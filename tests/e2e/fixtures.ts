@@ -51,6 +51,7 @@ export interface CalendarDriver {
     end: number;
     busy?: boolean;
     attendees?: string[];
+    location?: string;
   }): Promise<string>;
   update(id: string, change: { start: number; end: number; summary?: string }): Promise<void>;
   remove(id: string): Promise<void>;
@@ -182,6 +183,7 @@ async function caldavCalendar(
         colorId: null,
         privateProps: {},
         ...(e.attendees ? { attendees: [EMAIL, ...e.attendees] } : {}),
+        ...(e.location ? { location: e.location } : {}),
       });
       if (e.attendees) attendeesOf.set(ev.id, [EMAIL, ...e.attendees]);
       return ev.id;
@@ -265,6 +267,7 @@ async function googleDriver(): Promise<CalendarDriver> {
         busy: e.busy ?? true,
         colorId: null,
         privateProps: {},
+        ...(e.location ? { location: e.location } : {}),
       });
       return ev.id;
     },

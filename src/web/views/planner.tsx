@@ -150,6 +150,52 @@ export function Planner() {
             {selected.kind} · {selected.busy ? "busy" : "free"}
             {selected.locked && selected.kind !== "external" ? " · locked" : ""}
           </div>
+          {selected.kind === "external" && selected.levelEditable && (
+            <form
+              class="form"
+              data-testid="external-priority"
+              onSubmit={(e) => {
+                e.preventDefault();
+                const f = new FormData(e.currentTarget as HTMLFormElement);
+                const [, calendarId, ...rest] = selected.id.split(":");
+                const eventId = rest.join(":");
+                const level = Number(f.get("level"));
+                const series = f.get("series") === "on";
+                setSelected(null);
+                void run(() =>
+                  api(
+                    "POST",
+                    `/api/planner/external/${encodeURIComponent(calendarId ?? "")}/${encodeURIComponent(eventId)}/priority`,
+                    {
+                      level,
+                      series,
+                    },
+                  ),
+                );
+              }}
+            >
+              <label>
+                Priority for booking links
+                <select name="level">
+                  {[1, 2, 3, 4].map((l) => (
+                    <option value={l} key={l} selected={l === (selected.level ?? 1)}>
+                      P{l}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {selected.recurring && (
+                <label class="inline">
+                  <input type="checkbox" name="series" />
+                  All events in the series
+                </label>
+              )}
+              <button type="submit">Save priority</button>
+              <p class="status wide">
+                Only booking links read this. Tempoloom never moves this event.
+              </p>
+            </form>
+          )}
           {selected.kind !== "external" && (
             <div class="actions">
               <button

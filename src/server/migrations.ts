@@ -300,4 +300,15 @@ export const MIGRATIONS: readonly string[] = [
   ) STRICT;
   CREATE INDEX mirror_policies_user ON mirror_policies(user_id);
   `,
+  // 7: priority of external events (only booking links read it)
+  `
+  CREATE TABLE external_levels (
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    calendar_id TEXT NOT NULL REFERENCES calendars(id) ON DELETE CASCADE,
+    -- An event id, or the series id when the level applies to a whole series.
+    target_id TEXT NOT NULL,
+    level INTEGER NOT NULL CHECK (level BETWEEN 1 AND 4),
+    PRIMARY KEY (user_id, calendar_id, target_id)
+  ) STRICT;
+  `,
 ];

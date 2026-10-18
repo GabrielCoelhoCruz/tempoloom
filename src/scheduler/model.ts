@@ -83,6 +83,10 @@ export interface BufferFilter {
   length?: { op: ">=" | "<=" | "="; minutes: number };
   exactTitle?: string;
   tags?: string[];
+  /** Travel time: a physical address (two or more commas) or #tl_travel, and not a flight. */
+  travel?: boolean;
+  /** Airport time: #tl_flight or a flight number in the title. */
+  flight?: boolean;
 }
 
 export interface BufferItem {

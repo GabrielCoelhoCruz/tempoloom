@@ -62,6 +62,8 @@ T = {
     "x_cost": "the meeting cost calculator computes, rejects bad input and resets",
     "x_timer": "the pomodoro timer runs sessions and breaks, counts them and keeps them after reload",
     "x_stats": "stats sum meetings, tasks and habits for a chosen range",
+    "x_prio": "a lowered external event is offered only by higher-priority booking links",
+    "x_travel": "travel time wraps events at an address; flights get airport time instead",
 }
 
 # Row id -> E2E test keys that prove it on CalDAV.
@@ -90,6 +92,8 @@ E2E = {
     597: ["x_stats"], 598: ["x_stats"], 599: ["x_stats"], 600: ["x_stats"], 601: ["x_stats"], 602: ["x_stats"],
     701: ["x_timer"], 702: ["x_timer"], 703: ["x_timer"], 705: ["x_timer"], 706: ["x_timer"], 707: ["x_timer"],
     711: ["x_timer"], 714: ["x_cost"], 715: ["x_cost"], 716: ["x_cost"],
+    294: ["x_prio"], 295: ["x_prio"], 296: ["x_prio"], 237: ["x_travel"], 239: ["x_travel"], 240: ["x_travel"],
+    241: ["x_travel"], 407: ["x_prio"],
 }
 
 # Row id -> limits, for rows implemented with unit or property tests only.
@@ -116,6 +120,9 @@ UNIT = {
     596: "personal stats only; no team tab", 604: "meetings outside work hours and personal habit hours",
     606: "one-to-one and group split; no heaviest or lightest weekday", 607: "meetings, focus and booking counts; no breaks or travel",
     704: "phase tabs E2E-proven; reset not covered by E2E", 708: "sound on or off; one alarm sound", 712: "today's summary only",
+    60: "this event or the whole series; E2E covers a single event", 61: "only main-calendar events can change", 297: "",
+    298: "only main-calendar events can change", 238: "a fixed 30 minutes; no setting yet",
+    243: "travel buffers follow their event; a manual length is not kept", 244: "",
 }
 
 GOOGLE_ROWS = {

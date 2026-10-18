@@ -88,7 +88,17 @@ const linkInput = z.object({
 /** Classifies the owner's events for availability (class table of the spec). */
 export function calendarItems(db: Db, userId: string, from: number, to: number): CalendarItem[] {
   const items: CalendarItem[] = [];
+  const lowered = new Map(
+    all<{ calendar_id: string; target_id: string; level: Level }>(
+      db,
+      "SELECT calendar_id, target_id, level FROM external_levels WHERE user_id = ?",
+      userId,
+    ).map((x) => [`${x.calendar_id}:${x.target_id}`, x.level]),
+  );
   for (const e of all<{
+    calendar_id: string;
+    event_id: string;
+    recurring_id: string | null;
     summary: string;
     description: string;
     start_ms: number;
@@ -120,7 +130,12 @@ export function calendarItems(db: Db, userId: string, from: number, to: number):
       items.push({ ...span, cls: "free" });
     } else {
       // Other busy events block, including unanswered invitations: a booking is final.
-      items.push({ ...span, cls: "fixed" });
+      // A level the user lowered lets higher-priority links offer the time (external priority rule 5).
+      const level =
+        lowered.get(`${e.calendar_id}:${e.event_id}`) ??
+        (e.recurring_id ? lowered.get(`${e.calendar_id}:${e.recurring_id}`) : undefined) ??
+        1;
+      items.push(level > 1 ? { ...span, cls: "prioritized", level } : { ...span, cls: "fixed" });
     }
   }
   const levels = new Map<string, Level>();

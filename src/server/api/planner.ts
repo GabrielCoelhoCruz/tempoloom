@@ -10,6 +10,10 @@ import type { SyncService } from "../sync/service.ts";
 
 export interface PlannerEvent {
   id: string;
+  /** External events: the stored priority (1 when never lowered) and whether it can change. */
+  level?: number;
+  levelEditable?: boolean;
+  recurring?: boolean;
   start: number;
   end: number;
   title: string;
@@ -40,9 +44,12 @@ export function plannerEvents(db: Db, userId: string, from: number, to: number):
     busy: number;
     all_day: number;
     private_props: string;
+    recurring_id: string | null;
+    is_primary: number;
   }>(
     db,
-    `SELECT e.calendar_id, e.event_id, e.start_ms, e.end_ms, e.summary, e.busy, e.all_day, e.private_props
+    `SELECT e.calendar_id, e.event_id, e.start_ms, e.end_ms, e.summary, e.busy, e.all_day, e.private_props,
+       e.recurring_id, c.is_primary
      FROM events e JOIN calendars c ON c.id = e.calendar_id JOIN accounts a ON a.id = c.account_id
      WHERE a.user_id = ? AND c.check_availability = 1 AND e.end_ms > ? AND e.start_ms < ?
      ORDER BY e.start_ms`,
@@ -67,6 +74,13 @@ export function plannerEvents(db: Db, userId: string, from: number, to: number):
     movable: true,
     sourceId: m.source_id,
   }));
+  const levels = new Map(
+    all<{ calendar_id: string; target_id: string; level: number }>(
+      db,
+      "SELECT calendar_id, target_id, level FROM external_levels WHERE user_id = ?",
+      userId,
+    ).map((x) => [`${x.calendar_id}:${x.target_id}`, x.level]),
+  );
   for (const e of external) {
     if (e.all_day) continue;
     if ((JSON.parse(e.private_props) as Record<string, string>)[MANAGED_PROP] === "1") continue;
@@ -80,6 +94,14 @@ export function plannerEvents(db: Db, userId: string, from: number, to: number):
       locked: true,
       movable: false,
       sourceId: null,
+      level:
+        levels.get(`${e.calendar_id}:${e.event_id}`) ??
+        (e.recurring_id ? levels.get(`${e.calendar_id}:${e.recurring_id}`) : undefined) ??
+        1,
+      levelEditable:
+        e.is_primary === 1 &&
+        (JSON.parse(e.private_props) as Record<string, string>).tl_booking !== "1",
+      recurring: e.recurring_id !== null,
     });
   }
   return out.sort((a, b) => a.start - b.start || a.id.localeCompare(b.id));
@@ -134,6 +156,48 @@ export function plannerRoutes(db: Db, sync: SyncService, now: () => number): Hon
       row.id,
     );
     sync.request(user.id, 0);
+    return c.json({ ok: true });
+  });
+
+  /** Sets the priority of an external event on the main calendar (external priority rules 2-4, 7). */
+  r.post("/external/:calendarId/:eventId/priority", async (c) => {
+    const user = c.get("user");
+    const { level, series } = await jsonBody(
+      c,
+      z.object({ level: z.number().int().min(1).max(4), series: z.boolean().default(false) }),
+    );
+    const ev = one<{ recurring_id: string | null; is_primary: number }>(
+      db,
+      `SELECT e.recurring_id, c.is_primary FROM events e JOIN calendars c ON c.id = e.calendar_id
+       JOIN accounts a ON a.id = c.account_id WHERE a.user_id = ? AND e.calendar_id = ? AND e.event_id = ?`,
+      user.id,
+      c.req.param("calendarId"),
+      c.req.param("eventId"),
+    );
+    if (!ev) notFound("event");
+    if (!ev.is_primary) return c.json({ error: "not_main_calendar" }, 400);
+    const target = series && ev.recurring_id ? ev.recurring_id : c.req.param("eventId");
+    run(
+      db,
+      `INSERT INTO external_levels (user_id, calendar_id, target_id, level) VALUES (?, ?, ?, ?)
+       ON CONFLICT (user_id, calendar_id, target_id) DO UPDATE SET level = excluded.level`,
+      user.id,
+      c.req.param("calendarId"),
+      target,
+      level,
+    );
+    if (series && ev.recurring_id) {
+      // A series level replaces levels set on single events of that series.
+      run(
+        db,
+        `DELETE FROM external_levels WHERE user_id = ? AND calendar_id = ? AND target_id IN
+           (SELECT event_id FROM events WHERE calendar_id = ? AND recurring_id = ?)`,
+        user.id,
+        c.req.param("calendarId"),
+        c.req.param("calendarId"),
+        ev.recurring_id,
+      );
+    }
     return c.json({ ok: true });
   });
 

@@ -584,7 +584,21 @@ function compare(op: ">=" | "<=" | "=", a: number, b: number): boolean {
   return op === ">=" ? a >= b : op === "<=" ? a <= b : a === b;
 }
 
+const FLIGHT_NUMBER = /\b[A-Z0-9]{2}\s?\d{1,4}\b/;
+
+/** buffers-travel.md rules 2 and 5. */
+export function isFlight(e: ExternalEvent): boolean {
+  return hasTag(e, "#tl_flight") || (/\bflight\b/i.test(e.title) && FLIGHT_NUMBER.test(e.title));
+}
+
+export function hasAddress(e: ExternalEvent): boolean {
+  const loc = e.location.trim();
+  return !/^https?:\/\//i.test(loc) && (loc.match(/,/g)?.length ?? 0) >= 2;
+}
+
 export function matchesFilter(f: BufferFilter, e: ExternalEvent): boolean {
+  if (f.flight && !isFlight(e)) return false;
+  if (f.travel && (isFlight(e) || !(hasAddress(e) || hasTag(e, "#tl_travel")))) return false;
   if (f.text) {
     const fields = f.text.fields.length > 0 ? f.text.fields : (["title"] as const);
     const hay = fields.map((k) => e[k].toLowerCase());

@@ -437,6 +437,40 @@ export function Settings() {
           >
             Add 15 min prep before meetings
           </button>
+          <button
+            type="button"
+            onClick={() =>
+              void act(() =>
+                api("POST", "/api/buffers", {
+                  title: "Travel",
+                  side: "both",
+                  minutesBefore: 30,
+                  minutesAfter: 30,
+                  level: 2,
+                  filter: { travel: true },
+                }),
+              )
+            }
+          >
+            Add travel time (30 min)
+          </button>
+          <button
+            type="button"
+            onClick={() =>
+              void act(() =>
+                api("POST", "/api/buffers", {
+                  title: "Airport",
+                  side: "both",
+                  minutesBefore: 120,
+                  minutesAfter: 60,
+                  level: 1,
+                  filter: { flight: true },
+                }),
+              )
+            }
+          >
+            Add airport time (2 h before, 1 h after)
+          </button>
         </div>
         <div class="list" data-testid="buffer-list">
           {buffers.map((b) => (

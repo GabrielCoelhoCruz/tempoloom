@@ -81,6 +81,8 @@ const bufferInput = z.object({
         .optional(),
       exactTitle: z.string().optional(),
       tags: z.array(z.string().min(1)).optional(),
+      travel: z.boolean().optional(),
+      flight: z.boolean().optional(),
     })
     .optional(),
   onConflict: z.enum(["remove", "keep_as_conflict"]).optional(),

@@ -93,7 +93,13 @@ export function WeekView({ days, zone, events, now, onMove, onSelect }: Props) {
   const todayIdx = days.indexOf(nowLocal.date);
 
   const startDrag = (e: PointerEvent, box: Box) => {
-    if (!box.ev.movable || !onMove || e.button !== 0) return;
+    if (e.button !== 0) return;
+    if (!box.ev.movable || !onMove) {
+      // Fixed events open their details on a click; they cannot be dragged.
+      const el = e.currentTarget as HTMLElement;
+      el.addEventListener("pointerup", () => onSelect?.(box.ev.id), { once: true });
+      return;
+    }
     const el = e.currentTarget as HTMLElement;
     el.setPointerCapture(e.pointerId);
     const x0 = e.clientX;
