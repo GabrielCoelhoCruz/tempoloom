@@ -524,6 +524,31 @@ progress {
   margin-top: 8px;
 }
 
+/* Team policies */
+.report-table {
+  border-collapse: collapse;
+  font-size: 12px;
+  margin: 8px 0 16px;
+}
+.report-table th,
+.report-table td {
+  border: 1px solid var(--line);
+  padding: 4px 8px;
+  text-align: right;
+}
+.report-table caption,
+.report-table tbody th {
+  text-align: left;
+}
+.report-table th.baseline {
+  color: var(--muted);
+}
+.inline-form {
+  display: flex;
+  gap: 8px;
+  align-items: end;
+}
+
 /* Stats tabs and report tables */
 .tabs {
   display: flex;
@@ -557,29 +582,4 @@ table.report th:first-child {
 table.heat td {
   min-width: 64px;
   text-align: center;
-}
-
-/* Team policies */
-.report-table {
-  border-collapse: collapse;
-  font-size: 12px;
-  margin: 8px 0 16px;
-}
-.report-table th,
-.report-table td {
-  border: 1px solid var(--line);
-  padding: 4px 8px;
-  text-align: right;
-}
-.report-table caption,
-.report-table tbody th {
-  text-align: left;
-}
-.report-table th.baseline {
-  color: var(--muted);
-}
-.inline-form {
-  display: flex;
-  gap: 8px;
-  align-items: end;
 }

@@ -17,7 +17,6 @@
 // - "admins only" invite permission still lets members invite         -> permission
 // - a seat overage stops scheduling, or still lets people in          -> seats
 // Every test reloads the pages and reads the state again.
-import type { Page } from "@playwright/test";
 import { addDays } from "../../src/shared/time.ts";
 import {
   at,
