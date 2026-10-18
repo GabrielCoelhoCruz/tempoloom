@@ -112,6 +112,17 @@ T = {
     "pol_remind": "remind lists meetings without an agenda with a draft from the type's template; adjust proposes a shorter meeting",
     "pol_base": "the fragmentation baseline shows the group average of fragmented time on each day of the 4 weeks before",
     "pol_frag": "an enabled fragmentation policy places new habits of members in scope next to busy time, within each member's flexibility",
+    # Delegated access and account actions (delegation, account specs)
+    "dg_give": "the owner gives a team member access after a confirmation; people outside the team are not offered",
+    "dg_switch": "the delegate switches into the owner's account, sees the banner on every page, plans a task on the owner's calendar, and exits",
+    "dg_block": "an acting delegate cannot add or remove accounts, connect calendars, manage API keys, change delegates or delete the account",
+    "dg_live": "owner and delegate see each other's changes without a reload",
+    "dg_remove": "removing a delegate ends the open acting session; a delegate who leaves the team loses access",
+    "dg_ea2": "the assistant sets up a flexible meeting for the executive, on the executive's calendar only",
+    "dg_ea4": "an assistant with two executives switches between them; a habit lands on the chosen executive's calendar only",
+    "acct_add": "a user adds a second CalDAV account and removes it after a confirmation; the main account stays",
+    "acct_keys": "a personal API key creates a planned task; regenerate replaces the secret; delete revokes it",
+    "acct_delete": "deleting the own account needs the email typed, is refused for a sole admin with members, and removes data and future managed events",
 }
 
 # Row id -> E2E test keys that prove it on CalDAV.
@@ -178,6 +189,9 @@ E2E = {
     587: ["pol_buffer"], 234: ["pol_buffer"], 588: ["pol_decline", "pol_remind"],
     352: ["pol_decline", "pol_remind"], 589: ["pol_remind"], 590: ["pol_base", "pol_frag"],
     593: ["pol_focus", "pol_buffer", "pol_decline", "pol_base"],
+    # Delegated access, assistants, API keys
+    522: ["dg_give", "dg_remove"], 523: ["dg_switch", "dg_remove"], 524: ["dg_block", "acct_add", "acct_keys", "acct_delete"],
+    525: ["dg_live"], 765: ["dg_switch", "dg_ea2", "dg_ea4"], 927: ["acct_keys"],
 }
 
 # Row id -> how Tempoloom meets the row, when that differs from the reference's wording.
@@ -194,6 +208,9 @@ E2E_NOTES = {
     574: "Write access is read from the CalDAV privilege set; CalDAV has no groups to expand, and Google calendar access lists are not read",
     583: "Marketing-only in the reference; built: a teammate with write access who joins later takes part with no setup",
     269: "On CalDAV, an out-of-office event carries X-MICROSOFT-CDO-BUSYSTATUS:OOF",
+    524: "The blocked actions exist for the owner (E2E proves they work for the owner)",
+    765: "Executive assistant journey T1, T2 and T4; T3 (booking pages directory) is row 766. T2 sets up a new flexible meeting: converting an existing calendar meeting is not built",
+    927: "The expiry limit has unit tests; the rate limit is not built",
     588: "Adjust proposes a shorter meeting and changes it only when the organizer confirms; moving a meeting or lowering its priority is not built, because preview mode is not implemented",
     352: "Generated agendas are drafts from the meeting type's template: Tempoloom has no AI drafting, and the page says so",
     593: "Reports show goal, baseline and weekly group averages; for buffers they count removed buffers instead of a keep rate",
@@ -275,6 +292,8 @@ BLOCKED = {
     582: "Needs the assistant chat, which is not implemented",
     217: "No benchmark data: the evidence gives no targets per role (teams-policies.md open question 3)",
     594: "No benchmark data: the evidence gives no targets per role (teams-policies.md open question 3)",
+    928: "Needs the vendor's Zapier app and a Zapier account",
+    929: "Needs the vendor's Zapier app and a Zapier account",
     591: "Needs the Slack app (a vendor developer app and a test workspace)",
     592: "Needs the Slack app (a vendor developer app and a test workspace)",
     688: "Needs the assistant chat, which is not implemented",
@@ -321,7 +340,7 @@ UNIT = {
 GOOGLE_ROWS = {
     638: "Google sign-in is implemented and follows the team's SSO rules; Google E2E pending (needs a Google OAuth client and account). Microsoft sign-in is not implemented: it needs an app registration and a Microsoft Graph provider.",
     510: "Google sign-in (OAuth with PKCE) and Google Calendar sync are implemented; Google E2E pending: needs a service-account key, and the consent screen needs a one-time check by a person. Microsoft is not implemented.",
-    513: "Google and CalDAV accounts can be connected; adding a second account in the UI and Microsoft are not implemented. Google E2E pending.",
+    513: "Google and CalDAV accounts can be connected; a second CalDAV account is added in the UI with CalDAV E2E (\u201ca user adds a second CalDAV account and removes it after a confirmation\u201d); Microsoft is not implemented. Google E2E pending.",
     147: "Google sign-in asks for calendar scopes up front; incremental consent not implemented. Google E2E pending.",
     518: "All calendar scopes are asked at sign-in; incremental consent not implemented. Google E2E pending.",
 }
