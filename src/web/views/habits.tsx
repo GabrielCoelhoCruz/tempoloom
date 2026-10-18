@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "preact/hooks";
 import { api } from "../lib/api.ts";
 import { duration, hhmm } from "../lib/format.ts";
 import { freeName, templateFromUrl } from "../lib/library.ts";
+import { loadPolicyMarks, PolicyMark, policyMarks } from "../lib/policy-marks.tsx";
 import { LEVEL_NAMES, planNow } from "../lib/state.ts";
 
 interface Habit {
@@ -45,6 +46,7 @@ export function Habits() {
     ]);
     setHabits(h.habits);
     setHours(hs.hours);
+    await loadPolicyMarks();
   }, []);
   useEffect(() => void load(), [load]);
 
@@ -237,7 +239,7 @@ export function Habits() {
                     ? "daily"
                     : (f.days ?? []).map((d) => DAY_NAMES[d - 1]).join(", ")}{" "}
                   · {DEFENSE[h.defense] ?? h.defense}
-                  {h.enabled ? "" : " · off"}
+                  {h.enabled ? "" : " · off"} <PolicyMark id={h.id} />
                 </div>
               </div>
               <div class="actions">
@@ -249,13 +251,15 @@ export function Habits() {
                 >
                   {h.enabled ? "Turn off" : "Turn on"}
                 </button>
-                <button
-                  type="button"
-                  class="danger"
-                  onClick={() => void act(() => api("DELETE", `/api/habits/${h.id}`))}
-                >
-                  Delete
-                </button>
+                {!policyMarks.value[h.id] && (
+                  <button
+                    type="button"
+                    class="danger"
+                    onClick={() => void act(() => api("DELETE", `/api/habits/${h.id}`))}
+                  >
+                    Delete
+                  </button>
+                )}
               </div>
             </div>
           );

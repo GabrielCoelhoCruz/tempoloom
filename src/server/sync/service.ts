@@ -2,6 +2,8 @@
 import { all, one, run } from "../db.ts";
 import { meetingPeers } from "../planner/meetings.ts";
 import { replanUser } from "../planner/replan.ts";
+import { enforceAgendas } from "../policies/agendas.ts";
+import { applyPolicies } from "../policies/apply.ts";
 import { type ProviderDeps, ProviderPool } from "../providers/index.ts";
 import { applyCalendarEdits } from "./edits.ts";
 import { pullEvents, syncCalendarList } from "./pull.ts";
@@ -199,6 +201,15 @@ export class SyncService {
         calendars.map((c) => c.id),
         user.time_zone,
         now,
+      );
+      // Team policies (teams-policies.md rules 3, 14-17): automations, then agendas.
+      applyPolicies(db, userId, now);
+      await enforceAgendas(
+        db,
+        userId,
+        (id) => pool.get(id),
+        now,
+        (m, e) => this.#log(m, e),
       );
       const result = await replanUser(
         {

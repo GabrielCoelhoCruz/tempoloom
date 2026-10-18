@@ -479,4 +479,76 @@ export const MIGRATIONS: readonly string[] = [
   -- Set when the directory deactivates the person: no sign-in, no scheduling, no seat.
   ALTER TABLE users ADD COLUMN deactivated_at INTEGER;
   `,
+  // 13: policies: team policies, the automations they make, agenda templates and actions
+  `
+  CREATE TABLE team_policies (
+    id TEXT PRIMARY KEY,
+    team_id TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    type TEXT NOT NULL CHECK (type IN ('focus_time', 'buffers', 'meeting_agendas', 'fragmentation')),
+    name TEXT NOT NULL,
+    -- JSON: [] is the whole team; [{"attribute":"department","value":"Engineering"}] matches any rule.
+    scope TEXT NOT NULL DEFAULT '[]',
+    -- JSON: the goal of the type (docs/specs/teams-policies.md).
+    goal TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 0,
+    -- First time the policy was enabled; the report baseline is the 4 weeks before.
+    started_at INTEGER,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  ) STRICT;
+  CREATE INDEX team_policies_team ON team_policies(team_id);
+
+  -- A focus goal, buffer or habit that a policy made for a member.
+  CREATE TABLE policy_automations (
+    policy_id TEXT NOT NULL REFERENCES team_policies(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    key TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('focus', 'buffer', 'habit')),
+    item_id TEXT NOT NULL,
+    -- The member changed it; a new policy goal keeps the member's value.
+    personalized INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (policy_id, user_id, key)
+  ) STRICT;
+  CREATE INDEX policy_automations_user ON policy_automations(user_id);
+
+  -- A member's own choices inside a policy, as JSON (fragmentation flexibility).
+  CREATE TABLE policy_choices (
+    policy_id TEXT NOT NULL REFERENCES team_policies(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    choices TEXT NOT NULL,
+    PRIMARY KEY (policy_id, user_id)
+  ) STRICT;
+
+  -- An admin's agenda template for one meeting category; it replaces the built-in one.
+  CREATE TABLE agenda_templates (
+    team_id TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    category TEXT NOT NULL,
+    body TEXT NOT NULL,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (team_id, category)
+  ) STRICT;
+
+  -- What an agenda policy did about a meeting without an agenda: a reminder to
+  -- the organizer, or a decline for an invited member.
+  CREATE TABLE agenda_actions (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    calendar_id TEXT NOT NULL REFERENCES calendars(id) ON DELETE CASCADE,
+    event_id TEXT NOT NULL,
+    policy_id TEXT REFERENCES team_policies(id) ON DELETE SET NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('reminder', 'declined')),
+    state TEXT NOT NULL CHECK (state IN ('open', 'dismissed', 'resolved', 'done')),
+    title TEXT NOT NULL,
+    category TEXT NOT NULL,
+    start_ms INTEGER NOT NULL,
+    end_ms INTEGER NOT NULL,
+    -- "adjust": a shorter end the organizer may apply, and what became of it.
+    proposed_end_ms INTEGER,
+    proposal TEXT CHECK (proposal IN ('pending', 'applied', 'kept')),
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    UNIQUE (user_id, calendar_id, event_id, kind)
+  ) STRICT;
+  CREATE INDEX agenda_actions_user ON agenda_actions(user_id, kind, state);
+  `,
 ];
