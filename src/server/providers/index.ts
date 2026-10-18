@@ -1,6 +1,6 @@
 import { account, credentialsOf, googleAccessToken } from "../accounts.ts";
 import type { SecretBox } from "../crypto.ts";
-import type { Db } from "../db.ts";
+import { type Db, one } from "../db.ts";
 import { GoogleCalendarApi } from "../google/calendar.ts";
 import type { OAuthClient } from "../google/oauth.ts";
 import type { ServiceAccountKey } from "../google/service-account.ts";
@@ -20,12 +20,21 @@ export function providerFor(deps: ProviderDeps, accountId: string, zone: string)
   const row = account(deps.db, accountId);
   if (row.provider === "caldav") {
     const creds = credentialsOf(deps.box, row);
+    // An account attached through a team's calendar grant reads with the grant's account.
+    const grant = row.grant_team_id
+      ? one<{ server_url: string; username: string; password: string }>(
+          deps.db,
+          "SELECT server_url, username, password FROM calendar_grants WHERE team_id = ?",
+          row.grant_team_id,
+        )
+      : undefined;
     return new CalDavProvider(
       {
-        serverUrl: row.server_url ?? "",
-        username: creds.username ?? "",
-        password: creds.password ?? "",
+        serverUrl: grant?.server_url ?? row.server_url ?? "",
+        username: grant?.username ?? creds.username ?? "",
+        password: grant ? deps.box.open(grant.password) : (creds.password ?? ""),
         email: row.email,
+        ...(creds.homeUrl ? { homeUrl: creds.homeUrl } : {}),
       },
       zone,
       deps.now,

@@ -19,6 +19,11 @@ export interface CalDavCredentials {
   password: string;
   /** The user's email, used to find the user among attendees. */
   email: string;
+  /**
+   * Another person's calendar home, read with an organization grant's account
+   * (docs/specs/admin-sso-provisioning.md rule 12). Its calendars are read-only.
+   */
+  homeUrl?: string;
 }
 
 const PROPS_PROPERTY = "x-tempoloom-props";
@@ -296,9 +301,11 @@ export class CalDavProvider implements CalendarProvider {
 
   async #fetchCalendars(): Promise<DAVCalendar[]> {
     const client = await this.#connect();
-    const cals = (await retryRead(() => client.fetchCalendars())).filter(
-      (c) => !c.components || c.components.includes("VEVENT"),
-    );
+    const home = this.#creds.homeUrl;
+    const account = home && client.account ? { ...client.account, homeUrl: home } : undefined;
+    const cals = (
+      await retryRead(() => client.fetchCalendars(account ? { account } : undefined))
+    ).filter((c) => !c.components || c.components.includes("VEVENT"));
     this.#calendars = new Map(cals.map((c) => [c.url, c]));
     return cals;
   }
@@ -317,7 +324,7 @@ export class CalDavProvider implements CalendarProvider {
       id: c.url,
       name: davName(c),
       primary: i === 0,
-      writable: true,
+      writable: this.#creds.homeUrl === undefined,
       timeZone: null,
       color: c.calendarColor ?? null,
     }));

@@ -14,6 +14,8 @@ import {
   type ScimResource,
   setActive,
 } from "../directory.ts";
+import { grantOf } from "../grant.ts";
+import { enqueue } from "../provisioning.ts";
 import { joinTeam, membership, TeamError } from "../teams.ts";
 
 const CORE = "urn:ietf:params:scim:schemas:core:2.0:User";
@@ -250,6 +252,16 @@ export function scimRoutes(db: Db, baseUrl: string, now: () => number): Hono<Env
           now(),
         );
         save(teamId, user.id, resource, resource.externalId);
+        // With a calendar grant, the paced worker attaches the person's calendar (rule 12).
+        if (grantOf(db, teamId)) {
+          enqueue(
+            db,
+            teamId,
+            [{ email, name: displayNameOf(resource), attributes: {} }],
+            false,
+            now(),
+          );
+        }
         return user.id;
       });
       if (!userId) return scimError(c, 409, "The user exists.", "uniqueness");

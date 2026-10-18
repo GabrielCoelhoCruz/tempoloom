@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from "preact/hooks";
 import { ApiError, api } from "../lib/api.ts";
 import { navigate } from "../lib/router.ts";
 import { me } from "../lib/state.ts";
+import { CalendarAccess, ProvisionImport, SsoSettings } from "./team-admin.tsx";
 
 interface Member {
   userId: string;
@@ -485,7 +486,10 @@ export function TeamPage({ children }: { children?: ComponentChildren }) {
         <>
           <h2>Team settings</h2>
           <TeamSettingsForm info={info} onSaved={() => void load()} />
+          <SsoSettings />
+          <CalendarAccess />
           <Directory />
+          <ProvisionImport />
         </>
       )}
       {children}
@@ -500,6 +504,8 @@ interface DirectoryPerson {
   signedIn: boolean;
   seat: boolean;
   calendar: boolean;
+  eventsRead: number;
+  lastRead: number | null;
   deactivated: boolean;
 }
 
@@ -550,6 +556,16 @@ function Directory() {
             <div class="meta">
               {p.deactivated ? "deactivated · " : ""}signed in: {p.signedIn ? "yes" : "no"} · seat:{" "}
               {p.seat ? "used" : "none"} · calendar: {p.calendar ? "attached" : "none"}
+              {p.calendar && (
+                <>
+                  {" "}
+                  ({p.eventsRead} {p.eventsRead === 1 ? "event" : "events"} read, last read{" "}
+                  <span data-testid="last-read">
+                    {p.lastRead ? new Date(p.lastRead).toLocaleTimeString() : "never"}
+                  </span>
+                  )
+                </>
+              )}
             </div>
           </div>
         ))}

@@ -9,11 +9,14 @@ import { pullEvents, syncCalendarList } from "./pull.ts";
 export interface SyncServiceDeps extends ProviderDeps {
   intervalMs: number;
   baseUrl: string;
+  /** How often people who never signed in are read (default 24 hours). */
+  refreshMs?: number;
   log?: (msg: string, err?: unknown) => void;
 }
 
 const DEBOUNCE_MS = 300;
 const CALENDAR_LIST_EVERY_MS = 10 * 60_000;
+const REFRESH_MS = 86_400_000;
 
 export class SyncService {
   readonly #deps: SyncServiceDeps;
@@ -42,12 +45,19 @@ export class SyncService {
     return new ProviderPool(this.#deps, zone);
   }
 
+  /** Accounts read before this time are due, for people who never signed in. */
+  #refreshDue(): number {
+    return this.#deps.now() - (this.#deps.refreshMs ?? REFRESH_MS);
+  }
+
   start(): void {
     this.#interval = setInterval(() => {
       for (const { user_id } of all<{ user_id: string }>(
         this.#deps.db,
         `SELECT DISTINCT a.user_id FROM accounts a JOIN users u ON u.id = a.user_id
-         WHERE a.status = 'ok' AND u.deactivated_at IS NULL`,
+         WHERE a.status = 'ok' AND u.deactivated_at IS NULL
+           AND (u.first_sign_in_at IS NOT NULL OR a.refreshed_at IS NULL OR a.refreshed_at <= ?)`,
+        this.#refreshDue(),
       )) {
         this.request(user_id, 0);
       }
@@ -160,12 +170,27 @@ export class SyncService {
   async #run(userId: string): Promise<void> {
     const { db } = this.#deps;
     try {
-      const user = one<{ time_zone: string }>(
+      const user = one<{ time_zone: string; first_sign_in_at: number | null }>(
         db,
-        "SELECT time_zone FROM users WHERE id = ? AND deactivated_at IS NULL",
+        "SELECT time_zone, first_sign_in_at FROM users WHERE id = ? AND deactivated_at IS NULL",
         userId,
       );
       if (!user) return;
+      // A provisioned person who never signed in is read once per refresh period
+      // (admin-sso-provisioning.md rule 17), and never planned (outputs, open question 3).
+      const signedIn = user.first_sign_in_at !== null;
+      if (
+        !signedIn &&
+        !one(
+          db,
+          `SELECT 1 FROM accounts WHERE user_id = ? AND status = 'ok'
+             AND (refreshed_at IS NULL OR refreshed_at <= ?)`,
+          userId,
+          this.#refreshDue(),
+        )
+      ) {
+        return;
+      }
       const pool = this.#pool(userId);
       // Read each account's calendar list on first sight and every 10 minutes.
       const now0 = this.#deps.now();
@@ -192,6 +217,15 @@ export class SyncService {
       let pulled = 0;
       for (const cal of calendars) {
         pulled += await pullEvents(db, pool.get(cal.account_id), cal.id, now);
+      }
+      if (!signedIn) {
+        run(
+          db,
+          "UPDATE accounts SET refreshed_at = ? WHERE user_id = ? AND status = 'ok'",
+          now,
+          userId,
+        );
+        return;
       }
       applyCalendarEdits(
         db,

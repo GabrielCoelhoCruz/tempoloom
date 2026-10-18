@@ -23,8 +23,10 @@ import { bookingRoutes, publicBookingRoutes } from "./api/booking.ts";
 import { itemRoutes } from "./api/items.ts";
 import { meetingRoutes } from "./api/meetings.ts";
 import { plannerRoutes } from "./api/planner.ts";
+import { provisioningRoutes } from "./api/provisioning.ts";
 import { scimRoutes } from "./api/scim.ts";
 import { settingsRoutes } from "./api/settings.ts";
+import { connectRoutes, ssoAdminRoutes, ssoAuthRoutes } from "./api/sso.ts";
 import { statsRoutes } from "./api/stats.ts";
 import { publicInviteRoutes, teamRoutes } from "./api/team.ts";
 import { webhookRoutes } from "./api/webhooks.ts";
@@ -38,11 +40,13 @@ import {
   identityFromIdToken,
   type OAuthClient,
 } from "./google/oauth.ts";
+import { dropCoveredGrant } from "./grant.ts";
 import { jsonBody } from "./http.ts";
 import type { Mailer } from "./mail.ts";
 import { CalDavProvider } from "./providers/caldav.ts";
 import { ProviderError } from "./providers/types.ts";
 import { getSettings } from "./settings.ts";
+import { otherSignIn } from "./sso/policy.ts";
 import type { SyncService } from "./sync/service.ts";
 import { enqueueBookingEvent, type WebhookWorker } from "./webhooks.ts";
 
@@ -143,13 +147,11 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
     try {
       const tokens = await exchangeCode(deps.oauth, code, saved.code_verifier, now());
       if (!tokens.idToken) return c.redirect("/?login_error=no_identity");
-      const { user, accountId } = upsertGoogleLogin(
-        db,
-        box,
-        identityFromIdToken(tokens.idToken),
-        tokens,
-        now(),
-      );
+      const identity = identityFromIdToken(tokens.idToken);
+      // Domains that a team registered for SSO (admin-sso-provisioning.md rules 3, 4, 9).
+      const rule = otherSignIn(db, identity.email, config.TEAM_SEAT_LIMIT);
+      if ("refuse" in rule) return c.redirect(`/?login_error=${rule.refuse}`);
+      const { user, accountId } = upsertGoogleLogin(db, box, identity, tokens, now(), rule.teamId);
       if (isDeactivated(db, user.id)) return c.redirect("/?login_error=deactivated");
       startSession(c, user.id);
       void sync.onConnect(user.id, accountId);
@@ -180,8 +182,11 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
     }
     if (one(db, "SELECT 1 FROM users WHERE email = ? AND deactivated_at IS NOT NULL", email))
       return c.json({ error: "deactivated" }, 403);
+    // Domains that a team registered for SSO (admin-sso-provisioning.md rules 3, 4, 9).
+    const rule = otherSignIn(db, email, config.TEAM_SEAT_LIMIT);
+    if ("refuse" in rule) return c.json({ error: rule.refuse }, 403);
     const isNew = !one(db, "SELECT 1 FROM users WHERE email = ?", email);
-    const user = ensureUser(db, email, body.username, now());
+    const user = ensureUser(db, email, body.username, now(), rule.teamId);
     // CalDAV has no account time zone; take the browser's on first sign-in.
     if (isNew && body.timeZone)
       run(db, "UPDATE users SET time_zone = ? WHERE id = ?", body.timeZone, user.id);
@@ -200,6 +205,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
     );
     startSession(c, user.id);
     await sync.onConnect(user.id, accountId);
+    dropCoveredGrant(db, user.id);
     return c.json({ ok: true });
   });
 
@@ -236,6 +242,15 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
 
   app.route("/pub", publicInviteRoutes(db));
   app.route("/scim/v2", scimRoutes(db, config.BASE_URL, now));
+  const ssoDeps = {
+    db,
+    box,
+    baseUrl: config.BASE_URL,
+    seatLimit: config.TEAM_SEAT_LIMIT,
+    now,
+    startSession,
+  };
+  app.route("/auth/sso", ssoAuthRoutes(ssoDeps));
 
   app.use("/api/*", async (c, next) => {
     const token = getCookie(c, SESSION_COOKIE);
@@ -252,7 +267,8 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
       settings: getSettings(db, user.id),
       accounts: all(
         db,
-        "SELECT id, provider, email, status FROM accounts WHERE user_id = ? ORDER BY created_at",
+        `SELECT id, provider, email, status, grant_team_id IS NOT NULL AS viaGrant
+         FROM accounts WHERE user_id = ? ORDER BY created_at`,
         user.id,
       ),
     });
@@ -287,6 +303,9 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
       now,
     }),
   );
+  app.route("/api", ssoAdminRoutes(ssoDeps));
+  app.route("/api", connectRoutes({ db, box, sync, now }));
+  app.route("/api", provisioningRoutes({ db, box, now }));
 
   // Static client with a single-page fallback. Text files are compressed once
   // per encoding and kept in memory; the build output does not change at run time.
