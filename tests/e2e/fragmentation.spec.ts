@@ -62,6 +62,7 @@ test("the fragmentation baseline shows the group average of fragmented time on e
   const report = await openReport(page, "Fewer gaps");
   await report.getByLabel("Group by").fill("department");
   await report.getByRole("button", { name: "Show baseline" }).click();
+  await expect(page.getByTestId("baseline").locator('[data-group="Engineering"]')).toBeVisible();
   const grid = (group: string) => page.getByTestId("baseline").locator(`[data-group="${group}"]`);
   const check = async () => {
     for (const d of tuesdays) {
