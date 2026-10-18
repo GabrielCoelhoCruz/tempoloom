@@ -53,6 +53,10 @@ T = {
     "s_focus": "work habits count toward focus time; a deleted focus block is not reused",
     "s_prep": "a prep buffer sits before a meeting but not between back-to-back meetings",
     "s_zone": "changing the time zone moves the work day",
+    "b_book": "a visitor books a time without signing in; the event lands on the calendar and a task moves away",
+    "b_prio": "link priority decides which managed time it offers",
+    "b_limit": "a daily limit closes the day after one booking; a hidden link is unlisted but works",
+    "b_resched": "the visitor reschedules and then cancels from the manage page",
 }
 
 # Row id -> E2E test keys that prove it on CalDAV.
@@ -72,6 +76,9 @@ E2E = {
     229: ["s_prep", "buffer"], 230: ["buffer"], 231: ["s_prep"], 233: ["buffer"], 247: ["s_break"], 248: ["c_tags"],
     252: ["c_tags"], 270: ["s_zone"], 286: ["drag", "t_late", "t_free", "h_weekly"], 288: ["h_conflict"],
     496: ["c_second"], 497: ["c_second"], 503: ["c_second"], 504: ["split", "c_second"],
+    379: ["b_book"], 380: ["b_book"], 381: ["b_book"], 382: ["b_book"], 386: ["b_book"], 387: ["b_prio"],
+    391: ["b_limit"], 397: ["b_limit"], 399: ["b_book"], 400: ["b_book"], 402: ["b_resched"], 403: ["b_resched"],
+    404: ["b_book"], 406: ["b_prio"], 409: ["b_prio", "b_limit"], 410: ["b_book"], 414: ["b_book"], 421: ["b_book", "b_resched"],
 }
 
 # Row id -> limits, for rows implemented with unit or property tests only.
@@ -85,6 +92,11 @@ UNIT = {
     228: "", 249: "tasks and habits honor it; meetings and booking links not implemented",
     259: "title and description; not the RSVP note", 292: "settings field; no UI yet", 506: "API only",
     517: "status is stored; no reconnect UI yet",
+    383: "set through the API; the form derives the slug from the title", 384: "several durations work; the default is the first",
+    388: "", 389: "rolling days only; no fixed end date", 390: "before and after buffers; no travel or recovery buffer checks",
+    392: "a free-text location only; no Meet, Zoom or Gong", 398: "busy event with the booker as guest and manage link; no conference link",
+    408: "", 411: "", 412: "the page marks preferred times; no legend yet", 415: "",
+    420: "name, email and message; no CC, questions or location choice",
 }
 
 GOOGLE_ROWS = {
