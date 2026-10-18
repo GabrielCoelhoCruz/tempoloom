@@ -1,8 +1,10 @@
 import { Hono } from "hono";
 import { z } from "zod";
+import { CATEGORIES, type Category } from "../../scheduler/categories.ts";
 import type { AppEnv } from "../app.ts";
 import { all, type Db, one, run } from "../db.ts";
 import { jsonBody, notFound } from "../http.ts";
+import { type CachedEvent, categoryContext, externalCategory } from "../planner/categories.ts";
 import { MANAGED_PROP, type ManagedRow } from "../planner/push.ts";
 import { getSettings } from "../settings.ts";
 import { cacheEvent } from "../sync/pull.ts";
@@ -10,6 +12,10 @@ import type { SyncService } from "../sync/service.ts";
 
 export interface PlannerEvent {
   id: string;
+  /** External events: the detected or chosen category (events-categories-and-colors.md). */
+  category?: Category;
+  /** The category the user chose for this event, if any (rule 4). */
+  manualCategory: Category | null;
   /** External events: the stored priority (1 when never lowered) and whether it can change. */
   level?: number;
   levelEditable?: boolean;
@@ -35,21 +41,16 @@ export function plannerEvents(db: Db, userId: string, from: number, to: number):
     from,
     to,
   );
-  const external = all<{
-    calendar_id: string;
-    event_id: string;
-    start_ms: number;
-    end_ms: number;
-    summary: string;
-    busy: number;
-    all_day: number;
-    private_props: string;
-    recurring_id: string | null;
-    is_primary: number;
-  }>(
+  const external = all<
+    CachedEvent & {
+      busy: number;
+      all_day: number;
+      private_props: string;
+      is_primary: number;
+    }
+  >(
     db,
-    `SELECT e.calendar_id, e.event_id, e.start_ms, e.end_ms, e.summary, e.busy, e.all_day, e.private_props,
-       e.recurring_id, c.is_primary
+    `SELECT e.*, c.is_primary
      FROM events e JOIN calendars c ON c.id = e.calendar_id JOIN accounts a ON a.id = c.account_id
      WHERE a.user_id = ? AND c.check_availability = 1 AND e.end_ms > ? AND e.start_ms < ?
      ORDER BY e.start_ms`,
@@ -63,8 +64,10 @@ export function plannerEvents(db: Db, userId: string, from: number, to: number):
     for (const m of markers) if (title.startsWith(`${m} `)) return title.slice(m.length + 1);
     return title;
   };
+  const cats = categoryContext(db, userId);
   const out: PlannerEvent[] = managed.map((m) => ({
     id: m.id,
+    manualCategory: cats.manual.get(`${m.calendar_id}:${m.event_id}`) ?? null,
     start: m.start_ms,
     end: m.end_ms,
     title: plain(m.title),
@@ -86,6 +89,8 @@ export function plannerEvents(db: Db, userId: string, from: number, to: number):
     if ((JSON.parse(e.private_props) as Record<string, string>)[MANAGED_PROP] === "1") continue;
     out.push({
       id: `ext:${e.calendar_id}:${e.event_id}`,
+      category: externalCategory(cats, e),
+      manualCategory: cats.manual.get(`${e.calendar_id}:${e.event_id}`) ?? null,
       start: e.start_ms,
       end: e.end_ms,
       title: e.summary || "(busy)",
@@ -155,6 +160,58 @@ export function plannerRoutes(db: Db, sync: SyncService, now: () => number): Hon
       locked ? 1 : 0,
       row.id,
     );
+    sync.request(user.id, 0);
+    return c.json({ ok: true });
+  });
+
+  /** Rule 4: the user sets or clears the category of one event; its color follows. */
+  r.post("/events/category", async (c) => {
+    const user = c.get("user");
+    const body = await jsonBody(
+      c,
+      z.object({ id: z.string(), category: z.enum(CATEGORIES).nullable() }),
+    );
+    let target: { calendar_id: string; event_id: string } | undefined;
+    if (body.id.startsWith("ext:")) {
+      const rest = body.id.slice(4);
+      const cut = rest.indexOf(":");
+      target = one(
+        db,
+        `SELECT e.calendar_id, e.event_id FROM events e JOIN calendars c ON c.id = e.calendar_id
+           JOIN accounts a ON a.id = c.account_id
+         WHERE a.user_id = ? AND e.calendar_id = ? AND e.event_id = ?`,
+        user.id,
+        rest.slice(0, cut),
+        rest.slice(cut + 1),
+      );
+    } else {
+      target = one(
+        db,
+        "SELECT calendar_id, event_id FROM managed_events WHERE id = ? AND user_id = ? AND event_id IS NOT NULL",
+        body.id,
+        user.id,
+      );
+    }
+    if (!target) notFound("event");
+    if (body.category) {
+      run(
+        db,
+        `INSERT INTO event_categories (user_id, calendar_id, event_id, category) VALUES (?, ?, ?, ?)
+         ON CONFLICT (user_id, calendar_id, event_id) DO UPDATE SET category = excluded.category`,
+        user.id,
+        target.calendar_id,
+        target.event_id,
+        body.category,
+      );
+    } else {
+      run(
+        db,
+        "DELETE FROM event_categories WHERE user_id = ? AND calendar_id = ? AND event_id = ?",
+        user.id,
+        target.calendar_id,
+        target.event_id,
+      );
+    }
     sync.request(user.id, 0);
     return c.json({ ok: true });
   });

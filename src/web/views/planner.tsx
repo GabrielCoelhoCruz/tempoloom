@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "preact/hooks";
+import { CATEGORIES } from "../../scheduler/categories.ts";
 import type { ReportEntry } from "../../scheduler/model.ts";
 import type { PlannerEvent } from "../../server/api/planner.ts";
 import { addDays, localToUtc, utcToLocal, weekdayOf } from "../../shared/time.ts";
 import { api } from "../lib/api.ts";
+import { CATEGORY_LABELS } from "../lib/categories.ts";
 import { formatWhen } from "../lib/format.ts";
 import { planNow, zone } from "../lib/state.ts";
 import { WeekView } from "./week.tsx";
@@ -149,7 +151,31 @@ export function Planner() {
           <div class="status">
             {selected.kind} · {selected.busy ? "busy" : "free"}
             {selected.locked && selected.kind !== "external" ? " · locked" : ""}
+            {selected.category ? ` · ${CATEGORY_LABELS[selected.category]}` : ""}
           </div>
+          <label class="inline">
+            Category
+            <select
+              data-testid="event-category"
+              onChange={(e) => {
+                const id = selected.id;
+                const value = e.currentTarget.value;
+                setSelected(null);
+                void run(() =>
+                  api("POST", "/api/planner/events/category", { id, category: value || null }),
+                );
+              }}
+            >
+              <option value="" selected={!selected.manualCategory}>
+                Automatic
+              </option>
+              {CATEGORIES.map((c) => (
+                <option value={c} key={c} selected={selected.manualCategory === c}>
+                  {CATEGORY_LABELS[c]}
+                </option>
+              ))}
+            </select>
+          </label>
           {selected.kind === "external" && selected.levelEditable && (
             <form
               class="form"

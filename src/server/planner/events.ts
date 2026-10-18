@@ -1,10 +1,12 @@
 // External events of a user, read from the event cache in scheduler form.
 import type { ExternalEvent } from "../../scheduler/model.ts";
 import { all, type Db } from "../db.ts";
+import { categoryContext, externalCategory } from "./categories.ts";
 import { MANAGED_PROP } from "./push.ts";
 
 /** Events on the user's availability calendars in [from, to), without Tempoloom's own. */
 export function externalEvents(db: Db, userId: string, from: number, to: number): ExternalEvent[] {
+  let ctx: ReturnType<typeof categoryContext> | undefined;
   return all<{
     event_id: string;
     calendar_id: string;
@@ -20,6 +22,8 @@ export function externalEvents(db: Db, userId: string, from: number, to: number)
     attendee_count: number;
     organizer_self: number;
     private_props: string;
+    attendees: string;
+    recurring_id: string | null;
   }>(
     db,
     `SELECT e.* FROM events e JOIN calendars c ON c.id = e.calendar_id JOIN accounts a ON a.id = c.account_id
@@ -28,6 +32,7 @@ export function externalEvents(db: Db, userId: string, from: number, to: number)
     from,
     to,
   ).flatMap((e): ExternalEvent[] => {
+    ctx ??= categoryContext(db, userId);
     const props = JSON.parse(e.private_props) as Record<string, string>;
     if (props[MANAGED_PROP] === "1") return [];
     return [
@@ -45,6 +50,7 @@ export function externalEvents(db: Db, userId: string, from: number, to: number)
         location: e.location,
         eventType: e.event_type,
         bookedViaLink: props.tl_booking === "1",
+        category: externalCategory(ctx, e),
       },
     ];
   });

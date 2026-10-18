@@ -1,5 +1,23 @@
 // Per-user settings, stored as JSON on the user row. Missing fields take defaults.
 import { z } from "zod";
+import { CATEGORIES } from "../scheduler/categories.ts";
+
+/** One of Google's 11 event colors, or the calendar's own color. */
+const eventColor = z.enum([
+  "1",
+  "2",
+  "3",
+  "4",
+  "5",
+  "6",
+  "7",
+  "8",
+  "9",
+  "10",
+  "11",
+  "calendar_default",
+]);
+
 import { type Db, one, run } from "./db.ts";
 
 export const settingsSchema = z.object({
@@ -32,7 +50,31 @@ export const settingsSchema = z.object({
       conflict: z.string().max(8).default("⚠️"),
     })
     .prefault({}),
+  // events-categories-and-colors.md: color settings with the proposed defaults.
+  colorScope: z.enum(["managed_only", "all_events"]).default("managed_only"),
+  categoryColors: z
+    .object(
+      Object.fromEntries(CATEGORIES.map((c) => [c, eventColor])) as Record<
+        (typeof CATEGORIES)[number],
+        typeof eventColor
+      >,
+    )
+    .partial()
+    .transform((m) => ({ ...DEFAULT_COLORS, ...m }))
+    .prefault({}),
 });
+
+const DEFAULT_COLORS: Record<(typeof CATEGORIES)[number], z.infer<typeof eventColor>> = {
+  team_meeting: "9",
+  one_on_one: "7",
+  external_meeting: "11",
+  solo_work: "2",
+  personal: "3",
+  travel: "5",
+  flight: "5",
+  vacation: "8",
+  personal_commitment: "8",
+};
 
 export type Settings = z.infer<typeof settingsSchema>;
 
@@ -53,6 +95,10 @@ export function updateSettings(db: Db, userId: string, patch: unknown): Settings
       ...((patch as { taskDefaults?: object }).taskDefaults ?? {}),
     },
     markers: { ...current.markers, ...((patch as { markers?: object }).markers ?? {}) },
+    categoryColors: {
+      ...current.categoryColors,
+      ...((patch as { categoryColors?: object }).categoryColors ?? {}),
+    },
   });
   run(db, "UPDATE users SET settings = ? WHERE id = ?", JSON.stringify(merged), userId);
   return merged;

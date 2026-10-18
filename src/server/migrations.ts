@@ -385,4 +385,17 @@ export const MIGRATIONS: readonly string[] = [
   -- Guests and location of a managed event, as JSON; a change rewrites the event.
   ALTER TABLE managed_events ADD COLUMN extra TEXT NOT NULL DEFAULT '';
   `,
+  // 10: event categories and colors (docs/specs/events-categories-and-colors.md)
+  `
+  ALTER TABLE events ADD COLUMN attendees TEXT NOT NULL DEFAULT '[]';
+
+  -- A category the user set on one event (rule 4).
+  CREATE TABLE event_categories (
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    calendar_id TEXT NOT NULL REFERENCES calendars(id) ON DELETE CASCADE,
+    event_id TEXT NOT NULL,
+    category TEXT NOT NULL,
+    PRIMARY KEY (user_id, calendar_id, event_id)
+  ) STRICT;
+  `,
 ];

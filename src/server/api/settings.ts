@@ -14,6 +14,7 @@ const range = z
 const weekly = z.partialRecord(z.enum(["1", "2", "3", "4", "5", "6", "7"]), z.array(range).max(12));
 
 export function settingsRoutes(db: Db, sync: SyncService, now: () => number): Hono<AppEnv> {
+  const scopeChanges = new Map<string, number[]>();
   const r = new Hono<AppEnv>();
 
   r.get("/settings", (c) => c.json({ settings: getSettings(db, c.get("user").id) }));
@@ -21,6 +22,20 @@ export function settingsRoutes(db: Db, sync: SyncService, now: () => number): Ho
   r.patch("/settings", async (c) => {
     const user = c.get("user");
     const body = await jsonBody(c, z.record(z.string(), z.unknown()));
+    // Rule 11 of events-categories-and-colors.md: a scope change repaints many
+    // events, so at most 2 changes per minute.
+    if ("colorScope" in body && body.colorScope !== getSettings(db, user.id).colorScope) {
+      const recent = (scopeChanges.get(user.id) ?? []).filter((t) => now() - t < 60_000);
+      if (recent.length >= 2)
+        return c.json(
+          {
+            error: "too_many_changes",
+            message: "Wait a minute before you change the scope again.",
+          },
+          429,
+        );
+      scopeChanges.set(user.id, [...recent, now()]);
+    }
     const parsed = (() => {
       try {
         return updateSettings(db, user.id, body);

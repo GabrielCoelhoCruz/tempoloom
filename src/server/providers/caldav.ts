@@ -71,6 +71,25 @@ export async function retryRead<T>(read: () => Promise<T>): Promise<T> {
   }
 }
 
+/**
+ * Google's 11 event colors as CSS color names, for the CalDAV COLOR property
+ * (RFC 7986). Tempoloom keeps one color id for both backends.
+ */
+export const COLOR_NAMES: Record<string, string> = {
+  "1": "mediumpurple",
+  "2": "mediumseagreen",
+  "3": "darkorchid",
+  "4": "salmon",
+  "5": "gold",
+  "6": "orangered",
+  "7": "deepskyblue",
+  "8": "dimgray",
+  "9": "royalblue",
+  "10": "forestgreen",
+  "11": "red",
+};
+const COLOR_IDS = new Map(Object.entries(COLOR_NAMES).map(([id, name]) => [name, id]));
+
 /** A CalDAV time-range value: UTC, basic format. */
 const davTime = (t: number) => `${new Date(t).toISOString().slice(0, 19).replace(/[-:]/g, "")}Z`;
 
@@ -105,6 +124,7 @@ function attendeeFacts(ev: ICAL.Component, selfEmail: string) {
   return {
     selfResponse,
     attendeeCount: attendees.length,
+    attendees: attendees.map((a) => mailto(a.getFirstValue())).filter(Boolean),
     organizerSelf: organizer === null || organizer === undefined || mailto(organizer) === self,
   };
 }
@@ -132,7 +152,7 @@ function baseEvent(
     eventType: "default",
     ...attendeeFacts(comp, selfEmail),
     recurringId: null,
-    colorId: null,
+    colorId: COLOR_IDS.get(str("color").toLowerCase()) ?? null,
     updated: stamp instanceof ICAL.Time ? stamp.toUnixTime() * 1000 : null,
     privateProps: readProps(comp),
   };
@@ -222,6 +242,7 @@ export function objectFromWrite(uid: string, w: EventWrite, now: number): string
   if (w.description) ev.addPropertyWithValue("description", w.description);
   if (w.location) ev.addPropertyWithValue("location", w.location);
   ev.addPropertyWithValue("transp", w.busy ? "OPAQUE" : "TRANSPARENT");
+  if (w.colorId && COLOR_NAMES[w.colorId]) ev.addPropertyWithValue("color", COLOR_NAMES[w.colorId]);
   if (w.organizer) ev.addPropertyWithValue("organizer", `mailto:${w.organizer}`);
   for (const email of w.attendees ?? []) ev.addPropertyWithValue("attendee", `mailto:${email}`);
   for (const email of w.optionalAttendees ?? []) {
@@ -393,9 +414,10 @@ export class CalDavProvider implements CalendarProvider {
       eventType: "default",
       selfResponse: null,
       attendeeCount: fallback.attendees?.length ?? 0,
+      attendees: [...(fallback.attendees ?? []), ...(fallback.optionalAttendees ?? [])],
       organizerSelf: true,
       recurringId: null,
-      colorId: null,
+      colorId: fallback.colorId,
       updated: this.#now(),
       privateProps: fallback.privateProps,
     };
@@ -438,6 +460,48 @@ export class CalDavProvider implements CalendarProvider {
     if (res.status === 404) throw new ProviderError("not_found", 404, "Event not found");
     if (!res.ok) throw new ProviderError("other", res.status, `Update failed: ${res.status}`);
     return this.#readBack(eventId, event, res.headers.get("etag"));
+  }
+
+  async setColor(
+    calendarId: string,
+    eventId: string,
+    colorId: string | null,
+    etag: string | null,
+  ): Promise<ProviderEvent> {
+    const client = await this.#connect();
+    const cal = await this.#calendar(calendarId);
+    const [obj] = await retryRead(() =>
+      client.fetchCalendarObjects({ calendar: cal, objectUrls: [eventId] }),
+    );
+    if (typeof obj?.data !== "string") throw new ProviderError("not_found", 404, "Event not found");
+    const root = new ICAL.Component(ICAL.parse(obj.data));
+    const name = colorId ? COLOR_NAMES[colorId] : undefined;
+    for (const ev of root.getAllSubcomponents("vevent")) {
+      ev.removeAllProperties("color");
+      if (name) ev.addPropertyWithValue("color", name);
+    }
+    const match = obj.etag ?? etag;
+    const res = await client.updateCalendarObject({
+      calendarObject: { url: eventId, data: root.toString(), ...(match ? { etag: match } : {}) },
+    });
+    if (res.status === 412) throw new ProviderError("precondition_failed", 412, "Event changed");
+    if (res.status === 404) throw new ProviderError("not_found", 404, "Event not found");
+    if (!res.ok) throw new ProviderError("other", res.status, `Update failed: ${res.status}`);
+    const [first] = root.getAllSubcomponents("vevent");
+    const read = (p: string) => String(first?.getFirstPropertyValue(p) ?? "");
+    return this.#readBack(
+      eventId,
+      {
+        summary: read("summary"),
+        description: read("description"),
+        start: 0,
+        end: 0,
+        busy: read("transp").toUpperCase() !== "TRANSPARENT",
+        colorId,
+        privateProps: first ? readProps(first) : {},
+      },
+      res.headers.get("etag"),
+    );
   }
 
   async deleteEvent(calendarId: string, eventId: string): Promise<void> {

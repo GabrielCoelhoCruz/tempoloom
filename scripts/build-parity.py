@@ -71,6 +71,8 @@ T = {
     "m_hours": "a colleague's meeting hours limit the time, a full slot shrinks to fit, optional guests do not count, and skip or delete drop one period",
     "lib_habit": "a habit entry fills the habit form; saving places it and shows Added; a second use gets a suffix; delete clears the badge",
     "lib_other": "buffer and focus entries add their automation as set; prompts offer no action",
+    "c_paint": "managed events take their category color, a new color repaints them, and external events change color only for the scope all events",
+    "c_buffer": "a buffer for external meetings adds prep before a meeting with another domain only",
 }
 
 # Row id -> E2E test keys that prove it on CalDAV.
@@ -108,6 +110,8 @@ E2E = {
     337: ["m_sync"], 338: ["m_sync"], 348: ["m_sync"], 351: ["m_sync", "m_hours"], 354: ["m_sync", "m_hours"],
     363: ["m_sync"], 366: ["m_hours"], 371: ["m_sync"],
     149: ["lib_habit"], 717: ["lib_habit", "lib_other"], 721: ["lib_other"], 743: ["lib_other"],
+    275: ["c_paint", "c_buffer"], 277: ["c_paint"], 279: ["c_paint"], 280: ["c_paint"], 281: ["c_paint"],
+    731: ["c_buffer"],
 }
 
 # Row id -> reason, for rows implemented in part (some behavior has E2E, some does not).
@@ -145,11 +149,16 @@ PARTIAL = {
     374: "Unplaced and conflicting occurrences show their reason on the meeting; no shared attention list",
     764: "E2E adds Lunch at 12:00 on each workday from the library; the 11:30 to 14:00 window is not set",
     759: "E2E checks the prefilled form (personal hours, three days); the habit is not saved in that test",
+    278: "The category is computed again from the cached attendees on each run; not under E2E",
+    283: "Future managed events and external events from 90 days back are repainted; past managed events are not",
+    284: "An event that cannot change color is skipped and painting never stops a run; not under E2E (Google)",
+    285: "At most 2 scope changes a minute (E2E); no repaint-all button",
+    221: "Text, count, length, exact title, tag and category filters; category is E2E-proven; no filter by person",
 }
 
 # Library entries (automations-library.md): row = 718 + entry number.
 LIB_FORM = [11, 32, 34, 35, 36, 37, 38, 39, 40, 42, 43, 44, 45]
-LIB_DIRECT = [1, 7, 10, 19, 23, 28]
+LIB_DIRECT = [1, 7, 10, 19, 23, 28, 29, 30]
 for n in LIB_FORM:
     PARTIAL.setdefault(718 + n, "The library opens the form of its kind with the preset; not under E2E")
 for n in LIB_DIRECT:
@@ -163,8 +172,6 @@ for n in [4, 9]:
     BLOCKED[718 + n] = "Needs meeting checks, which are not implemented"
 for n in [8, 26]:
     BLOCKED[718 + n] = "Needs a meeting load cap, which is not implemented"
-for n in [13, 29, 30]:
-    BLOCKED[718 + n] = "Needs event categories (external meetings), which are not implemented"
 BLOCKED[718 + 2] = "Needs a buffer filter by person, which is not implemented"
 BLOCKED[718 + 27] = "Needs a buffer after a run of meetings, which is not implemented"
 BLOCKED[718 + 33] = "Needs no-meeting days for meetings and booking links, which are not implemented"
@@ -176,7 +183,7 @@ UNIT = {
     73: "several ranges per day; no copy-to-all", 90: "meetings, then buffers, then habits inside one level; unit tests only",
     100: "", 109: "", 152: "engine only", 154: "", 156: "daily and weekly; monthly and custom not implemented",
     161: "", 165: "", 178: "", 196: "", 197: "", 202: "", 203: "", 206: "", 208: "", 209: "", 219: "",
-    221: "text, count, length, exact title and tag; no attendee or category filters", 225: "", 226: "API only",
+    225: "", 226: "API only",
     228: "", 249: "tasks and habits honor it; meetings and booking links not implemented",
     259: "title and description; not the RSVP note", 292: "settings field; no UI yet", 506: "API only",
     517: "status is stored; no reconnect UI yet",

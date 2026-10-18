@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from "preact/hooks";
+import { CATEGORIES } from "../../scheduler/categories.ts";
 import type { Settings as UserSettings } from "../../server/settings.ts";
 import { api } from "../lib/api.ts";
+import { CATEGORY_LABELS, COLORS } from "../lib/categories.ts";
 import { hhmm, parseHhmm } from "../lib/format.ts";
 import { templateFromUrl } from "../lib/library.ts";
 import { loadMe, me, planNow } from "../lib/state.ts";
@@ -131,7 +133,8 @@ export function Settings() {
       await Promise.all([load(), loadMe()]);
       setMessage(done);
     } catch (err) {
-      setMessage(err instanceof Error ? err.message : String(err));
+      const body = (err as { body?: { message?: string } }).body;
+      setMessage(body?.message ?? (err instanceof Error ? err.message : String(err)));
     }
   };
 
@@ -496,6 +499,55 @@ export function Settings() {
             </div>
           ))}
         </div>
+      </section>
+
+      <section>
+        <h2>Colors</h2>
+        <form
+          class="form"
+          data-testid="color-form"
+          onSubmit={(e) => {
+            e.preventDefault();
+            const f = new FormData(e.currentTarget as HTMLFormElement);
+            void act(() =>
+              api("PATCH", "/api/settings", {
+                colorScope: f.get("colorScope"),
+                categoryColors: Object.fromEntries(
+                  CATEGORIES.map((k) => [k, String(f.get(`color-${k}`))]),
+                ),
+              }),
+            );
+          }}
+        >
+          <label class="wide">
+            Paint
+            <select name="colorScope" aria-label="Paint">
+              <option value="managed_only" selected={settings.colorScope === "managed_only"}>
+                Only events Tempoloom manages
+              </option>
+              <option value="all_events" selected={settings.colorScope === "all_events"}>
+                All events on my calendars
+              </option>
+            </select>
+          </label>
+          {CATEGORIES.map((k) => (
+            <label key={k}>
+              {CATEGORY_LABELS[k]}
+              <select name={`color-${k}`} aria-label={CATEGORY_LABELS[k]}>
+                <option value="calendar_default">Calendar color</option>
+                {COLORS.map((c) => (
+                  <option value={c.id} key={c.id} selected={settings.categoryColors[k] === c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ))}
+          <button type="submit" class="primary">
+            Save colors
+          </button>
+          <p class="meta wide">Outlook calendars may not show these colors.</p>
+        </form>
       </section>
 
       <section>

@@ -37,3 +37,10 @@ export function allDayBlocks(events: ExternalEvent[]): Interval[] {
     .filter((e) => e.allDay && blocksPlanning(e))
     .map((e) => ({ start: e.start, end: e.end }));
 }
+
+const FLIGHT_NUMBER = /\b[A-Z0-9]{2}\s?\d{1,4}\b/;
+
+/** A title with the word "flight" and a flight number (buffers-travel.md rule 2). */
+export function isFlightTitle(title: string): boolean {
+  return /\bflight\b/i.test(title) && FLIGHT_NUMBER.test(title);
+}

@@ -1,5 +1,7 @@
 // One planning run for one user: snapshot from the database, plan(), and
 // the push of the differences to the calendars.
+
+import { categoryOf } from "../../scheduler/categories.ts";
 import type { WeeklyHours } from "../../scheduler/hours.ts";
 import type {
   BufferFilter,
@@ -22,6 +24,7 @@ import {
 import { all, type Db, one, run } from "../db.ts";
 import type { CalendarProvider } from "../providers/types.ts";
 import { getSettings, type Settings } from "../settings.ts";
+import { categoryContext, colorFor, paintExternal } from "./categories.ts";
 import { externalEvents } from "./events.ts";
 import { attendeeOccurrences, attendeesOf, meetingItems } from "./meetings.ts";
 import { mirrorCopies } from "./mirror.ts";
@@ -411,6 +414,54 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
     ),
   );
 
+  // Each managed event gets the color of its category (events-categories-and-colors.md rule 6).
+  const cats = categoryContext(db, userId);
+  const personalHabits = new Set(
+    all<{ id: string }>(
+      db,
+      `SELECT h.id FROM habits h JOIN hours_sets s ON s.id = h.hours_set_id
+       WHERE h.user_id = ? AND s.kind = 'personal'`,
+      userId,
+    ).map((h) => h.id),
+  );
+  const travelBuffers = new Set(
+    snapshot.buffers.filter((b) => b.filter.travel || b.filter.flight).map((b) => b.id),
+  );
+  const mirrorTypes = new Map(
+    all<{ id: string; calendar_type: string }>(
+      db,
+      "SELECT id, calendar_type FROM mirror_policies WHERE user_id = ?",
+      userId,
+    ).map((p) => [p.id, p.calendar_type]),
+  );
+  for (const d of desired) {
+    const row = rowByKey.get(d.key);
+    const manual = row?.event_id
+      ? (cats.manual.get(`${row.calendar_id}:${row.event_id}`) ?? null)
+      : null;
+    const type = d.kind === "mirror" ? mirrorTypes.get(d.sourceId) : undefined;
+    const category =
+      type === "travel" && !manual
+        ? "travel"
+        : categoryOf(
+            {
+              title: d.title,
+              description: d.description,
+              start: d.start,
+              end: d.end,
+              eventType: "default",
+              attendees: [...(d.attendees ?? []), ...(d.optionalAttendees ?? [])],
+              managedKind: d.kind,
+              personalHabit: personalHabits.has(d.sourceId),
+              travelBuffer: travelBuffers.has(d.sourceId),
+              personalCalendar: type === "personal",
+              manual,
+            },
+            cats.userEmail,
+          );
+    d.colorId = colorFor(settings, category);
+  }
+
   const calendars = new Map(
     all<CalendarInfo>(
       db,
@@ -431,6 +482,14 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
       },
     },
     desired,
+  );
+  await paintExternal(
+    db,
+    userId,
+    settings,
+    (accountId) => ctx.provider(accountId),
+    now,
+    snapshot.windowEnd,
   );
   run(
     db,

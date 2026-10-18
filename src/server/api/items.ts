@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { z } from "zod";
+import { CATEGORIES } from "../../scheduler/categories.ts";
 import type { WeeklyHours } from "../../scheduler/hours.ts";
 import type { AppEnv } from "../app.ts";
 import { all, type Db, one, run, tx } from "../db.ts";
@@ -83,6 +84,7 @@ const bufferInput = z.object({
       tags: z.array(z.string().min(1)).optional(),
       travel: z.boolean().optional(),
       flight: z.boolean().optional(),
+      categories: z.array(z.enum(CATEGORIES)).min(1).optional(),
     })
     .optional(),
   onConflict: z.enum(["remove", "keep_as_conflict"]).optional(),

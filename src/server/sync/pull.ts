@@ -84,15 +84,16 @@ export function cacheEvent(db: Db, calendarId: string, e: ProviderEvent): void {
     db,
     `INSERT INTO events (calendar_id, event_id, summary, description, location, start_ms, end_ms,
        all_day, busy, event_type, self_response, attendee_count, organizer_self, recurring_id, color_id,
-       etag, updated_ms, private_props)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       etag, updated_ms, private_props, attendees)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT (calendar_id, event_id) DO UPDATE SET
        summary = excluded.summary, description = excluded.description, location = excluded.location,
        start_ms = excluded.start_ms, end_ms = excluded.end_ms, all_day = excluded.all_day,
        busy = excluded.busy, event_type = excluded.event_type, self_response = excluded.self_response,
        attendee_count = excluded.attendee_count, organizer_self = excluded.organizer_self,
        recurring_id = excluded.recurring_id, color_id = excluded.color_id, etag = excluded.etag,
-       updated_ms = excluded.updated_ms, private_props = excluded.private_props`,
+       updated_ms = excluded.updated_ms, private_props = excluded.private_props,
+       attendees = excluded.attendees`,
     calendarId,
     e.id,
     e.summary,
@@ -111,6 +112,7 @@ export function cacheEvent(db: Db, calendarId: string, e: ProviderEvent): void {
     e.etag,
     e.updated,
     JSON.stringify(e.privateProps),
+    JSON.stringify(e.attendees),
   );
 }
 

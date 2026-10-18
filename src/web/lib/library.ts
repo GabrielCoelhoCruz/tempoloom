@@ -1,3 +1,5 @@
+import type { Category } from "../../scheduler/categories.ts";
+
 // The automation library (docs/specs/automations-library.md): ready-made
 // starting points. All presets are Tempoloom's own proposals (spec, "Entries").
 
@@ -41,6 +43,7 @@ export interface BufferPreset {
     length?: { op: ">=" | "<=" | "="; minutes: number };
     travel?: boolean;
     flight?: boolean;
+    categories?: Category[];
   };
 }
 
@@ -79,8 +82,6 @@ export type LibraryEntry = {
 const NEEDS_ASSISTANT = "Needs the assistant chat, which Tempoloom does not have yet.";
 const NEEDS_CHECKS = "Needs meeting checks, which Tempoloom does not have yet.";
 const NEEDS_CAP = "Needs a meeting load cap, which Tempoloom does not have yet.";
-const NEEDS_CATEGORIES =
-  "Needs event categories (external meetings), which Tempoloom does not have yet.";
 const prompt = (slug: string, name: string, summary: string): LibraryEntry => ({
   slug,
   name,
@@ -186,8 +187,13 @@ export const LIBRARY: LibraryEntry[] = [
     name: "Prep before customer meetings",
     group: "buffers",
     summary: "15 min before external meetings. P2.",
-    kind: "unavailable",
-    reason: NEEDS_CATEGORIES,
+    kind: "buffer",
+    preset: {
+      side: "before",
+      minutesBefore: 15,
+      level: 2,
+      filter: { categories: ["external_meeting"] },
+    },
   },
   prompt("work-rhythm", "Work rhythm review", "When do you do deep work, and when do you meet?"),
   prompt("cross-team", "Cross-team meeting time", "Find the best time this week for colleagues."),
@@ -251,16 +257,26 @@ export const LIBRARY: LibraryEntry[] = [
     name: "Focus before customer meetings",
     group: "buffers",
     summary: "30 min of solo prep before external meetings. P2.",
-    kind: "unavailable",
-    reason: NEEDS_CATEGORIES,
+    kind: "buffer",
+    preset: {
+      side: "before",
+      minutesBefore: 30,
+      level: 2,
+      filter: { categories: ["external_meeting"] },
+    },
   },
   {
     slug: "sales-prep-debrief",
     name: "Sales call prep and debrief",
     group: "buffers",
     summary: "10 min before and after external meetings.",
-    kind: "unavailable",
-    reason: NEEDS_CATEGORIES,
+    kind: "buffer",
+    preset: {
+      side: "both",
+      minutesBefore: 10,
+      minutesAfter: 10,
+      filter: { categories: ["external_meeting"] },
+    },
   },
   prompt("prep-tasks", "Prep task suggestions", "Suggest prep tasks before next week's meetings."),
   {

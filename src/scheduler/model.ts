@@ -1,6 +1,7 @@
 // Input and output of the scheduling engine (docs/specs/planning-scheduler.md).
 // All times are epoch milliseconds. Durations are minutes.
 import type { LocalDate } from "../shared/time.ts";
+import type { Category } from "./categories.ts";
 import type { WeeklyHours } from "./hours.ts";
 import type { Interval } from "./timeset.ts";
 
@@ -25,6 +26,8 @@ export interface ExternalEvent {
   location: string;
   eventType: string;
   bookedViaLink: boolean;
+  /** events-categories-and-colors.md; unknown when not given. */
+  category?: Category;
 }
 
 /** An existing managed event. */
@@ -115,6 +118,8 @@ export interface BufferFilter {
   travel?: boolean;
   /** Airport time: #tl_flight or a flight number in the title. */
   flight?: boolean;
+  /** Event categories (events-categories-and-colors.md rule 14). */
+  categories?: Category[];
 }
 
 export interface BufferItem {

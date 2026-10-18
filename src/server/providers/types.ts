@@ -27,6 +27,8 @@ export interface ProviderEvent {
   eventType: string;
   selfResponse: ResponseStatus | null;
   attendeeCount: number;
+  /** Attendee emails, lower case. */
+  attendees: string[];
   organizerSelf: boolean;
   recurringId: string | null;
   colorId: string | null;
@@ -96,4 +98,14 @@ export interface CalendarProvider {
   ): Promise<ProviderEvent>;
   /** Deletes an event. Deleting an event that is already gone succeeds. */
   deleteEvent(calendarId: string, eventId: string): Promise<void>;
+  /**
+   * Sets only the color of an event (events-categories-and-colors.md rules 6-8);
+   * every other field stays as it is. For a series, `eventId` is the series.
+   */
+  setColor(
+    calendarId: string,
+    eventId: string,
+    colorId: string | null,
+    etag: string | null,
+  ): Promise<ProviderEvent>;
 }

@@ -40,6 +40,9 @@ export function fromGoogleEvent(e: GoogleEvent, zone: string): ProviderEvent {
     eventType: e.eventType ?? "default",
     selfResponse: self?.responseStatus ?? null,
     attendeeCount: e.attendees?.filter((a) => !a.resource).length ?? 0,
+    attendees: (e.attendees ?? [])
+      .filter((a) => !a.resource && a.email)
+      .map((a) => (a.email ?? "").toLowerCase()),
     organizerSelf: e.organizer?.self !== false,
     recurringId: e.recurringEventId ?? null,
     colorId: e.colorId ?? null,
@@ -141,6 +144,18 @@ export class GoogleProvider implements CalendarProvider {
   ): Promise<ProviderEvent> {
     const ev = await this.#api
       .patchEvent(calendarId, eventId, toGoogleEvent(event), etag ? { etag } : {})
+      .catch(mapError);
+    return fromGoogleEvent(ev, this.#zone);
+  }
+
+  async setColor(
+    calendarId: string,
+    eventId: string,
+    colorId: string | null,
+    etag: string | null,
+  ): Promise<ProviderEvent> {
+    const ev = await this.#api
+      .patchEvent(calendarId, eventId, { colorId: colorId ?? "" }, etag ? { etag } : {})
       .catch(mapError);
     return fromGoogleEvent(ev, this.#zone);
   }
