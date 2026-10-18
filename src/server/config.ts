@@ -29,7 +29,10 @@ const schema = z.object({
 export type Config = z.infer<typeof schema> & { dbPath: string };
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
-  const parsed = schema.safeParse(env);
+  // An empty value (for example `GOOGLE_CLIENT_ID=` in .env) means "not set".
+  const parsed = schema.safeParse(
+    Object.fromEntries(Object.entries(env).filter(([, v]) => v !== "")),
+  );
   if (!parsed.success) {
     const issues = parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("\n");
     throw new Error(`Invalid configuration:\n${issues}`);
