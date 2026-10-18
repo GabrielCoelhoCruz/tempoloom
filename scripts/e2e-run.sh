@@ -10,6 +10,7 @@ head=$(git rev-parse HEAD)
 dirty=$(git status --porcelain)
 scripts/login-browser.sh status
 npm run build >/dev/null
+rm -f .e2e/radicale.log
 npx playwright test "$@" 2>&1 | tee .e2e/output.txt
 status=${PIPESTATUS[0]}
 summary=$(node -e '

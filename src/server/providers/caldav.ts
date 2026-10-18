@@ -281,8 +281,11 @@ export class CalDavProvider implements CalendarProvider {
     if (opts.syncToken && tag && opts.syncToken === tag) {
       return { events: [], nextSyncToken: tag, full: false };
     }
+    // One calendar-query that returns the data: a multi-get after it fails as a
+    // whole when an event is deleted between the two requests.
     const objects = await client.fetchCalendarObjects({
       calendar: cal,
+      useMultiGet: false,
       timeRange: {
         start: new Date(opts.timeMin).toISOString(),
         end: new Date(opts.timeMax).toISOString(),
