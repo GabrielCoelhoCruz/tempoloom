@@ -181,7 +181,9 @@ export class SyncService {
         db,
         `SELECT c.id, c.account_id FROM calendars c JOIN accounts a ON a.id = c.account_id
          WHERE a.user_id = ? AND a.status = 'ok' AND (c.check_availability = 1 OR c.is_primary = 1
-           OR EXISTS (SELECT 1 FROM managed_events m WHERE m.calendar_id = c.id))`,
+           OR EXISTS (SELECT 1 FROM managed_events m WHERE m.calendar_id = c.id)
+           OR EXISTS (SELECT 1 FROM mirror_policies p WHERE p.enabled = 1
+                      AND (p.source_calendar_id = c.id OR p.dest_calendar_id = c.id)))`,
         userId,
       );
       const now = this.#deps.now();

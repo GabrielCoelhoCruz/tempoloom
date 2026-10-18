@@ -23,6 +23,7 @@ import {
 import { all, type Db, one, run } from "../db.ts";
 import type { CalendarProvider } from "../providers/types.ts";
 import { getSettings, type Settings } from "../settings.ts";
+import { mirrorCopies } from "./mirror.ts";
 import {
   type DesiredEvent,
   MANAGED_PROP,
@@ -404,6 +405,22 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
       colorId: null,
     };
   });
+
+  // Calendar mirroring copies are managed events too (sync-calendar-mirroring.md).
+  const work = one<{ weekly: string }>(
+    db,
+    "SELECT weekly FROM hours_sets WHERE user_id = ? AND kind = 'work' ORDER BY created_at LIMIT 1",
+    userId,
+  );
+  desired.push(
+    ...mirrorCopies(
+      db,
+      userId,
+      user.time_zone,
+      now,
+      work ? (JSON.parse(work.weekly) as WeeklyHours) : null,
+    ),
+  );
 
   const calendars = new Map(
     all<CalendarInfo>(

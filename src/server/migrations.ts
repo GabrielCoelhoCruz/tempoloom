@@ -282,4 +282,22 @@ export const MIGRATIONS: readonly string[] = [
   ) STRICT;
   CREATE INDEX bookings_link ON bookings(link_id, status, start_ms);
   `,
+  // 6: calendar mirroring policies
+  `
+  CREATE TABLE mirror_policies (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    source_calendar_id TEXT NOT NULL REFERENCES calendars(id) ON DELETE CASCADE,
+    dest_calendar_id TEXT NOT NULL REFERENCES calendars(id) ON DELETE CASCADE,
+    calendar_type TEXT NOT NULL CHECK (calendar_type IN ('personal', 'business', 'travel')),
+    visibility TEXT NOT NULL CHECK (visibility IN ('label_only', 'busy_only', 'details_private', 'details_default')),
+    all_day_mode TEXT NOT NULL CHECK (all_day_mode IN ('none', 'busy_only', 'all')),
+    copy_outside_work_hours INTEGER NOT NULL DEFAULT 1,
+    no_reply_busy INTEGER NOT NULL DEFAULT 0,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    created_at INTEGER NOT NULL,
+    CHECK (source_calendar_id <> dest_calendar_id)
+  ) STRICT;
+  CREATE INDEX mirror_policies_user ON mirror_policies(user_id);
+  `,
 ];

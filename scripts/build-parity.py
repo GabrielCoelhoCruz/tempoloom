@@ -57,6 +57,8 @@ T = {
     "b_prio": "link priority decides which managed time it offers",
     "b_limit": "a daily limit closes the day after one booking; a hidden link is unlisted but works",
     "b_resched": "the visitor reschedules and then cancels from the manage page",
+    "m_follow": "copies follow the source: create, label, skip rules, move, delete, put back, turn off",
+    "m_two": "details mode copies the title; two-way mirroring never copies a copy",
 }
 
 # Row id -> E2E test keys that prove it on CalDAV.
@@ -79,6 +81,9 @@ E2E = {
     379: ["b_book"], 380: ["b_book"], 381: ["b_book"], 382: ["b_book"], 386: ["b_book"], 387: ["b_prio"],
     391: ["b_limit"], 397: ["b_limit"], 399: ["b_book"], 400: ["b_book"], 402: ["b_resched"], 403: ["b_resched"],
     404: ["b_book"], 406: ["b_prio"], 409: ["b_prio", "b_limit"], 410: ["b_book"], 414: ["b_book"], 421: ["b_book", "b_resched"],
+    449: ["m_follow"], 459: ["m_two"], 463: ["m_two"], 464: ["m_follow"], 466: ["m_follow"], 474: ["m_follow"],
+    477: ["m_two"], 483: ["m_follow"], 486: ["m_follow"], 487: ["m_follow"], 488: ["m_follow"], 498: ["m_follow"],
+    462: ["m_follow"], 503: ["c_second", "m_follow"],
 }
 
 # Row id -> limits, for rows implemented with unit or property tests only.
@@ -97,6 +102,10 @@ UNIT = {
     392: "a free-text location only; no Meet, Zoom or Gong", 398: "busy event with the booker as guest and manage link; no conference link",
     408: "", 411: "", 412: "the page marks preferred times; no legend yet", 415: "",
     420: "name, email and message; no CC, questions or location choice",
+    450: "calendars of one account; several accounts not tested", 455: "toggle works; no throttle warning",
+    456: "", 457: "deletes at once; no confirmation dialog", 467: "", 468: "API only; no UI switch",
+    470: "", 471: "stored per policy; no UI", 472: "", 473: "the skip half is E2E-proven; free copies in details mode are not",
+    475: "", 476: "copies the details; the provider visibility is not set to private", 480: "", 490: "",
 }
 
 GOOGLE_ROWS = {

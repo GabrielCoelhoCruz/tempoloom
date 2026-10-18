@@ -99,6 +99,9 @@ export function Settings() {
     [],
   );
   const [message, setMessage] = useState<string | null>(null);
+  const [mirrors, setMirrors] = useState<
+    { id: string; source_name: string; dest_name: string; visibility: string; enabled: number }[]
+  >([]);
 
   const load = useCallback(async () => {
     const [s, h, c, b, f] = await Promise.all([
@@ -113,6 +116,7 @@ export function Settings() {
     setCalendars(c.calendars);
     setBuffers(b.buffers);
     setFocus(f.focus);
+    setMirrors((await api<{ mirrors: typeof mirrors }>("GET", "/api/mirrors")).mirrors);
   }, []);
   useEffect(() => void load(), [load]);
 
@@ -296,6 +300,104 @@ export function Settings() {
                 }
               />
             </label>
+          ))}
+        </div>
+      </section>
+
+      <section>
+        <h2>Calendar mirroring</h2>
+        <p class="status">
+          Copy events from one calendar to another, so both show the same busy time.
+        </p>
+        <form
+          class="form"
+          data-testid="mirror-form"
+          onSubmit={(e) => {
+            e.preventDefault();
+            const f = new FormData(e.currentTarget as HTMLFormElement);
+            void act(() =>
+              api("POST", "/api/mirrors", {
+                sourceCalendarId: f.get("source"),
+                destCalendarId: f.get("dest"),
+                visibility: f.get("visibility"),
+                calendarType: f.get("calendarType"),
+                allDayMode: f.get("allDayMode"),
+              }),
+            );
+          }}
+        >
+          <label>
+            Copy events from
+            <select name="source">
+              {calendars.map((c) => (
+                <option value={c.id} key={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            To
+            <select name="dest">
+              {calendars.map((c, i) => (
+                <option value={c.id} key={c.id} selected={i === 1}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Copies show
+            <select name="visibility">
+              <option value="label_only">A label only</option>
+              <option value="busy_only">"Busy"</option>
+              <option value="details_private">Details, private</option>
+              <option value="details_default">Details</option>
+            </select>
+          </label>
+          <label>
+            Label
+            <select name="calendarType">
+              <option value="personal">Personal commitment</option>
+              <option value="business">Work commitment</option>
+              <option value="travel">Travel</option>
+            </select>
+          </label>
+          <label>
+            All-day events
+            <select name="allDayMode">
+              <option value="none">Do not copy</option>
+              <option value="busy_only">Copy busy ones</option>
+              <option value="all">Copy all</option>
+            </select>
+          </label>
+          <button type="submit">Add mirroring</button>
+        </form>
+        <div class="list" data-testid="mirror-list">
+          {mirrors.map((m) => (
+            <div class="row" key={m.id}>
+              <span>
+                {m.source_name} → {m.dest_name} · {m.visibility.replace("_", " ")}
+                {m.enabled ? "" : " · off"}
+              </span>
+              <div class="actions">
+                <button
+                  type="button"
+                  onClick={() =>
+                    void act(() => api("PATCH", `/api/mirrors/${m.id}`, { enabled: !m.enabled }))
+                  }
+                >
+                  {m.enabled ? "Turn off" : "Turn on"}
+                </button>
+                <button
+                  type="button"
+                  class="danger"
+                  onClick={() => void act(() => api("DELETE", `/api/mirrors/${m.id}`))}
+                >
+                  Delete
+                </button>
+              </div>
+            </div>
           ))}
         </div>
       </section>

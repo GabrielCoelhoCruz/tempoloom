@@ -58,6 +58,27 @@ export function applyCalendarEdits(
         row.calendar_id,
         row.event_id,
       );
+      if (row.kind === "mirror") {
+        // The source event is the source of truth (mirroring rule 38): a deleted
+        // or edited copy is written again by the next push, and never locks.
+        if (!cached) run(db, "DELETE FROM managed_events WHERE id = ?", row.id);
+        else if (
+          cached.start_ms !== row.start_ms ||
+          cached.end_ms !== row.end_ms ||
+          cached.summary !== row.title
+        ) {
+          run(
+            db,
+            "UPDATE managed_events SET start_ms = ?, end_ms = ?, title = ?, etag = ? WHERE id = ?",
+            cached.start_ms,
+            cached.end_ms,
+            cached.summary,
+            cached.etag,
+            row.id,
+          );
+        }
+        continue;
+      }
       if (!cached) {
         if (row.end_ms > now) {
           if (row.kind === "task") {

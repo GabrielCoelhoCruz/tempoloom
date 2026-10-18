@@ -122,6 +122,86 @@ export function settingsRoutes(db: Db, sync: SyncService, now: () => number): Ho
     return c.json({ ok: true });
   });
 
+  const policyInput = z.object({
+    sourceCalendarId: z.string(),
+    destCalendarId: z.string(),
+    calendarType: z.enum(["personal", "business", "travel"]).default("personal"),
+    visibility: z
+      .enum(["label_only", "busy_only", "details_private", "details_default"])
+      .default("label_only"),
+    allDayMode: z.enum(["none", "busy_only", "all"]).default("none"),
+    copyOutsideWorkHours: z.boolean().default(true),
+  });
+  const ownCalendar = (userId: string, id: string) =>
+    one<{ id: string; writable: number }>(
+      db,
+      "SELECT c.id, c.writable FROM calendars c JOIN accounts a ON a.id = c.account_id WHERE c.id = ? AND a.user_id = ?",
+      id,
+      userId,
+    );
+
+  r.get("/mirrors", (c) =>
+    c.json({
+      mirrors: all(
+        db,
+        `SELECT p.*, s.name AS source_name, d.name AS dest_name FROM mirror_policies p
+         JOIN calendars s ON s.id = p.source_calendar_id JOIN calendars d ON d.id = p.dest_calendar_id
+         WHERE p.user_id = ? ORDER BY p.created_at`,
+        c.get("user").id,
+      ),
+    }),
+  );
+
+  r.post("/mirrors", async (c) => {
+    const user = c.get("user");
+    const b = await jsonBody(c, policyInput);
+    const src = ownCalendar(user.id, b.sourceCalendarId);
+    const dst = ownCalendar(user.id, b.destCalendarId);
+    if (!src || !dst) notFound("calendar");
+    if (src.id === dst.id) return c.json({ error: "same_calendar" }, 400);
+    if (!dst.writable) return c.json({ error: "destination_read_only" }, 400);
+    const id = randomUUID();
+    run(
+      db,
+      `INSERT INTO mirror_policies (id, user_id, source_calendar_id, dest_calendar_id, calendar_type, visibility,
+         all_day_mode, copy_outside_work_hours, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      id,
+      user.id,
+      src.id,
+      dst.id,
+      b.calendarType,
+      b.visibility,
+      b.allDayMode,
+      b.copyOutsideWorkHours ? 1 : 0,
+      now(),
+    );
+    // Calendars in a policy count for availability (connected calendars spec).
+    run(db, "UPDATE calendars SET check_availability = 1 WHERE id IN (?, ?)", src.id, dst.id);
+    sync.request(user.id, 0);
+    return c.json({ id }, 201);
+  });
+
+  r.patch("/mirrors/:id", async (c) => {
+    const user = c.get("user");
+    const { enabled } = await jsonBody(c, z.object({ enabled: z.boolean() }));
+    run(
+      db,
+      "UPDATE mirror_policies SET enabled = ? WHERE id = ? AND user_id = ?",
+      enabled ? 1 : 0,
+      c.req.param("id"),
+      user.id,
+    );
+    sync.request(user.id, 0);
+    return c.json({ ok: true });
+  });
+
+  r.delete("/mirrors/:id", (c) => {
+    const user = c.get("user");
+    run(db, "DELETE FROM mirror_policies WHERE id = ? AND user_id = ?", c.req.param("id"), user.id);
+    sync.request(user.id, 0);
+    return c.body(null, 204);
+  });
+
   r.patch("/calendars/:id", async (c) => {
     const user = c.get("user");
     const id = c.req.param("id");

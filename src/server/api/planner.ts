@@ -25,7 +25,8 @@ const range = z.object({ from: z.coerce.number().int(), to: z.coerce.number().in
 export function plannerEvents(db: Db, userId: string, from: number, to: number): PlannerEvent[] {
   const managed = all<ManagedRow>(
     db,
-    "SELECT * FROM managed_events WHERE user_id = ? AND end_ms > ? AND start_ms < ? ORDER BY start_ms",
+    `SELECT * FROM managed_events WHERE user_id = ? AND kind <> 'mirror' AND end_ms > ? AND start_ms < ?
+     ORDER BY start_ms`,
     userId,
     from,
     to,
