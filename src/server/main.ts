@@ -5,6 +5,7 @@ import { SecretBox } from "./crypto.ts";
 import { openDb } from "./db.ts";
 import type { OAuthClient } from "./google/oauth.ts";
 import { parseServiceAccountKey } from "./google/service-account.ts";
+import { createMailer } from "./mail.ts";
 import { SyncService } from "./sync/service.ts";
 import { WebhookWorker } from "./webhooks.ts";
 
@@ -39,7 +40,8 @@ const webhooks = new WebhookWorker({
   retryBaseMs: config.WEBHOOK_RETRY_BASE_MS,
   now: Date.now,
 });
-const app = createApp({ db, config, box, oauth, sync, webhooks });
+const mailer = createMailer(config.SMTP_URL, config.MAIL_FROM);
+const app = createApp({ db, config, box, oauth, sync, webhooks, mailer });
 
 const server = serve({ fetch: app.fetch, port: config.PORT, hostname: config.HOST }, (info) => {
   console.log(`tempoloom listening on http://${info.address}:${info.port}`);

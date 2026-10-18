@@ -1,17 +1,18 @@
 // Operator commands. Run with the same environment as the server.
 //   node src/server/cli.ts login-link --email you@example.com
 //   node src/server/cli.ts connect-google-service-account --email you@example.com [--calendar ID]
+//   node src/server/cli.ts seat-limit --email admin@example.com --seats 10|none
 import { parseArgs } from "node:util";
 import { createLoginLink, ensureUser, upsertAccount } from "./accounts.ts";
 import { loadConfig } from "./config.ts";
 import { SecretBox } from "./crypto.ts";
-import { openDb } from "./db.ts";
+import { one, openDb, run } from "./db.ts";
 import { parseServiceAccountKey } from "./google/service-account.ts";
 
 const [command, ...rest] = process.argv.slice(2);
 const { values } = parseArgs({
   args: rest,
-  options: { email: { type: "string" }, name: { type: "string" } },
+  options: { email: { type: "string" }, name: { type: "string" }, seats: { type: "string" } },
 });
 const config = loadConfig();
 const db = openDb(config.dbPath);
@@ -38,6 +39,21 @@ switch (command) {
       credentials: {},
     });
     console.log(`account ${id} for user ${user.id}`);
+    break;
+  }
+  case "seat-limit": {
+    // The most members of the user's team (teams-membership.md rules 24-27).
+    const seats = values.seats === "none" ? null : Number(values.seats);
+    if (seats !== null && !(Number.isInteger(seats) && seats > 0))
+      throw new Error("--seats must be a positive number or none");
+    const team = one<{ team_id: string }>(
+      db,
+      "SELECT m.team_id FROM team_members m JOIN users u ON u.id = m.user_id WHERE u.email = ?",
+      email.toLowerCase(),
+    );
+    if (!team) throw new Error(`No user ${email}`);
+    run(db, "UPDATE teams SET seat_limit = ? WHERE id = ?", seats, team.team_id);
+    console.log(`team ${team.team_id}: seat limit ${seats ?? "none"}`);
     break;
   }
   default:

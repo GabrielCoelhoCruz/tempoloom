@@ -504,3 +504,22 @@ progress {
   height: 160px;
   justify-content: flex-start;
 }
+
+/* Team */
+.toolbar-inline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 16px 0 8px;
+}
+.toolbar-inline h2 {
+  font-size: 16px;
+  margin: 0 auto 0 0;
+}
+.confirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}

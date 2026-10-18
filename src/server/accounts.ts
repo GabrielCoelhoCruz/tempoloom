@@ -9,6 +9,7 @@ import {
   type TokenSet,
 } from "./google/oauth.ts";
 import { type ServiceAccountKey, serviceAccountToken } from "./google/service-account.ts";
+import { createOwnTeam } from "./teams.ts";
 
 export interface User {
   id: string;
@@ -46,6 +47,12 @@ export function createSession(db: Db, userId: string, now = Date.now()): string 
     userId,
     now,
     now + SESSION_DAYS * 86_400_000,
+  );
+  run(
+    db,
+    "UPDATE users SET first_sign_in_at = ? WHERE id = ? AND first_sign_in_at IS NULL",
+    now,
+    userId,
   );
   return token;
 }
@@ -134,6 +141,7 @@ export function ensureUser(db: Db, email: string, name: string, now = Date.now()
         now,
       );
     }
+    createOwnTeam(db, { id, name, email: email.toLowerCase() }, now);
     return { id, email: email.toLowerCase(), name, time_zone: "UTC" };
   });
 }

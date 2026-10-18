@@ -398,4 +398,61 @@ export const MIGRATIONS: readonly string[] = [
     PRIMARY KEY (user_id, calendar_id, event_id)
   ) STRICT;
   `,
+  // 11: teams (docs/specs/teams-membership.md, teams-settings-templates.md)
+  `
+  CREATE TABLE teams (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    -- Email domain of the creator; same-domain users can find the team.
+    domain TEXT NOT NULL,
+    join_mode TEXT NOT NULL DEFAULT 'request' CHECK (join_mode IN ('invite_only', 'request', 'automatic')),
+    invite_permission TEXT NOT NULL DEFAULT 'admins' CHECK (invite_permission IN ('admins', 'all_members')),
+    -- Set by the operator (CLI); NULL means the instance default.
+    seat_limit INTEGER,
+    -- JSON: defaults for new members and other admin settings.
+    settings TEXT NOT NULL DEFAULT '{}',
+    created_at INTEGER NOT NULL
+  ) STRICT;
+
+  -- Each user is in exactly one team.
+  CREATE TABLE team_members (
+    user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    team_id TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    role TEXT NOT NULL CHECK (role IN ('admin', 'member')),
+    joined_at INTEGER NOT NULL
+  ) STRICT;
+  CREATE INDEX team_members_team ON team_members(team_id);
+
+  CREATE TABLE team_invites (
+    id TEXT PRIMARY KEY,
+    team_id TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    email TEXT NOT NULL,
+    message TEXT NOT NULL DEFAULT '',
+    grant_admin INTEGER NOT NULL DEFAULT 0,
+    -- The token sealed, so the link can be copied again, and its hash for lookup.
+    token TEXT NOT NULL,
+    token_hash TEXT NOT NULL UNIQUE,
+    state TEXT NOT NULL DEFAULT 'pending' CHECK (state IN ('pending', 'accepted', 'revoked')),
+    invited_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+    created_at INTEGER NOT NULL
+  ) STRICT;
+  CREATE INDEX team_invites_team ON team_invites(team_id, state);
+
+  CREATE TABLE team_requests (
+    team_id TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (team_id, user_id)
+  ) STRICT;
+
+  -- A seat is used from the first sign-in (admin-sso-provisioning.md rule 16).
+  ALTER TABLE users ADD COLUMN first_sign_in_at INTEGER;
+  UPDATE users SET first_sign_in_at = created_at;
+
+  INSERT INTO teams (id, name, domain, created_at)
+    SELECT 'team-' || id, name || '''s team', substr(email, instr(email, '@') + 1), created_at
+    FROM users;
+  INSERT INTO team_members (user_id, team_id, role, joined_at)
+    SELECT id, 'team-' || id, 'admin', created_at FROM users;
+  `,
 ];

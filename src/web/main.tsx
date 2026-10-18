@@ -1,4 +1,4 @@
-import type { ComponentChildren } from "preact";
+import type { ComponentChildren, FunctionComponent } from "preact";
 import { render } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import { ApiError, api } from "./lib/api.ts";
@@ -15,6 +15,27 @@ import { StatsPage } from "./views/stats.tsx";
 import { Tasks } from "./views/tasks.tsx";
 import { MeetingCost, Pomodoro } from "./views/tools.tsx";
 
+/** A view in its own chunk, loaded on first use, so the planner's cold load stays small. */
+function lazyView<P>(load: () => Promise<FunctionComponent<P>>): FunctionComponent<P> {
+  let View: FunctionComponent<P> | undefined;
+  return (props: P) => {
+    const [, setLoaded] = useState(false);
+    useEffect(() => {
+      if (View) return;
+      void load().then((v) => {
+        View = v;
+        setLoaded(true);
+      });
+    }, []);
+    return View ? <View {...(props as P & object)} /> : null;
+  };
+}
+
+const TeamPage = lazyView(() => import("./views/team.tsx").then((m) => m.TeamPage));
+const JoinPage = lazyView<{ token: string; login?: ComponentChildren }>(() =>
+  import("./views/team.tsx").then((m) => m.JoinPage),
+);
+
 const NAV: { href: string; label: string }[] = [
   { href: "/", label: "Planner" },
   { href: "/tasks", label: "Tasks" },
@@ -23,6 +44,7 @@ const NAV: { href: string; label: string }[] = [
   { href: "/library", label: "Library" },
   { href: "/links", label: "Booking links" },
   { href: "/stats", label: "Stats" },
+  { href: "/team", label: "Team" },
   { href: "/settings", label: "Settings" },
 ];
 
@@ -139,7 +161,10 @@ function Page() {
       return <Links />;
     case "/stats":
       return <StatsPage />;
+    case "/team":
+      return <TeamPage />;
     default:
+      if (path.value.startsWith("/join/")) return <JoinPage token={path.value.slice(6)} />;
       return <Planner />;
   }
 }
@@ -153,6 +178,8 @@ function App() {
   if (path.value === "/tools/pomodoro") return <Pomodoro />;
   if (isPublic) return <PublicBooking path={path.value} />;
   if (me.value === undefined) return null;
+  if (me.value === null && path.value.startsWith("/join/"))
+    return <JoinPage token={path.value.slice(6)} login={<CalDavLogin />} />;
   if (me.value === null) return <Login />;
   return (
     <div class="shell" data-testid="app-shell">

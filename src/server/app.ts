@@ -25,6 +25,7 @@ import { meetingRoutes } from "./api/meetings.ts";
 import { plannerRoutes } from "./api/planner.ts";
 import { settingsRoutes } from "./api/settings.ts";
 import { statsRoutes } from "./api/stats.ts";
+import { publicInviteRoutes, teamRoutes } from "./api/team.ts";
 import { webhookRoutes } from "./api/webhooks.ts";
 import type { Config } from "./config.ts";
 import type { SecretBox } from "./crypto.ts";
@@ -36,6 +37,7 @@ import {
   type OAuthClient,
 } from "./google/oauth.ts";
 import { jsonBody } from "./http.ts";
+import type { Mailer } from "./mail.ts";
 import { CalDavProvider } from "./providers/caldav.ts";
 import { ProviderError } from "./providers/types.ts";
 import { getSettings } from "./settings.ts";
@@ -49,6 +51,7 @@ export interface AppDeps {
   oauth: OAuthClient | undefined;
   sync: SyncService;
   webhooks: WebhookWorker;
+  mailer: Mailer;
   now?: () => number;
 }
 
@@ -225,6 +228,8 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
     }),
   );
 
+  app.route("/pub", publicInviteRoutes(db));
+
   app.use("/api/*", async (c, next) => {
     const token = getCookie(c, SESSION_COOKIE);
     const user = token ? userForSession(db, token, now()) : undefined;
@@ -264,6 +269,17 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   app.route("/api/booking", bookingRoutes(db, now));
   app.route("/api", webhookRoutes(db, box, config.WEBHOOK_ALLOW_PRIVATE, now));
   app.route("/api", statsRoutes(db));
+  app.route(
+    "/api",
+    teamRoutes({
+      db,
+      box,
+      mailer: deps.mailer,
+      baseUrl: config.BASE_URL,
+      seatLimit: config.TEAM_SEAT_LIMIT,
+      now,
+    }),
+  );
 
   // Static client with a single-page fallback. Text files are compressed once
   // per encoding and kept in memory; the build output does not change at run time.
