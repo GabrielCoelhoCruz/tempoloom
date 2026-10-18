@@ -13,9 +13,9 @@ import {
   RANGE_ERRORS,
   type Range,
   RangeControls,
-  StatsTabs,
   saveQuery,
-} from "./stats-tabs.tsx";
+} from "./stats-range.tsx";
+import { StatsTabs } from "./stats-tabs.tsx";
 
 interface Metrics {
   meetings: number;
@@ -355,7 +355,9 @@ export function OrgAnalytics() {
                 </span>
               </h2>
               {g.periods[0] === null ? (
-                <p class="meta">Fewer than 3 people: no values.</p>
+                <p class="meta">
+                  {g.people === 0 ? "No calendar data." : "Fewer than 3 people: no values."}
+                </p>
               ) : (
                 <table class="report">
                   <thead>

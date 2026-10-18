@@ -12,10 +12,10 @@ import {
   RANGE_ERRORS,
   type Range,
   RangeControls,
-  StatsTabs,
   saveQuery,
   WEEKDAYS,
-} from "./stats-tabs.tsx";
+} from "./stats-range.tsx";
+import { StatsTabs } from "./stats-tabs.tsx";
 
 type Bucket =
   | "oneOnOne"

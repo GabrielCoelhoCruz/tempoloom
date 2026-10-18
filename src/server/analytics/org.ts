@@ -127,7 +127,8 @@ export function orgReport(db: Db, teamId: string, q: OrgQuery) {
     .sort(([a], [b]) => Number(isNone(a)) - Number(isNone(b)) || a.localeCompare(b))
     .map(([label, members]) => {
       const included = members.filter((p) => p.hasCalendar);
-      const shown = q.groupBy === "person" || included.length >= MIN_GROUP;
+      // Rule 10: an admin sees one person's figures; groups need 3 people.
+      const shown = included.length >= (q.groupBy === "person" ? 1 : MIN_GROUP);
       return {
         label,
         people: included.length,
