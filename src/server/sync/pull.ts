@@ -4,8 +4,8 @@ import { DAY } from "../../shared/time.ts";
 import { all, type Db, one, run, tx } from "../db.ts";
 import { type CalendarProvider, ProviderError, type ProviderEvent } from "../providers/types.ts";
 
-/** Events from 7 days ago to 120 days ahead are cached. */
-const WINDOW_PAST = 7 * DAY;
+/** Events from 12 weeks ago (the stats range) to 120 days ahead are cached. */
+const WINDOW_PAST = 84 * DAY;
 const WINDOW_FUTURE = 120 * DAY;
 /** A full read runs again when less than this much future remains in the window. */
 const WINDOW_REFRESH = 90 * DAY;

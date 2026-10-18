@@ -9,13 +9,16 @@ import { Habits } from "./views/habits.tsx";
 import { Links } from "./views/links.tsx";
 import { Planner } from "./views/planner.tsx";
 import { Settings } from "./views/settings.tsx";
+import { StatsPage } from "./views/stats.tsx";
 import { Tasks } from "./views/tasks.tsx";
+import { MeetingCost, Pomodoro } from "./views/tools.tsx";
 
 const NAV: { href: string; label: string }[] = [
   { href: "/", label: "Planner" },
   { href: "/tasks", label: "Tasks" },
   { href: "/habits", label: "Habits" },
   { href: "/links", label: "Booking links" },
+  { href: "/stats", label: "Stats" },
   { href: "/settings", label: "Settings" },
 ];
 
@@ -126,16 +129,20 @@ function Page() {
       return <Settings />;
     case "/links":
       return <Links />;
+    case "/stats":
+      return <StatsPage />;
     default:
       return <Planner />;
   }
 }
 
 function App() {
-  const isPublic = path.value.startsWith("/book/");
+  const isPublic = path.value.startsWith("/book/") || path.value.startsWith("/tools/");
   useEffect(() => {
     if (!isPublic) void loadMe();
   }, [isPublic]);
+  if (path.value === "/tools/meeting-cost") return <MeetingCost />;
+  if (path.value === "/tools/pomodoro") return <Pomodoro />;
   if (isPublic) return <PublicBooking path={path.value} />;
   if (me.value === undefined) return null;
   if (me.value === null) return <Login />;

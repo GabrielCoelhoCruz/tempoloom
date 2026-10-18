@@ -59,6 +59,9 @@ T = {
     "b_resched": "the visitor reschedules and then cancels from the manage page",
     "m_follow": "copies follow the source: create, label, skip rules, move, delete, put back, turn off",
     "m_two": "details mode copies the title; two-way mirroring never copies a copy",
+    "x_cost": "the meeting cost calculator computes, rejects bad input and resets",
+    "x_timer": "the pomodoro timer runs sessions and breaks, counts them and keeps them after reload",
+    "x_stats": "stats sum meetings, tasks and habits for a chosen range",
 }
 
 # Row id -> E2E test keys that prove it on CalDAV.
@@ -84,6 +87,9 @@ E2E = {
     449: ["m_follow"], 459: ["m_two"], 463: ["m_two"], 464: ["m_follow"], 466: ["m_follow"], 474: ["m_follow"],
     477: ["m_two"], 483: ["m_follow"], 486: ["m_follow"], 487: ["m_follow"], 488: ["m_follow"], 498: ["m_follow"],
     462: ["m_follow"], 503: ["c_second", "m_follow"],
+    597: ["x_stats"], 598: ["x_stats"], 599: ["x_stats"], 600: ["x_stats"], 601: ["x_stats"], 602: ["x_stats"],
+    701: ["x_timer"], 702: ["x_timer"], 703: ["x_timer"], 705: ["x_timer"], 706: ["x_timer"], 707: ["x_timer"],
+    711: ["x_timer"], 714: ["x_cost"], 715: ["x_cost"], 716: ["x_cost"],
 }
 
 # Row id -> limits, for rows implemented with unit or property tests only.
@@ -106,6 +112,10 @@ UNIT = {
     456: "", 457: "deletes at once; no confirmation dialog", 467: "", 468: "API only; no UI switch",
     470: "", 471: "stored per policy; no UI", 472: "", 473: "the skip half is E2E-proven; free copies in details mode are not",
     475: "", 476: "copies the details; the provider visibility is not set to private", 480: "", 490: "",
+    193: "work and personal habit hours in stats; no per-habit progress", 353: "one-to-one, group and booked meeting hours",
+    596: "personal stats only; no team tab", 604: "meetings outside work hours and personal habit hours",
+    606: "one-to-one and group split; no heaviest or lightest weekday", 607: "meetings, focus and booking counts; no breaks or travel",
+    704: "phase tabs E2E-proven; reset not covered by E2E", 708: "sound on or off; one alarm sound", 712: "today's summary only",
 }
 
 GOOGLE_ROWS = {

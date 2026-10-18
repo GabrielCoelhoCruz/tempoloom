@@ -21,6 +21,7 @@ import { bookingRoutes, publicBookingRoutes } from "./api/booking.ts";
 import { itemRoutes } from "./api/items.ts";
 import { plannerRoutes } from "./api/planner.ts";
 import { settingsRoutes } from "./api/settings.ts";
+import { statsRoutes } from "./api/stats.ts";
 import type { Config } from "./config.ts";
 import type { SecretBox } from "./crypto.ts";
 import { all, type Db, one, run } from "./db.ts";
@@ -240,6 +241,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   app.route("/api", itemRoutes(db, sync, now));
   app.route("/api/planner", plannerRoutes(db, sync, now));
   app.route("/api/booking", bookingRoutes(db, now));
+  app.route("/api", statsRoutes(db));
 
   // Static client with a single-page fallback.
   app.get("*", async (c) => {
