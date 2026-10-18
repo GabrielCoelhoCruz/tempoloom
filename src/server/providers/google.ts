@@ -11,6 +11,7 @@ import {
   type CalendarProvider,
   type EventChanges,
   type EventWrite,
+  type ExternalChange,
   type ProviderCalendar,
   ProviderError,
   type ProviderEvent,
@@ -158,6 +159,32 @@ export class GoogleProvider implements CalendarProvider {
   ): Promise<ProviderEvent> {
     const ev = await this.#api
       .patchEvent(calendarId, eventId, { colorId: colorId ?? "" }, etag ? { etag } : {})
+      .catch(mapError);
+    return fromGoogleEvent(ev, this.#zone);
+  }
+
+  async editExternal(
+    calendarId: string,
+    eventId: string,
+    change: ExternalChange,
+    etag: string | null,
+  ): Promise<ProviderEvent> {
+    const patch: Partial<GoogleEventInput> = {};
+    if (change.description !== undefined) patch.description = change.description;
+    if (change.end !== undefined) patch.end = { dateTime: new Date(change.end).toISOString() };
+    const answer = change.selfResponse;
+    if (answer) {
+      const current = await this.#api.getEvent(calendarId, eventId).catch(mapError);
+      patch.attendees = (current.attendees ?? []).map((a) =>
+        a.self ? { ...a, responseStatus: answer } : a,
+      );
+    }
+    // The organizer hears about a changed answer; nobody hears about other edits.
+    const ev = await this.#api
+      .patchEvent(calendarId, eventId, patch, {
+        ...(etag && !change.selfResponse ? { etag } : {}),
+        sendUpdates: change.selfResponse ? "all" : "none",
+      })
       .catch(mapError);
     return fromGoogleEvent(ev, this.#zone);
   }

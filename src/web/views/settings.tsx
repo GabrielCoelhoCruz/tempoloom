@@ -6,6 +6,7 @@ import { CATEGORY_LABELS, COLORS } from "../lib/categories.ts";
 import { hhmm, parseHhmm } from "../lib/format.ts";
 import { lazyComponent } from "../lib/lazy.ts";
 import { templateFromUrl } from "../lib/library.ts";
+import { loadPolicyMarks, PolicyMark, policyMarks } from "../lib/policy-marks.tsx";
 import { loadMe, me, planNow } from "../lib/state.ts";
 
 interface HoursSet {
@@ -127,6 +128,7 @@ export function Settings() {
     setBuffers(b.buffers);
     setFocus(f.focus);
     setMirrors((await api<{ mirrors: typeof mirrors }>("GET", "/api/mirrors")).mirrors);
+    await loadPolicyMarks();
   }, []);
   useEffect(() => void load(), [load]);
 
@@ -487,20 +489,23 @@ export function Settings() {
         </div>
         <div class="list" data-testid="buffer-list">
           {buffers.map((b) => (
-            <div class="row" key={b.id}>
+            <div class="row" key={b.id} data-buffer-title={b.title}>
               <span>
                 {b.title} ·{" "}
                 {b.side === "before"
                   ? `${b.minutes_before} min before`
-                  : `${b.minutes_after} min after`}
+                  : `${b.minutes_after} min after`}{" "}
+                <PolicyMark id={b.id} />
               </span>
-              <button
-                type="button"
-                class="danger"
-                onClick={() => void act(() => api("DELETE", `/api/buffers/${b.id}`))}
-              >
-                Delete
-              </button>
+              {!policyMarks.value[b.id] && (
+                <button
+                  type="button"
+                  class="danger"
+                  onClick={() => void act(() => api("DELETE", `/api/buffers/${b.id}`))}
+                >
+                  Delete
+                </button>
+              )}
             </div>
           ))}
         </div>
@@ -577,17 +582,19 @@ export function Settings() {
           </button>
         ) : (
           focus.map((f) => (
-            <div class="row" key={f.id}>
+            <div class="row" key={f.id} data-focus-title={f.title}>
               <span>
-                {f.title} · {f.weekly_goal_minutes / 60} h per week
+                {f.title} · {f.weekly_goal_minutes / 60} h per week <PolicyMark id={f.id} />
               </span>
-              <button
-                type="button"
-                class="danger"
-                onClick={() => void act(() => api("DELETE", `/api/focus/${f.id}`))}
-              >
-                Delete
-              </button>
+              {!policyMarks.value[f.id] && (
+                <button
+                  type="button"
+                  class="danger"
+                  onClick={() => void act(() => api("DELETE", `/api/focus/${f.id}`))}
+                >
+                  Delete
+                </button>
+              )}
             </div>
           ))
         )}

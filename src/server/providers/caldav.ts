@@ -7,6 +7,7 @@ import {
   type CalendarProvider,
   type EventChanges,
   type EventWrite,
+  type ExternalChange,
   type ProviderCalendar,
   ProviderError,
   type ProviderEvent,
@@ -543,6 +544,74 @@ export class CalDavProvider implements CalendarProvider {
     const has = (name: string) => new RegExp(`<(?:[\\w-]+:)?${name}\\s*/?>`, "i").test(set);
     if (has("all") || has("write") || has("write-content") || has("bind")) return "write";
     return has("read") ? "read" : "none";
+  }
+
+  async editExternal(
+    calendarId: string,
+    eventId: string,
+    change: ExternalChange,
+    etag: string | null,
+  ): Promise<ProviderEvent> {
+    if (eventId.includes("#")) {
+      throw new ProviderError(
+        "other",
+        501,
+        "Edits of one occurrence of a series are not supported",
+      );
+    }
+    const client = await this.#connect();
+    const cal = await this.#calendar(calendarId);
+    const [obj] = await retryRead(() =>
+      client.fetchCalendarObjects({ calendar: cal, objectUrls: [eventId] }),
+    );
+    if (typeof obj?.data !== "string") throw new ProviderError("not_found", 404, "Event not found");
+    const root = new ICAL.Component(ICAL.parse(obj.data));
+    const ev = root.getAllSubcomponents("vevent").find((v) => !v.hasProperty("recurrence-id"));
+    if (!ev) throw new ProviderError("not_found", 404, "Event not found");
+    if (change.description !== undefined) {
+      ev.removeAllProperties("description");
+      if (change.description) ev.addPropertyWithValue("description", change.description);
+    }
+    if (change.end !== undefined) {
+      ev.removeAllProperties("duration");
+      ev.removeAllProperties("dtend");
+      ev.addPropertyWithValue("dtend", toUtcTime(change.end));
+    }
+    if (change.selfResponse) {
+      const self = this.#creds.email.toLowerCase();
+      const partstat = {
+        needsAction: "NEEDS-ACTION",
+        accepted: "ACCEPTED",
+        declined: "DECLINED",
+        tentative: "TENTATIVE",
+      }[change.selfResponse];
+      for (const a of ev.getAllProperties("attendee")) {
+        if (mailto(a.getFirstValue()) === self) a.setParameter("partstat", partstat);
+      }
+    }
+    ev.removeAllProperties("last-modified");
+    ev.addPropertyWithValue("last-modified", toUtcTime(this.#now()));
+    const match = obj.etag ?? etag;
+    const res = await client.updateCalendarObject({
+      calendarObject: { url: eventId, data: root.toString(), ...(match ? { etag: match } : {}) },
+    });
+    if (res.status === 412) throw new ProviderError("precondition_failed", 412, "Event changed");
+    if (res.status === 404) throw new ProviderError("not_found", 404, "Event not found");
+    if (!res.ok) throw new ProviderError("other", res.status, `Update failed: ${res.status}`);
+    const read = (p: string) => String(ev.getFirstPropertyValue(p) ?? "");
+    return this.#readBack(
+      eventId,
+      {
+        summary: read("summary"),
+        description: read("description"),
+        start: 0,
+        end: change.end ?? 0,
+        busy: read("transp").toUpperCase() !== "TRANSPARENT",
+        colorId: null,
+        privateProps: readProps(ev),
+      },
+      res.headers.get("etag"),
+    );
   }
 
   async deleteEvent(calendarId: string, eventId: string): Promise<void> {

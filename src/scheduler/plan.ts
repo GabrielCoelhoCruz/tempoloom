@@ -433,13 +433,57 @@ function dayWindow(ctx: Ctx, hoursId: string, date: LocalDate): TimeSet {
   );
 }
 
+/** Cost of a start beyond the fragmentation shift: ranks after every start within it. */
+const OUT_OF_SHIFT = Number.MAX_SAFE_INTEGER;
+
+/**
+ * Rule 23 of teams-policies.md: the fragmented time that a block at [t, t + l)
+ * adds inside the free interval `iv`. A gap counts only between two busy times,
+ * so an edge of the hours `window` bounds no gap (rule 21).
+ */
+function fragmentCost(
+  window: TimeSet,
+  minBlock: number,
+  iv: Interval,
+): (t: number, l: number) => number {
+  const ws = window.intervals();
+  const busyBefore = !ws.some((w) => w.start === iv.start);
+  const busyAfter = !ws.some((w) => w.end === iv.end);
+  const short = (gap: number, bounded: boolean) => (bounded && gap > 0 && gap < minBlock ? gap : 0);
+  const before = short(len(iv), busyBefore && busyAfter);
+  return (t, l) => short(t - iv.start, busyBefore) + short(iv.end - t - l, busyAfter) - before;
+}
+
 /** SCH-91: nearest start to the ideal time; shrinks per the defense mode. */
-function searchHabit(ctx: Ctx, h: HabitItem, free: TimeSet, date: LocalDate): Interval | null {
+function searchHabit(
+  ctx: Ctx,
+  h: HabitItem,
+  free: TimeSet,
+  date: LocalDate,
+  window?: TimeSet,
+): Interval | null {
   const ideal = localToUtc(ctx.s.zone, date, h.idealMinute);
   const lengths: number[] = [];
   for (let m = h.maxMinutes; m >= h.minMinutes; m -= 15) lengths.push(m * MINUTE);
   if (lengths.at(-1) !== h.minMinutes * MINUTE) lengths.push(h.minMinutes * MINUTE);
+  const frag = ctx.s.fragmentation;
   const starts = (length: number) => {
+    if (frag && window) {
+      // Within the member's flexibility, the start that adds the least fragmented time.
+      const out: { t: number; cost: number }[] = [];
+      const shift = frag.maxShiftMinutes * MINUTE;
+      for (const iv of free.intervals()) {
+        const cost = fragmentCost(window, frag.minBlockMinutes * MINUTE, iv);
+        for (let t = ceilTo(iv.start, ctx.step); t + length <= iv.end; t += ctx.step) {
+          out.push({ t, cost: Math.abs(t - ideal) > shift ? OUT_OF_SHIFT : cost(t, length) });
+        }
+      }
+      return out
+        .sort(
+          (a, b) => a.cost - b.cost || Math.abs(a.t - ideal) - Math.abs(b.t - ideal) || a.t - b.t,
+        )
+        .map((x) => x.t);
+    }
     const out: number[] = [];
     for (const iv of free.intervals()) {
       for (let t = ceilTo(iv.start, ctx.step); t + length <= iv.end; t += ctx.step) out.push(t);
@@ -512,7 +556,7 @@ function placeHabit(ctx: Ctx, h: HabitItem): void {
       if (okLen && dayIdx >= 0) chosen = { iv: { start: cur.start, end: cur.end }, dayIdx };
     }
     for (let i = 0; !chosen && i < days.length; i++) {
-      const iv = searchHabit(ctx, h, frees[i] as TimeSet, days[i] as LocalDate);
+      const iv = searchHabit(ctx, h, frees[i] as TimeSet, days[i] as LocalDate, windows[i]);
       if (iv) chosen = { iv, dayIdx: i };
     }
     if (chosen) {
@@ -612,25 +656,35 @@ function meetingPeriods(ctx: Ctx, m: MeetingItem): Period[] {
   return out;
 }
 
-/** Rules 16-17: the full length first, then an ideal day, then nearest the ideal time. */
+/**
+ * Rules 16-17: the full length first, then an ideal day, then nearest the ideal
+ * time. A fragmentation policy ranks the added fragmented time before the
+ * distance, within the member's flexibility.
+ */
 function searchMeeting(
   ctx: Ctx,
   m: MeetingItem,
-  frees: { date: LocalDate; free: TimeSet; ideal: boolean }[],
+  frees: { date: LocalDate; free: TimeSet; ideal: boolean; window: TimeSet }[],
 ): Interval | null {
+  const frag = ctx.s.fragmentation;
+  const shift = (frag?.maxShiftMinutes ?? 0) * MINUTE;
   for (let l = m.durationMinutes; l >= m.shortestMinutes; l -= 5) {
-    let best: { t: number; ideal: boolean; dist: number } | null = null;
-    for (const { date, free, ideal } of frees) {
+    let best: { t: number; ideal: boolean; dist: number; cost: number } | null = null;
+    for (const { date, free, ideal, window } of frees) {
       const target = localToUtc(ctx.s.zone, date, m.idealMinute);
       for (const iv of free.intervals()) {
+        const added = frag ? fragmentCost(window, frag.minBlockMinutes * MINUTE, iv) : null;
         for (let t = ceilTo(iv.start, ctx.step); t + l * MINUTE <= iv.end; t += ctx.step) {
           const dist = Math.abs(t - target);
+          const cost = added ? (dist > shift ? OUT_OF_SHIFT : added(t, l * MINUTE)) : 0;
           if (
             !best ||
             (ideal && !best.ideal) ||
-            (ideal === best.ideal && (dist < best.dist || (dist === best.dist && t < best.t)))
+            (ideal === best.ideal &&
+              (cost < best.cost ||
+                (cost === best.cost && (dist < best.dist || (dist === best.dist && t < best.t)))))
           )
-            best = { t, ideal, dist };
+            best = { t, ideal, dist, cost };
         }
       }
     }
@@ -656,6 +710,7 @@ function placeMeeting(ctx: Ctx, m: MeetingItem): void {
       date,
       ideal: period.ideal.includes(date),
       free: minus((windows[i] as TimeSet).intersect(ctx.freeOther), blocked),
+      window: windows[i] as TimeSet,
     }));
     let chosen: Interval | null = null;
     if (cur && !m.changed) {

@@ -39,6 +39,9 @@ const LOGIN_ERRORS: Record<string, string> = {
   no_seats: "Your organization's team has no free seats.",
   deactivated: "Your organization deactivated this account.",
 };
+const PoliciesPage = lazyComponent(() =>
+  import("./views/policies.tsx").then((m) => m.PoliciesPage),
+);
 
 const NAV: { href: string; label: string }[] = [
   { href: "/", label: "Planner" },
@@ -49,6 +52,7 @@ const NAV: { href: string; label: string }[] = [
   { href: "/links", label: "Booking links" },
   { href: "/stats", label: "Stats" },
   { href: "/team", label: "Team" },
+  { href: "/policies", label: "Policies" },
   { href: "/settings", label: "Settings" },
 ];
 
@@ -186,6 +190,8 @@ function Page() {
       return <OrgAnalytics />;
     case "/team":
       return <TeamPage />;
+    case "/policies":
+      return <PoliciesPage />;
     default:
       if (path.value.startsWith("/join/")) return <JoinPage token={path.value.slice(6)} />;
       return <Planner />;

@@ -61,6 +61,7 @@ export interface CalendarDriver {
     busy?: boolean;
     attendees?: string[];
     location?: string;
+    description?: string;
   }): Promise<string>;
   update(id: string, change: { start: number; end: number; summary?: string }): Promise<void>;
   remove(id: string): Promise<void>;
@@ -75,6 +76,7 @@ export interface CalendarDriver {
     start: number;
     end: number;
     answer: "NEEDS-ACTION" | "ACCEPTED" | "DECLINED" | "TENTATIVE";
+    description?: string;
   }): Promise<string>;
   /** Another calendar of the same account (CalDAV only). */
   newCalendar(name: string): Promise<CalendarDriver>;
@@ -207,7 +209,7 @@ async function caldavCalendar(
     async addEvent(e) {
       const ev = await provider.insertEvent(calendarId, {
         summary: e.title,
-        description: "",
+        description: e.description ?? "",
         start: e.start,
         end: e.end,
         busy: e.busy ?? true,
@@ -259,6 +261,7 @@ async function caldavCalendar(
         "ORGANIZER:mailto:organizer@example.com",
         "ATTENDEE;PARTSTAT=ACCEPTED:mailto:organizer@example.com",
         `ATTENDEE;PARTSTAT=${e.answer}:mailto:${email}`,
+        ...(e.description ? [`DESCRIPTION:${e.description.replace(/\n/g, "\\n")}`] : []),
       ]),
     newCalendar: (name) => caldavCalendar(env, client, home, name, email),
     async guests(id) {
@@ -310,7 +313,7 @@ async function googleDriver(): Promise<CalendarDriver> {
       if (e.attendees) throw new Error("A service account cannot invite attendees");
       const ev = await provider.insertEvent(calendarId, {
         summary: e.title,
-        description: "",
+        description: e.description ?? "",
         start: e.start,
         end: e.end,
         busy: e.busy ?? true,

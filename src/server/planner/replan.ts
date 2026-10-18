@@ -23,6 +23,7 @@ import {
 } from "../../shared/time.ts";
 import { isAnalyticsOnly } from "../analytics/seats.ts";
 import { all, type Db, one, run } from "../db.ts";
+import { fragmentationPreference } from "../policies/model.ts";
 import type { CalendarProvider } from "../providers/types.ts";
 import { getSettings, type Settings } from "../settings.ts";
 import { categoryContext, colorFor, paintExternal } from "./categories.ts";
@@ -285,6 +286,7 @@ export function loadSnapshot(
   });
 
   const meetings = meetingItems(db, userId, now, windowEnd, lastPlannedAt, exclusions);
+  const fragmentation = fragmentationPreference(db, userId);
   for (const m of meetings.rows) {
     notes.set(`meeting:${m.id}`, m.description);
     titles.set(`meeting:${m.id}`, m.title);
@@ -310,6 +312,7 @@ export function loadSnapshot(
     meetings: meetings.items,
     buffers,
     focus,
+    ...(fragmentation ? { fragmentation } : {}),
   };
   return { snapshot, rows, notes, titles };
 }

@@ -25,6 +25,7 @@ import { itemRoutes } from "./api/items.ts";
 import { meetingRoutes } from "./api/meetings.ts";
 import { oooRoutes } from "./api/ooo.ts";
 import { plannerRoutes } from "./api/planner.ts";
+import { policyRoutes } from "./api/policies.ts";
 import { provisioningRoutes } from "./api/provisioning.ts";
 import { scimRoutes } from "./api/scim.ts";
 import { settingsRoutes } from "./api/settings.ts";
@@ -188,7 +189,12 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
     // Domains that a team registered for SSO (admin-sso-provisioning.md rules 3, 4, 9).
     const rule = otherSignIn(db, email, config.TEAM_SEAT_LIMIT);
     if ("refuse" in rule) return c.json({ error: rule.refuse }, 403);
-    const isNew = !one(db, "SELECT 1 FROM users WHERE email = ?", email);
+    // A provisioned person (SCIM) exists before their first sign-in.
+    const isNew = !one(
+      db,
+      "SELECT 1 FROM users WHERE email = ? AND first_sign_in_at IS NOT NULL",
+      email,
+    );
     const user = ensureUser(db, email, body.username, now(), rule.teamId);
     // CalDAV has no account time zone; take the browser's on first sign-in.
     if (isNew && body.timeZone)
@@ -296,6 +302,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   app.route("/api", webhookRoutes(db, box, config.WEBHOOK_ALLOW_PRIVATE, now));
   app.route("/api", statsRoutes(db));
   app.route("/api", analyticsRoutes(db, now));
+  app.route("/api", policyRoutes(db, sync, now));
   app.route(
     "/api",
     teamRoutes({
