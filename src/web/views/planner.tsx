@@ -6,6 +6,7 @@ import { addDays, localToUtc, utcToLocal, weekdayOf } from "../../shared/time.ts
 import { api } from "../lib/api.ts";
 import { CATEGORY_LABELS } from "../lib/categories.ts";
 import { formatWhen } from "../lib/format.ts";
+import { useLive } from "../lib/live.ts";
 import { planNow, zone } from "../lib/state.ts";
 import { WeekView } from "./week.tsx";
 
@@ -60,6 +61,7 @@ export function Planner() {
     const t = setInterval(() => void load(), 15_000);
     return () => clearInterval(t);
   }, [load]);
+  useLive(load);
 
   const run = async (fn: () => Promise<unknown>) => {
     setBusy(true);

@@ -4,6 +4,7 @@ import { useEffect, useState } from "preact/hooks";
 import { ApiError, api } from "./lib/api.ts";
 import { onLinkClick, path } from "./lib/router.ts";
 import { loadMe, me } from "./lib/state.ts";
+import { AccountMenu, ActingBanner } from "./views/account-menu.tsx";
 import { PublicBooking } from "./views/book.tsx";
 import { Habits } from "./views/habits.tsx";
 import { Library } from "./views/library.tsx";
@@ -32,6 +33,7 @@ function lazyView<P>(load: () => Promise<FunctionComponent<P>>): FunctionCompone
 }
 
 const TeamPage = lazyView(() => import("./views/team.tsx").then((m) => m.TeamPage));
+const AccountPage = lazyView(() => import("./views/account.tsx").then((m) => m.AccountPage));
 const JoinPage = lazyView<{ token: string; login?: ComponentChildren }>(() =>
   import("./views/team.tsx").then((m) => m.JoinPage),
 );
@@ -46,6 +48,7 @@ const NAV: { href: string; label: string }[] = [
   { href: "/stats", label: "Stats" },
   { href: "/team", label: "Team" },
   { href: "/settings", label: "Settings" },
+  { href: "/account", label: "Account" },
 ];
 
 function Link({ href, children }: { href: string; children: ComponentChildren }) {
@@ -165,6 +168,8 @@ function Page() {
       return <StatsPage />;
     case "/team":
       return <TeamPage />;
+    case "/account":
+      return <AccountPage />;
     default:
       if (path.value.startsWith("/join/")) return <JoinPage token={path.value.slice(6)} />;
       return <Planner />;
@@ -196,11 +201,13 @@ function App() {
         <div class="status" data-testid="user-email">
           {me.value.user.email}
         </div>
+        <AccountMenu />
         <form method="post" action="/auth/logout">
           <button type="submit">Sign out</button>
         </form>
       </nav>
       <main class="main">
+        <ActingBanner />
         <Page />
       </main>
     </div>

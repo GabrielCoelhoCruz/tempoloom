@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "preact/hooks";
 import { api } from "../lib/api.ts";
 import { duration, formatWhen, hhmm } from "../lib/format.ts";
 import { freeName, templateFromUrl } from "../lib/library.ts";
+import { useLive } from "../lib/live.ts";
 import { LEVEL_NAMES, planNow, zone } from "../lib/state.ts";
 
 interface Person {
@@ -79,6 +80,7 @@ export function Meetings() {
     setMeetings((await api<{ meetings: Meeting[] }>("GET", "/api/meetings")).meetings);
   }, []);
   useEffect(() => void load(), [load]);
+  useLive(load);
 
   const fail = (err: unknown) => {
     const body = (err as { body?: { issues?: { message: string }[] } }).body;

@@ -49,7 +49,8 @@ test("a user adds a second CalDAV account and removes it after a confirmation; t
   people,
   radicale,
 }) => {
-  if (!radicale) throw new Error("needs CalDAV");
+  const six = radicale?.users[6];
+  if (!radicale || !six) throw new Error("This test needs the CalDAV backend.");
   const extra = await people(6);
   await colleague.signIn();
   await signIn();
@@ -57,7 +58,7 @@ test("a user adds a second CalDAV account and removes it after a confirmation; t
   await expect(accountRow(page, EMAIL)).toContainText("main");
   await expect(accountRow(page, EMAIL).getByRole("button", { name: "Remove" })).toHaveCount(0);
 
-  await addCalDavAccount(page, { ...radicale.users[6], password: "wrong", email: extra.email });
+  await addCalDavAccount(page, { ...six, password: "wrong", email: extra.email });
   await expect(accountMessage(page)).toHaveText("The server rejected the user name or password.");
   // Another Tempoloom user's calendar account is refused, not moved.
   await addCalDavAccount(page, { ...radicale.colleague, email: COLLEAGUE_EMAIL });
@@ -66,7 +67,7 @@ test("a user adds a second CalDAV account and removes it after a confirmation; t
   );
   await expect(page.getByTestId("account-list").locator("[data-account]")).toHaveCount(1);
 
-  await addCalDavAccount(page, { ...radicale.users[6], email: extra.email });
+  await addCalDavAccount(page, { ...six, email: extra.email });
   await expect(accountRow(page, extra.email)).toContainText("caldav");
   await page.getByRole("link", { name: "Settings", exact: true }).click();
   await expect(page.getByTestId("calendar-list")).toContainText(extra.email);

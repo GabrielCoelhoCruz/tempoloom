@@ -523,3 +523,71 @@ progress {
   gap: 8px;
   margin-top: 8px;
 }
+
+/* Delegated access and the Account page */
+.acting-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--meeting) 22%, var(--panel));
+  font-weight: 600;
+}
+.acting-banner.ended {
+  background: color-mix(in srgb, var(--accent) 14%, var(--panel));
+  font-weight: 400;
+}
+.account-menu {
+  position: relative;
+  margin: 8px 0;
+}
+.account-menu > button {
+  width: 100%;
+  text-align: left;
+}
+.account-menu .menu {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  min-width: 240px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  box-shadow: 0 4px 16px rgb(0 0 0 / 12%);
+}
+.account-menu .menu > * {
+  padding: 6px 8px;
+  border: 0;
+  border-radius: var(--radius);
+  background: none;
+  color: var(--fg);
+  text-align: left;
+  text-decoration: none;
+}
+.account-menu .menu > *:hover {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  background: rgb(0 0 0 / 30%);
+}
+.dialog {
+  max-width: 480px;
+  padding: 16px 20px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+}
+.dialog h2 {
+  margin: 0 0 8px;
+  font-size: 16px;
+}

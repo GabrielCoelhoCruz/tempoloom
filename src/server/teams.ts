@@ -134,6 +134,8 @@ export function hasFreeSeat(db: Db, team: Team, instanceLimit: number | undefine
 /** Cleanup when a user leaves a team, whichever way they leave. */
 function memberLeft(db: Db, teamId: string, userId: string): void {
   run(db, "DELETE FROM team_requests WHERE user_id = ?", userId);
+  // Delegated access exists only inside one team (accounts-delegated-access.md edge cases 1, 2).
+  run(db, "DELETE FROM delegates WHERE owner_id = ? OR delegate_id = ?", userId, userId);
   if (memberCount(db, teamId) === 0) run(db, "DELETE FROM teams WHERE id = ?", teamId);
 }
 

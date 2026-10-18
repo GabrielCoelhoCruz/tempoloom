@@ -222,6 +222,7 @@ test("an acting delegate cannot add or remove accounts, connect calendars, manag
   await keyRow(pb, "Owner key").getByRole("button", { name: "Regenerate" }).click();
   await expect(accountMessage(pb)).toHaveText(blockedKeys);
   await keyRow(pb, "Owner key").getByRole("button", { name: "Delete" }).click();
+  await pb.getByRole("dialog").getByRole("button", { name: "Delete key" }).click();
   await expect(accountMessage(pb)).toHaveText(blockedKeys);
 
   await expect(pb.getByTestId("delegates")).toContainText("Only e2e can change delegated access.");

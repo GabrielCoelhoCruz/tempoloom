@@ -2,8 +2,18 @@ import { signal } from "@preact/signals";
 import type { Settings } from "../../server/settings.ts";
 import { ApiError, api } from "./api.ts";
 
+export interface Person {
+  id: string;
+  email: string;
+  name: string;
+}
+
 export interface Me {
   user: { id: string; email: string; name: string; time_zone: string };
+  /** The delegate behind an acting session; `user` is then the owner (delegated access). */
+  actor: Person | null;
+  /** Owners who gave the signed-in person delegated access. */
+  owners: Person[];
   settings: Settings;
   accounts: { id: string; provider: string; email: string; status: string }[];
 }

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "preact/hooks";
 import { api } from "../lib/api.ts";
 import { duration, hhmm } from "../lib/format.ts";
 import { freeName, templateFromUrl } from "../lib/library.ts";
+import { useLive } from "../lib/live.ts";
 import { LEVEL_NAMES, planNow } from "../lib/state.ts";
 
 interface Habit {
@@ -47,6 +48,7 @@ export function Habits() {
     setHours(hs.hours);
   }, []);
   useEffect(() => void load(), [load]);
+  useLive(load);
 
   const act = async (fn: () => Promise<unknown>) => {
     setError(null);

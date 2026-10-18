@@ -22,6 +22,7 @@ export class SyncService {
   readonly #timers = new Map<string, NodeJS.Timeout>();
   #interval: NodeJS.Timeout | undefined;
   #stopped = false;
+  readonly #listeners = new Set<(userId: string) => void>();
 
   constructor(deps: SyncServiceDeps) {
     this.#deps = deps;
@@ -29,6 +30,11 @@ export class SyncService {
 
   #log(msg: string, err?: unknown): void {
     (this.#deps.log ?? ((m, e) => console.error(m, e ?? "")))(msg, err);
+  }
+
+  /** Calls fn after each run that read or wrote changes of the user's calendars. */
+  onChange(fn: (userId: string) => void): void {
+    this.#listeners.add(fn);
   }
 
   pool(userId: string): ProviderPool {
@@ -217,6 +223,8 @@ export class SyncService {
       if (p && p.created + p.updated + p.deleted > 0) {
         for (const id of peers.attendees) this.request(id);
       }
+      if (pulled > 0 || (p && p.created + p.updated + p.deleted > 0))
+        for (const fn of this.#listeners) fn(userId);
     } catch (err) {
       this.#log(`sync failed for user ${userId}`, err);
     }
