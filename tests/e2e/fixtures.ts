@@ -10,7 +10,13 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { type BrowserContext, test as base, expect, type Page } from "@playwright/test";
+import {
+  type Browser,
+  type BrowserContext,
+  test as base,
+  expect,
+  type Page,
+} from "@playwright/test";
 import { DAVClient } from "tsdav";
 import { GoogleCalendarApi } from "../../src/server/google/calendar.ts";
 import {
@@ -38,6 +44,8 @@ export interface AppServer {
   /** Environment of the server process, for the operator CLI. */
   env: Record<string, string>;
   restart(): Promise<void>;
+  /** Runs an operator command (src/server/cli.ts) with the server's environment. */
+  cli(...args: string[]): string;
   /** Reads the server database (read-only), for checks the UI does not show. */
   query<T>(sql: string, ...params: (string | number)[]): T[];
   log: string[];
@@ -98,6 +106,10 @@ interface RadicaleUser {
 interface RadicaleEnv extends RadicaleUser {
   /** A second user, for meetings between two people. */
   colleague: RadicaleUser;
+  /** Users e2e3 to e2e6, by number: more team members. */
+  users: Record<number, RadicaleUser>;
+  /** e2egrant reads every user's calendars (scripts/caldav-server.sh). */
+  grant: RadicaleUser;
 }
 
 function radicaleEnv(): RadicaleEnv {
@@ -108,15 +120,16 @@ function radicaleEnv(): RadicaleEnv {
       .split("\n")
       .map((l) => l.split(/=(.*)/s).slice(0, 2)),
   );
-  return {
+  const user = (n: string) => ({
     url: env.CALDAV_URL,
-    username: env.CALDAV_USERNAME,
-    password: env.CALDAV_PASSWORD,
-    colleague: {
-      url: env.CALDAV_URL,
-      username: env.CALDAV_USERNAME2,
-      password: env.CALDAV_PASSWORD2,
-    },
+    username: env[`CALDAV_USERNAME${n}`],
+    password: env[`CALDAV_PASSWORD${n}`],
+  });
+  return {
+    ...user(""),
+    colleague: user("2"),
+    users: Object.fromEntries([3, 4, 5, 6].map((n) => [n, user(String(n))])),
+    grant: user("grant"),
   };
 }
 
@@ -339,8 +352,21 @@ async function googleDriver(): Promise<CalendarDriver> {
 export interface Colleague {
   email: string;
   cal: CalendarDriver;
-  /** Signs the colleague in, in a browser context of their own. */
-  signIn: () => Promise<Page>;
+  /** Signs the colleague in, in a browser context of their own, starting at `path` (default "/"). */
+  signIn: (path?: string) => Promise<Page>;
+}
+
+/** Another user of the instance: Radicale user e2e<n> with a calendar of their own. */
+export interface Person extends Colleague {
+  username: string;
+}
+
+/** Messages that the instance sent, read from the loopback mail server. */
+export interface Mailbox {
+  /** Waits for a message to `to` with a matching subject. */
+  message(to: string, subject: RegExp): Promise<{ subject: string; text: string }>;
+  /** Number of messages to `to` so far. */
+  count(to: string): Promise<number>;
 }
 
 type TestFixtures = {
@@ -348,8 +374,36 @@ type TestFixtures = {
   cal: CalendarDriver;
   signIn: () => Promise<void>;
   colleague: Colleague;
+  /** people(3) is Radicale user e2e3 with email e2e3@tempoloom.test, unless `email` is given. */
+  people: (n: 3 | 4 | 5 | 6, email?: string) => Promise<Person>;
+  mail: Mailbox;
 };
-type WorkerFixtures = { radicale: RadicaleEnv | null };
+type WorkerFixtures = {
+  radicale: RadicaleEnv | null;
+  mailServer: { smtpUrl: string; apiUrl: string };
+};
+
+async function signInAs(
+  browser: Browser,
+  baseUrl: string,
+  env: RadicaleUser,
+  email: string,
+  contexts: BrowserContext[],
+  path = "/",
+): Promise<Page> {
+  const ctx = await browser.newContext({ timezoneId: ZONE, locale: "en-GB", baseURL: baseUrl });
+  contexts.push(ctx);
+  const page = await ctx.newPage();
+  await page.goto(path);
+  const form = page.getByTestId("caldav-form");
+  await form.getByLabel("CalDAV server URL").fill(env.url);
+  await form.getByLabel("User name", { exact: true }).fill(env.username);
+  await form.getByLabel("Password", { exact: true }).fill(env.password);
+  await form.getByLabel(/^Email/).fill(email);
+  await form.getByRole("button", { name: /sign in with caldav/i }).click();
+  await expect(page.getByTestId("app-shell")).toBeVisible();
+  return page;
+}
 
 export const test = base.extend<TestFixtures, WorkerFixtures>({
   radicale: [
@@ -363,7 +417,7 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
       // Keep the server log for failure analysis (it holds no secrets).
       execFileSync("sh", [
         "-c",
-        `docker logs tempoloom-e2e-radicale >> "${join(ROOT, ".e2e/radicale.log")}" 2>&1 || true`,
+        `docker logs ${process.env.TEMPOLOOM_CALDAV_CONTAINER ?? "tempoloom-e2e-radicale"} >> "${join(ROOT, ".e2e/radicale.log")}" 2>&1 || true`,
       ]);
       if (!process.env.TEMPOLOOM_E2E_KEEP_CALDAV) {
         execFileSync(join(ROOT, "scripts/caldav-server.sh"), ["stop"], { stdio: "ignore" });
@@ -372,11 +426,53 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
     { scope: "worker" },
   ],
 
+  mailServer: [
+    async ({}, use) => {
+      const script = join(ROOT, "scripts/mail-server.sh");
+      execFileSync(script, ["start"], { stdio: "ignore" });
+      const env = Object.fromEntries(
+        execFileSync(script, ["env"], { encoding: "utf8" })
+          .trim()
+          .split("\n")
+          .map((l) => l.split(/=(.*)/s).slice(0, 2)),
+      );
+      await use({ smtpUrl: env.SMTP_URL, apiUrl: env.MAIL_API_URL });
+      execFileSync(script, ["stop"], { stdio: "ignore" });
+    },
+    { scope: "worker" },
+  ],
+
+  mail: async ({ mailServer }, use) => {
+    const api = (p: string, init?: RequestInit) => fetch(new URL(p, mailServer.apiUrl), init);
+    await api("api/v1/messages", { method: "DELETE" });
+    interface Summary {
+      ID: string;
+      Subject: string;
+      To: { Address: string }[];
+    }
+    const list = async (to: string) =>
+      (
+        (await (await api("api/v1/messages?limit=200")).json()) as { messages: Summary[] }
+      ).messages.filter((m) => m.To.some((t) => t.Address.toLowerCase() === to.toLowerCase()));
+    await use({
+      async message(to, subject) {
+        const m = await eventually(
+          async () => (await list(to)).find((x) => subject.test(x.Subject)),
+          (v) => expect(v, `mail to ${to} matching ${subject}`).toBeTruthy(),
+          20_000,
+        );
+        const full = (await (await api(`api/v1/message/${m?.ID}`)).json()) as { Text: string };
+        return { subject: m?.Subject ?? "", text: full.Text };
+      },
+      count: async (to) => (await list(to)).length,
+    });
+  },
+
   cal: async ({ radicale }, use) => {
     await use(radicale ? await caldavDriver(radicale) : await googleDriver());
   },
 
-  app: async ({}, use, info) => {
+  app: async ({ mailServer }, use, info) => {
     const dataDir = mkdtempSync(join(tmpdir(), "tempoloom-e2e-"));
     const secretKey = randomBytes(32).toString("base64");
     const log: string[] = [];
@@ -393,6 +489,8 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
       // Webhook tests use a receiver on loopback and short retry delays.
       WEBHOOK_ALLOW_PRIVATE: "1",
       WEBHOOK_RETRY_BASE_MS: "500",
+      SMTP_URL: mailServer.smtpUrl,
+      MAIL_FROM: "Tempoloom <noreply@tempoloom.test>",
       ...(SA_JSON ? { GOOGLE_SERVICE_ACCOUNT_JSON: SA_JSON } : {}),
     };
     const start = async () => {
@@ -430,6 +528,12 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
         await stop();
         await start();
       },
+      cli: (...args) =>
+        execFileSync(process.execPath, ["src/server/cli.ts", ...args], {
+          cwd: ROOT,
+          env,
+          encoding: "utf8",
+        }),
       query: <T>(sql: string, ...params: (string | number)[]) => {
         const db = new DatabaseSync(join(dataDir, "tempoloom.db"), { readOnly: true });
         try {
@@ -453,40 +557,40 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
     await use({
       email: COLLEAGUE_EMAIL,
       cal,
-      signIn: async () => {
-        const ctx = await browser.newContext({
-          timezoneId: ZONE,
-          locale: "en-GB",
-          baseURL: app.baseUrl,
-        });
-        contexts.push(ctx);
-        const page = await ctx.newPage();
-        await page.goto("/");
-        const form = page.getByTestId("caldav-form");
-        await form.getByLabel("CalDAV server URL").fill(env.url);
-        await form.getByLabel("User name", { exact: true }).fill(env.username);
-        await form.getByLabel("Password", { exact: true }).fill(env.password);
-        await form.getByLabel(/^Email/).fill(COLLEAGUE_EMAIL);
-        await form.getByRole("button", { name: /sign in with caldav/i }).click();
-        await expect(page.getByTestId("app-shell")).toBeVisible();
-        return page;
-      },
+      signIn: (path) => signInAs(browser, app.baseUrl, env, COLLEAGUE_EMAIL, contexts, path),
     });
     for (const c of contexts) await c.close();
   },
 
-  signIn: async ({ page, app, radicale }, use) => {
+  people: async ({ radicale, browser, app }, use) => {
+    if (!radicale) throw new Error("The people fixture needs the CalDAV backend.");
+    const contexts: BrowserContext[] = [];
+    const made = new Map<number, Person>();
+    await use(async (n, email) => {
+      const known = made.get(n);
+      if (known) return known;
+      const env = radicale.users[n];
+      if (!env) throw new Error(`No Radicale user e2e${n}`);
+      const address = email ?? `e2e${n}@tempoloom.test`;
+      const person: Person = {
+        email: address,
+        username: env.username,
+        cal: await caldavDriver(env, address),
+        signIn: (path) => signInAs(browser, app.baseUrl, env, address, contexts, path),
+      };
+      made.set(n, person);
+      return person;
+    });
+    for (const c of contexts) await c.close();
+  },
+
+  // Depends on `cal`, so the user's calendar is reset and exists before sign-in.
+  signIn: async ({ page, app, radicale, cal: _cal }, use) => {
     await use(async () => {
       if (!radicale) {
         // Operator flow: connect the service account, then sign in with a one-time link.
-        const cli = (...args: string[]) =>
-          execFileSync(process.execPath, ["src/server/cli.ts", ...args], {
-            cwd: ROOT,
-            env: app.env,
-            encoding: "utf8",
-          });
-        cli("connect-google-service-account", "--email", EMAIL);
-        await page.goto(cli("login-link", "--email", EMAIL).trim());
+        app.cli("connect-google-service-account", "--email", EMAIL);
+        await page.goto(app.cli("login-link", "--email", EMAIL).trim());
         await expect(page.getByTestId("app-shell")).toBeVisible();
         // A new account's calendars are read on the next sync tick.
         await planNow(page);

@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
 # Starts or stops a Radicale CalDAV server in Docker for E2E tests. It listens
-# on 127.0.0.1 only and starts with empty storage. Each start creates a local
-# test user with a random password; the password is a fixture for this
+# on 127.0.0.1 only and starts with empty storage. Each start creates local
+# test users with random passwords; the passwords are fixtures for this
 # loopback server only, stored with mode 600 in the state directory. Storage
 # is a named Docker volume that this script creates and removes.
+#
+# Users: e2e and e2e2 to e2e6 own their calendars. e2e2 may change events in
+# e2e's calendars named "shared-*", e2e3 may only read them (a shared team
+# calendar). e2egrant reads every user's calendars (an organization grant).
 #
 #   scripts/caldav-server.sh start    # prints URL and user name
 #   scripts/caldav-server.sh stop     # removes only this script's container
@@ -15,6 +19,7 @@ VOLUME="$NAME-data"
 PORT="${TEMPOLOOM_CALDAV_PORT:-5232}"
 IMAGE="${TEMPOLOOM_CALDAV_IMAGE:-tomsquest/docker-radicale:latest}"
 USER_NAME="e2e"
+EXTRA_USERS="2 3 4 5 6"
 
 case "${1:-}" in
   start)
@@ -23,13 +28,16 @@ case "${1:-}" in
     rm -rf "$STATE"
     mkdir -p "$STATE/config"
     chmod 700 "$STATE"
-    password=$(head -c 24 /dev/urandom | base64 | tr -d '/+=' )
-    password2=$(head -c 24 /dev/urandom | base64 | tr -d '/+=' )
     umask 077
-    # A second user is a colleague for tests of meetings between two people.
-    printf '%s:%s\n%s:%s\n' "$USER_NAME" "$password" "${USER_NAME}2" "$password2" > "$STATE/config/users"
+    newpass() { head -c 24 /dev/urandom | base64 | tr -d '/+='; }
+    password=$(newpass)
     printf '%s\n' "$password" > "$STATE/password"
-    printf '%s\n' "$password2" > "$STATE/password2"
+    printf '%s:%s\n' "$USER_NAME" "$password" > "$STATE/config/users"
+    for n in $EXTRA_USERS grant; do
+      p=$(newpass)
+      printf '%s\n' "$p" > "$STATE/password$n"
+      printf '%s%s:%s\n' "$USER_NAME" "$n" "$p" >> "$STATE/config/users"
+    done
     chmod 644 "$STATE/config/users"
     cat > "$STATE/config/config" <<CONF
 [server]
@@ -39,13 +47,51 @@ type = htpasswd
 htpasswd_filename = /config/users
 htpasswd_encryption = plain
 [rights]
-type = owner_only
+type = from_file
+file = /config/rights
 [storage]
 filesystem_folder = /data/collections
 [logging]
 level = warning
 CONF
-    chmod 755 "$STATE/config"; chmod 644 "$STATE/config/config"
+    # The first section that matches both user and collection decides.
+    cat > "$STATE/config/rights" <<RIGHTS
+[root]
+user: .+
+collection:
+permissions: R
+
+[principal]
+user: .+
+collection: {user}
+permissions: RW
+
+[calendars]
+user: .+
+collection: {user}/[^/]+
+permissions: rw
+
+[shared-write]
+user: ${USER_NAME}2
+collection: ${USER_NAME}/shared-[^/]+
+permissions: rw
+
+[shared-read]
+user: ${USER_NAME}3
+collection: ${USER_NAME}/shared-[^/]+
+permissions: r
+
+[grant-principals]
+user: ${USER_NAME}grant
+collection: [^/]+
+permissions: R
+
+[grant-calendars]
+user: ${USER_NAME}grant
+collection: [^/]+/[^/]+
+permissions: r
+RIGHTS
+    chmod 755 "$STATE/config"; chmod 644 "$STATE/config/config" "$STATE/config/rights"
     docker run -d --name "$NAME" -p "127.0.0.1:$PORT:5232" \
       -v "$STATE/config:/config:ro" -v "$VOLUME:/data" "$IMAGE" >/dev/null
     for _ in $(seq 1 50); do
@@ -65,8 +111,10 @@ CONF
     echo "CALDAV_URL=http://127.0.0.1:$PORT/"
     echo "CALDAV_USERNAME=$USER_NAME"
     echo "CALDAV_PASSWORD=$(cat "$STATE/password")"
-    echo "CALDAV_USERNAME2=${USER_NAME}2"
-    echo "CALDAV_PASSWORD2=$(cat "$STATE/password2")"
+    for n in $EXTRA_USERS grant; do
+      echo "CALDAV_USERNAME$n=$USER_NAME$n"
+      echo "CALDAV_PASSWORD$n=$(cat "$STATE/password$n")"
+    done
     ;;
   *) echo "usage: $0 start|stop|env" >&2; exit 2 ;;
 esac
