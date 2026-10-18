@@ -94,6 +94,15 @@ T = {
     "sso_capture": "SSO and other sign-in, with domain capture: members use either, new sign-ups on the domain join the team, others keep their own team",
     "grant_read": "Calendar access attaches each provisioned person's calendar read-only, reads it on a slow cycle until first sign-in and in real time after it, and writes nothing before it",
     "prov_api": "The admin provisioning API adds a large import at a paced rate, with attributes and calendars through the grant; only team admins can use it",
+    # Team defaults, out-of-office calendars, no-meeting days (team-defaults, ooo-calendar, no-meeting specs)
+    "tpl_defaults": "default work and meeting hours go to people who join after the admin saves them; existing members and later changes keep their hours",
+    "tpl_focus": "a new member sees the team's habit templates while joining and takes the focus recommendation with a changed goal; existing members see none",
+    "tpl_habits": "team habit templates show at the top of every member's habits page; edits and deletes never change habits made from them; only admins manage them",
+    "ooo_copy": "participants come from write access to the shared calendar; a teammate who joins later is enrolled; a full-day absence is copied and follows moves and deletes",
+    "ooo_partial": "partial-day absences keep exact times until the admin switches to all-day; all-day busy events count only from the switch on; two calendars get a copy each; the person's managed events move off the time away",
+    "ooo_perm": "members add out-of-office calendars while the team allows it; after an admin switches it off only admins can",
+    "nm_self": "a #tl_free block keeps habits but not the organizer's flexible meetings or any booking link, even at a lowered priority",
+    "nm_team": "a team no-meeting day invitation counts for each invitee who answers yes or maybe, not for an unanswered one",
 }
 
 # Row id -> E2E test keys that prove it on CalDAV.
@@ -149,6 +158,12 @@ E2E = {
     # SSO and provisioning
     639: ["sso_only"], 640: ["sso_only", "sso_capture"], 641: ["sso_only", "sso_capture"],
     643: ["sso_capture"], 647: ["prov_api"], 648: ["prov_api"],
+    # Team defaults, out-of-office calendars, no-meeting days
+    192: ["tpl_habits"], 564: ["tpl_habits", "tpl_focus"], 565: ["tpl_defaults"], 215: ["tpl_focus"],
+    566: ["tpl_focus", "tpl_defaults"], 567: ["tpl_defaults", "tpl_focus"], 269: ["ooo_copy"],
+    573: ["ooo_copy"], 574: ["ooo_copy"], 575: ["ooo_copy"], 583: ["ooo_copy"], 576: ["ooo_partial"],
+    577: ["ooo_partial"], 579: ["ooo_partial"], 580: ["ooo_partial"], 578: ["ooo_perm"],
+    249: ["nm_self"], 251: ["nm_team"],
 }
 
 # Row id -> how Tempoloom meets the row, when that differs from the reference's wording.
@@ -161,6 +176,10 @@ E2E_NOTES = {
     639: "Proven with Dex, a real OpenID Connect provider on loopback, through its own login page",
     640: "The other sign-in methods are Google and CalDAV; SSO-only refuses both for the team's domains",
     648: "The API uses the team admin's session (no API keys exist yet)",
+    566: "Proactive mode only: Tempoloom has no reactive focus mode",
+    574: "Write access is read from the CalDAV privilege set; CalDAV has no groups to expand, and Google calendar access lists are not read",
+    583: "Marketing-only in the reference; built: a teammate with write access who joins later takes part with no setup",
+    269: "On CalDAV, an out-of-office event carries X-MICROSOFT-CDO-BUSYSTATUS:OOF",
 }
 
 # Row id -> reason, for rows implemented in part (some behavior has E2E, some does not).
@@ -232,6 +251,10 @@ BLOCKED = {
     630: "Not needed for parity: the reference lists these reports as coming soon (analytics-organization.md rule 16)",
     644: "Needs a Google Workspace domain and a super admin to grant domain-wide delegation; the CalDAV organization grant covers the same need for CalDAV servers (E2E: \u201cCalendar access attaches each provisioned person's calendar read-only\u2026\u201d)",
     645: "Needs a Microsoft 365 tenant and a Microsoft Graph calendar provider, which is not implemented",
+    568: "Needs the assistant chat, which is not implemented: a switch with nothing to switch off has no effect to prove",
+    569: "Needs the assistant chat, which is not implemented",
+    581: "Needs the Slack app (a vendor developer app and a test workspace)",
+    582: "Needs the assistant chat, which is not implemented",
 }
 for n in [5, 6, 12, 14, 15, 16, 17, 18, 20, 21, 22, 24, 31]:
     BLOCKED[718 + n] = "A prompt entry: needs the assistant chat, which is not implemented"
