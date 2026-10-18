@@ -1,7 +1,7 @@
 // The account menu and the acting banner of delegated access
 // (docs/specs/accounts-delegated-access.md rules 5, 6, 8, 10). Both show on
 // every page, so they stay small and load with the shell.
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useLayoutEffect, useState } from "preact/hooks";
 import { api } from "../lib/api.ts";
 import { startLive } from "../lib/live.ts";
 import { onLinkClick } from "../lib/router.ts";
@@ -44,7 +44,8 @@ export function AccountMenu() {
   const [open, setOpen] = useState(false);
   // Connect after the first render, so the planner's cold load does not wait for it.
   useEffect(() => startLive(() => void loadMe()), []);
-  useEffect(() => {
+  // Listen at once, not after paint: an Escape right after opening must close the menu.
+  useLayoutEffect(() => {
     if (!open) return;
     const close = (e: Event) => {
       if (

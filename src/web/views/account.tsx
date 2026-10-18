@@ -120,7 +120,6 @@ export function AccountPage() {
       setMessage(reason(err));
     }
   };
-  const confirm = (a: Ask) => setAsk(a);
 
   if (!m) return null;
   const when = (t: number) => toLocalInput(zone(), t).replace("T", " ");
@@ -148,9 +147,9 @@ export function AccountPage() {
                   type="button"
                   class="danger"
                   onClick={() =>
-                    confirm({
+                    setAsk({
                       title: "Remove account",
-                      text: `Remove ${a.email}? Tempoloom stops reading and writing its calendars and removes the events it placed there.`,
+                      text: `Remove ${a.email}? Tempoloom stops reading and writing its calendars and removes the coming events it placed there.`,
                       action: "Remove account",
                       onYes: () =>
                         void act(() => api("DELETE", `/api/accounts/${a.id}`), "Account removed."),
@@ -245,7 +244,7 @@ export function AccountPage() {
                     <button
                       type="button"
                       onClick={() =>
-                        confirm({
+                        setAsk({
                           title: "Give access",
                           text: `${p.name} will see and change your Tempoloom data: tasks, habits, meetings, booking links and settings. They cannot delete your account, add or remove accounts or calendars, or manage API keys.`,
                           action: "Give access",
@@ -275,7 +274,7 @@ export function AccountPage() {
                     type="button"
                     class="danger"
                     onClick={() =>
-                      confirm({
+                      setAsk({
                         title: "Remove access",
                         text: `${p.name} loses access to your account at once.`,
                         action: "Remove access",
@@ -387,7 +386,7 @@ export function AccountPage() {
                   type="button"
                   class="danger"
                   onClick={() =>
-                    confirm({
+                    setAsk({
                       title: "Delete key",
                       text: `Delete the key "${k.name}"? Apps that use it stop working.`,
                       action: "Delete key",
