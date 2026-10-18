@@ -126,6 +126,7 @@ export function TeamHabitTemplates({
 export function FocusRecommendation({ onDone }: { onDone: () => unknown }) {
   const [rec, setRec] = useState<{ weeklyGoalHours: number } | null>(null);
   const [goal, setGoal] = useState("");
+  const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     void api<{ focus: { weeklyGoalHours: number } | null }>("GET", "/api/team/onboarding").then(
       (r) => {
@@ -135,19 +136,27 @@ export function FocusRecommendation({ onDone }: { onDone: () => unknown }) {
     );
   }, []);
   if (!rec) return null;
-  const finish = async (state: "accepted" | "off") => {
-    await api("POST", "/api/team/focus-recommendation", { state });
-    setRec(null);
-    await onDone();
+  const finish = async (state: "accepted" | "off", before?: () => Promise<unknown>) => {
+    setError(null);
+    try {
+      await before?.();
+      await api("POST", "/api/team/focus-recommendation", { state });
+      setRec(null);
+      await onDone();
+    } catch (err) {
+      const body = (err as { body?: { issues?: { message: string }[] } }).body;
+      setError(body?.issues?.[0]?.message ?? String(err));
+    }
   };
   return (
     <form
       class="form"
       data-testid="focus-recommendation"
-      onSubmit={async (e) => {
+      onSubmit={(e) => {
         e.preventDefault();
-        await api("POST", "/api/focus", { weeklyGoalMinutes: Math.round(Number(goal) * 60) });
-        await finish("accepted");
+        void finish("accepted", () =>
+          api("POST", "/api/focus", { weeklyGoalMinutes: Math.round(Number(goal) * 60) }),
+        );
       }}
     >
       <p class="wide">
@@ -171,6 +180,11 @@ export function FocusRecommendation({ onDone }: { onDone: () => unknown }) {
       <button type="button" onClick={() => void finish("off")}>
         Turn off
       </button>
+      {error && (
+        <p class="error wide" role="alert">
+          {error}
+        </p>
+      )}
     </form>
   );
 }

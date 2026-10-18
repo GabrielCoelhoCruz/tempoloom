@@ -67,10 +67,12 @@ export async function refreshAccess(
     "SELECT user_id FROM team_members WHERE team_id = ?",
     target.team_id,
   ).map((m) => m.user_id);
-  const known = new Set(
-    all<{ user_id: string }>(db, "SELECT user_id FROM ooo_access WHERE ooo_id = ?", target.id).map(
-      (a) => a.user_id,
-    ),
+  const known = new Map(
+    all<{ user_id: string; access: Access }>(
+      db,
+      "SELECT user_id, access FROM ooo_access WHERE ooo_id = ?",
+      target.id,
+    ).map((a) => [a.user_id, a.access]),
   );
   const fresh = target.access_checked_at !== null && target.access_checked_at > now - ACCESS_TTL;
   if (!force && fresh && members.length === known.size && members.every((m) => known.has(m)))
@@ -91,7 +93,10 @@ export async function refreshAccess(
         const x = await provider.accessTo(target.provider_id);
         if (RANK[x] > RANK[best]) best = x;
       } catch (err) {
+        // A failed read keeps the last known access, so a network error drops no copies.
         console.error(`out-of-office access check failed for account ${a.id}`, err);
+        const last = known.get(userId) ?? "none";
+        if (RANK[last] > RANK[best]) best = last;
       }
     }
     access.set(userId, best);
