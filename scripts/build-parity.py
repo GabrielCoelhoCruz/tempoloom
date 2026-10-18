@@ -104,6 +104,14 @@ T = {
     "nm_self": "a #tl_free block keeps habits but not the organizer's flexible meetings or any booking link, even at a lowered priority",
     "nm_team": "a team no-meeting day invitation counts for each invitee who answers yes or maybe, not for an unanswered one",
     "org_cover": "organization analytics count a provisioned person who never signed in, through the calendar access, without writing to their calendar",
+    # Team policies (policies, agendas, fragmentation specs)
+    "pol_focus": "a focus policy by department gives members in scope a focus goal from the policy; a directory change moves it",
+    "pol_scope": "the narrower policy wins; members personalize their goal and keep it when the admin changes the policy; disabling falls back",
+    "pol_buffer": "a buffer policy gives members in scope prep and follow-up buffers by meeting type and a daily break",
+    "pol_decline": "auto-decline declines invitations without an agenda at the lead time and keeps the others",
+    "pol_remind": "remind lists meetings without an agenda with a draft from the type's template; adjust proposes a shorter meeting",
+    "pol_base": "the fragmentation baseline shows the group average of fragmented time on each day of the 4 weeks before",
+    "pol_frag": "an enabled fragmentation policy places new habits of members in scope next to busy time, within each member's flexibility",
 }
 
 # Row id -> E2E test keys that prove it on CalDAV.
@@ -165,6 +173,11 @@ E2E = {
     573: ["ooo_copy"], 574: ["ooo_copy"], 575: ["ooo_copy"], 583: ["ooo_copy"], 576: ["ooo_partial"],
     577: ["ooo_partial"], 579: ["ooo_partial"], 580: ["ooo_partial"], 578: ["ooo_perm"],
     249: ["nm_self"], 251: ["nm_team"], 628: ["org_cover", "grant_read"],
+    # Team policies
+    585: ["pol_focus", "pol_scope"], 586: ["pol_focus", "pol_scope"], 216: ["pol_focus", "pol_scope"],
+    587: ["pol_buffer"], 234: ["pol_buffer"], 588: ["pol_decline", "pol_remind"],
+    352: ["pol_decline", "pol_remind"], 589: ["pol_remind"], 590: ["pol_base", "pol_frag"],
+    593: ["pol_focus", "pol_buffer", "pol_decline", "pol_base"],
 }
 
 # Row id -> how Tempoloom meets the row, when that differs from the reference's wording.
@@ -181,6 +194,9 @@ E2E_NOTES = {
     574: "Write access is read from the CalDAV privilege set; CalDAV has no groups to expand, and Google calendar access lists are not read",
     583: "Marketing-only in the reference; built: a teammate with write access who joins later takes part with no setup",
     269: "On CalDAV, an out-of-office event carries X-MICROSOFT-CDO-BUSYSTATUS:OOF",
+    588: "Adjust proposes a shorter meeting and changes it only when the organizer confirms; moving a meeting or lowering its priority is not built, because preview mode is not implemented",
+    352: "Generated agendas are drafts from the meeting type's template: Tempoloom has no AI drafting, and the page says so",
+    593: "Reports show goal, baseline and weekly group averages; for buffers they count removed buffers instead of a keep rate",
     628: "The organization calendar access is a CalDAV account that reads every person's calendars; the 24-hour refresh is a setting (GRANT_REFRESH_SECONDS), 30 seconds in the test",
 }
 
@@ -257,6 +273,11 @@ BLOCKED = {
     569: "Needs the assistant chat, which is not implemented",
     581: "Needs the Slack app (a vendor developer app and a test workspace)",
     582: "Needs the assistant chat, which is not implemented",
+    217: "No benchmark data: the evidence gives no targets per role (teams-policies.md open question 3)",
+    594: "No benchmark data: the evidence gives no targets per role (teams-policies.md open question 3)",
+    591: "Needs the Slack app (a vendor developer app and a test workspace)",
+    592: "Needs the Slack app (a vendor developer app and a test workspace)",
+    688: "Needs the assistant chat, which is not implemented",
 }
 for n in [5, 6, 12, 14, 15, 16, 17, 18, 20, 21, 22, 24, 31]:
     BLOCKED[718 + n] = "A prompt entry: needs the assistant chat, which is not implemented"
