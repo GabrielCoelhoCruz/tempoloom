@@ -55,6 +55,17 @@ function readProps(ev: ICAL.Component): Record<string, string> {
   }
 }
 
+/** A CalDAV time-range value: UTC, basic format. */
+const davTime = (t: number) => `${new Date(t).toISOString().slice(0, 19).replace(/[-:]/g, "")}Z`;
+
+/** Text of a parsed DAV property (plain, CDATA or text node). */
+function davText(v: unknown): string | null {
+  if (typeof v === "string") return v;
+  const node = v as { _cdata?: unknown; _text?: unknown } | undefined;
+  const t = node?._cdata ?? node?._text;
+  return typeof t === "string" ? t : null;
+}
+
 const mailto = (v: unknown) =>
   typeof v === "string" ? v.replace(/^mailto:/i, "").toLowerCase() : "";
 
@@ -195,7 +206,12 @@ export function objectFromWrite(uid: string, w: EventWrite, now: number): string
   if (w.description) ev.addPropertyWithValue("description", w.description);
   if (w.location) ev.addPropertyWithValue("location", w.location);
   ev.addPropertyWithValue("transp", w.busy ? "OPAQUE" : "TRANSPARENT");
+  if (w.organizer) ev.addPropertyWithValue("organizer", `mailto:${w.organizer}`);
   for (const email of w.attendees ?? []) ev.addPropertyWithValue("attendee", `mailto:${email}`);
+  for (const email of w.optionalAttendees ?? []) {
+    const p = ev.addPropertyWithValue("attendee", `mailto:${email}`);
+    p.setParameter("role", "OPT-PARTICIPANT");
+  }
   ev.addPropertyWithValue(
     PROPS_PROPERTY,
     Buffer.from(JSON.stringify(w.privateProps)).toString("base64url"),
@@ -281,16 +297,32 @@ export class CalDavProvider implements CalendarProvider {
     if (opts.syncToken && tag && opts.syncToken === tag) {
       return { events: [], nextSyncToken: tag, full: false };
     }
-    // One calendar-query that returns the data: a multi-get after it fails as a
-    // whole when an event is deleted between the two requests.
-    const objects = await client.fetchCalendarObjects({
-      calendar: cal,
-      useMultiGet: false,
-      timeRange: {
-        start: new Date(opts.timeMin).toISOString(),
-        end: new Date(opts.timeMax).toISOString(),
-      },
-    });
+    // One calendar-query that returns the data. Two requests (a query, then a
+    // fetch of what it found) fail when an event is deleted between them.
+    const objects = (
+      await client.calendarQuery({
+        url: cal.url,
+        props: { "d:getetag": {}, "c:calendar-data": {} },
+        filters: [
+          {
+            "comp-filter": {
+              _attributes: { name: "VCALENDAR" },
+              "comp-filter": {
+                _attributes: { name: "VEVENT" },
+                "time-range": {
+                  _attributes: { start: davTime(opts.timeMin), end: davTime(opts.timeMax) },
+                },
+              },
+            },
+          },
+        ],
+        depth: "1",
+      })
+    ).map((r) => ({
+      url: new URL(r.href ?? "", cal.url).toString(),
+      etag: davText(r.props?.getetag),
+      data: davText(r.props?.calendarData),
+    }));
     const events: ProviderEvent[] = [];
     for (const o of objects) {
       if (typeof o.data !== "string" || !o.data) continue;
