@@ -1,0 +1,14 @@
+:root {
+  color-scheme: light dark;
+  --bg: Canvas;
+  --fg: CanvasText;
+  --muted: color-mix(in srgb, CanvasText 55%, Canvas);
+  --line: color-mix(in srgb, CanvasText 12%, Canvas);
+  --accent: #3b6fd8;
+  font-family: system-ui, sans-serif;
+}
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+}
