@@ -222,6 +222,16 @@ export class SyncService {
       const p = result?.push;
       if (p && p.created + p.updated + p.deleted > 0) {
         for (const id of peers.attendees) this.request(id);
+        // A CalDAV tag hashes the calendar's content, and the stored tag predates
+        // these writes: an edit that restores that content (say, deleting a chunk
+        // just written) would match it and go unseen. Read those calendars in full.
+        run(
+          db,
+          `UPDATE calendars SET sync_token = NULL
+           WHERE id IN (SELECT calendar_id FROM managed_events WHERE user_id = ?)
+             AND account_id IN (SELECT id FROM accounts WHERE provider = 'caldav')`,
+          userId,
+        );
       }
       if (pulled > 0 || (p && p.created + p.updated + p.deleted > 0))
         for (const fn of this.#listeners) fn(userId);
