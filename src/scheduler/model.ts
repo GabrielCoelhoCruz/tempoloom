@@ -179,6 +179,13 @@ export interface Snapshot {
   meetings: MeetingItem[];
   buffers: BufferItem[];
   focus: FocusItem[];
+  /**
+   * A fragmentation policy (teams-policies.md rule 23): new habits and flexible
+   * meetings prefer slots that leave no gap shorter than `minBlockMinutes`
+   * between busy times, and move at most `maxShiftMinutes` from their ideal time
+   * for it.
+   */
+  fragmentation?: { minBlockMinutes: number; maxShiftMinutes: number };
 }
 
 export type PlacementKind = "task" | "habit" | "meeting" | "buffer" | "focus";
