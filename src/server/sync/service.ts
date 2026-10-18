@@ -203,14 +203,19 @@ export class SyncService {
         now,
       );
       // Team policies (teams-policies.md rules 3, 14-17): automations, then agendas.
-      applyPolicies(db, userId, now);
-      await enforceAgendas(
-        db,
-        userId,
-        (id) => pool.get(id),
-        now,
-        (m, e) => this.#log(m, e),
-      );
+      // A policy failure never stops the member's own planning.
+      try {
+        applyPolicies(db, userId, now);
+        await enforceAgendas(
+          db,
+          userId,
+          (id) => pool.get(id),
+          now,
+          (m, e) => this.#log(m, e),
+        );
+      } catch (err) {
+        this.#log(`team policies failed for user ${userId}`, err);
+      }
       const result = await replanUser(
         {
           db,

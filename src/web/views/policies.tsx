@@ -662,6 +662,8 @@ function Admin({ data, reload }: { data: AdminData; reload: () => Promise<void> 
   const [reportId, setReportId] = useState(params.get("report"));
   const [groupBy, setGroupBy] = useState(params.get("groupBy") ?? "");
   const [report, setReport] = useState<Report | null>(null);
+  /** Each click on "Report" reads the report again. */
+  const [version, setVersion] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
   /** The open report lives in the URL, so it stays open across a reload. */
@@ -672,6 +674,7 @@ function Admin({ data, reload }: { data: AdminData; reload: () => Promise<void> 
     history.replaceState(null, "", `/policies${q.size ? `?${q}` : ""}`);
     setReportId(id);
     setGroupBy(group);
+    setVersion((v) => v + 1);
   };
 
   useEffect(() => {
@@ -683,7 +686,7 @@ function Admin({ data, reload }: { data: AdminData; reload: () => Promise<void> 
     )
       .then((r) => setReport(r.report))
       .catch(() => showReport(null, ""));
-  }, [reportId, groupBy]);
+  }, [reportId, groupBy, version]);
 
   const act = async (fn: () => Promise<unknown>) => {
     setError(null);
