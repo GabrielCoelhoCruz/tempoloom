@@ -134,6 +134,8 @@ export function hasFreeSeat(db: Db, team: Team, instanceLimit: number | undefine
 /** Cleanup when a user leaves a team, whichever way they leave. */
 function memberLeft(db: Db, teamId: string, userId: string): void {
   run(db, "DELETE FROM team_requests WHERE user_id = ?", userId);
+  // Calendars attached through the old team's grant (admin-sso-provisioning.md rule 12).
+  run(db, "DELETE FROM accounts WHERE user_id = ? AND grant_team_id = ?", userId, teamId);
   if (memberCount(db, teamId) === 0) run(db, "DELETE FROM teams WHERE id = ?", teamId);
 }
 

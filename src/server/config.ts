@@ -27,6 +27,10 @@ const schema = z.object({
   MAIL_FROM: z.string().default("Tempoloom <noreply@localhost>"),
   /** Default most members per team; the operator can set it per team with the CLI. */
   TEAM_SEAT_LIMIT: z.coerce.number().int().min(1).optional(),
+  /** Seconds between reads of calendars attached through a grant, before first sign-in. */
+  GRANT_REFRESH_SECONDS: z.coerce.number().int().min(5).default(86_400),
+  /** People created (or calendars attached) per minute by paced provisioning. */
+  PROVISION_PER_MINUTE: z.coerce.number().int().min(1).max(6000).default(60),
   /** Directory with the built web client. */
   WEB_DIST: z.string().default("./dist/web"),
 });

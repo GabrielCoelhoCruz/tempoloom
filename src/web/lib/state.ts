@@ -5,7 +5,8 @@ import { ApiError, api } from "./api.ts";
 export interface Me {
   user: { id: string; email: string; name: string; time_zone: string };
   settings: Settings;
-  accounts: { id: string; provider: string; email: string; status: string }[];
+  /** viaGrant: 1 when attached through the team's calendar grant (read-only). */
+  accounts: { id: string; provider: string; email: string; status: string; viaGrant: number }[];
 }
 
 export const me = signal<Me | null | undefined>(undefined);

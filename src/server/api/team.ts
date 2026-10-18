@@ -440,17 +440,30 @@ export function teamRoutes(deps: TeamDeps): Hono<AppEnv> {
       first_sign_in_at: number | null;
       deactivated_at: number | null;
       calendars: number;
+      events_read: number;
+      last_read: number | null;
     }>(
       db,
       `SELECT d.user_id, u.email, u.name, u.first_sign_in_at, u.deactivated_at,
-         (SELECT count(*) FROM accounts a WHERE a.user_id = u.id AND a.status = 'ok') AS calendars
+         (SELECT count(*) FROM accounts a WHERE a.user_id = u.id AND a.status = 'ok') AS calendars,
+         (SELECT count(*) FROM events e JOIN calendars c ON c.id = e.calendar_id
+            JOIN accounts a ON a.id = c.account_id
+          WHERE a.user_id = u.id AND a.status = 'ok' AND c.check_availability = 1
+            AND json_extract(e.private_props, '$.tl') IS NOT '1') AS events_read,
+         (SELECT max(c.synced_at) FROM calendars c JOIN accounts a ON a.id = c.account_id
+          WHERE a.user_id = u.id AND a.status = 'ok') AS last_read
        FROM directory_profiles d JOIN users u ON u.id = d.user_id WHERE d.team_id = ? ORDER BY u.email`,
       team.id,
     );
     return c.json({
       hasToken: Boolean(one(db, "SELECT 1 FROM scim_tokens WHERE team_id = ?", team.id)),
       people: people.map((p) => {
-        const { userName: _u, displayName: _d, ...shown } = attributes.get(p.user_id) ?? {};
+        const {
+          userName: _u,
+          displayName: _d,
+          active: _a,
+          ...shown
+        } = attributes.get(p.user_id) ?? {};
         return {
           email: p.email,
           name: p.name,
@@ -458,6 +471,8 @@ export function teamRoutes(deps: TeamDeps): Hono<AppEnv> {
           signedIn: p.first_sign_in_at !== null,
           seat: p.first_sign_in_at !== null && p.deactivated_at === null,
           calendar: p.calendars > 0,
+          eventsRead: p.events_read,
+          lastRead: p.last_read,
           deactivated: p.deactivated_at !== null,
         };
       }),

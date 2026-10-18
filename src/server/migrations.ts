@@ -495,4 +495,66 @@ export const MIGRATIONS: readonly string[] = [
     created_at INTEGER NOT NULL
   ) STRICT;
   `,
+  // 14: sso: single sign-on per team, CalDAV calendar grant, paced provisioning
+  `
+  -- A team's OpenID Connect identity provider (admin-sso-provisioning.md rules 2-5, 9).
+  CREATE TABLE sso_configs (
+    team_id TEXT PRIMARY KEY REFERENCES teams(id) ON DELETE CASCADE,
+    issuer TEXT NOT NULL,
+    client_id TEXT NOT NULL,
+    -- Sealed with the server key.
+    client_secret TEXT NOT NULL,
+    mode TEXT NOT NULL DEFAULT 'sso_only' CHECK (mode IN ('sso_only', 'sso_and_google')),
+    domain_capture INTEGER NOT NULL DEFAULT 0,
+    updated_at INTEGER NOT NULL
+  ) STRICT;
+
+  -- Each email domain belongs to one team's SSO (edge case 5).
+  CREATE TABLE sso_domains (
+    domain TEXT PRIMARY KEY,
+    team_id TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE
+  ) STRICT;
+  CREATE INDEX sso_domains_team ON sso_domains(team_id);
+
+  CREATE TABLE sso_states (
+    state TEXT PRIMARY KEY,
+    team_id TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    code_verifier TEXT NOT NULL,
+    nonce TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  ) STRICT;
+
+  -- A CalDAV account that can read every member's calendars (rules 12-15).
+  CREATE TABLE calendar_grants (
+    team_id TEXT PRIMARY KEY REFERENCES teams(id) ON DELETE CASCADE,
+    server_url TEXT NOT NULL,
+    username TEXT NOT NULL,
+    -- Sealed password.
+    password TEXT NOT NULL,
+    -- Calendar home of each person, relative to server_url; {local} and {email} are replaced.
+    home_template TEXT NOT NULL,
+    updated_at INTEGER NOT NULL
+  ) STRICT;
+
+  -- An account attached through a team's grant: read-only, read every 24 hours
+  -- until the person's first sign-in (rule 17).
+  ALTER TABLE accounts ADD COLUMN grant_team_id TEXT;
+  ALTER TABLE accounts ADD COLUMN refreshed_at INTEGER;
+
+  -- People waiting for paced provisioning (rule 10). create_user = 0 only attaches a calendar.
+  CREATE TABLE provision_jobs (
+    id INTEGER PRIMARY KEY,
+    team_id TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    email TEXT NOT NULL,
+    name TEXT NOT NULL,
+    attributes TEXT NOT NULL DEFAULT '{}',
+    create_user INTEGER NOT NULL,
+    state TEXT NOT NULL DEFAULT 'queued' CHECK (state IN ('queued', 'done', 'failed')),
+    error TEXT,
+    created_at INTEGER NOT NULL,
+    done_at INTEGER
+  ) STRICT;
+  CREATE INDEX provision_jobs_queue ON provision_jobs(state, id);
+  CREATE INDEX provision_jobs_team ON provision_jobs(team_id, create_user, state);
+  `,
 ];

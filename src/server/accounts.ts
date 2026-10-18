@@ -31,6 +31,8 @@ export interface AccountRow {
   access_token: string | null;
   access_expires_at: number;
   status: "ok" | "reauth_required";
+  /** Set when the account was attached through a team's calendar grant. */
+  grant_team_id: string | null;
 }
 
 const SESSION_DAYS = 30;
@@ -211,6 +213,7 @@ export function upsertAccount(db: Db, box: SecretBox, a: AccountInput, now = Dat
 /**
  * Creates or updates the user and Google account after a successful login.
  * Google returns a refresh token only on first consent, so an existing one is kept.
+ * A new user joins `teamId` when given (SSO domain capture).
  */
 export function upsertGoogleLogin(
   db: Db,
@@ -218,6 +221,7 @@ export function upsertGoogleLogin(
   identity: GoogleIdentity,
   tokens: TokenSet,
   now = Date.now(),
+  teamId?: string,
 ): { user: User; accountId: string } {
   return tx(db, () => {
     const existing = one<AccountRow>(
@@ -231,7 +235,7 @@ export function upsertGoogleLogin(
           "SELECT id, email, name, time_zone FROM users WHERE id = ?",
           existing.user_id,
         ) as User)
-      : ensureUser(db, identity.email, identity.name, now);
+      : ensureUser(db, identity.email, identity.name, now, teamId);
     const previous = existing
       ? (JSON.parse(box.open(existing.credentials)) as { refreshToken?: string })
       : {};

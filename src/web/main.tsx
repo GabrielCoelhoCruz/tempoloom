@@ -39,6 +39,21 @@ const TeamStats = lazyView(() => import("./views/team-stats.tsx").then((m) => m.
 const OrgAnalytics = lazyView(() =>
   import("./views/org-analytics.tsx").then((m) => m.OrgAnalytics),
 );
+const ConnectCalendar = lazyView(() =>
+  import("./views/connect.tsx").then((m) => m.ConnectCalendar),
+);
+
+/** Sign-in errors that come back in ?login_error= (single sign-on, Google). */
+const LOGIN_ERRORS: Record<string, string> = {
+  sso_required: "Your organization uses single sign-on. Sign in with SSO.",
+  sso_unknown_domain: "Single sign-on is not set up for this email domain.",
+  sso_other_team: "This account is not in your organization's team. Ask a team admin to add it.",
+  sso_domain: "Your identity provider signed you in with an email outside your organization.",
+  sso_unverified_email: "Your identity provider has not verified your email.",
+  sso_failed: "Single sign-on failed. Try again.",
+  no_seats: "Your organization's team has no free seats.",
+  deactivated: "Your organization deactivated this account.",
+};
 
 const NAV: { href: string; label: string }[] = [
   { href: "/", label: "Planner" },
@@ -85,11 +100,13 @@ function CalDavLogin() {
           ? "The server rejected the user name or password."
           : code === "deactivated"
             ? "Your organization deactivated this account."
-            : code === "email_required"
-              ? "Enter your email address."
-              : code === "no_calendars"
-                ? "This account has no calendars."
-                : "Could not reach the CalDAV server.",
+            : code === "sso_required" || code === "no_seats"
+              ? (LOGIN_ERRORS[code] ?? "")
+              : code === "email_required"
+                ? "Enter your email address."
+                : code === "no_calendars"
+                  ? "This account has no calendars."
+                  : "Could not reach the CalDAV server.",
       );
     } finally {
       setPending(false);
@@ -136,12 +153,23 @@ function Login() {
       <div class="card">
         <h1>Tempoloom</h1>
         <p>Plan tasks, habits and focus time around your meetings.</p>
-        {err && <p class="error">Sign-in failed: {err}</p>}
+        {err && (
+          <p class="error" role="alert">
+            {LOGIN_ERRORS[err] ?? `Sign-in failed: ${err}`}
+          </p>
+        )}
         {methods?.google && (
           <a class="button primary" href="/auth/google/start">
             Sign in with Google
           </a>
         )}
+        <form class="login-form" method="get" action="/auth/sso/start" data-testid="sso-form">
+          <label>
+            Work email
+            <input name="email" type="email" required autocomplete="email" />
+          </label>
+          <button type="submit">Sign in with SSO</button>
+        </form>
         <details open={methods !== null && !methods.google}>
           <summary>Use a CalDAV calendar</summary>
           <CalDavLogin />
@@ -209,6 +237,7 @@ function App() {
         </form>
       </nav>
       <main class="main">
+        {!me.value.accounts.some((a) => !a.viaGrant) && <ConnectCalendar />}
         <Page />
       </main>
     </div>

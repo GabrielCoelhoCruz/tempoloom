@@ -6,6 +6,7 @@ import { openDb } from "./db.ts";
 import type { OAuthClient } from "./google/oauth.ts";
 import { parseServiceAccountKey } from "./google/service-account.ts";
 import { createMailer } from "./mail.ts";
+import { ProvisionWorker } from "./provisioning.ts";
 import { SyncService } from "./sync/service.ts";
 import { WebhookWorker } from "./webhooks.ts";
 
@@ -32,6 +33,7 @@ const sync = new SyncService({
   now: Date.now,
   intervalMs: config.SYNC_INTERVAL_SECONDS * 1000,
   baseUrl: config.BASE_URL,
+  refreshMs: config.GRANT_REFRESH_SECONDS * 1000,
 });
 const webhooks = new WebhookWorker({
   db,
@@ -41,6 +43,13 @@ const webhooks = new WebhookWorker({
   now: Date.now,
 });
 const mailer = createMailer(config.SMTP_URL, config.MAIL_FROM);
+const provisioning = new ProvisionWorker({
+  db,
+  box,
+  sync,
+  perMinute: config.PROVISION_PER_MINUTE,
+  now: Date.now,
+});
 const app = createApp({ db, config, box, oauth, sync, webhooks, mailer });
 
 const server = serve({ fetch: app.fetch, port: config.PORT, hostname: config.HOST }, (info) => {
@@ -48,10 +57,12 @@ const server = serve({ fetch: app.fetch, port: config.PORT, hostname: config.HOS
 });
 sync.start();
 webhooks.start();
+provisioning.start();
 
 // Stop taking requests, let queued calendar writes finish, then exit.
 async function shutdown() {
   server.close();
+  await provisioning.stop();
   await sync.stop();
   await webhooks.stop();
   db.close();
