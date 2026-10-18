@@ -8,7 +8,6 @@ started=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 branch=$(git rev-parse --abbrev-ref HEAD)
 head=$(git rev-parse HEAD)
 dirty=$(git status --porcelain)
-scripts/login-browser.sh status
 npm run build >/dev/null
 rm -f .e2e/radicale.log
 npx playwright test "$@" 2>&1 | tee .e2e/output.txt
@@ -33,7 +32,6 @@ summary=$(node -e '
   echo '```bash'
   echo "git checkout $head"
   echo "npm ci"
-  echo "scripts/login-browser.sh start"
   echo "scripts/e2e-run.sh $*"
   echo '```'
   echo
