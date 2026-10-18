@@ -294,6 +294,7 @@ test("only a team admin manages endpoints in Team settings > Webhooks; a member 
 
     // The member sees the endpoint but cannot manage it.
     await openTeam(pc);
+    await pc.reload();
     const section = pc.getByTestId("team-webhooks");
     await expect(section.getByTestId("webhook-row")).toContainText("CRM");
     await expect(section.getByRole("button", { name: "+ New" })).toHaveCount(0);

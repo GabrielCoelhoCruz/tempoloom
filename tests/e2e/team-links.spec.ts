@@ -303,9 +303,9 @@ test("a round-robin link offers every pool member's time, names nobody before co
   await claimPage(page, "dee");
   await addLink(page, { title: "Support", durations: "30", level: 4 });
   await editLink(page, "Support");
+  await organizer(page, EMAIL).getByRole("button", { name: "Remove" }).click();
   await addToPool(page, EMAIL);
   await addToPool(page, colleague.email);
-  await organizer(page, EMAIL).getByRole("button", { name: "Remove" }).click();
   await saveLink(page);
   await page.reload();
   await editLink(page, "Support");
@@ -390,10 +390,10 @@ test("a preferred pool member is chosen first, but a reschedule keeps the member
   await claimPage(page, "eli");
   await addLink(page, { title: "Help", durations: "30", level: 4 });
   await editLink(page, "Help");
+  await organizer(page, EMAIL).getByRole("button", { name: "Remove" }).click();
   await addToPool(page, EMAIL);
   await addToPool(page, colleague.email);
   await poolMember(page, EMAIL).getByLabel("Preferred").check();
-  await organizer(page, EMAIL).getByRole("button", { name: "Remove" }).click();
   await saveLink(page);
 
   const v = await visitor(browser);
