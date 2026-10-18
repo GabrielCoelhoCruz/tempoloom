@@ -21,6 +21,8 @@ export default defineConfig({
     timezoneId: "Europe/Berlin",
     locale: "en-GB",
     viewport: { width: 1440, height: 900 },
+    actionTimeout: 15_000,
+    navigationTimeout: 30_000,
     // Never record traces or video: they can contain session tokens.
     trace: "off",
     video: "off",

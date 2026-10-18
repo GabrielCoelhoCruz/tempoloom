@@ -11,7 +11,7 @@ import type { SyncService } from "../sync/service.ts";
 const range = z
   .tuple([z.number().int().min(0).max(1439), z.number().int().min(1).max(1440)])
   .refine(([s, e]) => e > s, "A range must end after it starts");
-const weekly = z.record(z.enum(["1", "2", "3", "4", "5", "6", "7"]), z.array(range).max(12));
+const weekly = z.partialRecord(z.enum(["1", "2", "3", "4", "5", "6", "7"]), z.array(range).max(12));
 
 export function settingsRoutes(db: Db, sync: SyncService, now: () => number): Hono<AppEnv> {
   const r = new Hono<AppEnv>();
