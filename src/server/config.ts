@@ -18,6 +18,10 @@ const schema = z.object({
     .refine((v) => Buffer.from(v, "base64").length === 32, "SECRET_KEY must be 32 bytes, base64"),
   /** Seconds between calendar polls for each connected account. */
   SYNC_INTERVAL_SECONDS: z.coerce.number().int().min(5).default(30),
+  /** Allow webhook URLs on http, localhost and private addresses (self-hosted receivers). */
+  WEBHOOK_ALLOW_PRIVATE: z.stringbool().default(false),
+  /** First retry delay for failed webhook deliveries; it doubles up to one hour. */
+  WEBHOOK_RETRY_BASE_MS: z.coerce.number().int().min(10).default(30_000),
   /** Directory with the built web client. */
   WEB_DIST: z.string().default("./dist/web"),
 });

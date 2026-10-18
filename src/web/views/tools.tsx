@@ -269,7 +269,6 @@ export function Pomodoro() {
             role="tab"
             key={p}
             aria-selected={p === phase}
-            aria-pressed={p === phase}
             onClick={() => select(p)}
           >
             {PHASE_LABEL[p]}

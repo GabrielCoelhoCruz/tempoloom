@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "preact/hooks";
-import { api } from "../lib/api.ts";
+import { ApiError, api } from "../lib/api.ts";
 import { formatWhen } from "../lib/format.ts";
 import { LEVEL_NAMES, zone } from "../lib/state.ts";
 
@@ -11,6 +11,25 @@ interface Link {
   level: number;
   hidden: number;
 }
+
+interface Endpoint {
+  id: string;
+  name: string;
+  url: string;
+  status: "active" | "suspended";
+  link_ids: string[];
+  last_result: string | null;
+}
+
+const VERIFY_EXAMPLE = `import { createHmac, timingSafeEqual } from "node:crypto";
+
+// rawBody: the request body as received, before JSON parsing.
+function verified(rawBody, header, secret) {
+  const expected = "sha256=" + createHmac("sha256", secret).update(rawBody).digest("base64");
+  const a = Buffer.from(header ?? ""), b = Buffer.from(expected);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+// header: request.headers["x-tempoloom-signature-256"]`;
 
 interface Booking {
   id: string;
@@ -27,17 +46,22 @@ export function Links() {
   const [links, setLinks] = useState<Link[]>([]);
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [endpoints, setEndpoints] = useState<Endpoint[]>([]);
+  const [secret, setSecret] = useState<{ name: string; value: string } | null>(null);
+  const [urlError, setUrlError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     const p = await api<{ slug: string | null }>("GET", "/api/booking/page");
     setPage(p.slug);
     if (p.slug) {
-      const [l, b] = await Promise.all([
+      const [l, b, w] = await Promise.all([
         api<{ links: Link[] }>("GET", "/api/booking/links"),
         api<{ bookings: Booking[] }>("GET", "/api/booking/bookings"),
+        api<{ endpoints: Endpoint[] }>("GET", "/api/webhooks"),
       ]);
       setLinks(l.links);
       setBookings(b.bookings);
+      setEndpoints(w.endpoints);
     }
   }, []);
   useEffect(() => void load(), [load]);
@@ -183,6 +207,29 @@ export function Links() {
                   {url(l.slug)}
                 </a>
               </div>
+              {endpoints.length > 0 && (
+                <div class="meta" data-testid="link-webhooks">
+                  Send webhooks to:{" "}
+                  {endpoints.map((e) => (
+                    <label class="inline" key={e.id}>
+                      <input
+                        type="checkbox"
+                        checked={e.link_ids.includes(l.id)}
+                        onChange={(ev) => {
+                          const on = ev.currentTarget.checked;
+                          const ids = endpoints
+                            .filter((x) => (x.id === e.id ? on : x.link_ids.includes(l.id)))
+                            .map((x) => x.id);
+                          void act(() =>
+                            api("PUT", `/api/booking/links/${l.id}/webhooks`, { endpointIds: ids }),
+                          );
+                        }}
+                      />
+                      {e.name}
+                    </label>
+                  ))}
+                </div>
+              )}
             </div>
             <div class="actions">
               <button
@@ -202,6 +249,119 @@ export function Links() {
           </div>
         ))}
       </div>
+      <h2>Webhooks</h2>
+      <p>
+        Tempoloom sends a signed POST request to these addresses when a meeting is booked, moved or
+        cancelled.
+      </p>
+      <form
+        class="form"
+        data-testid="webhook-form"
+        onSubmit={(e) => {
+          e.preventDefault();
+          const form = e.currentTarget as HTMLFormElement;
+          const f = new FormData(form);
+          const name = String(f.get("name") ?? "");
+          const typed = String(f.get("secret") ?? "");
+          setUrlError(null);
+          api<{ secret: string }>("POST", "/api/webhooks", {
+            name,
+            url: String(f.get("url") ?? ""),
+            ...(typed ? { secret: typed } : {}),
+          })
+            .then((r) => {
+              setSecret({ name, value: r.secret });
+              form.reset();
+              return load();
+            })
+            .catch((err) => {
+              const body =
+                err instanceof ApiError
+                  ? (err.body as { message?: string; issues?: { message: string }[] })
+                  : null;
+              setUrlError(body?.message ?? body?.issues?.[0]?.message ?? String(err));
+            });
+        }}
+      >
+        <label>
+          Name
+          <input name="name" required maxLength={100} />
+        </label>
+        <label class="wide">
+          URL
+          <input name="url" required placeholder="https://example.com/hooks/tempoloom" />
+          {urlError && (
+            <span class="error" data-testid="webhook-url-error">
+              {urlError}
+            </span>
+          )}
+        </label>
+        <label>
+          Secret (optional, 32 to 128 characters)
+          <input name="secret" minLength={32} maxLength={128} />
+        </label>
+        <button type="submit" class="primary">
+          Add webhook
+        </button>
+      </form>
+      {secret && (
+        <p class="status" data-testid="webhook-secret-box">
+          Secret for {secret.name}: <code data-testid="webhook-secret">{secret.value}</code>{" "}
+          <button type="button" onClick={() => void navigator.clipboard?.writeText(secret.value)}>
+            Copy secret
+          </button>
+          <br />
+          Copy it now. Tempoloom does not show it again. Update your receiver when you change it.
+        </p>
+      )}
+      <div class="list" data-testid="webhook-list">
+        {endpoints.map((e) => (
+          <div class="row" key={e.id} data-testid="webhook-row">
+            <div>
+              <div>
+                {e.name} <span class="badge">{e.status}</span>
+              </div>
+              <div class="meta">
+                {e.url} · {e.link_ids.length} links
+                {e.last_result ? ` · last result ${e.last_result.replace("http_", "HTTP ")}` : ""}
+              </div>
+            </div>
+            <div class="actions">
+              {e.status === "suspended" && (
+                <button
+                  type="button"
+                  onClick={() => void act(() => api("POST", `/api/webhooks/${e.id}/resume`))}
+                >
+                  Resume
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() =>
+                  void act(async () => {
+                    const r = await api<{ secret: string }>("POST", `/api/webhooks/${e.id}/secret`);
+                    setSecret({ name: e.name, value: r.secret });
+                  })
+                }
+              >
+                New secret
+              </button>
+              <button
+                type="button"
+                class="danger"
+                onClick={() => void act(() => api("DELETE", `/api/webhooks/${e.id}`))}
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        ))}
+        {endpoints.length === 0 && <p class="status">No webhooks yet.</p>}
+      </div>
+      <details>
+        <summary>Check the signature in your receiver</summary>
+        <pre data-testid="verify-example">{VERIFY_EXAMPLE}</pre>
+      </details>
       <h2>Bookings</h2>
       <div class="list" data-testid="booking-list">
         {bookings.map((b) => (

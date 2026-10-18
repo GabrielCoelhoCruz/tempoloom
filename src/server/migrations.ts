@@ -311,4 +311,40 @@ export const MIGRATIONS: readonly string[] = [
     PRIMARY KEY (user_id, calendar_id, target_id)
   ) STRICT;
   `,
+  // 8: outgoing webhooks for booking links
+  `
+  CREATE TABLE webhook_endpoints (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    url TEXT NOT NULL,
+    secret TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'suspended')),
+    created_at INTEGER NOT NULL
+  ) STRICT;
+
+  CREATE TABLE booking_link_webhooks (
+    link_id TEXT NOT NULL REFERENCES booking_links(id) ON DELETE CASCADE,
+    endpoint_id TEXT NOT NULL REFERENCES webhook_endpoints(id) ON DELETE CASCADE,
+    PRIMARY KEY (link_id, endpoint_id)
+  ) STRICT;
+
+  CREATE TABLE webhook_deliveries (
+    id TEXT PRIMARY KEY,
+    endpoint_id TEXT NOT NULL REFERENCES webhook_endpoints(id) ON DELETE CASCADE,
+    type TEXT NOT NULL,
+    event_ts INTEGER NOT NULL,
+    payload TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('pending', 'delivered')),
+    attempts INTEGER NOT NULL DEFAULT 0,
+    next_attempt_at INTEGER NOT NULL,
+    last_result TEXT,
+    created_at INTEGER NOT NULL,
+    delivered_at INTEGER
+  ) STRICT;
+  CREATE INDEX webhook_deliveries_due ON webhook_deliveries(status, next_attempt_at);
+
+  -- Custom data from the booking page URL, sent in every webhook of the meeting.
+  ALTER TABLE bookings ADD COLUMN custom_data TEXT NOT NULL DEFAULT '{"data":{},"errors":[]}';
+  `,
 ];

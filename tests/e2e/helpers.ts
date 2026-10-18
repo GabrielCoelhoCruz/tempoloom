@@ -1,8 +1,17 @@
 // Shared steps for E2E scenarios: they drive the real UI like a user would.
-import type { Page } from "@playwright/test";
+import type { Browser, Page } from "@playwright/test";
 import type { ProviderEvent } from "../../src/server/providers/types.ts";
 import { addDays } from "../../src/shared/time.ts";
-import { at, type CalendarDriver, expect, local, managed, testWeek } from "./fixtures.ts";
+import {
+  at,
+  BASE_URL,
+  type CalendarDriver,
+  expect,
+  local,
+  managed,
+  testWeek,
+  ZONE,
+} from "./fixtures.ts";
 
 export const MIN = 60_000;
 export const W = testWeek();
@@ -100,4 +109,46 @@ export async function openWeek(page: Page, monday = W): Promise<void> {
 export async function openEvent(page: Page, text: string): Promise<void> {
   await page.locator(".ev", { hasText: text }).first().click();
   await expect(page.getByTestId("event-drawer")).toBeVisible();
+}
+
+// Booking links.
+
+export async function claimPage(page: Page, slug: string) {
+  await page.getByRole("link", { name: "Booking links" }).click();
+  await page.getByTestId("claim-form").getByLabel("Page address").fill(slug);
+  await page.getByRole("button", { name: "Create booking page" }).click();
+  await expect(page.getByTestId("page-url")).toContainText(`/book/${slug}`);
+}
+
+export async function addLink(
+  page: Page,
+  l: { title: string; durations?: string; level?: number; maxPerDay?: number; hidden?: boolean },
+) {
+  await page.getByRole("link", { name: "Booking links" }).click();
+  const form = page.getByTestId("link-form");
+  await form.getByLabel("Title").fill(l.title);
+  if (l.durations) await form.getByLabel(/Durations/).fill(l.durations);
+  if (l.level) await form.getByLabel("Priority").selectOption(String(l.level));
+  if (l.maxPerDay) await form.getByLabel("Most bookings per day").fill(String(l.maxPerDay));
+  if (l.hidden) await form.getByLabel(/Hide from my page/).check();
+  await form.getByRole("button", { name: "Add link" }).click();
+  await expect(page.locator(`[data-link-title="${l.title}"]`)).toBeVisible();
+}
+
+/** A signed-out visitor in a separate browser context. */
+export async function visitor(browser: Browser): Promise<Page> {
+  const ctx = await browser.newContext({ timezoneId: ZONE, locale: "en-GB", baseURL: BASE_URL });
+  return ctx.newPage();
+}
+
+export const slot = (p: Page, t: number) =>
+  p.locator(`[data-testid="times"] button[data-start="${t}"]`);
+
+export async function book(p: Page, t: number, name: string, email: string) {
+  await slot(p, t).click();
+  const form = p.getByTestId("book-form");
+  await form.getByLabel("Your name").fill(name);
+  await form.getByLabel("Your email").fill(email);
+  await form.getByRole("button", { name: "Book" }).click();
+  await expect(p.getByTestId("booked")).toBeVisible();
 }

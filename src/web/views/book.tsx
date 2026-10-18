@@ -161,6 +161,9 @@ function BookingPage({ page, link }: { page: string; link: string }) {
               name: f.get("name"),
               email: f.get("email"),
               message: f.get("message") || undefined,
+              params: [...new URLSearchParams(location.search)].filter(([k]) =>
+                k.startsWith("data-"),
+              ),
             })
               .then(setDone)
               .catch((err) => {

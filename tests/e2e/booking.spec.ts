@@ -1,50 +1,21 @@
 // Booking links: page setup, public booking without sign-in, priority, limits,
 // hidden links, reschedule and cancel. Specs: booking-links*.md.
-import type { Browser, Page } from "@playwright/test";
 import { addDays } from "../../src/shared/time.ts";
-import { at, BASE_URL, blockUntil, eventually, expect, local, test, ZONE } from "./fixtures.ts";
-import { addHabit, addTask, allEvents, titled, W } from "./helpers.ts";
+import { at, blockUntil, eventually, expect, local, test } from "./fixtures.ts";
+import {
+  addHabit,
+  addLink,
+  addTask,
+  allEvents,
+  book,
+  claimPage,
+  slot,
+  titled,
+  visitor,
+  W,
+} from "./helpers.ts";
 
 const day = (n: number) => addDays(W, n);
-
-async function claimPage(page: Page, slug: string) {
-  await page.getByRole("link", { name: "Booking links" }).click();
-  await page.getByTestId("claim-form").getByLabel("Page address").fill(slug);
-  await page.getByRole("button", { name: "Create booking page" }).click();
-  await expect(page.getByTestId("page-url")).toContainText(`/book/${slug}`);
-}
-
-async function addLink(
-  page: Page,
-  l: { title: string; durations?: string; level?: number; maxPerDay?: number; hidden?: boolean },
-) {
-  await page.getByRole("link", { name: "Booking links" }).click();
-  const form = page.getByTestId("link-form");
-  await form.getByLabel("Title").fill(l.title);
-  if (l.durations) await form.getByLabel(/Durations/).fill(l.durations);
-  if (l.level) await form.getByLabel("Priority").selectOption(String(l.level));
-  if (l.maxPerDay) await form.getByLabel("Most bookings per day").fill(String(l.maxPerDay));
-  if (l.hidden) await form.getByLabel(/Hide from my page/).check();
-  await form.getByRole("button", { name: "Add link" }).click();
-  await expect(page.locator(`[data-link-title="${l.title}"]`)).toBeVisible();
-}
-
-/** A signed-out visitor in a separate browser context. */
-async function visitor(browser: Browser): Promise<Page> {
-  const ctx = await browser.newContext({ timezoneId: ZONE, locale: "en-GB", baseURL: BASE_URL });
-  return ctx.newPage();
-}
-
-const slot = (p: Page, t: number) => p.locator(`[data-testid="times"] button[data-start="${t}"]`);
-
-async function book(p: Page, t: number, name: string, email: string) {
-  await slot(p, t).click();
-  const form = p.getByTestId("book-form");
-  await form.getByLabel("Your name").fill(name);
-  await form.getByLabel("Your email").fill(email);
-  await form.getByRole("button", { name: "Book" }).click();
-  await expect(p.getByTestId("booked")).toBeVisible();
-}
 
 test("a visitor books a time without signing in; the event lands on the calendar and a task moves away (booking-links rules 10-13, 22-23)", async ({
   page,

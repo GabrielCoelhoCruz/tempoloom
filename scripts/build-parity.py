@@ -3,9 +3,10 @@
 and the status map below. Run: python3 scripts/build-parity.py
 
 Status rules:
-  done     = implemented AND a passing Google Calendar E2E test (none yet).
-  partial  = implemented; proof is a passing CalDAV E2E (named) or unit tests.
-  blocked  = not implemented yet, or a non-goal; the reason says which.
+  done (CalDAV) = a full UI E2E test passes against a real CalDAV server (E2E map).
+  partial       = implemented in part, or proven by unit tests only (PARTIAL, UNIT,
+                  GOOGLE_ROWS); the reason says what is missing.
+  blocked       = not implemented yet, or a non-goal; the reason says which.
 """
 import re, sys, glob, os
 
@@ -64,6 +65,8 @@ T = {
     "x_stats": "stats sum meetings, tasks and habits for a chosen range",
     "x_prio": "a lowered external event is offered only by higher-priority booking links",
     "x_travel": "travel time wraps events at an address; flights get airport time instead",
+    "w_flow": "booking, reschedule and cancel send signed requests with custom data; a new secret signs the next one",
+    "w_retry": "a failing receiver gets retries with one request id and Retry-After; too much custom data is dropped; removed and deleted endpoints stop",
 }
 
 # Row id -> E2E test keys that prove it on CalDAV.
@@ -94,6 +97,18 @@ E2E = {
     711: ["x_timer"], 714: ["x_cost"], 715: ["x_cost"], 716: ["x_cost"],
     294: ["x_prio"], 295: ["x_prio"], 296: ["x_prio"], 237: ["x_travel"], 239: ["x_travel"], 240: ["x_travel"],
     241: ["x_travel"], 407: ["x_prio"],
+    405: ["w_flow"], 931: ["w_flow", "w_retry"], 932: ["w_flow", "w_retry"], 933: ["w_retry"], 935: ["w_flow"],
+    937: ["w_retry"], 939: ["w_retry"], 940: ["w_flow"], 941: ["w_flow", "w_retry"], 942: ["w_flow"],
+    943: ["w_flow", "w_retry"],
+}
+
+# Row id -> reason, for rows implemented in part (some behavior has E2E, some does not).
+PARTIAL = {
+    930: "Endpoints are per user, on the Booking links page, with E2E on CalDAV (\u201cbooking, reschedule and cancel send signed requests\u201d); teams and the admin role are not implemented",
+    571: "A per-user webhooks section on the Booking links page; no team settings page yet",
+    934: "http on a public host is rejected in E2E; the localhost and IP-literal checks are in code but not under E2E, because the E2E server allows private receivers (WEBHOOK_ALLOW_PRIVATE)",
+    936: "success on 200 and failure on 500 are E2E-proven; the 10-second timeout is not under test",
+    938: "the delivery worker suspends the endpoint and the page offers Resume; not under test (needs 24 hours of failures)",
 }
 
 # Row id -> limits, for rows implemented with unit or property tests only.
@@ -138,6 +153,8 @@ def status(row_id, spec_file, notes):
     if row_id in E2E:
         tests = "; ".join(f"\u201c{T[k]}\u201d" for k in E2E[row_id])
         return "done (CalDAV)", f"Full UI E2E passes on CalDAV (Radicale): {tests}. Google Calendar run pending (service-account key)."
+    if row_id in PARTIAL:
+        return "partial", f"{PARTIAL[row_id]}."
     if row_id in GOOGLE_ROWS:
         return "partial", GOOGLE_ROWS[row_id]
     if row_id in UNIT:

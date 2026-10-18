@@ -344,6 +344,9 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
       SECRET_KEY: secretKey,
       SYNC_INTERVAL_SECONDS: "5",
       WEB_DIST: join(ROOT, "dist/web"),
+      // Webhook tests use a receiver on loopback and short retry delays.
+      WEBHOOK_ALLOW_PRIVATE: "1",
+      WEBHOOK_RETRY_BASE_MS: "500",
       ...(SA_JSON ? { GOOGLE_SERVICE_ACCOUNT_JSON: SA_JSON } : {}),
     };
     const start = async () => {

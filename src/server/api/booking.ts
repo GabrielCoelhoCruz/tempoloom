@@ -14,6 +14,7 @@ import { writeCalendar } from "../planner/replan.ts";
 import { getSettings } from "../settings.ts";
 import { cacheEvent } from "../sync/pull.ts";
 import type { SyncService } from "../sync/service.ts";
+import { type CustomData, customData, type WebhookType } from "../webhooks.ts";
 
 export interface LinkRow {
   id: string;
@@ -47,6 +48,8 @@ interface BookingRow {
   email: string;
   message: string;
   status: "booked" | "cancelled";
+  created_at: number;
+  custom_data: string;
 }
 
 const slugRe = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
@@ -396,12 +399,68 @@ export function bookingRoutes(db: Db, now: () => number): Hono<AppEnv> {
   return r;
 }
 
+type OnEvent = (linkId: string, type: WebhookType, body: Record<string, unknown>) => void;
+
+interface MeetingFacts {
+  id: string;
+  start: number;
+  end: number;
+  name: string;
+  email: string;
+  message: string;
+  created: number;
+  custom: CustomData;
+  rescheduled?: number;
+  cancelled?: number;
+}
+
+/** The meeting object of a webhook payload (integrations-webhooks.md rule 17). */
+function meetingObject(db: Db, link: LinkRow, b: MeetingFacts, baseUrl: string) {
+  const owner = one<{ id: string; email: string; name: string; time_zone: string }>(
+    db,
+    "SELECT id, email, name, time_zone FROM users WHERE id = ?",
+    link.user_id,
+  );
+  const iso = (ms: number) => new Date(ms).toISOString();
+  return {
+    meeting_id: b.id,
+    meeting_title: eventTitle(link, owner?.name ?? "", b.name),
+    meeting_url: new URL("/links", baseUrl).toString(),
+    booking_link_id: link.id,
+    booking_link_title: link.title,
+    booking_link_description: link.description,
+    start_time: iso(b.start),
+    end_time: iso(b.end),
+    scheduled_at: iso(b.created),
+    ...(b.rescheduled ? { rescheduled_at: iso(b.rescheduled) } : {}),
+    ...(b.cancelled ? { cancelled_at: iso(b.cancelled) } : {}),
+    participants: owner
+      ? [
+          {
+            is_host: true,
+            email: owner.email,
+            user_id: owner.id,
+            name: owner.name,
+            time_zone: { id: owner.time_zone },
+          },
+        ]
+      : [],
+    attendee: { email: b.email, name: b.name },
+    ccs: [],
+    message: b.message,
+    location: link.location ? { text: link.location } : null,
+    answers: [],
+    custom_data: b.custom,
+  };
+}
+
 /** Public booking API: no session; the page and link slugs or a manage token identify the data. */
 export function publicBookingRoutes(
   db: Db,
   sync: SyncService,
   baseUrl: string,
   now: () => number,
+  onEvent: OnEvent,
 ): Hono {
   const r = new Hono();
   const findLink = (page: string, link: string) =>
@@ -482,6 +541,10 @@ export function publicBookingRoutes(
     name: z.string().trim().min(1).max(200),
     email: z.email(),
     message: z.string().max(4000).optional(),
+    params: z
+      .array(z.tuple([z.string().max(200), z.string().max(2000)]))
+      .max(100)
+      .optional(),
   });
 
   const offered = (link: LinkRow, start: number, duration: number, resched?: string) =>
@@ -510,6 +573,7 @@ export function publicBookingRoutes(
       const id = randomUUID();
       const token = randomBytes(24).toString("base64url");
       const end = body.start + body.duration * 60_000;
+      const custom = customData(body.params ?? []);
       const description = [body.message ?? "", manageText(token)].filter(Boolean).join("\n\n");
       const ev = await pool.get(target.account_id).insertEvent(target.provider_id, {
         summary: eventTitle(link, organizer, body.name),
@@ -526,7 +590,7 @@ export function publicBookingRoutes(
       run(
         db,
         `INSERT INTO bookings (id, link_id, user_id, calendar_id, event_id, start_ms, end_ms, name, email, message,
-           token_hash, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'booked', ?, ?)`,
+           token_hash, status, created_at, updated_at, custom_data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'booked', ?, ?, ?)`,
         id,
         link.id,
         link.user_id,
@@ -540,7 +604,25 @@ export function publicBookingRoutes(
         hash(token),
         now(),
         now(),
+        JSON.stringify(custom),
       );
+      onEvent(link.id, "booking_link.meeting.created", {
+        meeting: meetingObject(
+          db,
+          link,
+          {
+            id,
+            start: body.start,
+            end,
+            name: body.name,
+            email: body.email,
+            message: body.message ?? "",
+            created: now(),
+            custom,
+          },
+          baseUrl,
+        ),
+      });
       return { token, start: body.start, end };
     });
     if ("error" in result) return c.json(result, result.error === "slot_taken" ? 409 : 500);
@@ -611,6 +693,29 @@ export function publicBookingRoutes(
         now(),
         b.id,
       );
+      const facts = {
+        id: b.id,
+        name: b.name,
+        email: b.email,
+        message: b.message,
+        created: b.created_at,
+        custom: JSON.parse(b.custom_data) as CustomData,
+      };
+      onEvent(link.id, "booking_link.meeting.updated", {
+        previous_meeting: meetingObject(
+          db,
+          link,
+          { ...facts, start: b.start_ms, end: b.end_ms },
+          baseUrl,
+        ),
+        new_meeting: meetingObject(
+          db,
+          link,
+          { ...facts, start, end: start + duration * 60_000, rescheduled: now() },
+          baseUrl,
+        ),
+        change_reason: "rescheduled",
+      });
       return { start, end: start + duration * 60_000 };
     });
     if ("error" in result) return c.json(result, result.error === "slot_taken" ? 409 : 500);
@@ -636,6 +741,29 @@ export function publicBookingRoutes(
         );
       }
       run(db, "UPDATE bookings SET status = 'cancelled', updated_at = ? WHERE id = ?", now(), b.id);
+      const link = b.link_id
+        ? one<LinkRow>(db, "SELECT * FROM booking_links WHERE id = ?", b.link_id)
+        : undefined;
+      if (link) {
+        onEvent(link.id, "booking_link.meeting.cancelled", {
+          meeting: meetingObject(
+            db,
+            link,
+            {
+              id: b.id,
+              start: b.start_ms,
+              end: b.end_ms,
+              name: b.name,
+              email: b.email,
+              message: b.message,
+              created: b.created_at,
+              custom: JSON.parse(b.custom_data) as CustomData,
+              cancelled: now(),
+            },
+            baseUrl,
+          ),
+        });
+      }
     });
     return c.json({ ok: true });
   });

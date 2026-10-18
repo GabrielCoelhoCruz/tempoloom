@@ -22,6 +22,7 @@ import { itemRoutes } from "./api/items.ts";
 import { plannerRoutes } from "./api/planner.ts";
 import { settingsRoutes } from "./api/settings.ts";
 import { statsRoutes } from "./api/stats.ts";
+import { webhookRoutes } from "./api/webhooks.ts";
 import type { Config } from "./config.ts";
 import type { SecretBox } from "./crypto.ts";
 import { all, type Db, one, run } from "./db.ts";
@@ -36,6 +37,7 @@ import { CalDavProvider } from "./providers/caldav.ts";
 import { ProviderError } from "./providers/types.ts";
 import { getSettings } from "./settings.ts";
 import type { SyncService } from "./sync/service.ts";
+import { enqueueBookingEvent, type WebhookWorker } from "./webhooks.ts";
 
 export interface AppDeps {
   db: Db;
@@ -43,6 +45,7 @@ export interface AppDeps {
   box: SecretBox;
   oauth: OAuthClient | undefined;
   sync: SyncService;
+  webhooks: WebhookWorker;
   now?: () => number;
 }
 
@@ -203,7 +206,20 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   });
 
   // Public booking pages' API: no session.
-  app.route("/pub", publicBookingRoutes(db, sync, config.BASE_URL, now));
+  const webhookDeps = {
+    db,
+    box,
+    allowPrivate: config.WEBHOOK_ALLOW_PRIVATE,
+    retryBaseMs: config.WEBHOOK_RETRY_BASE_MS,
+    now,
+  };
+  app.route(
+    "/pub",
+    publicBookingRoutes(db, sync, config.BASE_URL, now, (linkId, type, body) => {
+      enqueueBookingEvent(webhookDeps, linkId, type, body);
+      deps.webhooks.kick();
+    }),
+  );
 
   app.use("/api/*", async (c, next) => {
     const token = getCookie(c, SESSION_COOKIE);
@@ -241,6 +257,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   app.route("/api", itemRoutes(db, sync, now));
   app.route("/api/planner", plannerRoutes(db, sync, now));
   app.route("/api/booking", bookingRoutes(db, now));
+  app.route("/api", webhookRoutes(db, box, config.WEBHOOK_ALLOW_PRIVATE, now));
   app.route("/api", statsRoutes(db));
 
   // Static client with a single-page fallback.

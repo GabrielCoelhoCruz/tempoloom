@@ -440,7 +440,8 @@ fieldset.days {
   flex-direction: column;
   height: 100vh;
 }
-button[aria-pressed="true"] {
+button[aria-pressed="true"],
+button[aria-selected="true"] {
   border-color: var(--accent);
   color: var(--accent);
 }
