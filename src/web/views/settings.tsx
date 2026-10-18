@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "preact/hooks";
 import type { Settings as UserSettings } from "../../server/settings.ts";
 import { api } from "../lib/api.ts";
 import { hhmm, parseHhmm } from "../lib/format.ts";
+import { templateFromUrl } from "../lib/library.ts";
 import { loadMe, me, planNow } from "../lib/state.ts";
 
 interface HoursSet {
@@ -89,6 +90,8 @@ function HoursEditor({
 }
 
 export function Settings() {
+  // A library mirroring entry fills the mirroring form (automations-library.md rule 5).
+  const mirrorTemplate = templateFromUrl()?.kind === "calendar_mirroring";
   const [settings, setSettings] = useState<UserSettings | null>(null);
   const [hours, setHours] = useState<HoursSet[]>([]);
   const [calendars, setCalendars] = useState<Calendar[]>([]);
@@ -350,7 +353,9 @@ export function Settings() {
             Copies show
             <select name="visibility">
               <option value="label_only">A label only</option>
-              <option value="busy_only">"Busy"</option>
+              <option value="busy_only" selected={mirrorTemplate}>
+                "Busy"
+              </option>
               <option value="details_private">Details, private</option>
               <option value="details_default">Details</option>
             </select>

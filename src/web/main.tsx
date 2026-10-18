@@ -6,6 +6,7 @@ import { onLinkClick, path } from "./lib/router.ts";
 import { loadMe, me } from "./lib/state.ts";
 import { PublicBooking } from "./views/book.tsx";
 import { Habits } from "./views/habits.tsx";
+import { Library } from "./views/library.tsx";
 import { Links } from "./views/links.tsx";
 import { Meetings } from "./views/meetings.tsx";
 import { Planner } from "./views/planner.tsx";
@@ -19,6 +20,7 @@ const NAV: { href: string; label: string }[] = [
   { href: "/tasks", label: "Tasks" },
   { href: "/habits", label: "Habits" },
   { href: "/meetings", label: "Meetings" },
+  { href: "/library", label: "Library" },
   { href: "/links", label: "Booking links" },
   { href: "/stats", label: "Stats" },
   { href: "/settings", label: "Settings" },
@@ -129,6 +131,8 @@ function Page() {
       return <Habits />;
     case "/meetings":
       return <Meetings />;
+    case "/library":
+      return <Library />;
     case "/settings":
       return <Settings />;
     case "/links":

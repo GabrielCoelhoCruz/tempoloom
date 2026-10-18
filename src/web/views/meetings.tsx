@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "preact/hooks";
 import { api } from "../lib/api.ts";
 import { duration, formatWhen, hhmm } from "../lib/format.ts";
+import { freeName, templateFromUrl } from "../lib/library.ts";
 import { LEVEL_NAMES, planNow, zone } from "../lib/state.ts";
 
 interface Person {
@@ -71,6 +72,8 @@ export function Meetings() {
   const [people, setPeople] = useState<Person[]>([]);
   const [preview, setPreview] = useState<Preview | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const template = templateFromUrl();
+  const preset = template?.kind === "flexible_meeting" ? template.preset : null;
 
   const load = useCallback(async () => {
     setMeetings((await api<{ meetings: Meeting[] }>("GET", "/api/meetings")).meetings);
@@ -142,6 +145,7 @@ export function Meetings() {
       <form
         class="form"
         data-testid="meeting-form"
+        key={template ? `${template.slug}-${meetings.length}` : "new"}
         onSubmit={(e) => {
           e.preventDefault();
           const form = e.currentTarget as HTMLFormElement;
@@ -155,7 +159,19 @@ export function Meetings() {
       >
         <label class="wide">
           Title
-          <input name="title" required maxLength={255} />
+          <input
+            name="title"
+            required
+            maxLength={255}
+            defaultValue={
+              template
+                ? freeName(
+                    template.name,
+                    meetings.map((m) => m.title),
+                  )
+                : ""
+            }
+          />
         </label>
         <label class="wide">
           Guests (comma list)
@@ -183,7 +199,9 @@ export function Meetings() {
           How often
           <select name="every">
             <option value="1">Every week</option>
-            <option value="2">Every 2 weeks</option>
+            <option value="2" selected={preset?.everyWeeks === 2}>
+              Every 2 weeks
+            </option>
             <option value="4">Every 4 weeks</option>
             <option value="daily">Every day</option>
           </select>
@@ -194,7 +212,14 @@ export function Meetings() {
         </label>
         <label>
           Duration (minutes)
-          <input name="duration" type="number" min={5} max={480} step={5} defaultValue="30" />
+          <input
+            name="duration"
+            type="number"
+            min={5}
+            max={480}
+            step={5}
+            defaultValue={String(preset?.durationMinutes ?? 30)}
+          />
         </label>
         <label>
           Can shorten to (minutes)
@@ -204,7 +229,7 @@ export function Meetings() {
           Priority
           <select name="level">
             {[1, 2, 3, 4].map((l) => (
-              <option value={l} key={l} selected={l === 2}>
+              <option value={l} key={l} selected={l === (preset?.level ?? 2)}>
                 {LEVEL_NAMES[l]}
               </option>
             ))}

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "preact/hooks";
 import { ApiError, api } from "../lib/api.ts";
 import { formatWhen } from "../lib/format.ts";
+import { freeName, templateFromUrl } from "../lib/library.ts";
 import { LEVEL_NAMES, zone } from "../lib/state.ts";
 
 interface Link {
@@ -105,6 +106,8 @@ export function Links() {
     );
   }
 
+  const template = templateFromUrl();
+  const preset = template?.kind === "booking_link" ? template.preset : null;
   const url = (slug?: string) => `${location.origin}/book/${page}${slug ? `/${slug}` : ""}`;
   return (
     <div class="page" data-testid="links-page" key="links">
@@ -118,6 +121,7 @@ export function Links() {
       <form
         class="form"
         data-testid="link-form"
+        key={template ? `${template.slug}-${links.length}` : "new"}
         onSubmit={(e) => {
           e.preventDefault();
           const f = new FormData(e.currentTarget as HTMLFormElement);
@@ -145,17 +149,29 @@ export function Links() {
       >
         <label class="wide">
           Title
-          <input name="title" required maxLength={120} />
+          <input
+            name="title"
+            required
+            maxLength={120}
+            defaultValue={
+              template
+                ? freeName(
+                    template.name,
+                    links.map((l) => l.title),
+                  )
+                : ""
+            }
+          />
         </label>
         <label>
           Durations (minutes, comma list)
-          <input name="durations" defaultValue="30" required />
+          <input name="durations" defaultValue={preset?.durations ?? "30"} required />
         </label>
         <label>
           Priority
           <select name="level">
             {[1, 2, 3, 4].map((l) => (
-              <option value={l} key={l} selected={l === 2}>
+              <option value={l} key={l} selected={l === (preset?.level ?? 2)}>
                 {LEVEL_NAMES[l]}
               </option>
             ))}

@@ -69,6 +69,8 @@ T = {
     "w_retry": "a failing receiver gets retries with one request id and Retry-After; too much custom data is dropped; removed and deleted endpoints stop",
     "m_sync": "a weekly meeting sits at the ideal time, moves around a colleague's busy time but not an unanswered invite, and moves the colleague's habit",
     "m_hours": "a colleague's meeting hours limit the time, a full slot shrinks to fit, optional guests do not count, and skip or delete drop one period",
+    "lib_habit": "a habit entry fills the habit form; saving places it and shows Added; a second use gets a suffix; delete clears the badge",
+    "lib_other": "buffer and focus entries add their automation as set; prompts offer no action",
 }
 
 # Row id -> E2E test keys that prove it on CalDAV.
@@ -105,6 +107,7 @@ E2E = {
     321: ["m_sync"], 323: ["m_sync"], 325: ["m_sync"], 329: ["m_sync"], 330: ["m_hours"], 335: ["m_sync"],
     337: ["m_sync"], 338: ["m_sync"], 348: ["m_sync"], 351: ["m_sync", "m_hours"], 354: ["m_sync", "m_hours"],
     363: ["m_sync"], 366: ["m_hours"], 371: ["m_sync"],
+    149: ["lib_habit"], 717: ["lib_habit", "lib_other"], 721: ["lib_other"], 743: ["lib_other"],
 }
 
 # Row id -> reason, for rows implemented in part (some behavior has E2E, some does not).
@@ -140,7 +143,31 @@ PARTIAL = {
     368: "A time edit in the calendar is kept and locks (E2E); free/busy is written back by the general drift rule, not under E2E for meetings",
     372: "Delete removes future occurrences and the rules; no choice about guest notices",
     374: "Unplaced and conflicting occurrences show their reason on the meeting; no shared attention list",
+    764: "E2E adds Lunch at 12:00 on each workday from the library; the 11:30 to 14:00 window is not set",
+    759: "E2E checks the prefilled form (personal hours, three days); the habit is not saved in that test",
 }
+
+# Library entries (automations-library.md): row = 718 + entry number.
+LIB_FORM = [11, 32, 34, 35, 36, 37, 38, 39, 40, 42, 43, 44, 45]
+LIB_DIRECT = [1, 7, 10, 19, 23, 28]
+for n in LIB_FORM:
+    PARTIAL.setdefault(718 + n, "The library opens the form of its kind with the preset; not under E2E")
+for n in LIB_DIRECT:
+    PARTIAL.setdefault(718 + n, "The library adds it with the preset (no form of its own yet); not under E2E")
+
+# Row id -> reason, for rows that cannot work yet because a feature they build on is missing.
+BLOCKED = {718: "Needs the assistant chat, which is not implemented"}
+for n in [5, 6, 12, 14, 15, 16, 17, 18, 20, 21, 22, 24, 31]:
+    BLOCKED[718 + n] = "A prompt entry: needs the assistant chat, which is not implemented"
+for n in [4, 9]:
+    BLOCKED[718 + n] = "Needs meeting checks, which are not implemented"
+for n in [8, 26]:
+    BLOCKED[718 + n] = "Needs a meeting load cap, which is not implemented"
+for n in [13, 29, 30]:
+    BLOCKED[718 + n] = "Needs event categories (external meetings), which are not implemented"
+BLOCKED[718 + 2] = "Needs a buffer filter by person, which is not implemented"
+BLOCKED[718 + 27] = "Needs a buffer after a run of meetings, which is not implemented"
+BLOCKED[718 + 33] = "Needs no-meeting days for meetings and booking links, which are not implemented"
 
 # Row id -> limits, for rows implemented with unit or property tests only.
 UNIT = {
@@ -191,6 +218,8 @@ def status(row_id, spec_file, notes):
     if row_id in UNIT:
         extra = UNIT[row_id]
         return "partial", "Implemented; unit or property tests only, no E2E yet." + (f" Limits: {extra}." if extra else "")
+    if row_id in BLOCKED:
+        return "blocked", f"{BLOCKED[row_id]}."
     if "non-goal" in notes.lower():
         return "blocked", "Non-goal by decision (billing, payments or mobile apps)."
     if spec_file.startswith("integrations-"):

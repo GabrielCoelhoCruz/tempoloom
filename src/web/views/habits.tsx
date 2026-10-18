@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "preact/hooks";
 import { api } from "../lib/api.ts";
 import { duration, hhmm } from "../lib/format.ts";
+import { freeName, templateFromUrl } from "../lib/library.ts";
 import { LEVEL_NAMES, planNow } from "../lib/state.ts";
 
 interface Habit {
@@ -32,6 +33,10 @@ export function Habits() {
   const [habits, setHabits] = useState<Habit[]>([]);
   const [hours, setHours] = useState<HoursSet[]>([]);
   const [error, setError] = useState<string | null>(null);
+  // A library entry fills the form (automations-library.md rule 5).
+  const template = templateFromUrl();
+  const preset = template?.kind === "habit" ? template.preset : null;
+  const personal = hours.find((h) => h.kind === "personal")?.id;
 
   const load = useCallback(async () => {
     const [h, hs] = await Promise.all([
@@ -88,28 +93,62 @@ export function Habits() {
   return (
     <div class="page" data-testid="habits-page">
       <h1>Habits</h1>
-      <form class="form" onSubmit={create} data-testid="habit-form">
+      <form
+        class="form"
+        onSubmit={create}
+        data-testid="habit-form"
+        key={template ? `${template.slug}-${habits.length}-${hours.length}` : "new"}
+      >
         <label class="wide">
           Title
-          <input name="title" required maxLength={255} />
+          <input
+            name="title"
+            required
+            maxLength={255}
+            defaultValue={
+              template
+                ? freeName(
+                    template.name,
+                    habits.map((h) => h.title),
+                  )
+                : ""
+            }
+          />
         </label>
         <label>
           Ideal time
-          <input name="idealTime" type="time" step={900} defaultValue="12:00" />
+          <input
+            name="idealTime"
+            type="time"
+            step={900}
+            defaultValue={preset?.idealTime ?? "12:00"}
+          />
         </label>
         <label>
           Shortest (minutes)
-          <input name="minMinutes" type="number" min={15} step={15} defaultValue="30" />
+          <input
+            name="minMinutes"
+            type="number"
+            min={15}
+            step={15}
+            defaultValue={String(preset?.minutes ?? 30)}
+          />
         </label>
         <label>
           Longest (minutes)
-          <input name="maxMinutes" type="number" min={15} step={15} defaultValue="60" />
+          <input
+            name="maxMinutes"
+            type="number"
+            min={15}
+            step={15}
+            defaultValue={String(preset?.minutes ?? 60)}
+          />
         </label>
         <label>
           Priority
           <select name="level">
             {[1, 2, 3, 4].map((l) => (
-              <option value={l} key={l} selected={l === 3}>
+              <option value={l} key={l} selected={l === (preset?.level ?? 3)}>
                 {LEVEL_NAMES[l]}
               </option>
             ))}
@@ -122,7 +161,11 @@ export function Habits() {
             {hours
               .filter((h) => h.kind !== "work")
               .map((h) => (
-                <option value={h.id} key={h.id}>
+                <option
+                  value={h.id}
+                  key={h.id}
+                  selected={preset?.hours === "personal" && h.id === personal}
+                >
                   {h.name}
                 </option>
               ))}
@@ -157,7 +200,12 @@ export function Habits() {
           <legend>Days (none selected: every day of its hours)</legend>
           {DAY_NAMES.map((n, i) => (
             <label key={n} class="inline">
-              <input type="checkbox" name="days" value={i + 1} />
+              <input
+                type="checkbox"
+                name="days"
+                value={i + 1}
+                defaultChecked={preset?.days?.includes(i + 1) ?? false}
+              />
               {n}
             </label>
           ))}
