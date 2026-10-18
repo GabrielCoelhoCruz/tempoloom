@@ -3,6 +3,7 @@
 import { addDays } from "../../src/shared/time.ts";
 import {
   at,
+  BACKEND,
   blockUntil,
   eventually,
   expect,
@@ -52,6 +53,8 @@ test("signs in with CalDAV, rejects a wrong password, and keeps the session (SPE
   radicale,
   cal,
 }) => {
+  test.skip(BACKEND !== "caldav", "This scenario tests the CalDAV sign-in form.");
+  if (!radicale) throw new Error("No CalDAV server");
   expect(cal.calendarId).toContain("/work-");
   await page.goto(app.baseUrl);
   const form = page.getByTestId("caldav-form");

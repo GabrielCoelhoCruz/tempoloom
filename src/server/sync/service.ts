@@ -1,5 +1,5 @@
 // Runs calendar sync and planning for each user, one run at a time per user.
-import { all, one } from "../db.ts";
+import { all, one, run } from "../db.ts";
 import { replanUser } from "../planner/replan.ts";
 import { type ProviderDeps, ProviderPool } from "../providers/index.ts";
 import { applyCalendarEdits } from "./edits.ts";
@@ -12,6 +12,7 @@ export interface SyncServiceDeps extends ProviderDeps {
 }
 
 const DEBOUNCE_MS = 300;
+const CALENDAR_LIST_EVERY_MS = 10 * 60_000;
 
 export class SyncService {
   readonly #deps: SyncServiceDeps;
@@ -64,6 +65,12 @@ export class SyncService {
   async onConnect(userId: string, accountId: string): Promise<void> {
     try {
       await syncCalendarList(this.#deps.db, this.#pool(userId).get(accountId), accountId, userId);
+      run(
+        this.#deps.db,
+        "UPDATE accounts SET calendars_synced_at = ? WHERE id = ?",
+        this.#deps.now(),
+        accountId,
+      );
     } catch (err) {
       this.#log(`calendar list sync failed for account ${accountId}`, err);
     }
@@ -101,12 +108,12 @@ export class SyncService {
   runNow(userId: string): Promise<void> {
     const queued = this.#queued.get(userId);
     if (queued) return queued;
-    const run = this.#enqueue(userId, async () => {
+    const job = this.#enqueue(userId, async () => {
       this.#queued.delete(userId);
       await this.#run(userId);
     });
-    this.#queued.set(userId, run);
-    return run;
+    this.#queued.set(userId, job);
+    return job;
   }
 
   /** Runs a calendar write for the user inside the user's queue, then plans again. */
@@ -139,6 +146,18 @@ export class SyncService {
       );
       if (!user) return;
       const pool = this.#pool(userId);
+      // Read each account's calendar list on first sight and every 10 minutes.
+      const now0 = this.#deps.now();
+      for (const a of all<{ id: string }>(
+        db,
+        `SELECT id FROM accounts WHERE user_id = ? AND status = 'ok'
+           AND (calendars_synced_at IS NULL OR calendars_synced_at < ?)`,
+        userId,
+        now0 - CALENDAR_LIST_EVERY_MS,
+      )) {
+        await syncCalendarList(db, pool.get(a.id), a.id, userId);
+        run(db, "UPDATE accounts SET calendars_synced_at = ? WHERE id = ?", now0, a.id);
+      }
       const calendars = all<{ id: string; account_id: string }>(
         db,
         `SELECT c.id, c.account_id FROM calendars c JOIN accounts a ON a.id = c.account_id

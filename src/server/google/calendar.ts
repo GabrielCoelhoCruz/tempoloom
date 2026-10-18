@@ -158,6 +158,20 @@ export class GoogleCalendarApi {
     return out;
   }
 
+  /** Creates a secondary calendar owned by the authenticated account. */
+  createCalendar(summary: string, timeZone: string): Promise<{ id: string; summary: string }> {
+    return this.#request("POST", "/calendars", undefined, { summary, timeZone });
+  }
+
+  async deleteCalendar(calendarId: string): Promise<void> {
+    try {
+      await this.#request("DELETE", `/calendars/${encodeURIComponent(calendarId)}`);
+    } catch (err) {
+      if (err instanceof GoogleApiError && (err.status === 404 || err.status === 410)) return;
+      throw err;
+    }
+  }
+
   /**
    * Lists events with recurring series expanded into instances. Without a sync
    * token it runs a full sync of the window; with one it returns only changes

@@ -12,7 +12,13 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { test as base, expect, type Page } from "@playwright/test";
 import { DAVClient } from "tsdav";
+import { GoogleCalendarApi } from "../../src/server/google/calendar.ts";
+import {
+  parseServiceAccountKey,
+  serviceAccountToken,
+} from "../../src/server/google/service-account.ts";
 import { CalDavProvider } from "../../src/server/providers/caldav.ts";
+import { GoogleProvider } from "../../src/server/providers/google.ts";
 import type { ProviderEvent } from "../../src/server/providers/types.ts";
 import { addDays, localToUtc, utcToLocal, weekdayOf } from "../../src/shared/time.ts";
 
@@ -21,10 +27,15 @@ export const PORT = Number(process.env.TEMPOLOOM_E2E_PORT ?? 8788);
 export const BASE_URL = `http://localhost:${PORT}`;
 const ROOT = join(import.meta.dirname, "../..");
 const EMAIL = "e2e@tempoloom.test";
+export const BACKEND: "caldav" | "google" =
+  process.env.TEMPOLOOM_E2E_BACKEND === "google" ? "google" : "caldav";
+const SA_JSON = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
 
 export interface AppServer {
   baseUrl: string;
   dataDir: string;
+  /** Environment of the server process, for the operator CLI. */
+  env: Record<string, string>;
   restart(): Promise<void>;
   /** Reads the server database (read-only), for checks the UI does not show. */
   query<T>(sql: string, ...params: (string | number)[]): T[];
@@ -156,16 +167,72 @@ async function caldavDriver(env: RadicaleEnv): Promise<CalendarDriver> {
   };
 }
 
+/** Google: the service account owns one fresh test calendar per test. */
+async function googleDriver(): Promise<CalendarDriver> {
+  if (!SA_JSON)
+    throw new Error("GOOGLE_SERVICE_ACCOUNT_JSON is not set; run scripts/e2e-google.sh");
+  const key = parseServiceAccountKey(SA_JSON);
+  let token: { value: string; exp: number } | undefined;
+  const api = new GoogleCalendarApi({
+    getAccessToken: async () => {
+      if (!token || token.exp < Date.now()) {
+        const t = await serviceAccountToken(key);
+        token = { value: t.accessToken, exp: t.expiresAt };
+      }
+      return token.value;
+    },
+  });
+  for (const c of await api.listCalendars()) {
+    if (c.summary.startsWith("tempoloom-e2e")) await api.deleteCalendar(c.id);
+  }
+  const created = await api.createCalendar(`tempoloom-e2e-${randomUUID().slice(0, 8)}`, ZONE);
+  const provider = new GoogleProvider(api, ZONE);
+  const calendarId = created.id;
+  return {
+    backend: "google",
+    calendarId,
+    async addEvent(e) {
+      if (e.attendees) throw new Error("A service account cannot invite attendees");
+      const ev = await provider.insertEvent(calendarId, {
+        summary: e.title,
+        description: "",
+        start: e.start,
+        end: e.end,
+        busy: e.busy ?? true,
+        colorId: null,
+        privateProps: {},
+      });
+      return ev.id;
+    },
+    async update(id, change) {
+      await api.patchEvent(calendarId, id, {
+        start: { dateTime: new Date(change.start).toISOString() },
+        end: { dateTime: new Date(change.end).toISOString() },
+      });
+    },
+    remove: (id) => api.deleteEvent(calendarId, id),
+    async events(from, to) {
+      return (
+        await provider.listEvents(calendarId, { syncToken: null, timeMin: from, timeMax: to })
+      ).events.filter((e) => !e.cancelled);
+    },
+  };
+}
+
 type TestFixtures = {
   app: AppServer;
   cal: CalendarDriver;
   signIn: () => Promise<void>;
 };
-type WorkerFixtures = { radicale: RadicaleEnv };
+type WorkerFixtures = { radicale: RadicaleEnv | null };
 
 export const test = base.extend<TestFixtures, WorkerFixtures>({
   radicale: [
     async ({}, use) => {
+      if (BACKEND !== "caldav") {
+        await use(null);
+        return;
+      }
       execFileSync(join(ROOT, "scripts/caldav-server.sh"), ["start"], { stdio: "ignore" });
       await use(radicaleEnv());
       // Keep the server log for failure analysis (it holds no secrets).
@@ -181,7 +248,7 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
   ],
 
   cal: async ({ radicale }, use) => {
-    await use(await caldavDriver(radicale));
+    await use(radicale ? await caldavDriver(radicale) : await googleDriver());
   },
 
   app: async ({}, use, info) => {
@@ -189,19 +256,21 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
     const secretKey = randomBytes(32).toString("base64");
     const log: string[] = [];
     let proc: ChildProcess | undefined;
+    const env: Record<string, string> = {
+      PATH: process.env.PATH ?? "",
+      PORT: String(PORT),
+      HOST: "127.0.0.1",
+      BASE_URL,
+      DATA_DIR: dataDir,
+      SECRET_KEY: secretKey,
+      SYNC_INTERVAL_SECONDS: "5",
+      WEB_DIST: join(ROOT, "dist/web"),
+      ...(SA_JSON ? { GOOGLE_SERVICE_ACCOUNT_JSON: SA_JSON } : {}),
+    };
     const start = async () => {
       proc = spawn(process.execPath, ["src/server/main.ts"], {
         cwd: ROOT,
-        env: {
-          PATH: process.env.PATH ?? "",
-          PORT: String(PORT),
-          HOST: "127.0.0.1",
-          BASE_URL,
-          DATA_DIR: dataDir,
-          SECRET_KEY: secretKey,
-          SYNC_INTERVAL_SECONDS: "5",
-          WEB_DIST: join(ROOT, "dist/web"),
-        },
+        env,
         stdio: ["ignore", "pipe", "pipe"],
       });
       proc.stdout?.on("data", (b: Buffer) => log.push(b.toString()));
@@ -227,6 +296,7 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
     await use({
       baseUrl: BASE_URL,
       dataDir,
+      env,
       log,
       restart: async () => {
         await stop();
@@ -249,6 +319,21 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
 
   signIn: async ({ page, app, radicale }, use) => {
     await use(async () => {
+      if (!radicale) {
+        // Operator flow: connect the service account, then sign in with a one-time link.
+        const cli = (...args: string[]) =>
+          execFileSync(process.execPath, ["src/server/cli.ts", ...args], {
+            cwd: ROOT,
+            env: app.env,
+            encoding: "utf8",
+          });
+        cli("connect-google-service-account", "--email", EMAIL);
+        await page.goto(cli("login-link", "--email", EMAIL).trim());
+        await expect(page.getByTestId("app-shell")).toBeVisible();
+        // A new account's calendars are read on the next sync tick.
+        await planNow(page);
+        return;
+      }
       await page.goto(app.baseUrl);
       const form = page.getByTestId("caldav-form");
       await form.getByLabel("CalDAV server URL").fill(radicale.url);

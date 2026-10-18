@@ -230,4 +230,8 @@ export const MIGRATIONS: readonly string[] = [
     planned_at INTEGER NOT NULL
   ) STRICT;
   `,
+  // 4: periodic refresh of each account's calendar list
+  `
+  ALTER TABLE accounts ADD COLUMN calendars_synced_at INTEGER;
+  `,
 ];
