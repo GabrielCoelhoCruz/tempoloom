@@ -92,7 +92,7 @@ async function saveFocusTemplate(p: Page, hours: number) {
   const form = p.getByTestId("focus-template");
   await form.getByLabel("Weekly goal (hours)").fill(String(hours));
   await form.getByRole("button", { name: "Save focus template" }).click();
-  await expect(p.getByTestId("defaults-message")).toHaveText("Saved");
+  await expect(p.getByTestId("defaults-message")).toHaveText("Focus template saved.");
 }
 
 /** A person who signs up from the invitation link and joins: a new member. */
@@ -126,11 +126,11 @@ test("default work and meeting hours go to people who join after the admin saves
   await defaults.getByRole("button", { name: "Set default work hours" }).click();
   await setHours(defaults, "team-work", ["10:00", "16:00"], [1, 2, 3, 4], [5]);
   await defaults.getByRole("button", { name: "Save default work hours" }).click();
-  await expect(page.getByTestId("defaults-message")).toHaveText("Saved");
+  await expect(page.getByTestId("defaults-message")).toHaveText("Default work hours saved.");
   await defaults.getByRole("button", { name: "Set default meeting hours" }).click();
   await setHours(defaults, "team-meeting", ["13:00", "15:00"], [1, 2, 3, 4], [5]);
   await defaults.getByRole("button", { name: "Save default meeting hours" }).click();
-  await expect(page.getByTestId("defaults-message")).toHaveText("Saved");
+  await expect(page.getByTestId("defaults-message")).toHaveText("Default meeting hours saved.");
   await saveFocusTemplate(page, 4);
 
   const pc = await newMember(page, c, mail);
@@ -158,7 +158,7 @@ test("default work and meeting hours go to people who join after the admin saves
   await openTeam(page);
   await defaults.getByTestId("range-team-work-1-0").locator("input").first().fill("08:00");
   await defaults.getByRole("button", { name: "Save default work hours" }).click();
-  await expect(page.getByTestId("defaults-message")).toHaveText("Saved");
+  await expect(page.getByTestId("defaults-message")).toHaveText("Default work hours saved.");
 
   await pc.reload();
   const work1 = pc.getByTestId("range-work-1-0").locator("input");
