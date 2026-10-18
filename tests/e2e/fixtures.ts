@@ -359,6 +359,8 @@ export interface Colleague {
 /** Another user of the instance: Radicale user e2e<n> with a calendar of their own. */
 export interface Person extends Colleague {
   username: string;
+  /** Fills and sends the sign-in form without waiting for the app; for refused sign-ins. */
+  attemptSignIn: () => Promise<Page>;
 }
 
 /** Messages that the instance sent, read from the loopback mail server. */
@@ -390,6 +392,7 @@ async function signInAs(
   email: string,
   contexts: BrowserContext[],
   path = "/",
+  wait = true,
 ): Promise<Page> {
   const ctx = await browser.newContext({ timezoneId: ZONE, locale: "en-GB", baseURL: baseUrl });
   contexts.push(ctx);
@@ -401,7 +404,7 @@ async function signInAs(
   await form.getByLabel("Password", { exact: true }).fill(env.password);
   await form.getByLabel(/^Email/).fill(email);
   await form.getByRole("button", { name: /sign in with caldav/i }).click();
-  await expect(page.getByTestId("app-shell")).toBeVisible();
+  if (wait) await expect(page.getByTestId("app-shell")).toBeVisible();
   return page;
 }
 
@@ -577,6 +580,7 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
         username: env.username,
         cal: await caldavDriver(env, address),
         signIn: (path) => signInAs(browser, app.baseUrl, env, address, contexts, path),
+        attemptSignIn: () => signInAs(browser, app.baseUrl, env, address, contexts, "/", false),
       };
       made.set(n, person);
       return person;
