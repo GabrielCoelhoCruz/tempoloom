@@ -1,5 +1,6 @@
 // External events of a user, read from the event cache in scheduler form.
 import type { ExternalEvent } from "../../scheduler/model.ts";
+import { bookingHolds } from "../booking-team.ts";
 import { all, type Db } from "../db.ts";
 import { categoryContext, externalCategory } from "./categories.ts";
 import { MANAGED_PROP } from "./push.ts";
@@ -7,7 +8,7 @@ import { MANAGED_PROP } from "./push.ts";
 /** Events on the user's availability calendars in [from, to), without Tempoloom's own. */
 export function externalEvents(db: Db, userId: string, from: number, to: number): ExternalEvent[] {
   let ctx: ReturnType<typeof categoryContext> | undefined;
-  return all<{
+  const events = all<{
     event_id: string;
     calendar_id: string;
     summary: string;
@@ -54,4 +55,23 @@ export function externalEvents(db: Db, userId: string, from: number, to: number)
       },
     ];
   });
+  // Bookings the user joins whose invitation the provider delivers (booking-links-team rule 25).
+  for (const h of bookingHolds(db, userId, from, to)) {
+    events.push({
+      id: `booking:${h.id}`,
+      start: h.start,
+      end: h.end,
+      allDay: false,
+      busy: true,
+      title: h.title,
+      description: "",
+      selfResponse: null,
+      organizerSelf: false,
+      attendeeCount: 2,
+      location: "",
+      eventType: "default",
+      bookedViaLink: true,
+    });
+  }
+  return events;
 }

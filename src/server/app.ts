@@ -21,6 +21,7 @@ import {
 import { accountRoutes } from "./api/account.ts";
 import { analyticsRoutes } from "./api/analytics.ts";
 import { bookingRoutes, publicBookingRoutes } from "./api/booking.ts";
+import { brandingRoutes, publicBrandingRoutes } from "./api/branding.ts";
 import { delegationGuard, delegationRoutes } from "./api/delegation.ts";
 import { itemRoutes } from "./api/items.ts";
 import { meetingRoutes } from "./api/meetings.ts";
@@ -258,6 +259,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   );
 
   app.route("/pub", publicInviteRoutes(db));
+  app.route("/pub", publicBrandingRoutes(db));
   app.route("/scim/v2", scimRoutes(db, config.BASE_URL, now));
   const ssoDeps = {
     db,
@@ -325,6 +327,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   app.route("/api", policyRoutes(db, sync, now));
   app.route("/api", accountRoutes(db, box, sync, now));
   app.route("/api", delegationRoutes(db, live, now));
+  app.route("/api", brandingRoutes(db, now));
   app.route(
     "/api",
     teamRoutes({

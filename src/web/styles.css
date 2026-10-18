@@ -659,3 +659,25 @@ table.heat td {
   margin: 0 0 8px;
   font-size: 16px;
 }
+
+/* Booking page branding (booking-links-booking-page.md rules 25-31) */
+.brand-header {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.brand-default {
+  font-weight: 600;
+  color: var(--muted);
+}
+.brand-logo {
+  max-height: 48px;
+  max-width: 240px;
+}
+.brand-banner {
+  display: block;
+  width: 100%;
+  aspect-ratio: 3 / 1;
+  object-fit: cover;
+  border-radius: var(--radius);
+}

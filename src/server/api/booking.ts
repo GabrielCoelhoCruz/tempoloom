@@ -1,21 +1,38 @@
-// Booking links: the owner's settings (under /api) and the public pages'
-// API (under /pub, no session). Specs: booking-links*.md.
+// Booking links: the settings of owners and co-organizers (under /api) and the
+// public pages' API (under /pub, no session). Specs: booking-links*.md.
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { Hono } from "hono";
+import { HTTPException } from "hono/http-exception";
 import { z } from "zod";
-import { type CalendarItem, type LinkRules, offeredTimes } from "../../scheduler/availability.ts";
+import {
+  type CalendarItem,
+  type OfferedTime,
+  type Person,
+  type TeamRules,
+  teamOffers,
+} from "../../scheduler/availability.ts";
 import { hasTag, TAG_FREE } from "../../scheduler/blocking.ts";
 import type { WeeklyHours } from "../../scheduler/hours.ts";
 import type { ExternalEvent, Level } from "../../scheduler/model.ts";
 import type { AppEnv } from "../app.ts";
+import {
+  assign,
+  bookingHolds,
+  hoursOf,
+  type LinkPerson,
+  linkPeople,
+  type Party,
+  recoveryMinutes,
+  writeBookingEvents,
+} from "../booking-team.ts";
 import { all, type Db, one, run, tx } from "../db.ts";
 import { jsonBody, notFound } from "../http.ts";
 import { MANAGED_PROP } from "../planner/push.ts";
-import { writeCalendar } from "../planner/replan.ts";
 import { getSettings } from "../settings.ts";
-import { cacheEvent } from "../sync/pull.ts";
 import type { SyncService } from "../sync/service.ts";
+import { membership, sameTeam } from "../teams.ts";
 import { type CustomData, customData, type WebhookType } from "../webhooks.ts";
+import { type Branding, brandingFor } from "./branding.ts";
 
 export interface LinkRow {
   id: string;
@@ -35,6 +52,8 @@ export interface LinkRow {
   max_per_day: number | null;
   max_per_week: number | null;
   location: string;
+  use_recovery_buffer: number;
+  branding: Branding;
 }
 
 interface BookingRow {
@@ -51,6 +70,8 @@ interface BookingRow {
   status: "booked" | "cancelled";
   created_at: number;
   custom_data: string;
+  host_id: string | null;
+  assignee_id: string | null;
 }
 
 const slugRe = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
@@ -88,6 +109,37 @@ const linkInput = z.object({
   maxPerWeek: z.number().int().min(1).max(200).nullable().optional(),
   location: z.string().max(500).optional(),
 });
+
+const BRANDINGS = ["sameAsGroup", "default", "none", "custom"] as const;
+
+const linkChanges = linkInput.partial().extend({
+  useRecoveryBuffer: z.boolean().optional(),
+  branding: z.enum(BRANDINGS).optional(),
+  organizers: z
+    .array(
+      z.object({
+        userId: z.string(),
+        hoursSetId: z.string().nullable(),
+        required: z.boolean(),
+        isHost: z.boolean(),
+      }),
+    )
+    .max(20)
+    .optional(),
+  pool: z
+    .array(
+      z.object({ userId: z.string(), hoursSetId: z.string().nullable(), preferred: z.boolean() }),
+    )
+    .max(50)
+    .optional(),
+});
+
+const forbidden = (): never => {
+  throw new HTTPException(403, { res: Response.json({ error: "forbidden" }, { status: 403 }) });
+};
+const invalid = (error: string): never => {
+  throw new HTTPException(400, { res: Response.json({ error }, { status: 400 }) });
+};
 
 /** Classifies the owner's events for availability (class table of the spec). */
 export function calendarItems(db: Db, userId: string, from: number, to: number): CalendarItem[] {
@@ -190,32 +242,17 @@ export function calendarItems(db: Db, userId: string, from: number, to: number):
       items.push({ ...span, cls: "prioritized", level });
     }
   }
+  for (const h of bookingHolds(db, userId, from, to)) {
+    items.push({ start: h.start, end: h.end, cls: "booked", bookingId: h.id });
+  }
   return items;
 }
 
-function rulesFor(db: Db, link: LinkRow, duration: number): LinkRules {
-  const user = one<{ time_zone: string }>(
-    db,
-    "SELECT time_zone FROM users WHERE id = ?",
-    link.user_id,
-  );
-  const hoursId =
-    link.hours_set_id ??
-    one<{ id: string }>(
-      db,
-      "SELECT id FROM hours_sets WHERE user_id = ? AND kind = 'meeting' ORDER BY created_at LIMIT 1",
-      link.user_id,
-    )?.id;
-  const weekly = JSON.parse(
-    (hoursId &&
-      one<{ weekly: string }>(db, "SELECT weekly FROM hours_sets WHERE id = ?", hoursId)?.weekly) ||
-      "{}",
-  ) as WeeklyHours;
+function rulesFor(db: Db, link: LinkRow, duration: number): TeamRules {
   return {
     durationMinutes: duration,
     level: link.level,
-    hours: weekly,
-    zone: user?.time_zone ?? "UTC",
+    zone: zoneOf(db, link.user_id),
     weekStart: getSettings(db, link.user_id).weekStart,
     noticeMinutes: link.notice_minutes,
     rangeEndDays: link.range_end_days,
@@ -226,6 +263,23 @@ function rulesFor(db: Db, link: LinkRow, duration: number): LinkRules {
   };
 }
 
+const zoneOf = (db: Db, userId: string) =>
+  one<{ time_zone: string }>(db, "SELECT time_zone FROM users WHERE id = ?", userId)?.time_zone ??
+  "UTC";
+const nameOf = (db: Db, userId: string) =>
+  one<{ name: string }>(db, "SELECT name FROM users WHERE id = ?", userId)?.name ?? "";
+
+/** The people a link checks: required organizers and the pool, all in the owner's team. */
+function linkTeam(db: Db, link: LinkRow): { people: LinkPerson[]; usable: boolean } {
+  const people = linkPeople(db, link.id);
+  const inTeam = (p: LinkPerson) => sameTeam(db, link.user_id, p.userId);
+  // An organizer who left the team stops the link until the owner removes them
+  // (booking-links edge case 3); pool members who left only drop out (team edge case 3).
+  const usable = people.every((p) => p.kind === "pool" || inTeam(p));
+  return { people: people.filter((p) => p.kind === "organizer" || inTeam(p)), usable };
+}
+
+/** Times of one link, each with the pool members who pass (round robin). */
 export function linkTimes(
   db: Db,
   link: LinkRow,
@@ -234,17 +288,44 @@ export function linkTimes(
   to: number,
   now: number,
   rescheduling?: string,
-) {
+): OfferedTime[] {
+  const { people, usable } = linkTeam(db, link);
+  if (!usable) return [];
   const bookings = all<{ id: string; start_ms: number; end_ms: number }>(
     db,
     "SELECT id, start_ms, end_ms FROM bookings WHERE link_id = ? AND status = 'booked' AND end_ms > ?",
     link.id,
     now - 8 * 86_400_000,
   ).map((b) => ({ id: b.id, start: b.start_ms, end: b.end_ms }));
-  const pad = (link.buffer_before + link.buffer_after + duration) * 60_000;
-  return offeredTimes(
+  // The booked meeting as the recovery buffer filters see it (availability rule 10).
+  const organizers = people.filter((p) => p.kind === "organizer");
+  const meeting: ExternalEvent = {
+    id: "",
+    start: from,
+    end: from + duration * 60_000,
+    allDay: false,
+    busy: true,
+    title: link.title,
+    description: "",
+    selfResponse: null,
+    organizerSelf: true,
+    attendeeCount: organizers.length + (organizers.length < people.length ? 1 : 0) + 1,
+    location: link.location,
+    eventType: "default",
+    bookedViaLink: true,
+  };
+  const pad = (link.buffer_before + link.buffer_after + 240 + duration) * 60_000;
+  const person = (p: LinkPerson): Person => ({
+    id: p.userId,
+    hours: hoursOf(db, p.userId, p.hoursSetId),
+    zone: zoneOf(db, p.userId),
+    items: calendarItems(db, p.userId, from - pad, to + pad),
+    recoveryMinutes: link.use_recovery_buffer ? recoveryMinutes(db, p.userId, meeting) : 0,
+  });
+  return teamOffers(
     rulesFor(db, link, duration),
-    calendarItems(db, link.user_id, from - pad, to + pad),
+    organizers.filter((p) => p.required).map(person),
+    people.filter((p) => p.kind === "pool").map(person),
     bookings,
     now,
     from,
@@ -263,6 +344,13 @@ function publicLink(link: LinkRow) {
   };
 }
 
+/** Names the booker may see before confirming: organizers only, never the pool (team rule 15). */
+function organizerNames(db: Db, link: LinkRow): string[] {
+  return linkPeople(db, link.id)
+    .filter((p) => p.kind === "organizer")
+    .map((p) => nameOf(db, p.userId));
+}
+
 function eventTitle(link: LinkRow, organizer: string, attendee: string): string {
   return link.title_template
     .replaceAll("{organizer}", organizer)
@@ -270,16 +358,79 @@ function eventTitle(link: LinkRow, organizer: string, attendee: string): string 
     .replaceAll("{title}", link.title);
 }
 
+interface PersonView {
+  userId: string;
+  name: string;
+  email: string;
+  hoursSetId: string | null;
+}
+
+/** A link as its owner and co-organizers see it, with its people. */
+function linkView(db: Db, link: LinkRow) {
+  const user = (id: string) =>
+    one<{ name: string; email: string }>(db, "SELECT name, email FROM users WHERE id = ?", id) ?? {
+      name: "",
+      email: "",
+    };
+  const people = linkPeople(db, link.id);
+  const view = (p: LinkPerson): PersonView => ({
+    userId: p.userId,
+    ...user(p.userId),
+    hoursSetId: p.hoursSetId,
+  });
+  return {
+    ...link,
+    durations: JSON.parse(link.durations) as number[],
+    owner: { id: link.user_id, ...user(link.user_id) },
+    pageSlug:
+      one<{ slug: string }>(db, "SELECT slug FROM booking_pages WHERE user_id = ?", link.user_id)
+        ?.slug ?? null,
+    organizers: people
+      .filter((p) => p.kind === "organizer")
+      .map((p) => ({ ...view(p), required: p.required, isHost: p.isHost })),
+    pool: people
+      .filter((p) => p.kind === "pool")
+      .map((p) => ({ ...view(p), preferred: p.preferred })),
+  };
+}
+
+type Changes = z.infer<typeof linkChanges>;
+
+/** Team rules 1, 3, 9, 12 and 13: who may be on a link and in which role. */
+function checkPeople(
+  db: Db,
+  ownerId: string,
+  organizers: NonNullable<Changes["organizers"]>,
+  pool: NonNullable<Changes["pool"]>,
+): void {
+  const ids = [...organizers, ...pool].map((p) => p.userId);
+  if (new Set(ids).size !== ids.length) invalid("duplicate_person");
+  if (organizers.length === 0 && pool.length === 0) invalid("no_people");
+  if (pool.length === 1) invalid("pool_too_small");
+  const hosts = organizers.filter((o) => o.isHost);
+  if (hosts.length !== (organizers.length > 0 ? 1 : 0)) invalid("one_host");
+  if (hosts.some((h) => !h.required)) invalid("host_required");
+  for (const p of [...organizers, ...pool]) {
+    if (!sameTeam(db, ownerId, p.userId)) invalid("not_in_team");
+    if (
+      p.hoursSetId &&
+      !one(db, "SELECT 1 FROM hours_sets WHERE id = ? AND user_id = ?", p.hoursSetId, p.userId)
+    ) {
+      invalid("unknown_hours");
+    }
+  }
+}
+
 export function bookingRoutes(db: Db, now: () => number): Hono<AppEnv> {
   const r = new Hono<AppEnv>();
 
   r.get("/page", (c) => {
-    const page = one<{ slug: string }>(
+    const page = one<{ slug: string; branding: string }>(
       db,
-      "SELECT slug FROM booking_pages WHERE user_id = ?",
+      "SELECT slug, branding FROM booking_pages WHERE user_id = ?",
       c.get("user").id,
     );
-    return c.json({ slug: page?.slug ?? null });
+    return c.json({ slug: page?.slug ?? null, branding: page?.branding ?? null });
   });
 
   /** Claims the user's booking page slug and creates the starter links (booking-links rules 1, 2). */
@@ -292,15 +443,23 @@ export function bookingRoutes(db: Db, now: () => number): Hono<AppEnv> {
       slug,
     );
     if (taken && taken.user_id !== user.id) return c.json({ error: "slug_taken" }, 409);
+    // A new page copies the team's branding default (booking page rule 28).
+    const teamDefault =
+      one<{ mode: string }>(
+        db,
+        "SELECT b.mode FROM team_branding b JOIN team_members m ON m.team_id = b.team_id WHERE m.user_id = ?",
+        user.id,
+      )?.mode ?? "default";
     tx(db, () => {
       const had = one(db, "SELECT 1 FROM booking_pages WHERE user_id = ?", user.id);
       run(
         db,
-        `INSERT INTO booking_pages (user_id, slug, created_at) VALUES (?, ?, ?)
+        `INSERT INTO booking_pages (user_id, slug, created_at, branding) VALUES (?, ?, ?, ?)
          ON CONFLICT (user_id) DO UPDATE SET slug = excluded.slug`,
         user.id,
         slug,
         now(),
+        teamDefault,
       );
       if (!had) {
         for (const [title, level, durations] of [
@@ -313,6 +472,15 @@ export function bookingRoutes(db: Db, now: () => number): Hono<AppEnv> {
       }
     });
     return c.json({ slug });
+  });
+
+  r.put("/page/branding", async (c) => {
+    const { branding } = await jsonBody(
+      c,
+      z.object({ branding: z.enum(["default", "none", "custom"]) }),
+    );
+    run(db, "UPDATE booking_pages SET branding = ? WHERE user_id = ?", branding, c.get("user").id);
+    return c.json({ ok: true });
   });
 
   function insertLink(userId: string, b: z.infer<typeof linkInput>): string {
@@ -349,8 +517,40 @@ export function bookingRoutes(db: Db, now: () => number): Hono<AppEnv> {
       b.location ?? "",
       now(),
     );
+    // A personal link: the creator is its only organizer and its host.
+    run(
+      db,
+      `INSERT INTO booking_link_people (link_id, user_id, kind, hours_set_id, required, is_host)
+       VALUES (?, ?, 'organizer', ?, 1, 1)`,
+      id,
+      userId,
+      b.hoursSetId ?? null,
+    );
     return id;
   }
+
+  /** The link, when the user owns it or is one of its people (team rule 22). */
+  const editable = (linkId: string, userId: string) => {
+    const link = one<LinkRow>(db, "SELECT * FROM booking_links WHERE id = ?", linkId);
+    if (!link) notFound("link");
+    const owner = link.user_id === userId;
+    // A co-organizer who left the owner's team loses access.
+    if (
+      !owner &&
+      !(
+        sameTeam(db, link.user_id, userId) &&
+        one(
+          db,
+          "SELECT 1 FROM booking_link_people WHERE link_id = ? AND user_id = ?",
+          linkId,
+          userId,
+        )
+      )
+    ) {
+      notFound("link");
+    }
+    return { link, owner };
+  };
 
   r.get("/links", (c) => {
     const user = c.get("user");
@@ -359,8 +559,38 @@ export function bookingRoutes(db: Db, now: () => number): Hono<AppEnv> {
       "SELECT * FROM booking_links WHERE user_id = ? ORDER BY level, created_at",
       user.id,
     );
+    // Team links page group: links where the user is a co-organizer or in the pool (sharing spec).
+    const { team } = membership(db, user.id);
+    const teamLinks = all<LinkRow>(
+      db,
+      `SELECT l.* FROM booking_links l JOIN booking_link_people p ON p.link_id = l.id
+       JOIN team_members m ON m.user_id = l.user_id
+       WHERE p.user_id = ? AND l.user_id <> ? AND m.team_id = ? ORDER BY l.level, l.created_at`,
+      user.id,
+      user.id,
+      team.id,
+    );
+    const members = all<{ userId: string; name: string; email: string }>(
+      db,
+      `SELECT u.id AS userId, u.name, u.email FROM team_members m JOIN users u ON u.id = m.user_id
+       WHERE m.team_id = ? AND u.deactivated_at IS NULL ORDER BY u.email`,
+      team.id,
+    );
+    const sets = all<{ id: string; user_id: string; name: string }>(
+      db,
+      `SELECT h.id, h.user_id, h.name FROM hours_sets h JOIN team_members m ON m.user_id = h.user_id
+       WHERE m.team_id = ? ORDER BY h.created_at`,
+      team.id,
+    );
     return c.json({
-      links: links.map((l) => ({ ...l, durations: JSON.parse(l.durations) as number[] })),
+      links: links.map((l) => linkView(db, l)),
+      teamLinks: teamLinks.map((l) => linkView(db, l)),
+      people: members.map((m) => ({
+        ...m,
+        hoursSets: sets
+          .filter((h) => h.user_id === m.userId)
+          .map((h) => ({ id: h.id, name: h.name })),
+      })),
     });
   });
 
@@ -379,27 +609,139 @@ export function bookingRoutes(db: Db, now: () => number): Hono<AppEnv> {
     return c.json({ link: one(db, "SELECT * FROM booking_links WHERE id = ?", id) }, 201);
   });
 
+  /** Changes a link. Only the owner may change its URL, its page and delete it (team rules 10, 22). */
+  r.patch("/links/:id", async (c) => {
+    const user = c.get("user");
+    const { link, owner } = editable(c.req.param("id"), user.id);
+    const b = await jsonBody(c, linkChanges);
+    if (!owner && (b.slug !== undefined || b.hidden !== undefined)) forbidden();
+    if (
+      b.slug &&
+      b.slug !== link.slug &&
+      one(db, "SELECT 1 FROM booking_links WHERE user_id = ? AND slug = ?", link.user_id, b.slug)
+    ) {
+      return c.json({ error: "slug_taken" }, 409);
+    }
+    const organizers =
+      b.organizers ??
+      linkPeople(db, link.id)
+        .filter((p) => p.kind === "organizer")
+        .map((p) => ({ ...p }));
+    const pool =
+      b.pool ??
+      linkPeople(db, link.id)
+        .filter((p) => p.kind === "pool")
+        .map((p) => ({ ...p }));
+    if (b.organizers || b.pool) checkPeople(db, link.user_id, organizers, pool);
+    const columns: [string, string | number | null | undefined][] = [
+      ["title", b.title],
+      ["description", b.description],
+      ["slug", b.slug],
+      ["hidden", b.hidden === undefined ? undefined : b.hidden ? 1 : 0],
+      ["durations", b.durations && JSON.stringify(b.durations)],
+      ["level", b.level],
+      ["notice_minutes", b.noticeMinutes],
+      ["range_end_days", b.rangeEndDays],
+      ["buffer_before", b.bufferBefore],
+      ["buffer_after", b.bufferAfter],
+      ["max_per_day", b.maxPerDay],
+      ["max_per_week", b.maxPerWeek],
+      ["location", b.location],
+      [
+        "use_recovery_buffer",
+        b.useRecoveryBuffer === undefined ? undefined : b.useRecoveryBuffer ? 1 : 0,
+      ],
+      ["branding", b.branding],
+    ];
+    const set = columns.filter(([, v]) => v !== undefined);
+    tx(db, () => {
+      if (set.length > 0) {
+        run(
+          db,
+          `UPDATE booking_links SET ${set.map(([k]) => `${k} = ?`).join(", ")} WHERE id = ?`,
+          ...set.map(([, v]) => v ?? null),
+          link.id,
+        );
+      }
+      if (b.organizers || b.pool) {
+        run(db, "DELETE FROM booking_link_people WHERE link_id = ?", link.id);
+        const add = run.bind(
+          null,
+          db,
+          `INSERT INTO booking_link_people (link_id, user_id, kind, hours_set_id, required, is_host, preferred, position)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        );
+        organizers.forEach((o, i) => {
+          add(
+            link.id,
+            o.userId,
+            "organizer",
+            o.hoursSetId,
+            o.required ? 1 : 0,
+            o.isHost ? 1 : 0,
+            0,
+            i,
+          );
+        });
+        pool.forEach((p, i) => {
+          add(link.id, p.userId, "pool", p.hoursSetId, 1, 0, p.preferred ? 1 : 0, i);
+        });
+      }
+    });
+    const saved = one<LinkRow>(db, "SELECT * FROM booking_links WHERE id = ?", link.id);
+    return c.json({ link: saved && linkView(db, saved) });
+  });
+
   r.delete("/links/:id", (c) => {
+    const { link, owner } = editable(c.req.param("id"), c.get("user").id);
+    if (!owner) forbidden();
     // Booked events stay (booking-links rule 20).
-    run(
-      db,
-      "DELETE FROM booking_links WHERE id = ? AND user_id = ?",
-      c.req.param("id"),
-      c.get("user").id,
-    );
+    run(db, "DELETE FROM booking_links WHERE id = ?", link.id);
     return c.body(null, 204);
   });
 
-  r.get("/bookings", (c) =>
-    c.json({
+  r.get("/bookings", (c) => {
+    const id = c.get("user").id;
+    return c.json({
       bookings: all(
         db,
         `SELECT b.id, b.start_ms, b.end_ms, b.name, b.email, b.status, l.title AS link_title FROM bookings b
-         LEFT JOIN booking_links l ON l.id = b.link_id WHERE b.user_id = ? ORDER BY b.start_ms DESC LIMIT 200`,
-        c.get("user").id,
+         LEFT JOIN booking_links l ON l.id = b.link_id
+         WHERE b.user_id = ? OR b.host_id = ?
+           OR b.id IN (SELECT booking_id FROM booking_participants WHERE user_id = ?)
+         ORDER BY b.start_ms DESC LIMIT 200`,
+        id,
+        id,
+        id,
       ),
-    }),
-  );
+    });
+  });
+
+  /** Every team member's booking page and public links (teams-executive-assistant-use rule 5). */
+  r.get("/directory", (c) => {
+    const { team } = membership(db, c.get("user").id);
+    const members = all<{ id: string; name: string; email: string; slug: string | null }>(
+      db,
+      `SELECT u.id, u.name, u.email, p.slug FROM team_members m JOIN users u ON u.id = m.user_id
+       LEFT JOIN booking_pages p ON p.user_id = u.id
+       WHERE m.team_id = ? AND u.deactivated_at IS NULL ORDER BY u.name, u.email`,
+      team.id,
+    );
+    return c.json({
+      members: members.map((m) => ({
+        name: m.name,
+        email: m.email,
+        page: m.slug,
+        links: m.slug
+          ? all<{ title: string; slug: string; durations: string }>(
+              db,
+              "SELECT title, slug, durations FROM booking_links WHERE user_id = ? AND hidden = 0 ORDER BY level, created_at",
+              m.id,
+            ).map((l) => ({ ...l, durations: JSON.parse(l.durations) as number[] }))
+          : [],
+      })),
+    });
+  });
   return r;
 }
 
@@ -407,6 +749,7 @@ type OnEvent = (linkId: string, type: WebhookType, body: Record<string, unknown>
 
 interface MeetingFacts {
   id: string;
+  title: string;
   start: number;
   end: number;
   name: string;
@@ -414,21 +757,36 @@ interface MeetingFacts {
   message: string;
   created: number;
   custom: CustomData;
+  hostId: string;
+  participants: string[];
   rescheduled?: number;
   cancelled?: number;
 }
 
 /** The meeting object of a webhook payload (integrations-webhooks.md rule 17). */
 function meetingObject(db: Db, link: LinkRow, b: MeetingFacts, baseUrl: string) {
-  const owner = one<{ id: string; email: string; name: string; time_zone: string }>(
-    db,
-    "SELECT id, email, name, time_zone FROM users WHERE id = ?",
-    link.user_id,
-  );
   const iso = (ms: number) => new Date(ms).toISOString();
+  const people = [b.hostId, ...b.participants.filter((p) => p !== b.hostId)].flatMap((id) => {
+    const u = one<{ id: string; email: string; name: string; time_zone: string }>(
+      db,
+      "SELECT id, email, name, time_zone FROM users WHERE id = ?",
+      id,
+    );
+    return u
+      ? [
+          {
+            is_host: id === b.hostId,
+            email: u.email,
+            user_id: u.id,
+            name: u.name,
+            time_zone: { id: u.time_zone },
+          },
+        ]
+      : [];
+  });
   return {
     meeting_id: b.id,
-    meeting_title: eventTitle(link, owner?.name ?? "", b.name),
+    meeting_title: b.title,
     meeting_url: new URL("/links", baseUrl).toString(),
     booking_link_id: link.id,
     booking_link_title: link.title,
@@ -438,17 +796,7 @@ function meetingObject(db: Db, link: LinkRow, b: MeetingFacts, baseUrl: string) 
     scheduled_at: iso(b.created),
     ...(b.rescheduled ? { rescheduled_at: iso(b.rescheduled) } : {}),
     ...(b.cancelled ? { cancelled_at: iso(b.cancelled) } : {}),
-    participants: owner
-      ? [
-          {
-            is_host: true,
-            email: owner.email,
-            user_id: owner.id,
-            name: owner.name,
-            time_zone: { id: owner.time_zone },
-          },
-        ]
-      : [],
+    participants: people,
     attendee: { email: b.email, name: b.name },
     ccs: [],
     message: b.message,
@@ -457,6 +805,46 @@ function meetingObject(db: Db, link: LinkRow, b: MeetingFacts, baseUrl: string) 
     custom_data: b.custom,
   };
 }
+
+/** Host and guests of a booking at a slot: organizers, and the round-robin assignee (rules 16, 18). */
+function placementFor(
+  db: Db,
+  link: LinkRow,
+  slot: OfferedTime,
+  keep: string | null,
+  now: number,
+): { hostId: string; assignee: string | null; parties: Party[]; organizerName: string } {
+  const { people } = linkTeam(db, link);
+  const organizers = people.filter((p) => p.kind === "organizer");
+  let assignee: string | null = null;
+  if (slot.pool) {
+    // Rule 20: a reschedule keeps the member who still passes; otherwise rule 16 again.
+    const preferred = new Set(
+      people.filter((p) => p.kind === "pool" && p.preferred).map((p) => p.userId),
+    );
+    assignee =
+      keep && slot.pool.includes(keep)
+        ? keep
+        : (assign(db, link.id, slot.pool, preferred, now) ?? null);
+  }
+  const hostId = organizers.find((o) => o.isHost)?.userId ?? assignee ?? link.user_id;
+  const parties: Party[] = organizers.map((o) => ({ userId: o.userId, optional: !o.required }));
+  if (assignee && !parties.some((p) => p.userId === assignee))
+    parties.push({ userId: assignee, optional: false });
+  return { hostId, assignee, parties, organizerName: organizerName(db, link, assignee) };
+}
+
+/** `{organizer}`: the main organizer, or the assignee on a link without organizers (edge case 5). */
+function organizerName(db: Db, link: LinkRow, assignee: string | null): string {
+  const hasOrganizers = linkPeople(db, link.id).some((p) => p.kind === "organizer");
+  return nameOf(db, hasOrganizers ? link.user_id : (assignee ?? link.user_id));
+}
+
+const contact = (db: Db, id: string | null) =>
+  id
+    ? (one<{ name: string; email: string }>(db, "SELECT name, email FROM users WHERE id = ?", id) ??
+      null)
+    : null;
 
 /** Public booking API: no session; the page and link slugs or a manage token identify the data. */
 export function publicBookingRoutes(
@@ -474,11 +862,14 @@ export function publicBookingRoutes(
       page,
       link,
     );
+  const pageBranding = (userId: string) =>
+    one<{ branding: string }>(db, "SELECT branding FROM booking_pages WHERE user_id = ?", userId)
+      ?.branding ?? "default";
 
   r.get("/pages/:page", (c) => {
-    const page = one<{ user_id: string; slug: string }>(
+    const page = one<{ user_id: string; slug: string; branding: Branding }>(
       db,
-      "SELECT user_id, slug FROM booking_pages WHERE slug = ?",
+      "SELECT user_id, slug, branding FROM booking_pages WHERE slug = ?",
       c.req.param("page"),
     );
     if (!page) notFound("page");
@@ -488,21 +879,24 @@ export function publicBookingRoutes(
       "SELECT * FROM booking_links WHERE user_id = ? AND hidden = 0 ORDER BY level, created_at",
       page.user_id,
     );
-    return c.json({ name: owner?.name ?? "", slug: page.slug, links: links.map(publicLink) });
+    return c.json({
+      name: owner?.name ?? "",
+      slug: page.slug,
+      links: links.map(publicLink),
+      branding: brandingFor(db, page.user_id, page.branding),
+    });
   });
 
   r.get("/pages/:page/:link", (c) => {
     const link = findLink(c.req.param("page"), c.req.param("link"));
     if (!link) notFound("link");
-    const owner = one<{ name: string; time_zone: string }>(
-      db,
-      "SELECT name, time_zone FROM users WHERE id = ?",
-      link.user_id,
-    );
+    // Link setting first; sameAsGroup takes the page's (booking page rule 27).
+    const mode = link.branding === "sameAsGroup" ? pageBranding(link.user_id) : link.branding;
     return c.json({
       link: publicLink(link),
-      organizer: owner?.name ?? "",
-      timeZone: owner?.time_zone ?? "UTC",
+      organizers: organizerNames(db, link),
+      timeZone: zoneOf(db, link.user_id),
+      branding: brandingFor(db, link.user_id, mode as Branding),
     });
   });
 
@@ -534,8 +928,11 @@ export function publicBookingRoutes(
           link.id,
         )?.id
       : undefined;
+    // The pool members stay on the server: the booker sees no host before confirming.
     return c.json({
-      times: linkTimes(db, link, q.data.duration, q.data.from, q.data.to, now(), resched),
+      times: linkTimes(db, link, q.data.duration, q.data.from, q.data.to, now(), resched).map(
+        (t) => ({ start: t.start, end: t.end, preferred: t.preferred }),
+      ),
     });
   });
 
@@ -551,8 +948,8 @@ export function publicBookingRoutes(
       .optional(),
   });
 
-  const offered = (link: LinkRow, start: number, duration: number, resched?: string) =>
-    linkTimes(db, link, duration, start, start + duration * 60_000, now(), resched).some(
+  const slotAt = (link: LinkRow, start: number, duration: number, resched?: string) =>
+    linkTimes(db, link, duration, start, start + duration * 60_000, now(), resched).find(
       (t) => t.start === start,
     );
 
@@ -561,45 +958,32 @@ export function publicBookingRoutes(
     return `Reschedule or cancel: ${url}`;
   }
 
+  const noCalendar = (err: unknown) => err instanceof Error && err.message === "no_calendar";
+
   r.post("/pages/:page/:link/book", async (c) => {
     const link = findLink(c.req.param("page"), c.req.param("link"));
     if (!link) notFound("link");
     const body = await jsonBody(c, bookInput);
     if (!(JSON.parse(link.durations) as number[]).includes(body.duration))
       return c.json({ error: "invalid_duration" }, 400);
-    const result = await sync.exclusive(link.user_id, async (pool) => {
+    const result = await sync.exclusive(link.user_id, async () => {
       // Check again inside the owner's queue so two bookers cannot take one slot.
-      if (!offered(link, body.start, body.duration)) return { error: "slot_taken" as const };
-      const target = writeCalendar(db, link.user_id);
-      if (!target) return { error: "no_calendar" as const };
-      const organizer =
-        one<{ name: string }>(db, "SELECT name FROM users WHERE id = ?", link.user_id)?.name ?? "";
+      const slot = slotAt(link, body.start, body.duration);
+      if (!slot) return { error: "slot_taken" as const };
+      const plan = placementFor(db, link, slot, null, now());
       const id = randomUUID();
       const token = randomBytes(24).toString("base64url");
       const end = body.start + body.duration * 60_000;
       const custom = customData(body.params ?? []);
-      const description = [body.message ?? "", manageText(token)].filter(Boolean).join("\n\n");
-      const ev = await pool.get(target.account_id).insertEvent(target.provider_id, {
-        summary: eventTitle(link, organizer, body.name),
-        description,
-        start: body.start,
-        end,
-        busy: true,
-        colorId: null,
-        attendees: [body.email],
-        ...(link.location ? { location: link.location } : {}),
-        privateProps: { tl_booking: "1", tl_booking_id: id },
-      });
-      cacheEvent(db, target.id, ev);
+      const title = eventTitle(link, plan.organizerName, body.name);
       run(
         db,
-        `INSERT INTO bookings (id, link_id, user_id, calendar_id, event_id, start_ms, end_ms, name, email, message,
-           token_hash, status, created_at, updated_at, custom_data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'booked', ?, ?, ?)`,
+        `INSERT INTO bookings (id, link_id, user_id, start_ms, end_ms, name, email, message, token_hash, status,
+           created_at, updated_at, custom_data, host_id, assignee_id, assigned_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'booked', ?, ?, ?, ?, ?, ?)`,
         id,
         link.id,
         link.user_id,
-        target.id,
-        ev.id,
         body.start,
         end,
         body.name,
@@ -609,6 +993,35 @@ export function publicBookingRoutes(
         now(),
         now(),
         JSON.stringify(custom),
+        plan.hostId,
+        plan.assignee,
+        plan.assignee ? now() : null,
+      );
+      let placed: { calendarId: string; eventId: string } | null;
+      try {
+        placed = await writeBookingEvents(db, sync, id, null, {
+          hostId: plan.hostId,
+          parties: plan.parties,
+          event: {
+            summary: title,
+            description: [body.message ?? "", manageText(token)].filter(Boolean).join("\n\n"),
+            start: body.start,
+            end,
+            location: link.location,
+            bookerEmail: body.email,
+          },
+        });
+      } catch (err) {
+        run(db, "DELETE FROM bookings WHERE id = ?", id);
+        if (noCalendar(err)) return { error: "no_calendar" as const };
+        throw err;
+      }
+      run(
+        db,
+        "UPDATE bookings SET calendar_id = ?, event_id = ? WHERE id = ?",
+        placed?.calendarId ?? null,
+        placed?.eventId ?? null,
+        id,
       );
       onEvent(link.id, "booking_link.meeting.created", {
         meeting: meetingObject(
@@ -616,6 +1029,7 @@ export function publicBookingRoutes(
           link,
           {
             id,
+            title,
             start: body.start,
             end,
             name: body.name,
@@ -623,11 +1037,20 @@ export function publicBookingRoutes(
             message: body.message ?? "",
             created: now(),
             custom,
+            hostId: plan.hostId,
+            participants: plan.parties.map((p) => p.userId),
           },
           baseUrl,
         ),
       });
-      return { token, start: body.start, end };
+      return {
+        token,
+        start: body.start,
+        end,
+        organizers: organizerNames(db, link),
+        // Round robin: the confirmation names the assigned member (team rule 23).
+        assignee: contact(db, plan.assignee),
+      };
     });
     if ("error" in result) return c.json(result, result.error === "slot_taken" ? 409 : 500);
     return c.json(result, 201);
@@ -635,6 +1058,22 @@ export function publicBookingRoutes(
 
   const byToken = (token: string) =>
     one<BookingRow>(db, "SELECT * FROM bookings WHERE token_hash = ?", hash(token));
+
+  const facts = (b: BookingRow, title: string) => ({
+    id: b.id,
+    title,
+    name: b.name,
+    email: b.email,
+    message: b.message,
+    created: b.created_at,
+    custom: JSON.parse(b.custom_data) as CustomData,
+    hostId: b.host_id ?? b.user_id,
+    participants: all<{ user_id: string }>(
+      db,
+      "SELECT user_id FROM booking_participants WHERE booking_id = ?",
+      b.id,
+    ).map((p) => p.user_id),
+  });
 
   r.get("/bookings/:token", (c) => {
     const b = byToken(c.req.param("token"));
@@ -651,6 +1090,7 @@ export function publicBookingRoutes(
       booking: { start: b.start_ms, end: b.end_ms, name: b.name, status: b.status },
       link: link ? publicLink(link) : null,
       page: page?.slug ?? null,
+      assignee: contact(db, b.assignee_id),
     });
   });
 
@@ -662,65 +1102,65 @@ export function publicBookingRoutes(
     if (!link) notFound("link");
     const { start } = await jsonBody(c, z.object({ start: z.number().int() }));
     const duration = (b.end_ms - b.start_ms) / 60_000;
-    const result = await sync.exclusive(b.user_id, async (pool) => {
-      if (!offered(link, start, duration, b.id)) return { error: "slot_taken" as const };
-      const cal = one<{ account_id: string; provider_id: string }>(
-        db,
-        "SELECT account_id, provider_id FROM calendars WHERE id = ?",
-        b.calendar_id ?? "",
-      );
-      if (!cal || !b.event_id) return { error: "no_event" as const };
-      const organizer =
-        one<{ name: string }>(db, "SELECT name FROM users WHERE id = ?", b.user_id)?.name ?? "";
-      const ev = await pool.get(cal.account_id).updateEvent(
-        cal.provider_id,
-        b.event_id,
-        {
-          summary: eventTitle(link, organizer, b.name),
-          description: [b.message, manageText(token)].filter(Boolean).join("\n\n"),
-          start,
-          end: start + duration * 60_000,
-          busy: true,
-          colorId: null,
-          attendees: [b.email],
-          ...(link.location ? { location: link.location } : {}),
-          privateProps: { tl_booking: "1", tl_booking_id: b.id },
-        },
-        null,
-      );
-      if (b.calendar_id) cacheEvent(db, b.calendar_id, ev);
+    const end = start + duration * 60_000;
+    const result = await sync.exclusive(b.user_id, async () => {
+      const slot = slotAt(link, start, duration, b.id);
+      if (!slot) return { error: "slot_taken" as const };
+      const plan = placementFor(db, link, slot, b.assignee_id, now());
+      const title = eventTitle(link, plan.organizerName, b.name);
+      const before = facts(b, title);
+      let placed: { calendarId: string; eventId: string } | null;
+      try {
+        placed = await writeBookingEvents(
+          db,
+          sync,
+          b.id,
+          { hostId: b.host_id ?? b.user_id, calendarId: b.calendar_id, eventId: b.event_id },
+          {
+            hostId: plan.hostId,
+            parties: plan.parties,
+            event: {
+              summary: title,
+              description: [b.message, manageText(token)].filter(Boolean).join("\n\n"),
+              start,
+              end,
+              location: link.location,
+              bookerEmail: b.email,
+            },
+          },
+        );
+      } catch (err) {
+        if (noCalendar(err)) return { error: "no_event" as const };
+        throw err;
+      }
       run(
         db,
-        "UPDATE bookings SET start_ms = ?, end_ms = ?, updated_at = ? WHERE id = ?",
+        `UPDATE bookings SET start_ms = ?, end_ms = ?, updated_at = ?, calendar_id = ?, event_id = ?,
+           host_id = ?, assignee_id = ?, assigned_at = CASE WHEN assignee_id IS ? THEN assigned_at ELSE ? END
+         WHERE id = ?`,
         start,
-        start + duration * 60_000,
+        end,
+        now(),
+        placed?.calendarId ?? null,
+        placed?.eventId ?? null,
+        plan.hostId,
+        plan.assignee,
+        plan.assignee,
         now(),
         b.id,
       );
-      const facts = {
-        id: b.id,
-        name: b.name,
-        email: b.email,
-        message: b.message,
-        created: b.created_at,
-        custom: JSON.parse(b.custom_data) as CustomData,
-      };
+      const after = facts({ ...b, host_id: plan.hostId }, title);
       onEvent(link.id, "booking_link.meeting.updated", {
         previous_meeting: meetingObject(
           db,
           link,
-          { ...facts, start: b.start_ms, end: b.end_ms },
+          { ...before, start: b.start_ms, end: b.end_ms },
           baseUrl,
         ),
-        new_meeting: meetingObject(
-          db,
-          link,
-          { ...facts, start, end: start + duration * 60_000, rescheduled: now() },
-          baseUrl,
-        ),
+        new_meeting: meetingObject(db, link, { ...after, start, end, rescheduled: now() }, baseUrl),
         change_reason: "rescheduled",
       });
-      return { start, end: start + duration * 60_000 };
+      return { start, end, assignee: contact(db, plan.assignee) };
     });
     if ("error" in result) return c.json(result, result.error === "slot_taken" ? 409 : 500);
     return c.json(result);
@@ -729,41 +1169,28 @@ export function publicBookingRoutes(
   r.post("/bookings/:token/cancel", async (c) => {
     const b = byToken(c.req.param("token"));
     if (!b || b.status !== "booked") notFound("booking");
-    await sync.exclusive(b.user_id, async (pool) => {
-      const cal = one<{ account_id: string; provider_id: string }>(
-        db,
-        "SELECT account_id, provider_id FROM calendars WHERE id = ?",
-        b.calendar_id ?? "",
-      );
-      if (cal && b.event_id) {
-        await pool.get(cal.account_id).deleteEvent(cal.provider_id, b.event_id);
-        run(
-          db,
-          "DELETE FROM events WHERE calendar_id = ? AND event_id = ?",
-          b.calendar_id ?? "",
-          b.event_id,
-        );
-      }
-      run(db, "UPDATE bookings SET status = 'cancelled', updated_at = ? WHERE id = ?", now(), b.id);
+    await sync.exclusive(b.user_id, async () => {
       const link = b.link_id
         ? one<LinkRow>(db, "SELECT * FROM booking_links WHERE id = ?", b.link_id)
         : undefined;
+      const title = link
+        ? eventTitle(link, organizerName(db, link, b.assignee_id), b.name)
+        : b.name;
+      const before = facts(b, title);
+      await writeBookingEvents(
+        db,
+        sync,
+        b.id,
+        { hostId: b.host_id ?? b.user_id, calendarId: b.calendar_id, eventId: b.event_id },
+        null,
+      );
+      run(db, "UPDATE bookings SET status = 'cancelled', updated_at = ? WHERE id = ?", now(), b.id);
       if (link) {
         onEvent(link.id, "booking_link.meeting.cancelled", {
           meeting: meetingObject(
             db,
             link,
-            {
-              id: b.id,
-              start: b.start_ms,
-              end: b.end_ms,
-              name: b.name,
-              email: b.email,
-              message: b.message,
-              created: b.created_at,
-              custom: JSON.parse(b.custom_data) as CustomData,
-              cancelled: now(),
-            },
+            { ...before, start: b.start_ms, end: b.end_ms, cancelled: now() },
             baseUrl,
           ),
         });

@@ -145,8 +145,8 @@ export function blockedForDelegate(
     return `Delegates cannot delete ${owner}'s account.`;
   if (/^\/api\/delegates(\/|$)/.test(path)) return `Only ${owner} can change delegated access.`;
   if (/^\/api\/team(\/|$)/.test(path)) return `Delegates cannot change ${owner}'s team.`;
-  // Team-wide admin settings: policies, agenda templates, salaries, analytics seats.
-  if (/^\/api\/(policies(\/templates|\/[^/]+)?|analytics\/.*)$/.test(path))
+  // Team-wide admin settings: policies, agenda templates, salaries, analytics seats, webhooks.
+  if (/^\/api\/(policies(\/templates|\/[^/]+)?|analytics\/.*|webhooks(\/.*)?)$/.test(path))
     return `Delegates cannot change ${owner}'s team settings.`;
   return undefined;
 }

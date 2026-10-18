@@ -140,6 +140,26 @@ function memberLeft(db: Db, teamId: string, userId: string): void {
   run(db, "DELETE FROM team_onboarding WHERE user_id = ? AND team_id = ?", userId, teamId);
   // Delegated access exists only inside one team (accounts-delegated-access.md edge cases 1, 2).
   run(db, "DELETE FROM delegates WHERE owner_id = ? OR delegate_id = ?", userId, userId);
+  // Round-robin pools keep only people of one team (booking-links-team.md edge case 3);
+  // existing bookings stay. The team's webhook endpoints leave the user's links
+  // (integrations-webhooks.md edge case 5).
+  run(
+    db,
+    `DELETE FROM booking_link_people WHERE kind = 'pool' AND (
+       (user_id = ? AND link_id IN (SELECT id FROM booking_links WHERE user_id <> ?))
+       OR (user_id <> ? AND link_id IN (SELECT id FROM booking_links WHERE user_id = ?)))`,
+    userId,
+    userId,
+    userId,
+    userId,
+  );
+  run(
+    db,
+    `DELETE FROM booking_link_webhooks WHERE link_id IN (SELECT id FROM booking_links WHERE user_id = ?)
+       AND endpoint_id IN (SELECT id FROM webhook_endpoints WHERE team_id = ?)`,
+    userId,
+    teamId,
+  );
   if (memberCount(db, teamId) === 0) run(db, "DELETE FROM teams WHERE id = ?", teamId);
 }
 

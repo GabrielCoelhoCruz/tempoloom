@@ -4,8 +4,10 @@ import { ApiError, api } from "../lib/api.ts";
 import { navigate } from "../lib/router.ts";
 import { me } from "../lib/state.ts";
 import { CalendarAccess, ProvisionImport, SsoSettings } from "./team-admin.tsx";
+import { TeamBranding } from "./team-branding.tsx";
 import { Onboarding, TeamDefaults } from "./team-defaults.tsx";
 import { OutOfOffice } from "./team-ooo.tsx";
+import { TeamWebhooks } from "./team-webhooks.tsx";
 
 interface Member {
   userId: string;
@@ -494,9 +496,11 @@ export function TeamPage({ children }: { children?: ComponentChildren }) {
           <Directory />
           <ProvisionImport />
           <TeamDefaults />
+          <TeamBranding />
         </>
       )}
       <OutOfOffice />
+      <TeamWebhooks />
       {children}
     </div>
   );

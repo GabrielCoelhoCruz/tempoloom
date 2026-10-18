@@ -1,6 +1,14 @@
 // Outgoing webhooks for booking links (docs/specs/integrations-webhooks.md).
 // A local HTTP receiver logs each request; the test checks type, signature,
-// payload and retries.
+// payload and retries. Endpoints live in Team settings > Webhooks (admins
+// only); members attach them to their own links on the Booking links page.
+//
+// Ways the endpoint management can fail (rules 1-6, acceptance test 6):
+//  1. A member sees the "+ New" button, or the API lets a member create,
+//     regenerate, resume or delete an endpoint.
+//  2. A member cannot attach a team endpoint to their own link, or the request
+//     for that link is not sent.
+//  3. An endpoint of another team can be attached.
 import { createHmac } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -8,6 +16,8 @@ import type { Page } from "@playwright/test";
 import { addDays } from "../../src/shared/time.ts";
 import { at, blockUntil, eventually, expect, local, test } from "./fixtures.ts";
 import { addLink, allEvents, book, claimPage, slot, visitor, W } from "./helpers.ts";
+import { teamOf } from "./link-helpers.ts";
+import { openTeam } from "./team-helpers.ts";
 
 const day = (n: number) => addDays(W, n);
 
@@ -57,8 +67,16 @@ const signed = (r: Received, secret: string) =>
   r.headers["x-tempoloom-signature-256"] ===
   `sha256=${createHmac("sha256", secret).update(r.raw).digest("base64")}`;
 
-async function addWebhook(page: Page, name: string, url: string, secret = ""): Promise<string> {
+/** Opens Team settings > Webhooks and the "+ New" form. */
+async function newWebhookForm(page: Page) {
+  await openTeam(page);
   const form = page.getByTestId("webhook-form");
+  if (!(await form.isVisible())) await page.getByRole("button", { name: "+ New" }).click();
+  return form;
+}
+
+async function addWebhook(page: Page, name: string, url: string, secret = ""): Promise<string> {
+  const form = await newWebhookForm(page);
   await form.getByLabel("Name").fill(name);
   await form.getByLabel("URL").fill(url);
   if (secret) await form.getByLabel(/Secret/).fill(secret);
@@ -74,6 +92,7 @@ const linkBox = (page: Page, linkTitle: string, endpoint: string) =>
     .getByLabel(endpoint);
 
 async function attach(page: Page, linkTitle: string, endpoint: string) {
+  await page.getByRole("link", { name: "Booking links" }).click();
   await linkBox(page, linkTitle, endpoint).check();
   await expect(linkBox(page, linkTitle, endpoint)).toBeChecked();
 }
@@ -93,7 +112,7 @@ test("booking, reschedule and cancel send signed requests with custom data; a ne
     await addLink(page, { title: "Other", durations: "30" });
 
     // URL validation: a public host needs https; nothing is saved.
-    const form = page.getByTestId("webhook-form");
+    const form = await newWebhookForm(page);
     await form.getByLabel("Name").fill("CRM");
     await form.getByLabel("URL").fill("http://example.com/hook");
     await form.getByRole("button", { name: "Add webhook" }).click();
@@ -105,6 +124,7 @@ test("booking, reschedule and cancel send signed requests with custom data; a ne
     expect(secret.length).toBeGreaterThanOrEqual(32);
     await attach(page, "Intro", "CRM");
     // The secret is shown once.
+    await openTeam(page);
     await page.reload();
     await expect(page.getByTestId("webhook-secret-box")).toHaveCount(0);
     await expect(page.getByTestId("webhook-row")).toContainText("1 links");
@@ -139,6 +159,7 @@ test("booking, reschedule and cancel send signed requests with custom data; a ne
     expect(meeting.end_time).toBe(new Date(ev?.end ?? 0).toISOString());
 
     // A new secret signs the next request (rule 3).
+    await openTeam(page);
     await page.getByTestId("webhook-row").getByRole("button", { name: "New secret" }).click();
     const secret2 = (await page.getByTestId("webhook-secret").textContent()) ?? "";
     expect(secret2).not.toBe(secret);
@@ -182,6 +203,7 @@ test("booking, reschedule and cancel send signed requests with custom data; a ne
       () => allEvents(cal),
       (l) => expect(l.find((e) => e.summary.includes("Gus"))).toBeUndefined(),
     );
+    await openTeam(page);
     await page.reload();
     await expect(page.getByTestId("webhook-row")).toContainText("last result HTTP 200");
   } finally {
@@ -228,6 +250,7 @@ test("a failing receiver gets retries with one request id and Retry-After; too m
     // Removing Sales from the link stops its requests; Audit still gets them.
     await addWebhook(page, "Audit", audit.url);
     await attach(page, "Demo", "Audit");
+    await page.getByRole("link", { name: "Booking links" }).click();
     await linkBox(page, "Demo", "Sales").uncheck();
     await expect(linkBox(page, "Demo", "Sales")).not.toBeChecked();
     await v.goto("/book/jo/demo");
@@ -239,6 +262,7 @@ test("a failing receiver gets retries with one request id and Retry-After; too m
     expect(hook.log).toHaveLength(3);
 
     // Delete Audit: it leaves the list and the link.
+    await openTeam(page);
     await page
       .getByTestId("webhook-row")
       .filter({ hasText: "Audit" })
@@ -251,5 +275,70 @@ test("a failing receiver gets retries with one request id and Retry-After; too m
   } finally {
     await hook.close();
     await audit.close();
+  }
+});
+
+test("only a team admin manages endpoints in Team settings > Webhooks; a member attaches one to their own link (rules 1, 4; acceptance test 6)", async ({
+  page,
+  browser,
+  signIn,
+  colleague,
+  mail,
+}) => {
+  const hook = await receiver();
+  try {
+    await blockUntil(colleague.cal, W);
+    const [pc] = await teamOf(page, signIn, [colleague], mail);
+    if (!pc) throw new Error("no colleague page");
+    await addWebhook(page, "CRM", hook.url);
+
+    // The member sees the endpoint but cannot manage it.
+    await openTeam(pc);
+    await pc.reload();
+    const section = pc.getByTestId("team-webhooks");
+    await expect(section.getByTestId("webhook-row")).toContainText("CRM");
+    await expect(section.getByRole("button", { name: "+ New" })).toHaveCount(0);
+    await expect(section.getByRole("button", { name: "Delete" })).toHaveCount(0);
+    const statuses = await pc.evaluate(async (url) => {
+      const post = await fetch("/api/webhooks", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: "Mine", url }),
+      });
+      const list = (await (await fetch("/api/webhooks")).json()) as {
+        endpoints: { id: string }[];
+      };
+      const id = list.endpoints[0]?.id ?? "";
+      const del = await fetch(`/api/webhooks/${id}`, { method: "DELETE" });
+      const secret = await fetch(`/api/webhooks/${id}/secret`, { method: "POST" });
+      return [post.status, del.status, secret.status];
+    }, hook.url);
+    expect(statuses).toEqual([403, 403, 403]);
+    await pc.reload();
+    await expect(pc.getByTestId("team-webhooks").getByTestId("webhook-row")).toHaveCount(1);
+    await expect(pc.getByRole("button", { name: "+ New" })).toHaveCount(0);
+
+    // The member attaches the team endpoint to their own link; a booking sends to it.
+    await claimPage(pc, "mia");
+    await addLink(pc, { title: "Office hours", durations: "30" });
+    await attach(pc, "Office hours", "CRM");
+    const v = await visitor(browser);
+    await v.goto("/book/mia/office-hours");
+    await book(v, at(W, "10:00"), "Ned", "ned@example.com");
+    const log = await eventually(
+      async () => hook.log,
+      (l) => expect(l).toHaveLength(1),
+    );
+    const meeting = log[0]?.body.meeting as Record<string, unknown> | undefined;
+    expect(meeting?.booking_link_title).toBe("Office hours");
+    await eventually(
+      () => allEvents(colleague.cal),
+      (l) => expect(l.find((e) => e.summary.includes("Ned"))).toBeDefined(),
+    );
+    await openTeam(page);
+    await page.reload();
+    await expect(page.getByTestId("webhook-row")).toContainText("1 links");
+  } finally {
+    await hook.close();
   }
 });
