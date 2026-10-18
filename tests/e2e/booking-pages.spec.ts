@@ -14,7 +14,7 @@
 //  6. Uploads that are not JPG or PNG, or too large, are stored.              (edge case 5)
 //  7. The banner is not shown at 3:1; the logo is a link without a homepage
 //     URL, or not a link with one.                                           (rules 30-31)
-//  8. Settings are lost on reload.
+//  8. Settings are lost on reload, or a form shows a value other than the saved one.
 import { EMAIL, expect, test } from "./fixtures.ts";
 import { addLink, claimPage, visitor } from "./helpers.ts";
 import { editLink, saveLink, teamOf } from "./link-helpers.ts";
@@ -153,6 +153,8 @@ test("branding: the admin uploads a logo and banner and sets the team default; t
 
   // A later team default does not change the page; without a homepage the logo is no link.
   await openTeam(page);
+  await page.reload();
+  await expect(br.getByLabel("Default for new booking pages")).toHaveValue("custom");
   await br.getByLabel("Default for new booking pages").selectOption({ label: "No logo" });
   await br.getByLabel("Homepage URL").fill("");
   await br.getByRole("button", { name: "Save branding" }).click();
@@ -178,6 +180,7 @@ test("branding: the admin uploads a logo and banner and sets the team default; t
   await v.reload();
   await expect(v.getByTestId("brand-logo")).toBeVisible();
   await editLink(page, "Meeting");
+  await expect(page.getByTestId("link-editor").getByLabel("Branding")).toHaveValue("custom");
   await page.getByTestId("link-editor").getByLabel("Branding").selectOption("default");
   await saveLink(page);
   await v.reload();

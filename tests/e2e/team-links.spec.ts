@@ -28,7 +28,7 @@
 //     are, or the unassigned pool members get the event.          (rules 13, 18, 26)
 // 12. A pool member who leaves the team still gives times; existing bookings
 //     disappear.                                                   (edge case 3)
-// 13. Data is lost on reload.
+// 13. Data is lost on reload, or saving the editor changes fields it did not touch.
 import { addDays } from "../../src/shared/time.ts";
 import {
   at,
@@ -281,7 +281,10 @@ test("a team link keeps the longest recovery buffer among its organizers free, a
   expect(after).toContain("13:30");
   expect(after).not.toContain("14:00");
   await page.reload();
+  // Saving the editor keeps the fields it did not change.
+  await expect(page.locator('[data-link-title="Panel"]')).toContainText("P4 low");
   await editLink(page, "Panel");
+  await expect(page.getByTestId("link-editor").getByLabel("Priority")).toHaveValue("4");
   await expect(
     page.getByTestId("link-editor").getByLabel("Keep recovery buffers free"),
   ).not.toBeChecked();
