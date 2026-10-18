@@ -9,6 +9,7 @@ import {
   type TokenSet,
 } from "./google/oauth.ts";
 import { type ServiceAccountKey, serviceAccountToken } from "./google/service-account.ts";
+import { applyTeamDefaults } from "./team-defaults.ts";
 import { createOwnTeam } from "./teams.ts";
 
 export interface User {
@@ -158,6 +159,7 @@ export function ensureUser(
         teamId,
         now,
       );
+      applyTeamDefaults(db, teamId, id, now);
     } else createOwnTeam(db, { id, name, email: email.toLowerCase() }, now);
     return { id, email: email.toLowerCase(), name, time_zone: "UTC" };
   });

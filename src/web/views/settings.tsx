@@ -6,6 +6,7 @@ import { CATEGORY_LABELS, COLORS } from "../lib/categories.ts";
 import { hhmm, parseHhmm } from "../lib/format.ts";
 import { templateFromUrl } from "../lib/library.ts";
 import { loadMe, me, planNow } from "../lib/state.ts";
+import { FocusRecommendation } from "./team-recommendations.tsx";
 
 interface HoursSet {
   id: string;
@@ -24,7 +25,7 @@ interface Calendar {
 
 const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
-function HoursEditor({
+export function HoursEditor({
   set,
   onSave,
 }: {
@@ -552,6 +553,7 @@ export function Settings() {
 
       <section>
         <h2>Focus time</h2>
+        <FocusRecommendation onDone={() => act(async () => {})} />
         {focus.length === 0 ? (
           <button
             type="button"

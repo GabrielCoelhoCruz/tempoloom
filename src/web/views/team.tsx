@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from "preact/hooks";
 import { ApiError, api } from "../lib/api.ts";
 import { navigate } from "../lib/router.ts";
 import { me } from "../lib/state.ts";
+import { Onboarding, TeamDefaults } from "./team-defaults.tsx";
 
 interface Member {
   userId: string;
@@ -221,6 +222,7 @@ export function TeamPage({ children }: { children?: ComponentChildren }) {
           join until seats are free.
         </p>
       )}
+      <Onboarding />
       <div data-testid="team-prompts">
         {info.prompts.colleagues.length > 0 && info.canInvite && (
           <form
@@ -477,6 +479,7 @@ export function TeamPage({ children }: { children?: ComponentChildren }) {
           <h2>Team settings</h2>
           <TeamSettingsForm info={info} onSaved={() => void load()} />
           <Directory />
+          <TeamDefaults />
         </>
       )}
       {children}

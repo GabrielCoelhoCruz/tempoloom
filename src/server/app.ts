@@ -27,6 +27,7 @@ import { scimRoutes } from "./api/scim.ts";
 import { settingsRoutes } from "./api/settings.ts";
 import { statsRoutes } from "./api/stats.ts";
 import { publicInviteRoutes, teamRoutes } from "./api/team.ts";
+import { teamDefaultRoutes } from "./api/team-defaults.ts";
 import { webhookRoutes } from "./api/webhooks.ts";
 import type { Config } from "./config.ts";
 import type { SecretBox } from "./crypto.ts";
@@ -287,6 +288,8 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
       now,
     }),
   );
+
+  app.route("/api", teamDefaultRoutes(db, now));
 
   // Static client with a single-page fallback. Text files are compressed once
   // per encoding and kept in memory; the build output does not change at run time.

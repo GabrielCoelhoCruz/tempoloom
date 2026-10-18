@@ -3,6 +3,7 @@ import { api } from "../lib/api.ts";
 import { duration, hhmm } from "../lib/format.ts";
 import { freeName, templateFromUrl } from "../lib/library.ts";
 import { LEVEL_NAMES, planNow } from "../lib/state.ts";
+import { TeamHabitTemplates } from "./team-recommendations.tsx";
 
 interface Habit {
   id: string;
@@ -93,6 +94,7 @@ export function Habits() {
   return (
     <div class="page" data-testid="habits-page">
       <h1>Habits</h1>
+      <TeamHabitTemplates habits={habits.map((h) => h.title)} onAdded={load} />
       <form
         class="form"
         onSubmit={create}
