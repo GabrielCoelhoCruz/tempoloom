@@ -16,6 +16,7 @@
 // - "adjust" shortens without the organizer's consent, or not at all    -> end time before/after
 // - a member can change templates                                        -> 403 check
 // - the report counts declined meetings as attended, or shows names      -> report cells
+import type { Page } from "@playwright/test";
 import { addDays } from "../../src/shared/time.ts";
 import { at, BACKEND, eventually, expect, local, test } from "./fixtures.ts";
 import { W } from "./helpers.ts";
@@ -29,6 +30,12 @@ import {
 } from "./policy-helpers.ts";
 
 test.skip(BACKEND === "google", "Agenda policy E2E uses several CalDAV users.");
+
+/** Reloads the Policies page and waits until it shows the member's data. */
+async function reloaded(p: Page): Promise<void> {
+  await p.reload();
+  await expect(p.getByTestId("agenda-reminders")).toBeVisible();
+}
 
 const tue = addDays(W, 1);
 const wed = addDays(W, 2);
@@ -153,7 +160,7 @@ test("remind lists meetings without an agenda with a draft from the type's templ
   const reminders = b.page.getByTestId("agenda-reminders");
   await eventually(
     async () => {
-      await b.page.reload();
+      await reloaded(b.page);
       return reminders.locator("[data-reminder]").count();
     },
     (n) => expect(n).toBe(2),
@@ -191,7 +198,7 @@ test("remind lists meetings without an agenda with a draft from the type's templ
     .click();
   await expect(reminders.locator("[data-reminder]")).toHaveCount(0);
   await b.page.waitForTimeout(8_000);
-  await b.page.reload();
+  await reloaded(b.page);
   await expect(b.page.getByTestId("agenda-reminders").locator("[data-reminder]")).toHaveCount(0);
 
   // Rule 16: "adjust" proposes to shorten; nothing changes until the organizer applies it.
@@ -207,7 +214,7 @@ test("remind lists meetings without an agenda with a draft from the type's templ
     .locator('[data-reminder="Long review"]');
   await eventually(
     async () => {
-      await b.page.reload();
+      await reloaded(b.page);
       return reviewReminder.count();
     },
     (n) => expect(n).toBe(1),

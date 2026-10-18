@@ -92,6 +92,7 @@ test("a focus policy by department gives members in scope a focus goal from the 
   await expect(bFocus.getByRole("button", { name: "Delete" })).toHaveCount(0);
   await c.page.getByRole("link", { name: "Settings" }).click();
   await c.page.reload();
+  await expect(c.page.getByTestId("settings-page")).toBeVisible();
   await expect(c.page.locator("[data-focus-title]")).toHaveCount(0);
 
   // The member sees the policy that applies to them.
