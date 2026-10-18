@@ -112,6 +112,8 @@ E2E = {
     149: ["lib_habit"], 717: ["lib_habit", "lib_other"], 721: ["lib_other"], 743: ["lib_other"],
     275: ["c_paint", "c_buffer"], 277: ["c_paint"], 279: ["c_paint"], 280: ["c_paint"], 281: ["c_paint"],
     731: ["c_buffer"],
+    260: ["c_allday"], 264: ["c_allday"], 267: ["c_allday"],
+    54: ["b_book"], 62: ["b_prio"], 258: ["m_follow"],
 }
 
 # Row id -> reason, for rows implemented in part (some behavior has E2E, some does not).
@@ -154,6 +156,18 @@ PARTIAL = {
     284: "An event that cannot change color is skipped and painting never stops a run; not under E2E (Google)",
     285: "At most 2 scope changes a minute (E2E); no repaint-all button",
     221: "Text, count, length, exact title, tag and category filters; category is E2E-proven; no filter by person",
+    261: "Google out-of-office events are busy, so they block like any busy event; Google E2E pending",
+    262: "Away time over 8 hours is vacation, shorter is personal commitment (unit tests); stats do not split it yet",
+    263: "#tl_free opens a busy event to tasks and habits (E2E for a timed event); not under E2E for out of office",
+    265: "Any connected calendar that counts for availability blocks its busy events (E2E); no holiday calendar of its own",
+    56: "Inside one level and rank: meetings, then buffers, then habits, then tasks; unit tests only",
+    242: "The planner can set any event's category to flight (E2E for the control); airport time still follows the title or #tl_flight",
+    253: "#tl_busy makes any free event block tasks and habits (E2E); no quick-block action",
+    254: "#tl_travel makes the travel buffer wrap an event without an address; not under E2E",
+    255: "#tl_flight gives airport time and the flight category; E2E covers flight numbers in the title, not the tag",
+    256: "#tl_trip gives the travel category (unit tests); no buffer is added",
+    257: "#tl_focus counts an event as focus in stats; not under test",
+    385: "Booked events go to the main calendar; no choice of calendar",
 }
 
 # Library entries (automations-library.md): row = 718 + entry number.
