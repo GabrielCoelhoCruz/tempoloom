@@ -21,6 +21,7 @@ import {
   utcToLocal,
   weekdayOf,
 } from "../../shared/time.ts";
+import { isAnalyticsOnly } from "../analytics/seats.ts";
 import { all, type Db, one, run } from "../db.ts";
 import type { CalendarProvider } from "../providers/types.ts";
 import { getSettings, type Settings } from "../settings.ts";
@@ -328,7 +329,7 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
   );
   if (!user) return null;
   const settings = getSettings(db, userId);
-  if (settings.paused) return null;
+  if (settings.paused || isAnalyticsOnly(db, userId)) return null;
   const target = writeCalendar(db, userId);
   if (!target) return null;
   const last =

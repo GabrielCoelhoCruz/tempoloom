@@ -35,6 +35,10 @@ const TeamPage = lazyView(() => import("./views/team.tsx").then((m) => m.TeamPag
 const JoinPage = lazyView<{ token: string; login?: ComponentChildren }>(() =>
   import("./views/team.tsx").then((m) => m.JoinPage),
 );
+const TeamStats = lazyView(() => import("./views/team-stats.tsx").then((m) => m.TeamStats));
+const OrgAnalytics = lazyView(() =>
+  import("./views/org-analytics.tsx").then((m) => m.OrgAnalytics),
+);
 
 const NAV: { href: string; label: string }[] = [
   { href: "/", label: "Planner" },
@@ -163,6 +167,10 @@ function Page() {
       return <Links />;
     case "/stats":
       return <StatsPage />;
+    case "/stats/team":
+      return <TeamStats />;
+    case "/stats/organization":
+      return <OrgAnalytics />;
     case "/team":
       return <TeamPage />;
     default:

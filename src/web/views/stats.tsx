@@ -3,6 +3,7 @@ import { addDays, utcToLocal, weekdayOf } from "../../shared/time.ts";
 import { api } from "../lib/api.ts";
 import { duration } from "../lib/format.ts";
 import { zone } from "../lib/state.ts";
+import { StatsTabs } from "./stats-tabs.tsx";
 
 type Category =
   | "oneOnOne"
@@ -87,6 +88,7 @@ export function StatsPage() {
   return (
     <div class="page" data-testid="stats-page">
       <h1>Stats</h1>
+      <StatsTabs />
       <div class="actions">
         {Object.entries(picks).map(([label, r]) => (
           <button

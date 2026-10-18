@@ -479,4 +479,20 @@ export const MIGRATIONS: readonly string[] = [
   -- Set when the directory deactivates the person: no sign-in, no scheduling, no seat.
   ALTER TABLE users ADD COLUMN deactivated_at INTEGER;
   `,
+  // 13: analytics: meeting cost salaries and analytics-only seats (docs/specs/analytics-organization.md)
+  `
+  CREATE TABLE analytics_settings (
+    team_id TEXT PRIMARY KEY REFERENCES teams(id) ON DELETE CASCADE,
+    default_salary INTEGER NOT NULL,
+    -- Annual salary per department: JSON object department -> whole currency units.
+    salaries TEXT NOT NULL DEFAULT '{}'
+  ) STRICT;
+
+  -- The member's calendar counts in analytics; the scheduler never changes it.
+  CREATE TABLE analytics_seats (
+    user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    team_id TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    created_at INTEGER NOT NULL
+  ) STRICT;
+  `,
 ];
