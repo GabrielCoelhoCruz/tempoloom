@@ -17,10 +17,11 @@ import {
   type User,
   upsertAccount,
   upsertGoogleLogin,
-  userForSession,
 } from "./accounts.ts";
+import { accountRoutes } from "./api/account.ts";
 import { analyticsRoutes } from "./api/analytics.ts";
 import { bookingRoutes, publicBookingRoutes } from "./api/booking.ts";
+import { delegationGuard, delegationRoutes } from "./api/delegation.ts";
 import { itemRoutes } from "./api/items.ts";
 import { meetingRoutes } from "./api/meetings.ts";
 import { oooRoutes } from "./api/ooo.ts";
@@ -29,14 +30,16 @@ import { policyRoutes } from "./api/policies.ts";
 import { provisioningRoutes } from "./api/provisioning.ts";
 import { scimRoutes } from "./api/scim.ts";
 import { settingsRoutes } from "./api/settings.ts";
-import { connectRoutes, ssoAdminRoutes, ssoAuthRoutes } from "./api/sso.ts";
+import { ssoAdminRoutes, ssoAuthRoutes } from "./api/sso.ts";
 import { statsRoutes } from "./api/stats.ts";
 import { publicInviteRoutes, teamRoutes } from "./api/team.ts";
 import { teamDefaultRoutes } from "./api/team-defaults.ts";
 import { webhookRoutes } from "./api/webhooks.ts";
+import { apiKeyUser } from "./api-keys.ts";
 import type { Config } from "./config.ts";
 import type { SecretBox } from "./crypto.ts";
 import { all, type Db, one, run } from "./db.ts";
+import { ownersOf, sessionIdentity } from "./delegation.ts";
 import { isDeactivated } from "./directory.ts";
 import {
   buildAuthRequest,
@@ -46,6 +49,7 @@ import {
 } from "./google/oauth.ts";
 import { dropCoveredGrant } from "./grant.ts";
 import { jsonBody } from "./http.ts";
+import { createLiveHub } from "./live.ts";
 import type { Mailer } from "./mail.ts";
 import { CalDavProvider } from "./providers/caldav.ts";
 import { ProviderError } from "./providers/types.ts";
@@ -65,7 +69,11 @@ export interface AppDeps {
   now?: () => number;
 }
 
-export type AppEnv = { Variables: { user: User } };
+/**
+ * `user` owns the data a request works on. In an acting session (delegated
+ * access) `actor` is the delegate behind it. `session` is unset for API keys.
+ */
+export type AppEnv = { Variables: { user: User; actor?: User; session?: string } };
 
 const SESSION_COOKIE = "tl_session";
 const STATE_TTL = 10 * 60_000;
@@ -261,18 +269,30 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   };
   app.route("/auth/sso", ssoAuthRoutes(ssoDeps));
 
+  const live = createLiveHub();
+  sync.onChange((userId) => live.notify(userId));
+
   app.use("/api/*", async (c, next) => {
     const token = getCookie(c, SESSION_COOKIE);
-    const user = token ? userForSession(db, token, now()) : undefined;
+    const found = token ? sessionIdentity(db, token, now()) : undefined;
+    if (found === "acting_ended")
+      return c.json({ error: "acting_ended", message: "Your access to that account ended." }, 403);
+    const user = found?.user ?? apiKeyUser(db, c.req.header("authorization"), now());
     if (!user) return c.json({ error: "unauthenticated" }, 401);
     c.set("user", user);
+    if (found?.actor) c.set("actor", found.actor);
+    if (found) c.set("session", found.session);
     await next();
   });
+  app.use("/api/*", delegationGuard(db, live, now));
 
   app.get("/api/me", (c) => {
     const user = c.get("user");
+    const actor = c.get("actor");
     return c.json({
       user,
+      actor: actor ?? null,
+      owners: ownersOf(db, (actor ?? user).id),
       settings: getSettings(db, user.id),
       accounts: all(
         db,
@@ -303,6 +323,8 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   app.route("/api", statsRoutes(db));
   app.route("/api", analyticsRoutes(db, now));
   app.route("/api", policyRoutes(db, sync, now));
+  app.route("/api", accountRoutes(db, box, sync, now));
+  app.route("/api", delegationRoutes(db, live, now));
   app.route(
     "/api",
     teamRoutes({
@@ -315,7 +337,6 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
     }),
   );
   app.route("/api", ssoAdminRoutes(ssoDeps));
-  app.route("/api", connectRoutes({ db, box, sync, now }));
   app.route("/api", provisioningRoutes({ db, box, now }));
 
   app.route("/api", teamDefaultRoutes(db, now));

@@ -138,6 +138,8 @@ function memberLeft(db: Db, teamId: string, userId: string): void {
   // Calendars attached through the old team's grant (admin-sso-provisioning.md rule 12).
   run(db, "DELETE FROM accounts WHERE user_id = ? AND grant_team_id = ?", userId, teamId);
   run(db, "DELETE FROM team_onboarding WHERE user_id = ? AND team_id = ?", userId, teamId);
+  // Delegated access exists only inside one team (accounts-delegated-access.md edge cases 1, 2).
+  run(db, "DELETE FROM delegates WHERE owner_id = ? OR delegate_id = ?", userId, userId);
   if (memberCount(db, teamId) === 0) run(db, "DELETE FROM teams WHERE id = ?", teamId);
 }
 

@@ -3,6 +3,7 @@ import { api } from "../lib/api.ts";
 import { duration, hhmm } from "../lib/format.ts";
 import { lazyComponent } from "../lib/lazy.ts";
 import { freeName, templateFromUrl } from "../lib/library.ts";
+import { useLive } from "../lib/live.ts";
 import { loadPolicyMarks, PolicyMark, policyMarks } from "../lib/policy-marks.tsx";
 import { LEVEL_NAMES, planNow } from "../lib/state.ts";
 
@@ -54,6 +55,7 @@ export function Habits() {
     await loadPolicyMarks();
   }, []);
   useEffect(() => void load(), [load]);
+  useLive(load);
 
   const act = async (fn: () => Promise<unknown>) => {
     setError(null);

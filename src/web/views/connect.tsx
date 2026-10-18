@@ -17,7 +17,7 @@ export function ConnectCalendar() {
         setPending(true);
         setError(null);
         try {
-          await api("POST", "/api/accounts/caldav", {
+          await api("POST", "/api/accounts", {
             serverUrl: f.get("serverUrl"),
             username: f.get("username"),
             password: f.get("password"),

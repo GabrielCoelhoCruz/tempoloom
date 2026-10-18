@@ -39,7 +39,7 @@ export interface AccountRow {
 const SESSION_DAYS = 30;
 const LINK_MINUTES = 15;
 
-const hashToken = (token: string) => createHash("sha256").update(token).digest("base64url");
+export const hashToken = (token: string) => createHash("sha256").update(token).digest("base64url");
 
 export function createSession(db: Db, userId: string, now = Date.now()): string {
   const token = randomBytes(32).toString("base64url");

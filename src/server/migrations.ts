@@ -689,4 +689,39 @@ export const MIGRATIONS: readonly string[] = [
   ) STRICT;
   CREATE INDEX agenda_actions_user ON agenda_actions(user_id, kind, state);
   `,
+  // 17: delegation: delegated access, acting sessions, the delegates' change log, API keys
+  `
+  CREATE TABLE delegates (
+    owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    delegate_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (owner_id, delegate_id)
+  ) STRICT;
+  CREATE INDEX delegates_delegate ON delegates(delegate_id);
+
+  -- The owner whose account a delegate works in during this session.
+  ALTER TABLE sessions ADD COLUMN acting_as TEXT REFERENCES users(id) ON DELETE SET NULL;
+
+  -- Changes made in acting sessions, so the owner sees who made them.
+  CREATE TABLE delegate_changes (
+    id INTEGER PRIMARY KEY,
+    owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    actor_email TEXT NOT NULL,
+    method TEXT NOT NULL,
+    path TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  ) STRICT;
+  CREATE INDEX delegate_changes_owner ON delegate_changes(owner_id, created_at);
+
+  CREATE TABLE api_keys (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    token_hash TEXT NOT NULL UNIQUE,
+    expires_at INTEGER,
+    created_at INTEGER NOT NULL,
+    last_used_at INTEGER
+  ) STRICT;
+  CREATE INDEX api_keys_user ON api_keys(user_id);
+  `,
 ];

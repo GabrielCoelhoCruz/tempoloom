@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "preact/hooks";
 import { api } from "../lib/api.ts";
 import { duration, formatWhen, fromLocalInput, toLocalInput } from "../lib/format.ts";
+import { useLive } from "../lib/live.ts";
 import { LEVEL_NAMES, me, planNow, zone } from "../lib/state.ts";
 
 interface Task {
@@ -45,6 +46,7 @@ export function Tasks() {
     setTasks((await api<{ tasks: Task[] }>("GET", `/api/tasks?status=${filter}`)).tasks);
   }, [filter]);
   useEffect(() => void load(), [load]);
+  useLive(load);
   useEffect(() => {
     void api<{ hours: HoursSet[] }>("GET", "/api/hours").then((h) => setHours(h.hours));
   }, []);

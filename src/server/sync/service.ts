@@ -28,6 +28,7 @@ export class SyncService {
   readonly #timers = new Map<string, NodeJS.Timeout>();
   #interval: NodeJS.Timeout | undefined;
   #stopped = false;
+  readonly #listeners = new Set<(userId: string) => void>();
 
   constructor(deps: SyncServiceDeps) {
     this.#deps = deps;
@@ -35,6 +36,11 @@ export class SyncService {
 
   #log(msg: string, err?: unknown): void {
     (this.#deps.log ?? ((m, e) => console.error(m, e ?? "")))(msg, err);
+  }
+
+  /** Calls fn after each run that read or wrote changes of the user's calendars. */
+  onChange(fn: (userId: string) => void): void {
+    this.#listeners.add(fn);
   }
 
   pool(userId: string): ProviderPool {
@@ -271,7 +277,19 @@ export class SyncService {
       const p = result?.push;
       if (p && p.created + p.updated + p.deleted > 0) {
         for (const id of peers.attendees) this.request(id);
+        // A CalDAV tag hashes the calendar's content, and the stored tag predates
+        // these writes: an edit that restores that content (say, deleting a chunk
+        // just written) would match it and go unseen. Read those calendars in full.
+        run(
+          db,
+          `UPDATE calendars SET sync_token = NULL
+           WHERE id IN (SELECT calendar_id FROM managed_events WHERE user_id = ?)
+             AND account_id IN (SELECT id FROM accounts WHERE provider = 'caldav')`,
+          userId,
+        );
       }
+      if (pulled > 0 || (p && p.created + p.updated + p.deleted > 0))
+        for (const fn of this.#listeners) fn(userId);
     } catch (err) {
       this.#log(`sync failed for user ${userId}`, err);
     }

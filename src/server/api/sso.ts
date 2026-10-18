@@ -7,16 +7,12 @@ import { Hono } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { HTTPException } from "hono/http-exception";
 import { z } from "zod";
-import { isValidTimeZone } from "../../shared/time.ts";
-import { ensureUser, upsertAccount } from "../accounts.ts";
+import { ensureUser } from "../accounts.ts";
 import type { AppEnv } from "../app.ts";
 import type { SecretBox } from "../crypto.ts";
 import { all, type Db, one, run, tx } from "../db.ts";
 import { isDeactivated } from "../directory.ts";
-import { dropCoveredGrant } from "../grant.ts";
 import { jsonBody } from "../http.ts";
-import { CalDavProvider } from "../providers/caldav.ts";
-import { ProviderError } from "../providers/types.ts";
 import {
   authRequest,
   discover,
@@ -27,7 +23,6 @@ import {
   verifyIdToken,
 } from "../sso/oidc.ts";
 import { type SsoMode, ssoForEmail } from "../sso/policy.ts";
-import type { SyncService } from "../sync/service.ts";
 import { hasFreeSeat, isCompanyDomain, membership, type Team } from "../teams.ts";
 
 const STATE_TTL = 10 * 60_000;
@@ -256,71 +251,5 @@ export function ssoAdminRoutes(deps: SsoDeps): Hono<AppEnv> {
     return c.body(null, 204);
   });
 
-  return r;
-}
-
-const connectBody = z.object({
-  serverUrl: z.url({ protocol: /^https?$/ }),
-  username: z.string().min(1).max(200),
-  password: z.string().min(1).max(1000),
-  timeZone: z.string().refine(isValidTimeZone, "Unknown time zone").optional(),
-});
-
-/** /api/accounts/caldav: connects a CalDAV calendar to the signed-in user. */
-export function connectRoutes(deps: {
-  db: Db;
-  box: SecretBox;
-  sync: SyncService;
-  now: () => number;
-}): Hono<AppEnv> {
-  const { db, box, sync, now } = deps;
-  const r = new Hono<AppEnv>();
-  r.post("/accounts/caldav", async (c) => {
-    const user = c.get("user");
-    const { timeZone, ...body } = await jsonBody(c, connectBody);
-    try {
-      const calendars = await new CalDavProvider(
-        { ...body, email: user.email },
-        "UTC",
-      ).listCalendars();
-      if (calendars.length === 0) return c.json({ error: "no_calendars" }, 400);
-    } catch (err) {
-      if (err instanceof ProviderError && err.kind === "auth") {
-        return c.json({ error: "invalid_credentials" }, 401);
-      }
-      return c.json({ error: "server_unreachable" }, 502);
-    }
-    const externalId = `${new URL(body.serverUrl).href}|${body.username}`;
-    const owner = one<{ user_id: string }>(
-      db,
-      "SELECT user_id FROM accounts WHERE provider = 'caldav' AND external_id = ?",
-      externalId,
-    );
-    if (owner && owner.user_id !== user.id) return c.json({ error: "account_in_use" }, 409);
-    // SSO brings no time zone: the first own calendar takes the browser's, as CalDAV sign-in does.
-    const first = !one(
-      db,
-      "SELECT 1 FROM accounts WHERE user_id = ? AND grant_team_id IS NULL",
-      user.id,
-    );
-    if (first && timeZone)
-      run(db, "UPDATE users SET time_zone = ? WHERE id = ?", timeZone, user.id);
-    const accountId = upsertAccount(
-      db,
-      box,
-      {
-        userId: user.id,
-        provider: "caldav",
-        externalId,
-        email: user.email,
-        serverUrl: body.serverUrl,
-        credentials: { username: body.username, password: body.password },
-      },
-      now(),
-    );
-    await sync.onConnect(user.id, accountId);
-    dropCoveredGrant(db, user.id);
-    return c.json({ ok: true });
-  });
   return r;
 }
