@@ -53,4 +53,5 @@ jobs:
             .e2e/report
             .e2e/results.json
             .e2e/test-results
+            .e2e/radicale.log
           retention-days: 14

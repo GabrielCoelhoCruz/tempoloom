@@ -168,6 +168,11 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
     async ({}, use) => {
       execFileSync(join(ROOT, "scripts/caldav-server.sh"), ["start"], { stdio: "ignore" });
       await use(radicaleEnv());
+      // Keep the server log for failure analysis (it holds no secrets).
+      execFileSync("sh", [
+        "-c",
+        `docker logs tempoloom-e2e-radicale > "${join(ROOT, ".e2e/radicale.log")}" 2>&1 || true`,
+      ]);
       if (!process.env.TEMPOLOOM_E2E_KEEP_CALDAV) {
         execFileSync(join(ROOT, "scripts/caldav-server.sh"), ["stop"], { stdio: "ignore" });
       }

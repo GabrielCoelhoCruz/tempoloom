@@ -38,12 +38,12 @@ const server = serve({ fetch: app.fetch, port: config.PORT, hostname: config.HOS
 });
 sync.start();
 
-function shutdown() {
-  sync.stop();
-  server.close(() => {
-    db.close();
-    process.exit(0);
-  });
+// Stop taking requests, let queued calendar writes finish, then exit.
+async function shutdown() {
+  server.close();
+  await sync.stop();
+  db.close();
+  process.exit(0);
 }
-process.on("SIGINT", shutdown);
-process.on("SIGTERM", shutdown);
+process.once("SIGINT", () => void shutdown());
+process.once("SIGTERM", () => void shutdown());

@@ -19,6 +19,7 @@ export class SyncService {
   readonly #queued = new Map<string, Promise<void>>();
   readonly #timers = new Map<string, NodeJS.Timeout>();
   #interval: NodeJS.Timeout | undefined;
+  #stopped = false;
 
   constructor(deps: SyncServiceDeps) {
     this.#deps = deps;
@@ -50,9 +51,13 @@ export class SyncService {
     }, this.#deps.intervalMs);
   }
 
-  stop(): void {
+  /** Stops new work and resolves when the work already queued has finished. */
+  async stop(): Promise<void> {
+    this.#stopped = true;
     clearInterval(this.#interval);
     for (const t of this.#timers.values()) clearTimeout(t);
+    this.#timers.clear();
+    await Promise.all([...this.#tail.values()]);
   }
 
   /** Reads the account's calendar list, then plans. */
@@ -67,6 +72,7 @@ export class SyncService {
 
   /** Asks for a sync and replan of a user. Calls within the debounce window merge. */
   request(userId: string, delayMs = DEBOUNCE_MS): void {
+    if (this.#stopped) return;
     clearTimeout(this.#timers.get(userId));
     this.#timers.set(
       userId,
