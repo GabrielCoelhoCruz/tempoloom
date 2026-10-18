@@ -266,11 +266,15 @@ test("team habit templates show at the top of every member's habits page; edits 
   await expect(planning).toContainText("1 h");
   await planning.getByRole("button", { name: "Add" }).click();
   await expect(planning).toContainText("Added");
+  const report = recommended.locator('[data-template="Weekly status report"]');
+  await report.getByRole("button", { name: "Add" }).click();
+  await expect(report).toContainText("Added");
   await expect(pb.locator('[data-habit-title="Weekly planning"]')).toBeVisible();
-  await eventually(
-    () => week(colleague.cal),
-    (l) => expect(starts(l, "Weekly planning")).toEqual([`${W} 09:00-10:00`]),
-  );
+  const placed = (l: Awaited<ReturnType<typeof week>>) => {
+    expect(starts(l, "Weekly planning")).toEqual([`${W} 09:00-10:00`]);
+    expect(starts(l, "Weekly status report")).toEqual([`${day(4)} 16:00-16:30`]);
+  };
+  await eventually(() => week(colleague.cal), placed);
 
   // The admin shortens one template and deletes the other.
   await openTeam(page);
@@ -292,8 +296,9 @@ test("team habit templates show at the top of every member's habits page; edits 
   await expect(recommended.locator("[data-template]")).toHaveCount(1);
   await expect(planning).toContainText("30 min");
   await expect(pb.locator('[data-habit-title="Weekly planning"]')).toContainText("1 h");
+  await expect(pb.locator('[data-habit-title="Weekly status report"]')).toBeVisible();
   await planNow(pb);
-  expect(starts(await week(colleague.cal), "Weekly planning")).toEqual([`${W} 09:00-10:00`]);
+  placed(await week(colleague.cal));
 
   // A member who is not an admin cannot manage templates.
   await openTeam(pb);
