@@ -53,6 +53,14 @@ export interface EventWrite {
   organizer?: string;
 }
 
+/** A change to an event someone else may organize; every other field stays as it is. */
+export interface ExternalChange {
+  /** The user's own answer to the invitation. */
+  selfResponse?: ResponseStatus;
+  description?: string;
+  end?: number;
+}
+
 export interface EventChanges {
   events: ProviderEvent[];
   /** Opaque token for the next incremental read; null when the backend gives none. */
@@ -106,6 +114,17 @@ export interface CalendarProvider {
     calendarId: string,
     eventId: string,
     colorId: string | null,
+    etag: string | null,
+  ): Promise<ProviderEvent>;
+  /**
+   * Changes the user's answer, the description or the end of one event
+   * (teams-policies.md rules 15-17). With an etag, fails with precondition_failed
+   * if the event changed.
+   */
+  editExternal(
+    calendarId: string,
+    eventId: string,
+    change: ExternalChange,
     etag: string | null,
   ): Promise<ProviderEvent>;
 }
