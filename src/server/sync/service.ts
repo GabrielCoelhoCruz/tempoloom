@@ -77,6 +77,25 @@ export class SyncService {
     this.request(userId, 0);
   }
 
+  /** Reads every calendar list of the user now, inside the user's queue. */
+  async refreshCalendars(userId: string): Promise<void> {
+    await this.exclusive(userId, async (pool) => {
+      for (const a of all<{ id: string }>(
+        this.#deps.db,
+        "SELECT id FROM accounts WHERE user_id = ? AND status = 'ok'",
+        userId,
+      )) {
+        await syncCalendarList(this.#deps.db, pool.get(a.id), a.id, userId);
+        run(
+          this.#deps.db,
+          "UPDATE accounts SET calendars_synced_at = ? WHERE id = ?",
+          this.#deps.now(),
+          a.id,
+        );
+      }
+    });
+  }
+
   /** Asks for a sync and replan of a user. Calls within the debounce window merge. */
   request(userId: string, delayMs = DEBOUNCE_MS): void {
     if (this.#stopped) return;

@@ -9,32 +9,45 @@ interface Task {
   level: number;
   total_minutes: number;
   due_at: number | null;
+  next_up_rank: number | null;
   state: string;
   scheduledMinutes: number;
   remainingMinutes: number;
   issue: { status: string; reason: string } | null;
 }
 
+interface HoursSet {
+  id: string;
+  kind: string;
+  name: string;
+}
+
+const REASONS: Record<string, string> = {
+  "outside-window": "starts after the planning window",
+  "no-hours": "no hours in this period",
+  "too-long-for-hours": "a chunk is longer than any range of its hours",
+  "all-day-block": "all-day events block every day",
+  "no-space-fixed": "no free time",
+  "no-space-priority": "higher priorities use the free time",
+  "after-due": "part ends after the due date",
+};
+
 export function Tasks() {
   const z = zone();
   const d = me.value?.settings.taskDefaults;
   const [filter, setFilter] = useState<"open" | "done">("open");
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [hours, setHours] = useState<HoursSet[]>([]);
+  const [split, setSplit] = useState(d?.splitUp ?? true);
   const [error, setError] = useState<string | null>(null);
-  const [form, setForm] = useState(() => ({
-    title: "",
-    minutes: d?.minutes ?? 60,
-    level: d?.level ?? 2,
-    splitUp: d?.splitUp ?? true,
-    minChunk: d?.minChunkMinutes ?? 30,
-    maxChunk: d?.maxChunkMinutes ?? 120,
-    due: d?.dueInDays == null ? "" : toLocalInput(z, Date.now() + d.dueInDays * 86_400_000),
-  }));
 
   const load = useCallback(async () => {
     setTasks((await api<{ tasks: Task[] }>("GET", `/api/tasks?status=${filter}`)).tasks);
   }, [filter]);
   useEffect(() => void load(), [load]);
+  useEffect(() => {
+    void api<{ hours: HoursSet[] }>("GET", "/api/hours").then((h) => setHours(h.hours));
+  }, []);
 
   const act = async (fn: () => Promise<unknown>) => {
     setError(null);
@@ -43,22 +56,32 @@ export function Tasks() {
       await planNow();
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      const body = (err as { body?: { issues?: { message: string }[] } }).body;
+      setError(body?.issues?.[0]?.message ?? (err instanceof Error ? err.message : String(err)));
     }
   };
 
   const create = (e: Event) => {
     e.preventDefault();
+    const formEl = e.currentTarget as HTMLFormElement;
+    const f = new FormData(formEl);
+    const text = (k: string) => String(f.get(k) ?? "");
+    const num = (k: string) => Number(f.get(k));
     void act(async () => {
       await api("POST", "/api/tasks", {
-        title: form.title,
-        minutes: form.minutes,
-        level: form.level,
-        splitUp: form.splitUp,
-        ...(form.splitUp ? { minChunkMinutes: form.minChunk, maxChunkMinutes: form.maxChunk } : {}),
-        dueAt: form.due ? fromLocalInput(z, form.due) : null,
+        title: text("title"),
+        ...(text("notes") ? { notes: text("notes") } : {}),
+        minutes: num("minutes"),
+        level: num("level"),
+        splitUp: split,
+        ...(split ? { minChunkMinutes: num("minChunk"), maxChunkMinutes: num("maxChunk") } : {}),
+        dueAt: text("due") ? fromLocalInput(z, text("due")) : null,
+        ...(text("startAfter") ? { startAfter: fromLocalInput(z, text("startAfter")) } : {}),
+        ...(text("hoursSetId") ? { hoursSetId: text("hoursSetId") } : {}),
+        nextUp: f.get("nextUp") === "on",
       });
-      setForm({ ...form, title: "" });
+      const title = formEl.elements.namedItem("title") as HTMLInputElement | null;
+      if (title) title.value = "";
     });
   };
 
@@ -68,13 +91,7 @@ export function Tasks() {
       <form class="form" onSubmit={create} data-testid="task-form">
         <label class="wide">
           Title
-          <input
-            name="title"
-            required
-            maxLength={255}
-            value={form.title}
-            onInput={(e) => setForm({ ...form, title: e.currentTarget.value })}
-          />
+          <input name="title" required maxLength={255} />
         </label>
         <label>
           Duration (minutes)
@@ -83,19 +100,14 @@ export function Tasks() {
             type="number"
             min={15}
             step={15}
-            value={form.minutes}
-            onInput={(e) => setForm({ ...form, minutes: Number(e.currentTarget.value) })}
+            defaultValue={String(d?.minutes ?? 60)}
           />
         </label>
         <label>
           Priority
-          <select
-            name="level"
-            value={form.level}
-            onChange={(e) => setForm({ ...form, level: Number(e.currentTarget.value) })}
-          >
+          <select name="level">
             {[1, 2, 3, 4].map((l) => (
-              <option value={l} key={l}>
+              <option value={l} key={l} selected={l === (d?.level ?? 2)}>
                 {LEVEL_NAMES[l]}
               </option>
             ))}
@@ -106,22 +118,40 @@ export function Tasks() {
           <input
             name="due"
             type="datetime-local"
-            value={form.due}
-            onInput={(e) => setForm({ ...form, due: e.currentTarget.value })}
+            defaultValue={
+              d?.dueInDays == null ? "" : toLocalInput(z, Date.now() + d.dueInDays * 86_400_000)
+            }
           />
+        </label>
+        <label>
+          Start after
+          <input name="startAfter" type="datetime-local" />
+        </label>
+        <label>
+          Hours
+          <select name="hoursSetId">
+            <option value="">Work hours</option>
+            {hours
+              .filter((h) => h.kind !== "work")
+              .map((h) => (
+                <option value={h.id} key={h.id}>
+                  {h.name}
+                </option>
+              ))}
+          </select>
         </label>
         <label>
           Split into chunks
           <select
             name="splitUp"
-            value={form.splitUp ? "yes" : "no"}
-            onChange={(e) => setForm({ ...form, splitUp: e.currentTarget.value === "yes" })}
+            value={split ? "yes" : "no"}
+            onChange={(e) => setSplit(e.currentTarget.value === "yes")}
           >
             <option value="yes">Yes</option>
             <option value="no">No</option>
           </select>
         </label>
-        {form.splitUp && (
+        {split && (
           <>
             <label>
               Shortest chunk
@@ -130,8 +160,7 @@ export function Tasks() {
                 type="number"
                 min={15}
                 step={15}
-                value={form.minChunk}
-                onInput={(e) => setForm({ ...form, minChunk: Number(e.currentTarget.value) })}
+                defaultValue={String(d?.minChunkMinutes ?? 30)}
               />
             </label>
             <label>
@@ -141,17 +170,28 @@ export function Tasks() {
                 type="number"
                 min={15}
                 step={15}
-                value={form.maxChunk}
-                onInput={(e) => setForm({ ...form, maxChunk: Number(e.currentTarget.value) })}
+                defaultValue={String(d?.maxChunkMinutes ?? 120)}
               />
             </label>
           </>
         )}
+        <label class="inline">
+          <input name="nextUp" type="checkbox" />
+          Next up (work on it first)
+        </label>
+        <label class="wide">
+          Notes
+          <textarea name="notes" rows={2} />
+        </label>
         <button type="submit" class="primary">
           Add task
         </button>
       </form>
-      {error && <p class="error">{error}</p>}
+      {error && (
+        <p class="error" role="alert">
+          {error}
+        </p>
+      )}
       <div class="toolbar" style={{ padding: "0 0 8px", border: 0 }}>
         <button type="button" aria-pressed={filter === "open"} onClick={() => setFilter("open")}>
           Open
@@ -164,13 +204,29 @@ export function Tasks() {
         {tasks.map((t) => (
           <div class="row" key={t.id} data-testid="task-row" data-task-title={t.title}>
             <div>
-              <div>{t.title}</div>
+              <div>
+                {t.title}
+                {t.next_up_rank !== null && <span class="badge"> next up</span>}
+              </div>
               <div class="meta">
-                {LEVEL_NAMES[t.level]} · {duration(t.total_minutes)}
-                {t.due_at ? ` · due ${formatWhen(z, t.due_at)}` : ""} ·{" "}
-                <span data-testid="task-state">{t.state}</span>
+                <span data-testid="task-level">{LEVEL_NAMES[t.level]}</span> ·{" "}
+                {duration(t.total_minutes)}
+                {t.due_at ? (
+                  <>
+                    {" "}
+                    · due <span data-testid="task-due">{formatWhen(z, t.due_at)}</span>
+                  </>
+                ) : (
+                  ""
+                )}{" "}
+                · <span data-testid="task-state">{t.state}</span>
                 {t.scheduledMinutes > 0 ? ` · ${duration(t.scheduledMinutes)} planned` : ""}
-                {t.issue && <span class="badge risk"> {t.issue.reason}</span>}
+                {t.issue && (
+                  <span class="badge risk" data-testid="task-issue">
+                    {" "}
+                    {REASONS[t.issue.reason] ?? t.issue.reason}
+                  </span>
+                )}
               </div>
             </div>
             <div class="actions">

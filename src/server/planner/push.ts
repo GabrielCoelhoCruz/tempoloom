@@ -72,6 +72,7 @@ interface Cached {
   summary: string;
   description: string;
   busy: number;
+  etag: string | null;
 }
 
 function differs(row: ManagedRow, cached: Cached | undefined, d: DesiredEvent): boolean {
@@ -132,7 +133,7 @@ export async function pushSchedule(ctx: PushContext, desired: DesiredEvent[]): P
     if (row.locked && (row.start_ms !== d.start || row.end_ms !== d.end)) continue;
     const cached = one<Cached>(
       db,
-      "SELECT summary, description, busy FROM events WHERE calendar_id = ? AND event_id = ?",
+      "SELECT summary, description, busy, etag FROM events WHERE calendar_id = ? AND event_id = ?",
       row.calendar_id,
       row.event_id,
     );
@@ -143,7 +144,7 @@ export async function pushSchedule(ctx: PushContext, desired: DesiredEvent[]): P
         providerCalendarId,
         row.event_id,
         write(userId, d),
-        row.etag,
+        cached?.etag ?? row.etag,
       );
       cacheEvent(db, row.calendar_id, ev);
       saveRow(db, userId, d, ev.id, ev.etag, row.id);

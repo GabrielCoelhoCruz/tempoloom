@@ -115,6 +115,13 @@ export function settingsRoutes(db: Db, sync: SyncService, now: () => number): Ho
     }),
   );
 
+  /** Reads each account's calendar list again (new or removed calendars). */
+  r.post("/calendars/refresh", async (c) => {
+    const user = c.get("user");
+    await sync.refreshCalendars(user.id);
+    return c.json({ ok: true });
+  });
+
   r.patch("/calendars/:id", async (c) => {
     const user = c.get("user");
     const id = c.req.param("id");

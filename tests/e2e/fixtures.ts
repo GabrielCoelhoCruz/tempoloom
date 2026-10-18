@@ -52,9 +52,20 @@ export interface CalendarDriver {
     busy?: boolean;
     attendees?: string[];
   }): Promise<string>;
-  update(id: string, change: { start: number; end: number }): Promise<void>;
+  update(id: string, change: { start: number; end: number; summary?: string }): Promise<void>;
   remove(id: string): Promise<void>;
   events(from: number, to: number): Promise<ProviderEvent[]>;
+  /** A busy or free all-day event on a local date. */
+  addAllDay(date: string, title: string, busy: boolean): Promise<string>;
+  /** An invitation from someone else, with the user's answer (CalDAV only). */
+  addInvite(e: {
+    title: string;
+    start: number;
+    end: number;
+    answer: "NEEDS-ACTION" | "ACCEPTED" | "DECLINED" | "TENTATIVE";
+  }): Promise<string>;
+  /** Another calendar of the same account (CalDAV only). */
+  newCalendar(name: string): Promise<CalendarDriver>;
 }
 
 /** The first Monday at least 2 days ahead: the test week W. */
@@ -105,8 +116,44 @@ async function caldavDriver(env: RadicaleEnv): Promise<CalendarDriver> {
   }
   const home = client.account?.homeUrl;
   if (!home) throw new Error("No calendar home on the CalDAV server");
-  const calendarId = new URL(`work-${randomUUID().slice(0, 8)}/`, home).toString();
-  await client.makeCalendar({ url: calendarId, props: { displayname: "Work" } });
+  return caldavCalendar(env, client, home, "Work");
+}
+
+async function caldavCalendar(
+  env: RadicaleEnv,
+  client: DAVClient,
+  home: string,
+  name: string,
+): Promise<CalendarDriver> {
+  const calendarId = new URL(`${name.toLowerCase()}-${randomUUID().slice(0, 8)}/`, home).toString();
+  await client.makeCalendar({ url: calendarId, props: { displayname: name } });
+  const putRaw = async (lines: string[]) => {
+    const cal = (await client.fetchCalendars()).find((c) => c.url === calendarId);
+    if (!cal) throw new Error("calendar missing");
+    const uid = randomUUID();
+    const res = await client.createCalendarObject({
+      calendar: cal,
+      filename: `${uid}.ics`,
+      iCalString: [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "PRODID:-//tempoloom-e2e//EN",
+        "BEGIN:VEVENT",
+        `UID:${uid}`,
+        "DTSTAMP:20260101T000000Z",
+        ...lines,
+        "END:VEVENT",
+        "END:VCALENDAR",
+      ].join("\r\n"),
+    });
+    if (!res.ok) throw new Error(`create failed ${res.status}`);
+    return new URL(`${uid}.ics`, calendarId).toString();
+  };
+  const utc = (t: number) =>
+    new Date(t)
+      .toISOString()
+      .replace(/[-:]/g, "")
+      .replace(/\.\d{3}/, "");
   const provider = new CalDavProvider(
     { serverUrl: env.url, username: env.username, password: env.password, email: EMAIL },
     ZONE,
@@ -146,7 +193,7 @@ async function caldavDriver(env: RadicaleEnv): Promise<CalendarDriver> {
         calendarId,
         id,
         {
-          summary: ev.summary,
+          summary: change.summary ?? ev.summary,
           description: ev.description,
           start: change.start,
           end: change.end,
@@ -164,6 +211,23 @@ async function caldavDriver(env: RadicaleEnv): Promise<CalendarDriver> {
         await provider.listEvents(calendarId, { syncToken: null, timeMin: from, timeMax: to })
       ).events;
     },
+    addAllDay: (date, title, busy) =>
+      putRaw([
+        `DTSTART;VALUE=DATE:${date.replace(/-/g, "")}`,
+        `DTEND;VALUE=DATE:${addDays(date, 1).replace(/-/g, "")}`,
+        `SUMMARY:${title}`,
+        `TRANSP:${busy ? "OPAQUE" : "TRANSPARENT"}`,
+      ]),
+    addInvite: (e) =>
+      putRaw([
+        `DTSTART:${utc(e.start)}`,
+        `DTEND:${utc(e.end)}`,
+        `SUMMARY:${e.title}`,
+        "ORGANIZER:mailto:organizer@example.com",
+        "ATTENDEE;PARTSTAT=ACCEPTED:mailto:organizer@example.com",
+        `ATTENDEE;PARTSTAT=${e.answer}:mailto:${EMAIL}`,
+      ]),
+    newCalendar: (name) => caldavCalendar(env, client, home, name),
   };
 }
 
@@ -208,6 +272,7 @@ async function googleDriver(): Promise<CalendarDriver> {
       await api.patchEvent(calendarId, id, {
         start: { dateTime: new Date(change.start).toISOString() },
         end: { dateTime: new Date(change.end).toISOString() },
+        ...(change.summary ? { summary: change.summary } : {}),
       });
     },
     remove: (id) => api.deleteEvent(calendarId, id),
@@ -216,6 +281,17 @@ async function googleDriver(): Promise<CalendarDriver> {
         await provider.listEvents(calendarId, { syncToken: null, timeMin: from, timeMax: to })
       ).events.filter((e) => !e.cancelled);
     },
+    async addAllDay(date, title, busy) {
+      const ev = await api.insertEvent(calendarId, {
+        summary: title,
+        start: { date },
+        end: { date: addDays(date, 1) },
+        transparency: busy ? "opaque" : "transparent",
+      });
+      return ev.id;
+    },
+    addInvite: () => Promise.reject(new Error("A service account cannot receive invitations")),
+    newCalendar: () => Promise.reject(new Error("Not supported for the Google backend yet")),
   };
 }
 

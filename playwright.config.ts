@@ -16,6 +16,7 @@ export default defineConfig({
   ],
   outputDir: ".e2e/test-results",
   use: {
+    baseURL: `http://localhost:${process.env.TEMPOLOOM_E2E_PORT ?? 8788}`,
     channel: "chrome",
     timezoneId: "Europe/Berlin",
     locale: "en-GB",

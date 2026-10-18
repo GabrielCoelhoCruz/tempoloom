@@ -312,11 +312,20 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
     const user = c.get("user");
     const id = c.req.param("id");
     const { minutes: add } = await jsonBody(c, z.object({ minutes }));
-    if (!one(db, "SELECT 1 FROM tasks WHERE id = ? AND user_id = ?", id, user.id)) notFound("task");
+    const task = one<TaskRow>(db, "SELECT * FROM tasks WHERE id = ? AND user_id = ?", id, user.id);
+    if (!task) notFound("task");
+    // A task that is not split keeps one chunk, so the chunk grows with the total.
+    const single =
+      task.min_chunk_minutes === task.max_chunk_minutes &&
+      task.max_chunk_minutes >= task.total_minutes;
+    const total = task.total_minutes + add;
     run(
       db,
-      "UPDATE tasks SET total_minutes = total_minutes + ?, status = 'open', rules_changed_at = ? WHERE id = ?",
-      add,
+      `UPDATE tasks SET total_minutes = ?, min_chunk_minutes = ?, max_chunk_minutes = ?, status = 'open',
+         rules_changed_at = ? WHERE id = ?`,
+      total,
+      single ? total : task.min_chunk_minutes,
+      single ? total : task.max_chunk_minutes,
       now(),
       id,
     );

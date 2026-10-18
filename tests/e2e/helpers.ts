@@ -1,0 +1,103 @@
+// Shared steps for E2E scenarios: they drive the real UI like a user would.
+import type { Page } from "@playwright/test";
+import type { ProviderEvent } from "../../src/server/providers/types.ts";
+import { addDays } from "../../src/shared/time.ts";
+import { at, type CalendarDriver, expect, local, managed, testWeek } from "./fixtures.ts";
+
+export const MIN = 60_000;
+export const W = testWeek();
+export const windowFrom = () => Date.now() - 3_600_000;
+export const windowTo = () => at(addDays(W, 21), "00:00");
+
+export const titled = (events: ProviderEvent[], text: string) =>
+  managed(events)
+    .filter((e) => e.summary.includes(text))
+    .sort((a, b) => a.start - b.start);
+
+export const inHours = (t0: number, t1: number, from = "09:00", to = "17:00") => {
+  const [d0, h0] = local(t0).split(" ");
+  const [d1, h1] = local(t1).split(" ");
+  return d0 === d1 && (h0 ?? "") >= from && (h1 ?? "") <= to;
+};
+
+export const allEvents = (cal: CalendarDriver) => cal.events(windowFrom(), windowTo());
+
+export interface TaskForm {
+  title: string;
+  minutes?: number;
+  min?: number;
+  max?: number;
+  split?: boolean;
+  /** "" clears the due date; undefined keeps the default. */
+  due?: string;
+  startAfter?: string;
+  level?: 1 | 2 | 3 | 4;
+  hours?: string;
+  nextUp?: boolean;
+  notes?: string;
+}
+
+/** Fills and submits the task form. Dates are "YYYY-MM-DDTHH:MM" in the user's zone. */
+export async function addTask(page: Page, t: TaskForm): Promise<void> {
+  await page.getByRole("link", { name: "Tasks" }).click();
+  const form = page.getByTestId("task-form");
+  await form.getByLabel("Title").fill(t.title);
+  if (t.minutes !== undefined) await form.getByLabel("Duration (minutes)").fill(String(t.minutes));
+  if (t.due !== undefined) await form.getByLabel("Due").fill(t.due);
+  if (t.startAfter) await form.getByLabel("Start after").fill(t.startAfter);
+  if (t.level) await form.getByLabel("Priority").selectOption(String(t.level));
+  if (t.hours) await form.getByLabel("Hours").selectOption({ label: t.hours });
+  if (t.split === false) await form.getByLabel("Split into chunks").selectOption("no");
+  if (t.min) await form.getByLabel("Shortest chunk").fill(String(t.min));
+  if (t.max) await form.getByLabel("Longest chunk").fill(String(t.max));
+  if (t.nextUp) await form.getByLabel(/Next up/).check();
+  if (t.notes) await form.getByLabel("Notes").fill(t.notes);
+  await form.getByRole("button", { name: "Add task" }).click();
+  await expect(page.locator(`[data-task-title="${t.title}"]`)).toBeVisible();
+}
+
+export interface HabitForm {
+  title: string;
+  ideal?: string;
+  min?: number;
+  max?: number;
+  level?: 1 | 2 | 3 | 4;
+  days?: ("Mon" | "Tue" | "Wed" | "Thu" | "Fri" | "Sat" | "Sun")[];
+  defense?: "Free until time gets short" | "Always free" | "Always busy";
+  noRoom?: "Keep and mark the conflict" | "Remove that day";
+  starting?: string;
+  skipWords?: string;
+  notes?: string;
+  hours?: string;
+}
+
+export async function addHabit(page: Page, h: HabitForm): Promise<void> {
+  await page.getByRole("link", { name: "Habits" }).click();
+  const form = page.getByTestId("habit-form");
+  await form.getByLabel("Title").fill(h.title);
+  if (h.ideal) await form.getByLabel("Ideal time").fill(h.ideal);
+  if (h.min) await form.getByLabel("Shortest (minutes)").fill(String(h.min));
+  if (h.max) await form.getByLabel("Longest (minutes)").fill(String(h.max));
+  if (h.level) await form.getByLabel("Priority").selectOption(String(h.level));
+  if (h.hours) await form.getByLabel("Hours").selectOption({ label: h.hours });
+  if (h.defense) await form.getByLabel("Show as").selectOption({ label: h.defense });
+  if (h.noRoom) await form.getByLabel("When there is no room").selectOption({ label: h.noRoom });
+  if (h.starting) await form.getByLabel("Starting").fill(h.starting);
+  if (h.skipWords) await form.getByLabel(/Skip days with events named/).fill(h.skipWords);
+  if (h.notes) await form.getByLabel("Notes").fill(h.notes);
+  for (const d of h.days ?? []) await form.getByLabel(d, { exact: true }).check();
+  await form.getByRole("button", { name: "Add habit" }).click();
+  await expect(page.locator(`[data-habit-title="${h.title}"]`)).toBeVisible();
+}
+
+/** Opens the planner on week W. */
+export async function openWeek(page: Page, monday = W): Promise<void> {
+  await page.goto(`/?week=${monday}`);
+  await expect(page.getByTestId("week-label")).toContainText(monday);
+}
+
+/** Opens the details panel of a managed event in the planner by title text. */
+export async function openEvent(page: Page, text: string): Promise<void> {
+  await page.locator(".ev", { hasText: text }).first().click();
+  await expect(page.getByTestId("event-drawer")).toBeVisible();
+}

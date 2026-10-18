@@ -30,7 +30,17 @@ export async function syncCalendarList(
   accountId: string,
   userId: string,
 ): Promise<void> {
-  const entries = await provider.listCalendars();
+  const listed = await provider.listCalendars();
+  // Keep the account's main calendar stable: a backend without a primary flag
+  // (CalDAV) must not move the main calendar when calendars are added.
+  const current = one<{ provider_id: string }>(
+    db,
+    "SELECT provider_id FROM calendars WHERE account_id = ? AND is_primary = 1",
+    accountId,
+  );
+  const keep =
+    current && listed.some((c) => c.id === current.provider_id) ? current.provider_id : null;
+  const entries = keep ? listed.map((c) => ({ ...c, primary: c.id === keep })) : listed;
   tx(db, () => {
     for (const c of entries) {
       run(

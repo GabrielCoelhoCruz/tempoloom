@@ -46,7 +46,11 @@ function HoursEditor({
           <div class="hours-day" key={day}>
             <span class="day">{n}</span>
             {ranges.map(([s, e], i) => (
-              <span key={`${day}-${s}-${i}`} class="range">
+              <span
+                key={`${day}-${s}-${i}`}
+                class="range"
+                data-testid={`range-${set.kind}-${day}-${i}`}
+              >
                 <input
                   type="time"
                   step={900}
@@ -225,10 +229,51 @@ export function Settings() {
             onSave={(weekly) => act(() => api("PUT", `/api/hours/${h.id}`, { weekly }))}
           />
         ))}
+        <form
+          class="actions"
+          data-testid="custom-hours-form"
+          onSubmit={(e) => {
+            e.preventDefault();
+            const input = (e.currentTarget as HTMLFormElement).elements.namedItem(
+              "name",
+            ) as HTMLInputElement;
+            const name = input.value.trim();
+            if (!name) return;
+            void act(() =>
+              api("POST", "/api/hours", {
+                name,
+                weekly: {
+                  1: [[540, 1020]],
+                  2: [[540, 1020]],
+                  3: [[540, 1020]],
+                  4: [[540, 1020]],
+                  5: [[540, 1020]],
+                },
+              }),
+            );
+            input.value = "";
+          }}
+        >
+          <input
+            name="name"
+            placeholder="Name of a new hours set"
+            aria-label="New hours set name"
+          />
+          <button type="submit">+ Custom hours</button>
+        </form>
       </section>
 
       <section>
         <h2>Calendars</h2>
+        <p class="status">Checked calendars count for availability.</p>
+        <button
+          type="button"
+          onClick={() =>
+            void act(() => api("POST", "/api/calendars/refresh"), "Calendar list updated")
+          }
+        >
+          Refresh calendar list
+        </button>
         <div class="list" data-testid="calendar-list">
           {calendars.map((c) => (
             <label class="row inline" key={c.id}>
