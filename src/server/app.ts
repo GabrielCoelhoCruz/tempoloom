@@ -180,7 +180,12 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
     }
     if (one(db, "SELECT 1 FROM users WHERE email = ? AND deactivated_at IS NOT NULL", email))
       return c.json({ error: "deactivated" }, 403);
-    const isNew = !one(db, "SELECT 1 FROM users WHERE email = ?", email);
+    // A provisioned person (SCIM) exists before their first sign-in.
+    const isNew = !one(
+      db,
+      "SELECT 1 FROM users WHERE email = ? AND first_sign_in_at IS NOT NULL",
+      email,
+    );
     const user = ensureUser(db, email, body.username, now());
     // CalDAV has no account time zone; take the browser's on first sign-in.
     if (isNew && body.timeZone)
