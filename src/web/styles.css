@@ -444,3 +444,21 @@ button[aria-pressed="true"] {
   border-color: var(--accent);
   color: var(--accent);
 }
+.public {
+  margin: 0 auto;
+  padding: 32px 24px;
+}
+.day-times {
+  margin: 12px 0;
+}
+.day-times h3 {
+  font-size: 14px;
+  margin: 0 0 6px;
+}
+button.preferred {
+  border-color: color-mix(in srgb, var(--habit) 60%, var(--line));
+}
+a.row {
+  text-decoration: none;
+  color: var(--fg);
+}

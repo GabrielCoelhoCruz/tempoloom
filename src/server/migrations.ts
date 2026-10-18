@@ -234,4 +234,52 @@ export const MIGRATIONS: readonly string[] = [
   `
   ALTER TABLE accounts ADD COLUMN calendars_synced_at INTEGER;
   `,
+  // 5: booking links
+  `
+  CREATE TABLE booking_pages (
+    user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    slug TEXT NOT NULL UNIQUE,
+    created_at INTEGER NOT NULL
+  ) STRICT;
+
+  CREATE TABLE booking_links (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    slug TEXT NOT NULL,
+    hidden INTEGER NOT NULL DEFAULT 0,
+    title TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    title_template TEXT NOT NULL,
+    durations TEXT NOT NULL,
+    level INTEGER NOT NULL CHECK (level BETWEEN 1 AND 4),
+    hours_set_id TEXT REFERENCES hours_sets(id) ON DELETE SET NULL,
+    notice_minutes INTEGER NOT NULL DEFAULT 240,
+    range_end_days INTEGER NOT NULL DEFAULT 30,
+    buffer_before INTEGER NOT NULL DEFAULT 0,
+    buffer_after INTEGER NOT NULL DEFAULT 0,
+    max_per_day INTEGER,
+    max_per_week INTEGER,
+    location TEXT NOT NULL DEFAULT '',
+    created_at INTEGER NOT NULL,
+    UNIQUE (user_id, slug)
+  ) STRICT;
+
+  CREATE TABLE bookings (
+    id TEXT PRIMARY KEY,
+    link_id TEXT REFERENCES booking_links(id) ON DELETE SET NULL,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    calendar_id TEXT,
+    event_id TEXT,
+    start_ms INTEGER NOT NULL,
+    end_ms INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    email TEXT NOT NULL,
+    message TEXT NOT NULL DEFAULT '',
+    token_hash TEXT NOT NULL UNIQUE,
+    status TEXT NOT NULL CHECK (status IN ('booked', 'cancelled')),
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  ) STRICT;
+  CREATE INDEX bookings_link ON bookings(link_id, status, start_ms);
+  `,
 ];

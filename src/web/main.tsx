@@ -4,7 +4,9 @@ import { useEffect, useState } from "preact/hooks";
 import { ApiError, api } from "./lib/api.ts";
 import { onLinkClick, path } from "./lib/router.ts";
 import { loadMe, me } from "./lib/state.ts";
+import { PublicBooking } from "./views/book.tsx";
 import { Habits } from "./views/habits.tsx";
+import { Links } from "./views/links.tsx";
 import { Planner } from "./views/planner.tsx";
 import { Settings } from "./views/settings.tsx";
 import { Tasks } from "./views/tasks.tsx";
@@ -13,6 +15,7 @@ const NAV: { href: string; label: string }[] = [
   { href: "/", label: "Planner" },
   { href: "/tasks", label: "Tasks" },
   { href: "/habits", label: "Habits" },
+  { href: "/links", label: "Booking links" },
   { href: "/settings", label: "Settings" },
 ];
 
@@ -121,15 +124,19 @@ function Page() {
       return <Habits />;
     case "/settings":
       return <Settings />;
+    case "/links":
+      return <Links />;
     default:
       return <Planner />;
   }
 }
 
 function App() {
+  const isPublic = path.value.startsWith("/book/");
   useEffect(() => {
-    void loadMe();
-  }, []);
+    if (!isPublic) void loadMe();
+  }, [isPublic]);
+  if (isPublic) return <PublicBooking path={path.value} />;
   if (me.value === undefined) return null;
   if (me.value === null) return <Login />;
   return (

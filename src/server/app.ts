@@ -17,6 +17,7 @@ import {
   upsertGoogleLogin,
   userForSession,
 } from "./accounts.ts";
+import { bookingRoutes, publicBookingRoutes } from "./api/booking.ts";
 import { itemRoutes } from "./api/items.ts";
 import { plannerRoutes } from "./api/planner.ts";
 import { settingsRoutes } from "./api/settings.ts";
@@ -200,6 +201,9 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
     return c.redirect("/");
   });
 
+  // Public booking pages' API: no session.
+  app.route("/pub", publicBookingRoutes(db, sync, config.BASE_URL, now));
+
   app.use("/api/*", async (c, next) => {
     const token = getCookie(c, SESSION_COOKIE);
     const user = token ? userForSession(db, token, now()) : undefined;
@@ -235,6 +239,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   app.route("/api", settingsRoutes(db, sync, now));
   app.route("/api", itemRoutes(db, sync, now));
   app.route("/api/planner", plannerRoutes(db, sync, now));
+  app.route("/api/booking", bookingRoutes(db, now));
 
   // Static client with a single-page fallback.
   app.get("*", async (c) => {
