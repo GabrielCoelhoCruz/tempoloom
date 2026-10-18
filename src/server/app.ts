@@ -19,6 +19,7 @@ import {
   upsertGoogleLogin,
   userForSession,
 } from "./accounts.ts";
+import { analyticsRoutes } from "./api/analytics.ts";
 import { bookingRoutes, publicBookingRoutes } from "./api/booking.ts";
 import { itemRoutes } from "./api/items.ts";
 import { meetingRoutes } from "./api/meetings.ts";
@@ -276,6 +277,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   app.route("/api/booking", bookingRoutes(db, now));
   app.route("/api", webhookRoutes(db, box, config.WEBHOOK_ALLOW_PRIVATE, now));
   app.route("/api", statsRoutes(db));
+  app.route("/api", analyticsRoutes(db, now));
   app.route(
     "/api",
     teamRoutes({
