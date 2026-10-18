@@ -53,7 +53,8 @@ test("the pomodoro timer runs sessions and breaks, counts them and keeps them af
   await settings.getByLabel("Start the next phase on its own").check();
   await page.getByRole("tab", { name: "Work session" }).click();
   await page.getByRole("button", { name: "Start" }).click();
-  for (let i = 0; i < 6; i++) await page.clock.fastForward("01:01");
+  // runFor fires every timer in order, also the ones each new phase sets.
+  await page.clock.runFor("06:06");
   await expect(page.getByRole("tab", { name: "Long break" })).toHaveAttribute(
     "aria-selected",
     "true",
