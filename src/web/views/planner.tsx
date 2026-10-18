@@ -25,7 +25,13 @@ function mondayOf(z: string, t: number): string {
 
 export function Planner() {
   const z = zone();
-  const [weekStart, setWeekStart] = useState(() => mondayOf(z, Date.now()));
+  // ?week=YYYY-MM-DD opens that week, so a week can be linked.
+  const [weekStart, setWeekStart] = useState(() => {
+    const q = new URLSearchParams(location.search).get("week");
+    return q && /^\d{4}-\d{2}-\d{2}$/.test(q)
+      ? addDays(q, 1 - weekdayOf(q))
+      : mondayOf(z, Date.now());
+  });
   const [events, setEvents] = useState<PlannerEvent[]>([]);
   const [report, setReport] = useState<ReportEntry[]>([]);
   const [selected, setSelected] = useState<PlannerEvent | null>(null);
