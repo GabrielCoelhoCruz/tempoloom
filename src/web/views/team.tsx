@@ -3,6 +3,8 @@ import { useCallback, useEffect, useState } from "preact/hooks";
 import { ApiError, api } from "../lib/api.ts";
 import { navigate } from "../lib/router.ts";
 import { me } from "../lib/state.ts";
+import { TeamBranding } from "./team-branding.tsx";
+import { TeamWebhooks } from "./team-webhooks.tsx";
 
 interface Member {
   userId: string;
@@ -477,8 +479,10 @@ export function TeamPage({ children }: { children?: ComponentChildren }) {
           <h2>Team settings</h2>
           <TeamSettingsForm info={info} onSaved={() => void load()} />
           <Directory />
+          <TeamBranding />
         </>
       )}
+      <TeamWebhooks />
       {children}
     </div>
   );

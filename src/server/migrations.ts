@@ -479,4 +479,65 @@ export const MIGRATIONS: readonly string[] = [
   -- Set when the directory deactivates the person: no sign-in, no scheduling, no seat.
   ALTER TABLE users ADD COLUMN deactivated_at INTEGER;
   `,
+  // 13: booking: team and round-robin links, page and team branding, team webhook endpoints
+  `
+  -- Organizers and round-robin pool members of a link (booking-links-team.md).
+  CREATE TABLE booking_link_people (
+    link_id TEXT NOT NULL REFERENCES booking_links(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL CHECK (kind IN ('organizer', 'pool')),
+    -- NULL: the person's meeting hours.
+    hours_set_id TEXT REFERENCES hours_sets(id) ON DELETE SET NULL,
+    required INTEGER NOT NULL DEFAULT 1,
+    is_host INTEGER NOT NULL DEFAULT 0,
+    preferred INTEGER NOT NULL DEFAULT 0,
+    position INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (link_id, user_id)
+  ) STRICT;
+  CREATE INDEX booking_link_people_user ON booking_link_people(user_id);
+  INSERT INTO booking_link_people (link_id, user_id, kind, hours_set_id, required, is_host)
+    SELECT id, user_id, 'organizer', hours_set_id, 1, 1 FROM booking_links;
+
+  ALTER TABLE booking_links ADD COLUMN use_recovery_buffer INTEGER NOT NULL DEFAULT 1;
+  -- sameAsGroup, default, none or custom (booking-links-booking-page.md rules 25-31).
+  ALTER TABLE booking_links ADD COLUMN branding TEXT NOT NULL DEFAULT 'sameAsGroup';
+  ALTER TABLE booking_pages ADD COLUMN branding TEXT NOT NULL DEFAULT 'default';
+
+  -- The host holds the event; the assignee is the round-robin member who took it.
+  ALTER TABLE bookings ADD COLUMN host_id TEXT REFERENCES users(id) ON DELETE SET NULL;
+  ALTER TABLE bookings ADD COLUMN assignee_id TEXT REFERENCES users(id) ON DELETE SET NULL;
+  ALTER TABLE bookings ADD COLUMN assigned_at INTEGER;
+  UPDATE bookings SET host_id = user_id;
+
+  -- Other organizers and the assignee of a booking. A copy of the event on their
+  -- own calendar (calendar_id, event_id), or none when their provider delivers
+  -- the invitation; then the booking blocks their time from the database.
+  CREATE TABLE booking_participants (
+    booking_id TEXT NOT NULL REFERENCES bookings(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    calendar_id TEXT,
+    event_id TEXT,
+    PRIMARY KEY (booking_id, user_id)
+  ) STRICT;
+  CREATE INDEX booking_participants_user ON booking_participants(user_id);
+
+  CREATE TABLE team_branding (
+    team_id TEXT PRIMARY KEY REFERENCES teams(id) ON DELETE CASCADE,
+    -- The starting value for new booking pages: default, none or custom.
+    mode TEXT NOT NULL DEFAULT 'default',
+    homepage_url TEXT NOT NULL DEFAULT '',
+    logo_type TEXT,
+    logo BLOB,
+    banner_type TEXT,
+    banner BLOB,
+    updated_at INTEGER NOT NULL
+  ) STRICT;
+
+  -- Webhook endpoints belong to the team (integrations-webhooks.md rule 1); user_id is the creator.
+  ALTER TABLE webhook_endpoints ADD COLUMN team_id TEXT REFERENCES teams(id) ON DELETE CASCADE;
+  UPDATE webhook_endpoints SET team_id = (
+    SELECT m.team_id FROM team_members m WHERE m.user_id = webhook_endpoints.user_id
+  );
+  CREATE INDEX webhook_endpoints_team ON webhook_endpoints(team_id);
+  `,
 ];

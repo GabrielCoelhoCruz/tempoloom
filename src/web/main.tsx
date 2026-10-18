@@ -7,7 +7,6 @@ import { loadMe, me } from "./lib/state.ts";
 import { PublicBooking } from "./views/book.tsx";
 import { Habits } from "./views/habits.tsx";
 import { Library } from "./views/library.tsx";
-import { Links } from "./views/links.tsx";
 import { Meetings } from "./views/meetings.tsx";
 import { Planner } from "./views/planner.tsx";
 import { Settings } from "./views/settings.tsx";
@@ -32,6 +31,7 @@ function lazyView<P>(load: () => Promise<FunctionComponent<P>>): FunctionCompone
 }
 
 const TeamPage = lazyView(() => import("./views/team.tsx").then((m) => m.TeamPage));
+const Links = lazyView(() => import("./views/links.tsx").then((m) => m.Links));
 const JoinPage = lazyView<{ token: string; login?: ComponentChildren }>(() =>
   import("./views/team.tsx").then((m) => m.JoinPage),
 );

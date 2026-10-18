@@ -20,6 +20,7 @@ import {
   userForSession,
 } from "./accounts.ts";
 import { bookingRoutes, publicBookingRoutes } from "./api/booking.ts";
+import { brandingRoutes, publicBrandingRoutes } from "./api/branding.ts";
 import { itemRoutes } from "./api/items.ts";
 import { meetingRoutes } from "./api/meetings.ts";
 import { plannerRoutes } from "./api/planner.ts";
@@ -235,6 +236,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   );
 
   app.route("/pub", publicInviteRoutes(db));
+  app.route("/pub", publicBrandingRoutes(db));
   app.route("/scim/v2", scimRoutes(db, config.BASE_URL, now));
 
   app.use("/api/*", async (c, next) => {
@@ -276,6 +278,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   app.route("/api/booking", bookingRoutes(db, now));
   app.route("/api", webhookRoutes(db, box, config.WEBHOOK_ALLOW_PRIVATE, now));
   app.route("/api", statsRoutes(db));
+  app.route("/api", brandingRoutes(db, now));
   app.route(
     "/api",
     teamRoutes({

@@ -14,6 +14,48 @@ interface Offered {
   end: number;
   preferred: boolean;
 }
+interface Branding {
+  mode: "default" | "none" | "custom";
+  logo?: string;
+  banner?: string;
+  homepage?: string;
+}
+interface Contact {
+  name: string;
+  email: string;
+}
+
+/** The page header's branding (booking page rules 25-31). */
+function Brand({ b }: { b: Branding }) {
+  if (b.mode === "none") return null;
+  if (b.mode === "default") {
+    return (
+      <header class="brand-header" data-testid="branding">
+        <span class="brand-default" data-testid="brand-default">
+          Tempoloom
+        </span>
+      </header>
+    );
+  }
+  const logo = b.logo ? (
+    <img src={b.logo} alt="Logo" class="brand-logo" data-testid="brand-logo" />
+  ) : null;
+  return (
+    <header class="brand-header" data-testid="branding">
+      {b.banner && <img src={b.banner} alt="" class="brand-banner" data-testid="brand-banner" />}
+      {logo && b.homepage ? (
+        <a href={b.homepage} data-testid="brand-home">
+          {logo}
+        </a>
+      ) : (
+        logo
+      )}
+    </header>
+  );
+}
+
+const withWhom = (organizers: string[]) =>
+  organizers.length > 0 ? `with ${organizers.join(", ")}` : "";
 
 const viewerZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 const dayLabel = (t: number) =>
@@ -92,15 +134,26 @@ function Times({
   );
 }
 
+interface LinkInfo {
+  link: PublicLink;
+  organizers: string[];
+  branding: Branding;
+}
+
 function BookingPage({ page, link }: { page: string; link: string }) {
-  const [info, setInfo] = useState<{ link: PublicLink; organizer: string } | null>(null);
+  const [info, setInfo] = useState<LinkInfo | null>(null);
   const [missing, setMissing] = useState(false);
   const [duration, setDuration] = useState<number | null>(null);
   const [picked, setPicked] = useState<Offered | null>(null);
-  const [done, setDone] = useState<{ token: string; start: number } | null>(null);
+  const [done, setDone] = useState<{
+    token: string;
+    start: number;
+    organizers: string[];
+    assignee: Contact | null;
+  } | null>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
-    api<{ link: PublicLink; organizer: string }>("GET", `/pub/pages/${page}/${link}`)
+    api<LinkInfo>("GET", `/pub/pages/${page}/${link}`)
       .then((r) => {
         setInfo(r);
         setDuration(r.link.durations[0] ?? null);
@@ -112,11 +165,17 @@ function BookingPage({ page, link }: { page: string; link: string }) {
   if (done) {
     return (
       <div data-testid="booked">
+        <Brand b={info.branding} />
         <h2>You are booked</h2>
         <p>
-          {info.link.title} with {info.organizer}, {dayLabel(done.start)} at {timeLabel(done.start)}
-          .
+          {info.link.title} {withWhom(done.organizers)}, {dayLabel(done.start)} at{" "}
+          {timeLabel(done.start)}.
         </p>
+        {done.assignee && (
+          <p data-testid="booked-host">
+            Your meeting is with {done.assignee.name} ({done.assignee.email}).
+          </p>
+        )}
         <p>
           <a href={`/book/manage/${done.token}`} data-testid="manage-link">
             Reschedule or cancel
@@ -127,8 +186,9 @@ function BookingPage({ page, link }: { page: string; link: string }) {
   }
   return (
     <div data-testid="booking-page">
+      <Brand b={info.branding} />
       <h1>{info.link.title}</h1>
-      <p class="status">with {info.organizer}</p>
+      {info.organizers.length > 0 && <p class="status">{withWhom(info.organizers)}</p>}
       {info.link.description && <p>{info.link.description}</p>}
       {info.link.location && <p class="status">Location: {info.link.location}</p>}
       {info.link.durations.length > 1 && (
@@ -155,7 +215,7 @@ function BookingPage({ page, link }: { page: string; link: string }) {
             e.preventDefault();
             const f = new FormData(e.currentTarget as HTMLFormElement);
             setError(null);
-            api<{ token: string; start: number }>("POST", `/pub/pages/${page}/${link}/book`, {
+            api<NonNullable<typeof done>>("POST", `/pub/pages/${page}/${link}/book`, {
               start: picked.start,
               duration,
               name: f.get("name"),
@@ -207,10 +267,14 @@ function BookingPage({ page, link }: { page: string; link: string }) {
 }
 
 function PageLinks({ page }: { page: string }) {
-  const [data, setData] = useState<{ name: string; links: PublicLink[] } | null>(null);
+  const [data, setData] = useState<{
+    name: string;
+    links: PublicLink[];
+    branding: Branding;
+  } | null>(null);
   const [missing, setMissing] = useState(false);
   useEffect(() => {
-    api<{ name: string; links: PublicLink[] }>("GET", `/pub/pages/${page}`)
+    api<NonNullable<typeof data>>("GET", `/pub/pages/${page}`)
       .then(setData)
       .catch(() => setMissing(true));
   }, [page]);
@@ -218,6 +282,7 @@ function PageLinks({ page }: { page: string }) {
   if (!data) return null;
   return (
     <div data-testid="public-page">
+      <Brand b={data.branding} />
       <h1>Book time with {data.name}</h1>
       <div class="list">
         {data.links.map((l) => (
@@ -236,6 +301,7 @@ function Manage({ token }: { token: string }) {
     booking: { start: number; end: number; name: string; status: string };
     link: PublicLink | null;
     page: string | null;
+    assignee: Contact | null;
   } | null>(null);
   const [mode, setMode] = useState<"view" | "reschedule">("view");
   const [message, setMessage] = useState<string | null>(null);
@@ -252,6 +318,11 @@ function Manage({ token }: { token: string }) {
           ? "Cancelled"
           : `${dayLabel(booking.start)} at ${timeLabel(booking.start)}`}
       </p>
+      {data.assignee && (
+        <p data-testid="booking-host">
+          With {data.assignee.name} ({data.assignee.email})
+        </p>
+      )}
       {message && <p class="status">{message}</p>}
       {booking.status === "booked" && mode === "view" && (
         <div class="actions">
