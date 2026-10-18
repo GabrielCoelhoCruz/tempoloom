@@ -61,10 +61,11 @@ case "${1:-}" in
       for u in $USERS; do
         p=$(newpass)
         printf '%s\n' "$p" > "$STATE/password-$u"
+        hash=$(bcrypt "$p")
         echo "  - email: $u@$DOMAIN"
-        echo "    hash: '$(bcrypt "$p")'"
+        echo "    hash: '$hash'"
         echo "    username: $u"
-        echo "    userID: $(cat /proc/sys/kernel/random/uuid)"
+        echo "    userID: $(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
       done
     } > "$STATE/config.yaml"
     # Dex reads its config (it holds the client secret, mode 600) as the host user,
