@@ -7,9 +7,6 @@ import { createOwnTeam, isSoleAdmin, joinTeam, membership } from "./teams.ts";
 export type Attributes = Record<string, string>;
 export type ScimResource = Record<string, unknown>;
 
-/** Identity fields shown elsewhere; never used as filters. */
-const IDENTITY = new Set(["userName", "displayName", "name", "email", "emails", "active", "id"]);
-
 const text = (v: unknown): string | undefined =>
   typeof v === "string" || typeof v === "number" || typeof v === "boolean" ? String(v) : undefined;
 
