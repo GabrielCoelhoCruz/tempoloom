@@ -294,7 +294,7 @@ export const LIBRARY: LibraryEntry[] = [
     summary: "One whole weekday a week without meetings.",
     kind: "unavailable",
     reason:
-      "Needs no-meeting days for meetings and booking links, which Tempoloom does not have yet.",
+      "Tempoloom cannot write the weekly event yet. Add a weekly all-day busy event with #tl_free in its title: meetings and booking links stay off that day.",
   },
   {
     slug: "one-on-ones",

@@ -1,7 +1,7 @@
 // Flexible meetings in the scheduler snapshot (docs/specs/meetings-flexible.md).
 // The organizer's run places the meeting; an attendee who is a user here gives
 // hours and busy time (rules 11, 13), and sees each occurrence as fixed (rule 27).
-import { attends } from "../../scheduler/blocking.ts";
+import { attends, hasTag, TAG_FREE } from "../../scheduler/blocking.ts";
 import { hoursToTimeSet, type WeeklyHours } from "../../scheduler/hours.ts";
 import type { ExternalEvent, Level, MeetingItem } from "../../scheduler/model.ts";
 import type { Interval, TimeSet } from "../../scheduler/timeset.ts";
@@ -126,7 +126,11 @@ export function meetingItem(
   exclusions: Map<string, Interval[]>,
 ): MeetingItem {
   let window: TimeSet | null = null;
-  const busy: Interval[] = [];
+  // The organizer's no-meeting time (events-tags.md rules 3, 8): a busy #tl_free
+  // event they attend is free for tasks and habits, but never for meetings.
+  const busy: Interval[] = externalEvents(db, userId, now, windowEnd)
+    .filter((e) => e.busy && attends(e) && hasTag(e, TAG_FREE))
+    .map((e) => ({ start: e.start, end: e.end }));
   for (const a of attendees) {
     if (!a.required) continue;
     const user = instanceUser(db, a.email);
