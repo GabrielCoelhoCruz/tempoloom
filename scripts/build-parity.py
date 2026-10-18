@@ -84,6 +84,11 @@ T = {
     "tm_colleagues": "people of the same domain who are alone are offered for a new team, and each gets one invitation",
     "tm_seats": "over the seat limit, scheduling goes on but invitations stop",
     "dir_scim": "SCIM provisioning adds people with attributes and no seat until sign-in; updates and deactivation follow the directory",
+    # Analytics (tests/e2e/team-stats.spec.ts, org-analytics.spec.ts)
+    "an_team": "team stats show averages over the included members of last week, with no names, a time-in-meetings distribution, and no values for small teams",
+    "an_future": "team stats for a future week count planned tasks, recovery buffers and travel, with each member's days and work hours in their own time zone",
+    "an_org": "organization analytics group last week by department, manager line and person, filter by custom attributes, score focus and fragmentation, cost meetings, trend week over week and export CSV for admins only",
+    "an_seat": "a future range counts planned breaks and travel; an analytics-only member is counted but the scheduler never changes their calendar",
 }
 
 # Row id -> E2E test keys that prove it on CalDAV.
@@ -131,6 +136,11 @@ E2E = {
     554: ["tm_request", "tm_auto"], 555: ["tm_leave"], 556: ["tm_roles"], 557: ["tm_roles", "tm_leave"],
     558: ["tm_roles", "tm_seats"], 559: ["tm_seats"], 560: ["tm_seats"], 561: ["tm_invite", "tm_seats"],
     562: ["tm_perm", "tm_roles"], 563: ["tm_perm"], 642: ["dir_scim"], 646: ["dir_scim"],
+    # Analytics
+    596: ["an_team"], 613: ["an_team"], 614: ["an_team"], 615: ["an_future"], 616: ["an_org"],
+    617: ["an_org"], 618: ["an_org"], 619: ["an_org"], 620: ["an_org"], 621: ["an_org"], 622: ["an_org"],
+    623: ["an_org", "an_future"], 624: ["an_org"], 625: ["an_seat", "an_future"], 626: ["an_org"],
+    629: ["an_seat"], 218: ["an_org"],
 }
 
 # Row id -> how Tempoloom meets the row, when that differs from the reference's wording.
@@ -138,6 +148,8 @@ E2E_NOTES = {
     559: "Buying seats is a non-goal; the operator sets the limit with the CLI (seat-limit)",
     560: "No tiers: the operator sets a team's most members with the CLI, or TEAM_SEAT_LIMIT for all teams",
     561: "No tier gate by design (teams-membership.md rule 11); the seat limit is the only gate",
+    619: "The score uses the spec's proposed formula; no public benchmark data exists, and the page says so",
+    629: "The spec's proposed meaning: the calendar counts in analytics and the scheduler never changes it",
 }
 
 # Row id -> reason, for rows implemented in part (some behavior has E2E, some does not).
@@ -203,7 +215,11 @@ for n in LIB_DIRECT:
     PARTIAL.setdefault(718 + n, "The library adds it with the preset (no form of its own yet); not under E2E")
 
 # Row id -> reason, for rows that cannot work yet because a feature they build on is missing.
-BLOCKED = {718: "Needs the assistant chat, which is not implemented"}
+BLOCKED = {
+    718: "Needs the assistant chat, which is not implemented",
+    627: "Needs the assistant chat, which is not implemented",
+    630: "Not needed for parity: the reference lists these reports as coming soon (analytics-organization.md rule 16)",
+}
 for n in [5, 6, 12, 14, 15, 16, 17, 18, 20, 21, 22, 24, 31]:
     BLOCKED[718 + n] = "A prompt entry: needs the assistant chat, which is not implemented"
 for n in [4, 9]:
