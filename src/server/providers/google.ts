@@ -55,8 +55,10 @@ function toGoogleEvent(w: EventWrite): GoogleEventInput {
   return {
     summary: w.summary,
     description: w.description,
-    start: { dateTime: new Date(w.start).toISOString() },
-    end: { dateTime: new Date(w.end).toISOString() },
+    start: w.allDayDates
+      ? { date: w.allDayDates.start }
+      : { dateTime: new Date(w.start).toISOString() },
+    end: w.allDayDates ? { date: w.allDayDates.end } : { dateTime: new Date(w.end).toISOString() },
     transparency: w.busy ? "opaque" : "transparent",
     ...(w.colorId ? { colorId: w.colorId } : {}),
     ...(w.location ? { location: w.location } : {}),

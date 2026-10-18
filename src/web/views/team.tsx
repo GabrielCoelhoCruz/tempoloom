@@ -4,6 +4,7 @@ import { ApiError, api } from "../lib/api.ts";
 import { navigate } from "../lib/router.ts";
 import { me } from "../lib/state.ts";
 import { Onboarding, TeamDefaults } from "./team-defaults.tsx";
+import { OutOfOffice } from "./team-ooo.tsx";
 
 interface Member {
   userId: string;
@@ -482,6 +483,7 @@ export function TeamPage({ children }: { children?: ComponentChildren }) {
           <TeamDefaults />
         </>
       )}
+      <OutOfOffice />
       {children}
     </div>
   );

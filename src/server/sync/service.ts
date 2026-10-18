@@ -1,5 +1,6 @@
 // Runs calendar sync and planning for each user, one run at a time per user.
 import { all, one, run } from "../db.ts";
+import { oooOwnersOf, syncOutOfOffice } from "../ooo.ts";
 import { meetingPeers } from "../planner/meetings.ts";
 import { replanUser } from "../planner/replan.ts";
 import { type ProviderDeps, ProviderPool } from "../providers/index.ts";
@@ -209,10 +210,14 @@ export class SyncService {
         },
         userId,
       );
+      // Team out-of-office calendars this user owns (teams-ooo-calendar.md).
+      await syncOutOfOffice(db, userId, pool, this.#deps.now());
       // Flexible meetings join calendars of several users (meetings-flexible.md
-      // rules 13, 27): a change on one side plans the other side again.
+      // rules 13, 27): a change on one side plans the other side again. The
+      // owners of shared out-of-office calendars copy this user's time away.
       const peers = meetingPeers(db, userId);
-      if (pulled > 0) for (const id of peers.organizers) this.request(id);
+      if (pulled > 0)
+        for (const id of [...peers.organizers, ...oooOwnersOf(db, userId)]) this.request(id);
       const p = result?.push;
       if (p && p.created + p.updated + p.deleted > 0) {
         for (const id of peers.attendees) this.request(id);
