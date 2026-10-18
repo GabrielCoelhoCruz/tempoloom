@@ -39,7 +39,9 @@ import {
   joinLink,
   member,
   openTeam,
+  role,
   setTeamSettings,
+  status,
   teamOfTwo,
 } from "./team-helpers.ts";
 
@@ -71,13 +73,13 @@ test("an invitation by email adds an existing user at once and a new person afte
   await openTeam(page);
   // A new user has a team of their own and is its admin.
   await expect(page.getByTestId("team-name")).toHaveText("e2e's team");
-  await expect(member(page, EMAIL)).toContainText("admin");
-  await expect(member(page, EMAIL)).toContainText("active");
+  await expect(role(page, EMAIL)).toHaveText("admin");
+  await expect(status(page, EMAIL)).toHaveText("active");
 
   await invite(page, [COLLEAGUE_EMAIL, d.email], { message: "Welcome" });
   await expect(page.getByTestId("invite-result")).toContainText("Invitations sent to 2 people");
-  await expect(member(page, COLLEAGUE_EMAIL)).toContainText("invited");
-  await expect(member(page, d.email)).toContainText("invited");
+  await expect(status(page, COLLEAGUE_EMAIL)).toHaveText("invited");
+  await expect(status(page, d.email)).toHaveText("invited");
   await invite(page, [EMAIL]);
   await expect(page.getByTestId("invite-result")).toContainText(`${EMAIL} is already a member`);
 
@@ -85,8 +87,8 @@ test("an invitation by email adds an existing user at once and a new person afte
   expect(mailB.text).toContain("Welcome");
   expect(await mail.count(COLLEAGUE_EMAIL)).toBe(1);
   await accept(pb, joinLink(mailB.text));
-  await expect(member(pb, EMAIL)).toContainText("admin");
-  await expect(member(pb, COLLEAGUE_EMAIL)).toContainText("member");
+  await expect(role(pb, EMAIL)).toHaveText("admin");
+  await expect(role(pb, COLLEAGUE_EMAIL)).toHaveText("member");
 
   // A person without an account sees the invitation, signs up from it, then joins.
   const linkD = joinLink((await mail.message(d.email, /invited you to/)).text);
@@ -96,17 +98,17 @@ test("an invitation by email adds an existing user at once and a new person afte
   await expect(anon.getByTestId("caldav-form")).toBeVisible();
   const pd = await d.signIn(new URL(linkD).pathname);
   await pd.getByRole("button", { name: "Join team" }).click();
-  await expect(member(pd, d.email)).toContainText("member");
+  await expect(role(pd, d.email)).toHaveText("member");
 
   // Joining does not touch the member's calendar.
   expect(await weekTimes(colleague.cal, "Review")).toEqual(before);
 
   await page.reload();
-  await expect(member(page, COLLEAGUE_EMAIL)).toContainText("active");
-  await expect(member(page, COLLEAGUE_EMAIL)).toContainText("member");
-  await expect(member(page, d.email)).toContainText("active");
+  await expect(status(page, COLLEAGUE_EMAIL)).toHaveText("active");
+  await expect(role(page, COLLEAGUE_EMAIL)).toHaveText("member");
+  await expect(status(page, d.email)).toHaveText("active");
   await pb.reload();
-  await expect(member(pb, EMAIL)).toContainText("admin");
+  await expect(role(pb, EMAIL)).toHaveText("admin");
 });
 
 test("a copied invite link works until it is revoked; a revoked link adds nobody (rules 7, 8; edge case 4; T2)", async ({
@@ -165,7 +167,7 @@ test("a same-domain user asks to join; the admin approves with admin rights or r
   }
 
   await page.reload();
-  await expect(member(page, d.email)).toContainText("requested");
+  await expect(status(page, d.email)).toHaveText("requested");
   await member(page, d.email).getByRole("button", { name: "Review" }).click();
   const review = page.getByTestId("review");
   await expect(review).toContainText(d.email);
@@ -175,12 +177,12 @@ test("a same-domain user asks to join; the admin approves with admin rights or r
   await page.getByTestId("review").getByRole("button", { name: "Reject" }).click();
 
   await page.reload();
-  await expect(member(page, d.email)).toContainText("admin");
-  await expect(member(page, d.email)).toContainText("active");
+  await expect(role(page, d.email)).toHaveText("admin");
+  await expect(status(page, d.email)).toHaveText("active");
   await expect(member(page, c.email)).toHaveCount(0);
   await pd.reload();
   await expect(pd.getByTestId("team-name")).toHaveText("e2e's team");
-  await expect(member(pd, EMAIL)).toContainText("admin");
+  await expect(role(pd, EMAIL)).toHaveText("admin");
   await pc.reload();
   await expect(pc.getByTestId("team-name")).toHaveText("e2e3's team");
 });
@@ -199,7 +201,7 @@ test("automatic join adds a same-domain user at once with no review; invite only
   await openTeam(pc);
   await pc.getByTestId("join-prompt").getByRole("button", { name: "Join" }).click();
   await expect(pc.getByTestId("team-name")).toHaveText("e2e's team");
-  await expect(member(pc, COLLEAGUE_EMAIL)).toContainText("active");
+  await expect(status(pc, COLLEAGUE_EMAIL)).toHaveText("active");
 
   await setTeamSettings(page, { joinMode: "Invite only" });
   const d = await people(4);
@@ -208,7 +210,7 @@ test("automatic join adds a same-domain user at once with no review; invite only
   await expect(pd.getByTestId("join-prompt")).toHaveCount(0);
 
   await page.reload();
-  await expect(member(page, c.email)).toContainText("active");
+  await expect(status(page, c.email)).toHaveText("active");
   await expect(page.getByRole("button", { name: "Review" })).toHaveCount(0);
   await pd.reload();
   await expect(pd.getByTestId("join-prompt")).toHaveCount(0);
@@ -245,7 +247,7 @@ test("the sole admin cannot leave or drop the admin role; a member leaves and ke
   expect(await weekTimes(colleague.cal, "Review")).toEqual(placed);
 
   await page.reload();
-  await expect(member(page, EMAIL)).toContainText("admin");
+  await expect(role(page, EMAIL)).toHaveText("admin");
   await expect(member(page, COLLEAGUE_EMAIL)).toHaveCount(0);
   await pb.reload();
   await expect(member(pb, EMAIL)).toHaveCount(0);
@@ -254,7 +256,7 @@ test("the sole admin cannot leave or drop the admin role; a member leaves and ke
   expect(await weekTimes(colleague.cal, "Review")).toEqual(placed);
 });
 
-test("an admin gives the admin role and removes a member; members cannot; the seat bar frees a seat (rules 21, 22, 25; T6)", async ({
+test("an invitation can grant the admin role; an admin gives and removes the role and removes a member; members cannot; the seat bar frees a seat (rules 4, 21, 22, 25; T6)", async ({
   page,
   app,
   signIn,
@@ -266,10 +268,14 @@ test("an admin gives the admin role and removes a member; members cannot; the se
   app.cli("seat-limit", "--email", EMAIL, "--seats", "5");
   const c = await people(3);
   const pc = await c.signIn();
-  await invite(page, [c.email]);
+  await invite(page, [c.email], { admin: true });
   await accept(pc, joinLink((await mail.message(c.email, /invited you/)).text));
+  await expect(role(pc, c.email)).toHaveText("admin");
   await page.reload();
+  await expect(role(page, c.email)).toHaveText("admin");
   await expect(page.getByTestId("seat-bar")).toHaveText("3 of 5 seats used, 2 left");
+  await member(page, c.email).getByRole("button", { name: "Remove admin" }).click();
+  await expect(role(page, c.email)).toHaveText("member");
 
   // A member sees no role or delete actions, and the API refuses them.
   await openTeam(pb);
@@ -285,13 +291,13 @@ test("an admin gives the admin role and removes a member; members cannot; the se
   expect(status).toBe(403);
 
   await member(page, COLLEAGUE_EMAIL).getByRole("button", { name: "Make admin" }).click();
-  await expect(member(page, COLLEAGUE_EMAIL)).toContainText("admin");
+  await expect(role(page, COLLEAGUE_EMAIL)).toHaveText("admin");
   await member(page, c.email).getByRole("button", { name: "Delete" }).click();
   await page.getByRole("button", { name: "Remove", exact: true }).click();
   await expect(member(page, c.email)).toHaveCount(0);
 
   await page.reload();
-  await expect(member(page, COLLEAGUE_EMAIL)).toContainText("admin");
+  await expect(role(page, COLLEAGUE_EMAIL)).toHaveText("admin");
   await expect(member(page, c.email)).toHaveCount(0);
   await expect(page.getByTestId("seat-bar")).toHaveText("2 of 5 seats used, 3 left");
   await pc.reload();
@@ -300,7 +306,7 @@ test("an admin gives the admin role and removes a member; members cannot; the se
   expect(await c.cal.events(Date.now() - 86_400_000, Date.now() + 30 * 86_400_000)).toEqual([]);
 });
 
-test("with invite permission for admins only a member cannot invite; with all members a member can (team settings rule 12)", async ({
+test("team settings are for admins only; with invite permission for admins only a member cannot invite, with all members a member can (team settings rules 1, 12)", async ({
   page,
   signIn,
   colleague,
@@ -320,6 +326,16 @@ test("with invite permission for admins only a member cannot invite; with all me
     return r.status;
   });
   expect(refused).toBe(403);
+  await expect(pb.getByTestId("team-settings")).toHaveCount(0);
+  const patch = await pb.evaluate(async () => {
+    const r = await fetch("/api/team", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ invitePermission: "all_members" }),
+    });
+    return r.status;
+  });
+  expect(patch).toBe(403);
 
   await setTeamSettings(page, { invitePermission: "All members" });
   await pb.reload();
@@ -329,7 +345,7 @@ test("with invite permission for admins only a member cannot invite; with all me
   const pd = await d.signIn();
   await accept(pd, joinLink(text));
   await page.reload();
-  await expect(member(page, d.email)).toContainText("active");
+  await expect(status(page, d.email)).toHaveText("active");
   await page.reload();
   await expect(page.getByTestId("team-settings").getByLabel("Who can invite")).toHaveValue(
     "all_members",
@@ -367,7 +383,7 @@ test("people of the same domain who are alone are offered for a new team, and ea
 
   // B is now in a team of two, so B is no longer offered.
   await page.reload();
-  await expect(member(page, COLLEAGUE_EMAIL)).toContainText("active");
+  await expect(status(page, COLLEAGUE_EMAIL)).toHaveText("active");
   await expect(page.getByTestId("colleagues-prompt")).toHaveCount(0);
 });
 

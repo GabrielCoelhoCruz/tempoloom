@@ -9,6 +9,10 @@ export async function openTeam(p: Page): Promise<void> {
 
 /** The member table row of a person (member, invited or requested). */
 export const member = (p: Page, email: string) => p.locator(`[data-member="${email}"]`);
+/** The role label (admin or member) of a member row. */
+export const role = (p: Page, email: string) => member(p, email).getByTestId("role");
+/** The status label (active, invited or requested) of a member table row. */
+export const status = (p: Page, email: string) => member(p, email).getByTestId("status");
 
 export async function invite(
   p: Page,
@@ -65,6 +69,6 @@ export async function teamOfTwo(
   await invite(page, [b.email]);
   await accept(pb, joinLink((await mail.message(b.email, /invited you/)).text));
   await page.reload();
-  await expect(member(page, b.email)).toContainText("active");
+  await expect(status(page, b.email)).toHaveText("active");
   return pb;
 }

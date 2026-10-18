@@ -16,7 +16,7 @@
 // Every check reads the admin view again after a reload.
 import { BACKEND, BASE_URL, EMAIL, expect, test } from "./fixtures.ts";
 import { scim } from "./scim.ts";
-import { member, openTeam } from "./team-helpers.ts";
+import { member, openTeam, role } from "./team-helpers.ts";
 
 test.skip(BACKEND === "google", "Directory E2E uses several CalDAV users.");
 
@@ -68,7 +68,7 @@ test("SCIM provisioning adds people with attributes and no seat until sign-in; u
   await expect(row(v.email)).toContainText("signed in: no");
   await expect(row(v.email)).toContainText("seat: none");
   await expect(page.getByTestId("seat-bar")).toHaveText("1 of 5 seats used, 4 left");
-  await expect(member(page, v.email)).toContainText("member");
+  await expect(role(page, v.email)).toHaveText("member");
 
   // A member cannot make tokens. Vera signs in and is already in the team.
   const pv = await v.signIn();
