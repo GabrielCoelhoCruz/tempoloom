@@ -1,0 +1,40 @@
+{
+  "name": "tempoloom",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Self-hostable calendar planner that schedules tasks, habits and focus time around your meetings.",
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "engines": {
+    "node": ">=24.11"
+  },
+  "scripts": {
+    "dev:server": "node --watch src/server/main.ts",
+    "dev:web": "vite",
+    "build": "vite build",
+    "start": "node src/server/main.ts",
+    "typecheck": "tsc -p tsconfig.json",
+    "lint": "biome check .",
+    "format": "biome check --write .",
+    "test": "vitest run",
+    "test:e2e": "playwright test",
+    "bench": "node bench/scheduler-week.ts"
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.1.5",
+    "hono": "^4.13.13",
+    "preact": "^11.0.1",
+    "@preact/signals": "^2.11.3",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.15",
+    "@playwright/test": "^1.64.1",
+    "@preact/preset-vite": "^2.10.6",
+    "@types/node": "^24.0.0",
+    "fast-check": "^4.10.2",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.4",
+    "vitest": "^5.0.5"
+  }
+}
