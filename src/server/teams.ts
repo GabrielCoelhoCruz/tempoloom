@@ -119,7 +119,7 @@ export function seats(
     one<{ n: number }>(
       db,
       `SELECT count(*) AS n FROM team_members m JOIN users u ON u.id = m.user_id
-       WHERE m.team_id = ? AND u.first_sign_in_at IS NOT NULL`,
+       WHERE m.team_id = ? AND u.first_sign_in_at IS NOT NULL AND u.deactivated_at IS NULL`,
       team.id,
     )?.n ?? 0;
   return { used, limit: team.seat_limit ?? instanceLimit ?? null };

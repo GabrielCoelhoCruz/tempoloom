@@ -79,11 +79,13 @@ function CalDavLogin() {
       setError(
         code === "invalid_credentials"
           ? "The server rejected the user name or password."
-          : code === "email_required"
-            ? "Enter your email address."
-            : code === "no_calendars"
-              ? "This account has no calendars."
-              : "Could not reach the CalDAV server.",
+          : code === "deactivated"
+            ? "Your organization deactivated this account."
+            : code === "email_required"
+              ? "Enter your email address."
+              : code === "no_calendars"
+                ? "This account has no calendars."
+                : "Could not reach the CalDAV server.",
       );
     } finally {
       setPending(false);

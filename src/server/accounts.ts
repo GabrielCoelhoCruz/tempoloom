@@ -61,7 +61,7 @@ export function userForSession(db: Db, token: string, now = Date.now()): User | 
   return one<User>(
     db,
     `SELECT u.id, u.email, u.name, u.time_zone FROM sessions s JOIN users u ON u.id = s.user_id
-     WHERE s.token_hash = ? AND s.expires_at > ?`,
+     WHERE s.token_hash = ? AND s.expires_at > ? AND u.deactivated_at IS NULL`,
     hashToken(token),
     now,
   );
@@ -107,8 +107,17 @@ const EVENINGS = JSON.stringify(
   Object.fromEntries([1, 2, 3, 4, 5, 6, 7].map((d) => [d, [[1080, 1320]]])),
 );
 
-/** Finds a user by email or creates one with the built-in hours sets. */
-export function ensureUser(db: Db, email: string, name: string, now = Date.now()): User {
+/**
+ * Finds a user by email or creates one with the built-in hours sets. A new user
+ * gets a team of their own, or joins `teamId` as a member (provisioning).
+ */
+export function ensureUser(
+  db: Db,
+  email: string,
+  name: string,
+  now = Date.now(),
+  teamId?: string,
+): User {
   return tx(db, () => {
     const existing = one<User>(
       db,
@@ -141,7 +150,15 @@ export function ensureUser(db: Db, email: string, name: string, now = Date.now()
         now,
       );
     }
-    createOwnTeam(db, { id, name, email: email.toLowerCase() }, now);
+    if (teamId) {
+      run(
+        db,
+        "INSERT INTO team_members (user_id, team_id, role, joined_at) VALUES (?, ?, 'member', ?)",
+        id,
+        teamId,
+        now,
+      );
+    } else createOwnTeam(db, { id, name, email: email.toLowerCase() }, now);
     return { id, email: email.toLowerCase(), name, time_zone: "UTC" };
   });
 }

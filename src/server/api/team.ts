@@ -8,6 +8,7 @@ import { z } from "zod";
 import type { AppEnv } from "../app.ts";
 import type { SecretBox } from "../crypto.ts";
 import { all, type Db, one, run, tx } from "../db.ts";
+import { directoryAttributes } from "../directory.ts";
 import { jsonBody, notFound } from "../http.ts";
 import type { Mailer } from "../mail.ts";
 import {
@@ -412,6 +413,55 @@ export function teamRoutes(deps: TeamDeps): Hono<AppEnv> {
       fail(err);
     }
     return c.body(null, 204);
+  });
+
+  // Directory provisioning: the SCIM token and the admin view (admin-sso-provisioning.md outputs).
+  r.post("/team/scim-token", (c) => {
+    const { team } = admin(c);
+    const token = randomBytes(32).toString("base64url");
+    run(
+      db,
+      `INSERT INTO scim_tokens (team_id, token_hash, created_at) VALUES (?, ?, ?)
+       ON CONFLICT (team_id) DO UPDATE SET token_hash = excluded.token_hash, created_at = excluded.created_at`,
+      team.id,
+      hash(token),
+      now(),
+    );
+    return c.json({ token, baseUrl: new URL("/scim/v2", baseUrl).toString() });
+  });
+
+  r.get("/team/directory", (c) => {
+    const { team } = admin(c);
+    const attributes = directoryAttributes(db, team.id);
+    const people = all<{
+      user_id: string;
+      email: string;
+      name: string;
+      first_sign_in_at: number | null;
+      deactivated_at: number | null;
+      calendars: number;
+    }>(
+      db,
+      `SELECT d.user_id, u.email, u.name, u.first_sign_in_at, u.deactivated_at,
+         (SELECT count(*) FROM accounts a WHERE a.user_id = u.id AND a.status = 'ok') AS calendars
+       FROM directory_profiles d JOIN users u ON u.id = d.user_id WHERE d.team_id = ? ORDER BY u.email`,
+      team.id,
+    );
+    return c.json({
+      hasToken: Boolean(one(db, "SELECT 1 FROM scim_tokens WHERE team_id = ?", team.id)),
+      people: people.map((p) => {
+        const { userName: _u, displayName: _d, ...shown } = attributes.get(p.user_id) ?? {};
+        return {
+          email: p.email,
+          name: p.name,
+          attributes: shown,
+          signedIn: p.first_sign_in_at !== null,
+          seat: p.first_sign_in_at !== null && p.deactivated_at === null,
+          calendar: p.calendars > 0,
+          deactivated: p.deactivated_at !== null,
+        };
+      }),
+    });
   });
 
   return r;

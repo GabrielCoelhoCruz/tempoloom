@@ -476,10 +476,77 @@ export function TeamPage({ children }: { children?: ComponentChildren }) {
         <>
           <h2>Team settings</h2>
           <TeamSettingsForm info={info} onSaved={() => void load()} />
+          <Directory />
         </>
       )}
       {children}
     </div>
+  );
+}
+
+interface DirectoryPerson {
+  email: string;
+  name: string;
+  attributes: Record<string, string>;
+  signedIn: boolean;
+  seat: boolean;
+  calendar: boolean;
+  deactivated: boolean;
+}
+
+/** Directory provisioning: the SCIM token and the people the directory sent. */
+function Directory() {
+  const [dir, setDir] = useState<{ hasToken: boolean; people: DirectoryPerson[] } | null>(null);
+  const [created, setCreated] = useState<{ token: string; baseUrl: string } | null>(null);
+  useEffect(() => {
+    void api<typeof dir>("GET", "/api/team/directory").then(setDir);
+  }, []);
+  if (!dir) return null;
+  return (
+    <section data-testid="directory">
+      <div class="toolbar-inline">
+        <h2>Directory provisioning (SCIM)</h2>
+        <button
+          type="button"
+          onClick={async () => {
+            setCreated(await api("POST", "/api/team/scim-token"));
+          }}
+        >
+          {dir.hasToken || created ? "Replace SCIM token" : "Create SCIM token"}
+        </button>
+      </div>
+      {created && (
+        <p class="status">
+          SCIM base URL: <code data-testid="scim-base-url">{created.baseUrl}</code>
+          <br />
+          Token (shown once; a new token replaces it):{" "}
+          <code data-testid="scim-token">{created.token}</code>
+        </p>
+      )}
+      <div class="list">
+        {dir.people.map((p) => (
+          <div class="row" key={p.email} data-directory={p.email}>
+            <div>
+              <div>
+                {p.name} <span class="meta">{p.email}</span>
+              </div>
+              <div class="meta">
+                {Object.entries(p.attributes).map(([k, v]) => (
+                  <span class="badge" key={k}>
+                    {k}: {v}
+                  </span>
+                ))}
+              </div>
+            </div>
+            <div class="meta">
+              {p.deactivated ? "deactivated · " : ""}signed in: {p.signedIn ? "yes" : "no"} · seat:{" "}
+              {p.seat ? "used" : "none"} · calendar: {p.calendar ? "attached" : "none"}
+            </div>
+          </div>
+        ))}
+        {dir.people.length === 0 && <p class="status">The directory has sent nobody yet.</p>}
+      </div>
+    </section>
   );
 }
 

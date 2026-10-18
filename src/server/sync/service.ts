@@ -46,7 +46,8 @@ export class SyncService {
     this.#interval = setInterval(() => {
       for (const { user_id } of all<{ user_id: string }>(
         this.#deps.db,
-        "SELECT DISTINCT user_id FROM accounts WHERE status = 'ok'",
+        `SELECT DISTINCT a.user_id FROM accounts a JOIN users u ON u.id = a.user_id
+         WHERE a.status = 'ok' AND u.deactivated_at IS NULL`,
       )) {
         this.request(user_id, 0);
       }
@@ -161,7 +162,7 @@ export class SyncService {
     try {
       const user = one<{ time_zone: string }>(
         db,
-        "SELECT time_zone FROM users WHERE id = ?",
+        "SELECT time_zone FROM users WHERE id = ? AND deactivated_at IS NULL",
         userId,
       );
       if (!user) return;

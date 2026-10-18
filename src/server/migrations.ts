@@ -455,4 +455,28 @@ export const MIGRATIONS: readonly string[] = [
   INSERT INTO team_members (user_id, team_id, role, joined_at)
     SELECT id, 'team-' || id, 'admin', created_at FROM users;
   `,
+  // 12: directory provisioning over SCIM (docs/specs/admin-sso-provisioning.md)
+  `
+  CREATE TABLE directory_profiles (
+    user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    team_id TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    external_id TEXT,
+    -- The SCIM resource as the identity provider last sent it.
+    resource TEXT NOT NULL,
+    -- Flat attribute name -> text value: analytics filters and policy scopes.
+    attributes TEXT NOT NULL DEFAULT '{}',
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  ) STRICT;
+  CREATE INDEX directory_profiles_team ON directory_profiles(team_id);
+
+  CREATE TABLE scim_tokens (
+    team_id TEXT PRIMARY KEY REFERENCES teams(id) ON DELETE CASCADE,
+    token_hash TEXT NOT NULL UNIQUE,
+    created_at INTEGER NOT NULL
+  ) STRICT;
+
+  -- Set when the directory deactivates the person: no sign-in, no scheduling, no seat.
+  ALTER TABLE users ADD COLUMN deactivated_at INTEGER;
+  `,
 ];

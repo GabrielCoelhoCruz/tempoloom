@@ -23,6 +23,7 @@ import { bookingRoutes, publicBookingRoutes } from "./api/booking.ts";
 import { itemRoutes } from "./api/items.ts";
 import { meetingRoutes } from "./api/meetings.ts";
 import { plannerRoutes } from "./api/planner.ts";
+import { scimRoutes } from "./api/scim.ts";
 import { settingsRoutes } from "./api/settings.ts";
 import { statsRoutes } from "./api/stats.ts";
 import { publicInviteRoutes, teamRoutes } from "./api/team.ts";
@@ -30,6 +31,7 @@ import { webhookRoutes } from "./api/webhooks.ts";
 import type { Config } from "./config.ts";
 import type { SecretBox } from "./crypto.ts";
 import { all, type Db, one, run } from "./db.ts";
+import { isDeactivated } from "./directory.ts";
 import {
   buildAuthRequest,
   exchangeCode,
@@ -148,6 +150,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
         tokens,
         now(),
       );
+      if (isDeactivated(db, user.id)) return c.redirect("/?login_error=deactivated");
       startSession(c, user.id);
       void sync.onConnect(user.id, accountId);
       return c.redirect("/");
@@ -175,6 +178,8 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
       }
       return c.json({ error: "server_unreachable" }, 502);
     }
+    if (one(db, "SELECT 1 FROM users WHERE email = ? AND deactivated_at IS NOT NULL", email))
+      return c.json({ error: "deactivated" }, 403);
     const isNew = !one(db, "SELECT 1 FROM users WHERE email = ?", email);
     const user = ensureUser(db, email, body.username, now());
     // CalDAV has no account time zone; take the browser's on first sign-in.
@@ -201,6 +206,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   app.get("/auth/link/:token", (c) => {
     const userId = consumeLoginLink(db, c.req.param("token"), now());
     if (!userId) return c.redirect("/?login_error=link_expired");
+    if (isDeactivated(db, userId)) return c.redirect("/?login_error=deactivated");
     startSession(c, userId);
     return c.redirect("/");
   });
@@ -229,6 +235,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   );
 
   app.route("/pub", publicInviteRoutes(db));
+  app.route("/scim/v2", scimRoutes(db, config.BASE_URL, now));
 
   app.use("/api/*", async (c, next) => {
     const token = getCookie(c, SESSION_COOKIE);
