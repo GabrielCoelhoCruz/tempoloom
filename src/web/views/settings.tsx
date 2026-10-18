@@ -4,9 +4,9 @@ import type { Settings as UserSettings } from "../../server/settings.ts";
 import { api } from "../lib/api.ts";
 import { CATEGORY_LABELS, COLORS } from "../lib/categories.ts";
 import { hhmm, parseHhmm } from "../lib/format.ts";
+import { lazyComponent } from "../lib/lazy.ts";
 import { templateFromUrl } from "../lib/library.ts";
 import { loadMe, me, planNow } from "../lib/state.ts";
-import { FocusRecommendation } from "./team-recommendations.tsx";
 
 interface HoursSet {
   id: string;
@@ -22,6 +22,10 @@ interface Calendar {
   provider: string;
   email: string;
 }
+
+const FocusRecommendation = lazyComponent(() =>
+  import("./team-recommendations.tsx").then((m) => m.FocusRecommendation),
+);
 
 const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 

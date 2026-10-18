@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useState } from "preact/hooks";
 import { api } from "../lib/api.ts";
 import { duration, hhmm } from "../lib/format.ts";
+import { lazyComponent } from "../lib/lazy.ts";
 import { freeName, templateFromUrl } from "../lib/library.ts";
 import { LEVEL_NAMES, planNow } from "../lib/state.ts";
-import { TeamHabitTemplates } from "./team-recommendations.tsx";
 
 interface Habit {
   id: string;
@@ -22,6 +22,10 @@ interface HoursSet {
   kind: string;
   name: string;
 }
+
+const TeamHabitTemplates = lazyComponent(() =>
+  import("./team-recommendations.tsx").then((m) => m.TeamHabitTemplates),
+);
 
 const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const DEFENSE: Record<string, string> = {
