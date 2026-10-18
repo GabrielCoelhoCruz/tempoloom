@@ -321,7 +321,12 @@ export function TeamPage({ children }: { children?: ComponentChildren }) {
                 {m.name} <span class="meta">{m.email}</span>
               </div>
               <div class="meta">
-                <span class="badge">{m.role}</span> <span class="badge">active</span>
+                <span class="badge" data-testid="role">
+                  {m.role}
+                </span>{" "}
+                <span class="badge" data-testid="status">
+                  active
+                </span>
               </div>
               {confirm?.userId === m.userId && confirm.kind === "leave" && (
                 <Confirm
@@ -389,7 +394,9 @@ export function TeamPage({ children }: { children?: ComponentChildren }) {
             <div>
               <div>{i.email}</div>
               <div class="meta">
-                <span class="badge">invited</span>
+                <span class="badge" data-testid="status">
+                  invited
+                </span>
               </div>
             </div>
             {i.canManage && (
@@ -425,7 +432,9 @@ export function TeamPage({ children }: { children?: ComponentChildren }) {
                 {q.name} <span class="meta">{q.email}</span>
               </div>
               <div class="meta">
-                <span class="badge">requested</span>
+                <span class="badge" data-testid="status">
+                  requested
+                </span>
               </div>
               {review === q.userId && (
                 <form class="confirm" data-testid="review" onSubmit={(e) => e.preventDefault()}>
