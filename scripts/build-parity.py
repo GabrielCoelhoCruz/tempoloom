@@ -89,6 +89,11 @@ T = {
     "an_future": "team stats for a future week count planned tasks, recovery buffers and travel, with each member's days and work hours in their own time zone",
     "an_org": "organization analytics group last week by department, manager line and person, filter by custom attributes, score focus and fragmentation, cost meetings, trend week over week and export CSV for admins only",
     "an_seat": "a future range counts planned breaks and travel; an analytics-only member is counted but the scheduler never changes their calendar",
+    # SSO and provisioning (tests/e2e/sso.spec.ts, grant.spec.ts)
+    "sso_only": "SSO only: people on the team's domain sign in through its identity provider, other sign-ins point them to SSO, and people outside the team keep theirs",
+    "sso_capture": "SSO and other sign-in, with domain capture: members use either, new sign-ups on the domain join the team, others keep their own team",
+    "grant_read": "Calendar access attaches each provisioned person's calendar read-only, reads it on a slow cycle until first sign-in and in real time after it, and writes nothing before it",
+    "prov_api": "The admin provisioning API adds a large import at a paced rate, with attributes and calendars through the grant; only team admins can use it",
 }
 
 # Row id -> E2E test keys that prove it on CalDAV.
@@ -141,6 +146,9 @@ E2E = {
     617: ["an_org"], 618: ["an_org"], 619: ["an_org"], 620: ["an_org"], 621: ["an_org"], 622: ["an_org"],
     623: ["an_org", "an_future"], 624: ["an_org"], 625: ["an_seat", "an_future"], 626: ["an_org"],
     629: ["an_seat"], 218: ["an_org"],
+    # SSO and provisioning
+    639: ["sso_only"], 640: ["sso_only", "sso_capture"], 641: ["sso_only", "sso_capture"],
+    643: ["sso_capture"], 647: ["prov_api"], 648: ["prov_api"],
 }
 
 # Row id -> how Tempoloom meets the row, when that differs from the reference's wording.
@@ -150,6 +158,9 @@ E2E_NOTES = {
     561: "No tier gate by design (teams-membership.md rule 11); the seat limit is the only gate",
     619: "The score uses the spec's proposed formula; no public benchmark data exists, and the page says so",
     629: "The spec's proposed meaning: the calendar counts in analytics and the scheduler never changes it",
+    639: "Proven with Dex, a real OpenID Connect provider on loopback, through its own login page",
+    640: "The other sign-in methods are Google and CalDAV; SSO-only refuses both for the team's domains",
+    648: "The API uses the team admin's session (no API keys exist yet)",
 }
 
 # Row id -> reason, for rows implemented in part (some behavior has E2E, some does not).
@@ -219,6 +230,8 @@ BLOCKED = {
     718: "Needs the assistant chat, which is not implemented",
     627: "Needs the assistant chat, which is not implemented",
     630: "Not needed for parity: the reference lists these reports as coming soon (analytics-organization.md rule 16)",
+    644: "Needs a Google Workspace domain and a super admin to grant domain-wide delegation; the CalDAV organization grant covers the same need for CalDAV servers (E2E: \u201cCalendar access attaches each provisioned person's calendar read-only\u2026\u201d)",
+    645: "Needs a Microsoft 365 tenant and a Microsoft Graph calendar provider, which is not implemented",
 }
 for n in [5, 6, 12, 14, 15, 16, 17, 18, 20, 21, 22, 24, 31]:
     BLOCKED[718 + n] = "A prompt entry: needs the assistant chat, which is not implemented"
@@ -260,6 +273,7 @@ UNIT = {
 }
 
 GOOGLE_ROWS = {
+    638: "Google sign-in is implemented and follows the team's SSO rules; Google E2E pending (needs a Google OAuth client and account). Microsoft sign-in is not implemented: it needs an app registration and a Microsoft Graph provider.",
     510: "Google sign-in (OAuth with PKCE) and Google Calendar sync are implemented; Google E2E pending: needs a service-account key, and the consent screen needs a one-time check by a person. Microsoft is not implemented.",
     513: "Google and CalDAV accounts can be connected; adding a second account in the UI and Microsoft are not implemented. Google E2E pending.",
     147: "Google sign-in asks for calendar scopes up front; incremental consent not implemented. Google E2E pending.",
