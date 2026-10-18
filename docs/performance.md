@@ -9,7 +9,7 @@ and the hardware. Re-run the commands after a change that can affect speed.
 - Memory: 31 GB
 - Node.js 24.21.0, Google Chrome 155.0.8059.79 (headless, through Playwright)
 - Server and browser on the same host (loopback network)
-- Measured on 2026-10-18 at commit `374db4c`
+- Measured on 2026-10-18 on the code of commit `06f0e59` (the commit that added this file)
 
 ## Results
 
