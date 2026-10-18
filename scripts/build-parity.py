@@ -73,6 +73,17 @@ T = {
     "lib_other": "buffer and focus entries add their automation as set; prompts offer no action",
     "c_paint": "managed events take their category color, a new color repaints them, and external events change color only for the scope all events",
     "c_buffer": "a buffer for external meetings adds prep before a meeting with another domain only",
+    # Teams (tests/e2e/team.spec.ts, directory.spec.ts)
+    "tm_invite": "an invitation by email adds an existing user at once and a new person after sign-up; members are refused",
+    "tm_revoke": "a copied invite link works until it is revoked; a revoked link adds nobody",
+    "tm_request": "a same-domain user asks to join; the admin approves with admin rights or rejects; other domains see nothing",
+    "tm_auto": "automatic join adds a same-domain user at once with no review; invite only hides the team",
+    "tm_leave": "the sole admin cannot leave or drop the admin role; a member leaves and keeps habits and events",
+    "tm_roles": "an invitation can grant the admin role; an admin gives and removes the role and removes a member; members cannot; the seat bar frees a seat",
+    "tm_perm": "team settings are for admins only; with invite permission for admins only a member cannot invite, with all members a member can",
+    "tm_colleagues": "people of the same domain who are alone are offered for a new team, and each gets one invitation",
+    "tm_seats": "over the seat limit, scheduling goes on but invitations stop",
+    "dir_scim": "SCIM provisioning adds people with attributes and no seat until sign-in; updates and deactivation follow the directory",
 }
 
 # Row id -> E2E test keys that prove it on CalDAV.
@@ -114,6 +125,19 @@ E2E = {
     731: ["c_buffer"],
     260: ["c_allday"], 264: ["c_allday"], 267: ["c_allday"],
     54: ["b_book"], 62: ["b_prio"], 258: ["m_follow"],
+    # Teams
+    546: ["tm_invite", "tm_colleagues"], 547: ["tm_colleagues"], 548: ["tm_invite", "tm_roles"],
+    549: ["tm_revoke"], 550: ["tm_revoke"], 551: ["tm_invite"], 552: ["tm_request"], 553: ["tm_auto"],
+    554: ["tm_request", "tm_auto"], 555: ["tm_leave"], 556: ["tm_roles"], 557: ["tm_roles", "tm_leave"],
+    558: ["tm_roles", "tm_seats"], 559: ["tm_seats"], 560: ["tm_seats"], 561: ["tm_invite", "tm_seats"],
+    562: ["tm_perm", "tm_roles"], 563: ["tm_perm"], 642: ["dir_scim"], 646: ["dir_scim"],
+}
+
+# Row id -> how Tempoloom meets the row, when that differs from the reference's wording.
+E2E_NOTES = {
+    559: "Buying seats is a non-goal; the operator sets the limit with the CLI (seat-limit)",
+    560: "No tiers: the operator sets a team's most members with the CLI, or TEAM_SEAT_LIMIT for all teams",
+    561: "No tier gate by design (teams-membership.md rule 11); the seat limit is the only gate",
 }
 
 # Row id -> reason, for rows implemented in part (some behavior has E2E, some does not).
@@ -231,7 +255,8 @@ GOOGLE_PENDING = "Google E2E pending: the service-account key is not available y
 def status(row_id, spec_file, notes):
     if row_id in E2E:
         tests = "; ".join(f"\u201c{T[k]}\u201d" for k in E2E[row_id])
-        return "done (CalDAV)", f"Full UI E2E passes on CalDAV (Radicale): {tests}. Google Calendar run pending (service-account key)."
+        note = f" {E2E_NOTES[row_id]}." if row_id in E2E_NOTES else ""
+        return "done (CalDAV)", f"Full UI E2E passes on CalDAV (Radicale): {tests}.{note} Google Calendar run pending (service-account key)."
     if row_id in PARTIAL:
         return "partial", f"{PARTIAL[row_id]}."
     if row_id in GOOGLE_ROWS:
