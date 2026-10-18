@@ -42,13 +42,19 @@ const scimError = (c: Context, status: number, detail: string, scimType?: string
     status,
   );
 
+/** The object at `key` in `obj`, created when missing. */
+function child(obj: Record<string, unknown>, key: string): Record<string, unknown> {
+  if (!obj[key] || typeof obj[key] !== "object") obj[key] = {};
+  return obj[key] as Record<string, unknown>;
+}
+
 /** Sets `value` at a SCIM attribute path in the resource (RFC 7644 3.5.2, common forms). */
 function setPath(resource: ScimResource, path: string, value: unknown, remove: boolean): void {
   let target = resource as Record<string, unknown>;
   let rest = path;
   const urn = /^(urn:[^ ]+):([^:]+)$/.exec(path);
   if (urn?.[1] && urn[2] && urn[1] !== CORE) {
-    target = (resource[urn[1]] ??= {}) as Record<string, unknown>;
+    target = child(target, urn[1]);
     rest = urn[2];
   } else if (urn?.[2]) rest = urn[2];
   // A filter such as emails[type eq "work"].value addresses the first element.
@@ -56,9 +62,12 @@ function setPath(resource: ScimResource, path: string, value: unknown, remove: b
   for (let i = 0; i < parts.length - 1; i++) {
     const p = parts[i] ?? "";
     if (p.endsWith("[0]")) {
-      const list = (target[p.slice(0, -3)] ??= [{}]) as Record<string, unknown>[];
-      target = list[0] ??= {};
-    } else target = (target[p] ??= {}) as Record<string, unknown>;
+      const key = p.slice(0, -3);
+      if (!Array.isArray(target[key])) target[key] = [{}];
+      const list = target[key] as Record<string, unknown>[];
+      if (!list[0]) list[0] = {};
+      target = list[0];
+    } else target = child(target, p);
   }
   const last = parts.at(-1) ?? "";
   if (remove) delete target[last];
