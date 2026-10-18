@@ -11,6 +11,12 @@ interface TeamBranding {
   banner: string | null;
 }
 
+const MODES = [
+  ["default", "Tempoloom logo"],
+  ["none", "No logo"],
+  ["custom", "Team logo and banner"],
+] as const;
+
 export function TeamBranding() {
   const [b, setB] = useState<TeamBranding | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -71,10 +77,12 @@ export function TeamBranding() {
       >
         <label>
           Default for new booking pages
-          <select name="mode" defaultValue={b.mode}>
-            <option value="default">Tempoloom logo</option>
-            <option value="none">No logo</option>
-            <option value="custom">Team logo and banner</option>
+          <select name="mode">
+            {MODES.map(([value, label]) => (
+              <option value={value} key={value} selected={value === b.mode}>
+                {label}
+              </option>
+            ))}
           </select>
         </label>
         <label class="wide">

@@ -47,6 +47,13 @@ export interface EditableLink {
   pool: PoolMember[];
 }
 
+const BRANDINGS = [
+  ["sameAsGroup", "Same as the page"],
+  ["default", "Tempoloom logo"],
+  ["none", "No logo"],
+  ["custom", "Team logo and banner"],
+] as const;
+
 const ERRORS: Record<string, string> = {
   not_in_team: "Only members of the owner's team can join a link.",
   one_host: "Choose one host among the organizers.",
@@ -181,9 +188,9 @@ export function LinkEditor({
       </label>
       <label>
         Priority
-        <select name="level" defaultValue={String(link.level)}>
+        <select name="level">
           {[1, 2, 3, 4].map((l) => (
-            <option value={l} key={l}>
+            <option value={l} key={l} selected={l === link.level}>
               {LEVEL_NAMES[l]}
             </option>
           ))}
@@ -244,11 +251,12 @@ export function LinkEditor({
       </label>
       <label>
         Branding
-        <select name="branding" defaultValue={link.branding}>
-          <option value="sameAsGroup">Same as the page</option>
-          <option value="default">Tempoloom logo</option>
-          <option value="none">No logo</option>
-          <option value="custom">Team logo and banner</option>
+        <select name="branding">
+          {BRANDINGS.map(([value, label]) => (
+            <option value={value} key={value} selected={value === link.branding}>
+              {label}
+            </option>
+          ))}
         </select>
       </label>
       {isOwner && (
