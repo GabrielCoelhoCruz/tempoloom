@@ -4,6 +4,7 @@ import { loadConfig } from "./config.ts";
 import { SecretBox } from "./crypto.ts";
 import { openDb } from "./db.ts";
 import type { OAuthClient } from "./google/oauth.ts";
+import { parseServiceAccountKey } from "./google/service-account.ts";
 import { SyncService } from "./sync/service.ts";
 
 const config = loadConfig();
@@ -17,16 +18,20 @@ const oauth: OAuthClient | undefined =
         redirectUri: new URL("/auth/google/callback", config.BASE_URL).toString(),
       }
     : undefined;
+const serviceKey = config.GOOGLE_SERVICE_ACCOUNT_JSON
+  ? parseServiceAccountKey(config.GOOGLE_SERVICE_ACCOUNT_JSON)
+  : undefined;
 
-const sync = new SyncService({ db, box, oauth, intervalMs: config.SYNC_INTERVAL_SECONDS * 1000 });
-
-const app = createApp({
+const sync = new SyncService({
   db,
-  config,
   box,
   oauth,
-  onLogin: (userId, accountId) => sync.onLogin(userId, accountId),
+  serviceKey,
+  now: Date.now,
+  intervalMs: config.SYNC_INTERVAL_SECONDS * 1000,
+  baseUrl: config.BASE_URL,
 });
+const app = createApp({ db, config, box, oauth, sync });
 
 const server = serve({ fetch: app.fetch, port: config.PORT, hostname: config.HOST }, (info) => {
   console.log(`tempoloom listening on http://${info.address}:${info.port}`);

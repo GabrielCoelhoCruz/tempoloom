@@ -59,6 +59,7 @@ interface Ctx {
   report: ReportEntry[];
   /** Keys of locked or started placements, already in `placements`. */
   fixedKeys: Set<string>;
+  dismissed: Set<string>;
   current: Map<string, CurrentPlacement>;
   /** Free time each task saw before its own chunks (for DEF-11). */
   taskSeen: Map<string, TimeSet>;
@@ -137,6 +138,7 @@ function init(s: Snapshot): Ctx {
     placements: [],
     report: [],
     fixedKeys: new Set(),
+    dismissed: new Set(s.dismissedKeys ?? []),
     current: new Map(s.current.map((c) => [c.key, c])),
     taskSeen: new Map(),
     habitSeen: new Map(),
@@ -471,7 +473,14 @@ function placeHabit(ctx: Ctx, h: HabitItem): void {
   const done = new Set((s.past ?? []).map((p) => p.key));
   for (const occ of habitOccurrences(ctx, h)) {
     const key = `habit:${h.id}:${occ.date}`;
-    if (done.has(key) || ctx.fixedKeys.has(key) || h.skips.includes(occ.date)) continue;
+    if (
+      done.has(key) ||
+      ctx.fixedKeys.has(key) ||
+      ctx.dismissed.has(key) ||
+      h.skips.includes(occ.date)
+    ) {
+      continue;
+    }
     const fullWindow = dayWindow(ctx, h.hours, occ.date);
     const days = [occ.date, ...occ.alternatives];
     const windows = days.map((d) => dayWindow(ctx, h.hours, d));
@@ -615,7 +624,7 @@ function placeBuffer(ctx: Ctx, b: BufferItem): void {
     const sides = b.side === "both" ? (["before", "after"] as const) : [b.side];
     for (const side of sides) {
       const key = `buffer:${b.id}:${a.id}:${side}`;
-      if (ctx.fixedKeys.has(key)) continue;
+      if (ctx.fixedKeys.has(key) || ctx.dismissed.has(key)) continue;
       const iv =
         side === "before"
           ? { start: a.start - b.minutesBefore * MINUTE, end: a.start }

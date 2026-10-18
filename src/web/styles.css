@@ -364,3 +364,83 @@ a.button.primary {
   border-color: var(--accent);
   color: #fff;
 }
+.login-form {
+  display: grid;
+  gap: 10px;
+  text-align: left;
+  margin-top: 12px;
+  min-width: 320px;
+}
+.login .card details {
+  margin-top: 16px;
+}
+section {
+  margin-bottom: 28px;
+}
+section h2 {
+  font-size: 15px;
+  margin: 0 0 10px;
+}
+.hours {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px;
+  margin-bottom: 12px;
+}
+.hours h3 {
+  margin: 0 0 8px;
+  font-size: 14px;
+}
+.hours-day {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+.hours-day .day {
+  width: 36px;
+  color: var(--muted);
+}
+.hours-day .range {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+label.inline {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  color: var(--fg);
+  font-size: 14px;
+}
+fieldset.days {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.issues {
+  padding: 8px 16px;
+  border-top: 1px solid var(--line);
+  font-size: 13px;
+  max-height: 30vh;
+  overflow: auto;
+}
+.planner {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+button[aria-pressed="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+}

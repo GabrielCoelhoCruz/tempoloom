@@ -1,0 +1,353 @@
+import { useCallback, useEffect, useState } from "preact/hooks";
+import type { Settings as UserSettings } from "../../server/settings.ts";
+import { api } from "../lib/api.ts";
+import { hhmm, parseHhmm } from "../lib/format.ts";
+import { loadMe, me, planNow } from "../lib/state.ts";
+
+interface HoursSet {
+  id: string;
+  kind: string;
+  name: string;
+  weekly: Record<string, [number, number][]>;
+}
+interface Calendar {
+  id: string;
+  name: string;
+  is_primary: number;
+  check_availability: number;
+  provider: string;
+  email: string;
+}
+
+const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+function HoursEditor({
+  set,
+  onSave,
+}: {
+  set: HoursSet;
+  onSave: (weekly: HoursSet["weekly"]) => Promise<void>;
+}) {
+  const [weekly, setWeekly] = useState(set.weekly);
+  const update = (day: string, i: number, which: 0 | 1, value: string) => {
+    const ranges = [...(weekly[day] ?? [])];
+    const r = [...(ranges[i] ?? [540, 1020])] as [number, number];
+    r[which] = value === "24:00" ? 1440 : parseHhmm(value);
+    ranges[i] = r;
+    setWeekly({ ...weekly, [day]: ranges });
+  };
+  return (
+    <div class="hours" data-testid={`hours-${set.kind}`}>
+      <h3>{set.name}</h3>
+      {DAY_NAMES.map((n, idx) => {
+        const day = String(idx + 1);
+        const ranges = weekly[day] ?? [];
+        return (
+          <div class="hours-day" key={day}>
+            <span class="day">{n}</span>
+            {ranges.map(([s, e], i) => (
+              <span key={`${day}-${s}-${i}`} class="range">
+                <input
+                  type="time"
+                  step={900}
+                  value={hhmm(s)}
+                  onChange={(ev) => update(day, i, 0, ev.currentTarget.value)}
+                />
+                –
+                <input
+                  type="time"
+                  step={900}
+                  value={e >= 1440 ? "23:59" : hhmm(e)}
+                  onChange={(ev) => update(day, i, 1, ev.currentTarget.value)}
+                />
+                <button
+                  type="button"
+                  onClick={() => setWeekly({ ...weekly, [day]: ranges.filter((_, j) => j !== i) })}
+                >
+                  −
+                </button>
+              </span>
+            ))}
+            <button
+              type="button"
+              onClick={() => setWeekly({ ...weekly, [day]: [...ranges, [540, 1020]] })}
+            >
+              +
+            </button>
+          </div>
+        );
+      })}
+      <button type="button" class="primary" onClick={() => void onSave(weekly)}>
+        Save {set.name.toLowerCase()}
+      </button>
+    </div>
+  );
+}
+
+export function Settings() {
+  const [settings, setSettings] = useState<UserSettings | null>(null);
+  const [hours, setHours] = useState<HoursSet[]>([]);
+  const [calendars, setCalendars] = useState<Calendar[]>([]);
+  const [buffers, setBuffers] = useState<
+    { id: string; title: string; side: string; minutes_before: number; minutes_after: number }[]
+  >([]);
+  const [focus, setFocus] = useState<{ id: string; title: string; weekly_goal_minutes: number }[]>(
+    [],
+  );
+  const [message, setMessage] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    const [s, h, c, b, f] = await Promise.all([
+      api<{ settings: UserSettings }>("GET", "/api/settings"),
+      api<{ hours: HoursSet[] }>("GET", "/api/hours"),
+      api<{ calendars: Calendar[] }>("GET", "/api/calendars"),
+      api<{ buffers: typeof buffers }>("GET", "/api/buffers"),
+      api<{ focus: typeof focus }>("GET", "/api/focus"),
+    ]);
+    setSettings(s.settings);
+    setHours(h.hours);
+    setCalendars(c.calendars);
+    setBuffers(b.buffers);
+    setFocus(f.focus);
+  }, []);
+  useEffect(() => void load(), [load]);
+
+  const act = async (fn: () => Promise<unknown>, done = "Saved") => {
+    setMessage(null);
+    try {
+      await fn();
+      await planNow();
+      await Promise.all([load(), loadMe()]);
+      setMessage(done);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  if (!settings) return null;
+  return (
+    <div class="page" data-testid="settings-page">
+      <h1>Settings</h1>
+      {message && (
+        <p class="status" data-testid="settings-message">
+          {message}
+        </p>
+      )}
+
+      <section>
+        <h2>Scheduling</h2>
+        <div class="form">
+          <label>
+            Plan ahead (weeks)
+            <input
+              name="schedulingWindowWeeks"
+              type="number"
+              min={1}
+              max={12}
+              value={settings.schedulingWindowWeeks}
+              onChange={(e) =>
+                void act(() =>
+                  api("PATCH", "/api/settings", {
+                    schedulingWindowWeeks: Number(e.currentTarget.value),
+                  }),
+                )
+              }
+            />
+          </label>
+          <label>
+            Break between tasks and habits
+            <select
+              name="breakMinutes"
+              value={settings.breakMinutes}
+              onChange={(e) =>
+                void act(() =>
+                  api("PATCH", "/api/settings", { breakMinutes: Number(e.currentTarget.value) }),
+                )
+              }
+            >
+              {[0, 5, 10, 15, 20, 30].map((m) => (
+                <option value={m} key={m}>
+                  {m === 0 ? "None" : `${m} minutes`}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Urgency
+            <select
+              name="urgencyMode"
+              value={settings.urgencyMode}
+              onChange={(e) =>
+                void act(() =>
+                  api("PATCH", "/api/settings", { urgencyMode: e.currentTarget.value }),
+                )
+              }
+            >
+              <option value="priority-only">Priority only</option>
+              <option value="due-date">Raise tasks due within 48 hours</option>
+              <option value="due-date-and-work">Raise tasks that are short of time</option>
+            </select>
+          </label>
+          <label>
+            Time zone
+            <input
+              name="timeZone"
+              defaultValue={me.value?.user.time_zone ?? ""}
+              onChange={(e) =>
+                void act(() => api("PATCH", "/api/me", { timeZone: e.currentTarget.value }))
+              }
+            />
+          </label>
+          <label>
+            Planning
+            <select
+              name="paused"
+              value={settings.paused ? "paused" : "on"}
+              onChange={(e) =>
+                void act(() =>
+                  api("PATCH", "/api/settings", { paused: e.currentTarget.value === "paused" }),
+                )
+              }
+            >
+              <option value="on">On</option>
+              <option value="paused">Paused</option>
+            </select>
+          </label>
+        </div>
+      </section>
+
+      <section>
+        <h2>Hours</h2>
+        {hours.map((h) => (
+          <HoursEditor
+            key={h.id}
+            set={h}
+            onSave={(weekly) => act(() => api("PUT", `/api/hours/${h.id}`, { weekly }))}
+          />
+        ))}
+      </section>
+
+      <section>
+        <h2>Calendars</h2>
+        <div class="list" data-testid="calendar-list">
+          {calendars.map((c) => (
+            <label class="row inline" key={c.id}>
+              <span>
+                {c.name}{" "}
+                <span class="meta">
+                  ({c.provider}, {c.email}
+                  {c.is_primary ? ", main" : ""})
+                </span>
+              </span>
+              <input
+                type="checkbox"
+                checked={c.check_availability === 1}
+                onChange={(e) =>
+                  void act(() =>
+                    api("PATCH", `/api/calendars/${c.id}`, {
+                      checkAvailability: e.currentTarget.checked,
+                    }),
+                  )
+                }
+              />
+            </label>
+          ))}
+        </div>
+      </section>
+
+      <section>
+        <h2>Buffers</h2>
+        <div class="actions">
+          <button
+            type="button"
+            onClick={() =>
+              void act(() =>
+                api("POST", "/api/buffers", {
+                  title: "Recovery",
+                  side: "after",
+                  minutesAfter: 15,
+                  level: 2,
+                  filter: { participants: { op: ">=", value: 2 } },
+                }),
+              )
+            }
+          >
+            Add 15 min recovery after meetings
+          </button>
+          <button
+            type="button"
+            onClick={() =>
+              void act(() =>
+                api("POST", "/api/buffers", {
+                  title: "Prep",
+                  side: "before",
+                  minutesBefore: 15,
+                  level: 3,
+                  filter: { participants: { op: ">=", value: 2 } },
+                }),
+              )
+            }
+          >
+            Add 15 min prep before meetings
+          </button>
+        </div>
+        <div class="list" data-testid="buffer-list">
+          {buffers.map((b) => (
+            <div class="row" key={b.id}>
+              <span>
+                {b.title} ·{" "}
+                {b.side === "before"
+                  ? `${b.minutes_before} min before`
+                  : `${b.minutes_after} min after`}
+              </span>
+              <button
+                type="button"
+                class="danger"
+                onClick={() => void act(() => api("DELETE", `/api/buffers/${b.id}`))}
+              >
+                Delete
+              </button>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section>
+        <h2>Focus time</h2>
+        {focus.length === 0 ? (
+          <button
+            type="button"
+            onClick={() =>
+              void act(() =>
+                api("POST", "/api/focus", {
+                  weeklyGoalMinutes: 600,
+                  dailyMinMinutes: 60,
+                  dailyMaxMinutes: 240,
+                  minBlockMinutes: 60,
+                  maxBlockMinutes: 180,
+                }),
+              )
+            }
+          >
+            Protect 10 hours of focus time per week
+          </button>
+        ) : (
+          focus.map((f) => (
+            <div class="row" key={f.id}>
+              <span>
+                {f.title} · {f.weekly_goal_minutes / 60} h per week
+              </span>
+              <button
+                type="button"
+                class="danger"
+                onClick={() => void act(() => api("DELETE", `/api/focus/${f.id}`))}
+              >
+                Delete
+              </button>
+            </div>
+          ))
+        )}
+      </section>
+    </div>
+  );
+}

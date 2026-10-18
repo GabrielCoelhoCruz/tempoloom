@@ -1,12 +1,13 @@
 // Append-only list. Never edit a migration that has shipped; add a new one.
 export const MIGRATIONS: readonly string[] = [
-  // 1: identity and the calendar mirror
+  // 1: identity, calendar accounts and the event cache
   `
   CREATE TABLE users (
     id TEXT PRIMARY KEY,
     email TEXT NOT NULL UNIQUE,
     name TEXT NOT NULL,
     time_zone TEXT NOT NULL DEFAULT 'UTC',
+    settings TEXT NOT NULL DEFAULT '{}',
     created_at INTEGER NOT NULL
   ) STRICT;
 
@@ -21,31 +22,42 @@ export const MIGRATIONS: readonly string[] = [
   CREATE TABLE oauth_states (
     state TEXT PRIMARY KEY,
     code_verifier TEXT NOT NULL,
-    user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
     created_at INTEGER NOT NULL
   ) STRICT;
 
-  CREATE TABLE google_accounts (
+  -- One-time sign-in links made by an operator with the CLI.
+  CREATE TABLE login_links (
+    token_hash TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    expires_at INTEGER NOT NULL
+  ) STRICT;
+
+  CREATE TABLE accounts (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    google_sub TEXT NOT NULL UNIQUE,
+    provider TEXT NOT NULL CHECK (provider IN ('google', 'google_service', 'caldav')),
+    -- Google subject, service account email, or CalDAV server and user name.
+    external_id TEXT NOT NULL,
     email TEXT NOT NULL,
-    refresh_token TEXT NOT NULL,
+    server_url TEXT,
+    -- Sealed JSON: a refresh token, or CalDAV credentials.
+    credentials TEXT NOT NULL,
     access_token TEXT,
     access_expires_at INTEGER NOT NULL DEFAULT 0,
-    scope TEXT NOT NULL,
+    scope TEXT NOT NULL DEFAULT '',
     status TEXT NOT NULL DEFAULT 'ok' CHECK (status IN ('ok', 'reauth_required')),
-    created_at INTEGER NOT NULL
+    created_at INTEGER NOT NULL,
+    UNIQUE (provider, external_id)
   ) STRICT;
-  CREATE INDEX google_accounts_user ON google_accounts(user_id);
+  CREATE INDEX accounts_user ON accounts(user_id);
 
   CREATE TABLE calendars (
     id TEXT PRIMARY KEY,
-    account_id TEXT NOT NULL REFERENCES google_accounts(id) ON DELETE CASCADE,
-    google_id TEXT NOT NULL,
-    summary TEXT NOT NULL,
+    account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    provider_id TEXT NOT NULL,
+    name TEXT NOT NULL,
     time_zone TEXT,
-    access_role TEXT NOT NULL,
+    writable INTEGER NOT NULL DEFAULT 1,
     is_primary INTEGER NOT NULL DEFAULT 0,
     color TEXT,
     -- Busy events on this calendar block time for scheduling.
@@ -54,13 +66,12 @@ export const MIGRATIONS: readonly string[] = [
     window_start INTEGER,
     window_end INTEGER,
     synced_at INTEGER,
-    UNIQUE (account_id, google_id)
+    UNIQUE (account_id, provider_id)
   ) STRICT;
 
   CREATE TABLE events (
     calendar_id TEXT NOT NULL REFERENCES calendars(id) ON DELETE CASCADE,
-    google_id TEXT NOT NULL,
-    status TEXT NOT NULL,
+    event_id TEXT NOT NULL,
     summary TEXT NOT NULL DEFAULT '',
     description TEXT NOT NULL DEFAULT '',
     location TEXT NOT NULL DEFAULT '',
@@ -77,17 +88,17 @@ export const MIGRATIONS: readonly string[] = [
     etag TEXT,
     updated_ms INTEGER,
     private_props TEXT NOT NULL DEFAULT '{}',
-    PRIMARY KEY (calendar_id, google_id)
+    PRIMARY KEY (calendar_id, event_id)
   ) STRICT;
   CREATE INDEX events_time ON events(calendar_id, start_ms, end_ms);
   `,
-  // 2: managed events written to Google Calendar
+  // 2: managed events written to calendars
   `
   CREATE TABLE managed_events (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     calendar_id TEXT NOT NULL REFERENCES calendars(id) ON DELETE CASCADE,
-    google_id TEXT,
+    event_id TEXT,
     key TEXT NOT NULL,
     kind TEXT NOT NULL,
     source_id TEXT NOT NULL,
@@ -98,10 +109,125 @@ export const MIGRATIONS: readonly string[] = [
     description TEXT NOT NULL DEFAULT '',
     color_id TEXT,
     locked INTEGER NOT NULL DEFAULT 0,
+    -- The user changed the title in the calendar; Tempoloom keeps it.
+    user_edited INTEGER NOT NULL DEFAULT 0,
     etag TEXT,
     UNIQUE (user_id, key)
   ) STRICT;
   CREATE INDEX managed_events_source ON managed_events(user_id, kind, source_id);
-  CREATE INDEX managed_events_google ON managed_events(calendar_id, google_id);
+  CREATE INDEX managed_events_event ON managed_events(calendar_id, event_id);
+  `,
+  // 3: planning items
+  `
+  CREATE TABLE hours_sets (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL CHECK (kind IN ('work', 'personal', 'meeting', 'custom')),
+    name TEXT NOT NULL,
+    -- JSON: { "1": [[540, 1020]], ... } local minutes per ISO weekday.
+    weekly TEXT NOT NULL,
+    task_calendar_id TEXT REFERENCES calendars(id) ON DELETE SET NULL,
+    created_at INTEGER NOT NULL
+  ) STRICT;
+  CREATE INDEX hours_sets_user ON hours_sets(user_id);
+
+  CREATE TABLE tasks (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    title TEXT NOT NULL,
+    notes TEXT NOT NULL DEFAULT '',
+    level INTEGER NOT NULL CHECK (level BETWEEN 1 AND 4),
+    total_minutes INTEGER NOT NULL,
+    logged_minutes INTEGER NOT NULL DEFAULT 0,
+    min_chunk_minutes INTEGER NOT NULL,
+    max_chunk_minutes INTEGER NOT NULL,
+    start_after INTEGER NOT NULL,
+    due_at INTEGER,
+    hours_set_id TEXT NOT NULL REFERENCES hours_sets(id),
+    next_up_rank INTEGER,
+    status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'done')),
+    created_at INTEGER NOT NULL,
+    rules_changed_at INTEGER NOT NULL
+  ) STRICT;
+  CREATE INDEX tasks_user ON tasks(user_id, status);
+
+  CREATE TABLE habits (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    title TEXT NOT NULL,
+    notes TEXT NOT NULL DEFAULT '',
+    enabled INTEGER NOT NULL DEFAULT 1,
+    level INTEGER NOT NULL CHECK (level BETWEEN 1 AND 4),
+    rank INTEGER NOT NULL DEFAULT 0,
+    hours_set_id TEXT NOT NULL REFERENCES hours_sets(id),
+    ideal_minute INTEGER NOT NULL,
+    min_minutes INTEGER NOT NULL,
+    max_minutes INTEGER NOT NULL,
+    -- JSON: {"period":"daily"} or {"period":"weekly","days":[1,3]}
+    frequency TEXT NOT NULL,
+    starting TEXT,
+    defense TEXT NOT NULL CHECK (defense IN ('adaptive', 'always-free', 'always-busy')),
+    when_unplaceable TEXT NOT NULL CHECK (when_unplaceable IN ('remove', 'keep_as_conflict')),
+    reserved_words TEXT NOT NULL DEFAULT '[]',
+    created_at INTEGER NOT NULL,
+    rules_changed_at INTEGER NOT NULL
+  ) STRICT;
+  CREATE INDEX habits_user ON habits(user_id);
+
+  CREATE TABLE buffers (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    title TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    level INTEGER NOT NULL CHECK (level BETWEEN 1 AND 4),
+    rank INTEGER NOT NULL DEFAULT 0,
+    side TEXT NOT NULL CHECK (side IN ('before', 'after', 'both')),
+    minutes_before INTEGER NOT NULL DEFAULT 0,
+    minutes_after INTEGER NOT NULL DEFAULT 0,
+    busy INTEGER NOT NULL DEFAULT 1,
+    filter TEXT NOT NULL DEFAULT '{}',
+    on_conflict TEXT NOT NULL CHECK (on_conflict IN ('remove', 'keep_as_conflict')),
+    created_at INTEGER NOT NULL,
+    rules_changed_at INTEGER NOT NULL
+  ) STRICT;
+
+  CREATE TABLE focus_goals (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    title TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    hours_set_id TEXT NOT NULL REFERENCES hours_sets(id),
+    weekly_goal_minutes INTEGER NOT NULL,
+    daily_min_minutes INTEGER NOT NULL,
+    daily_max_minutes INTEGER NOT NULL,
+    min_block_minutes INTEGER NOT NULL,
+    max_block_minutes INTEGER NOT NULL,
+    busy INTEGER NOT NULL DEFAULT 1,
+    created_at INTEGER NOT NULL,
+    rules_changed_at INTEGER NOT NULL
+  ) STRICT;
+
+  -- Time ranges an item must not use again (deleted or moved events).
+  CREATE TABLE item_exclusions (
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,
+    item_id TEXT NOT NULL,
+    start_ms INTEGER NOT NULL,
+    end_ms INTEGER NOT NULL
+  ) STRICT;
+  CREATE INDEX item_exclusions_item ON item_exclusions(user_id, kind, item_id);
+
+  -- Demand keys the user dismissed: skipped habit days and deleted buffers.
+  CREATE TABLE dismissed_keys (
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    key TEXT NOT NULL,
+    PRIMARY KEY (user_id, key)
+  ) STRICT;
+
+  CREATE TABLE plan_reports (
+    user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    report TEXT NOT NULL,
+    planned_at INTEGER NOT NULL
+  ) STRICT;
   `,
 ];

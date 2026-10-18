@@ -22,3 +22,35 @@ jobs:
       - run: npm run lint
       - run: npm test
       - run: npm run build
+      - run: node bench/scheduler-week.ts 100
+
+  caldav-e2e:
+    # Integration and end-to-end tests against a real CalDAV server (Radicale
+    # in Docker, loopback only) and real Chrome.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Integration tests (Radicale)
+        run: |
+          scripts/caldav-server.sh start
+          set -a; eval "$(scripts/caldav-server.sh env)"; set +a
+          npm run test:integration
+          scripts/caldav-server.sh stop
+      - name: E2E tests (Radicale, Chrome)
+        run: npx playwright test
+      - name: Upload report and screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-report
+          path: |
+            .e2e/report
+            .e2e/results.json
+            .e2e/test-results
+          retention-days: 14

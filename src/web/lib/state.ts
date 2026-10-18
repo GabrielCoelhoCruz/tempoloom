@@ -1,0 +1,35 @@
+import { signal } from "@preact/signals";
+import type { Settings } from "../../server/settings.ts";
+import { ApiError, api } from "./api.ts";
+
+export interface Me {
+  user: { id: string; email: string; name: string; time_zone: string };
+  settings: Settings;
+  accounts: { id: string; provider: string; email: string; status: string }[];
+}
+
+export const me = signal<Me | null | undefined>(undefined);
+
+export async function loadMe(): Promise<void> {
+  try {
+    me.value = await api<Me>("GET", "/api/me");
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 401) me.value = null;
+    else throw err;
+  }
+}
+
+export const zone = () =>
+  me.value?.user.time_zone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+/** Asks the server to plan now; resolves when the calendar holds the plan. */
+export async function planNow(): Promise<void> {
+  await api("POST", "/api/planner/sync");
+}
+
+export const LEVEL_NAMES: Record<number, string> = {
+  1: "P1 critical",
+  2: "P2 high",
+  3: "P3 medium",
+  4: "P4 low",
+};

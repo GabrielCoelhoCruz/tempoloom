@@ -8,6 +8,7 @@ import {
   refreshAccessToken,
   type TokenSet,
 } from "./google/oauth.ts";
+import { type ServiceAccountKey, serviceAccountToken } from "./google/service-account.ts";
 
 export interface User {
   id: string;
@@ -16,18 +17,23 @@ export interface User {
   time_zone: string;
 }
 
-export interface GoogleAccount {
+export type Provider = "google" | "google_service" | "caldav";
+
+export interface AccountRow {
   id: string;
   user_id: string;
-  google_sub: string;
+  provider: Provider;
+  external_id: string;
   email: string;
-  refresh_token: string;
+  server_url: string | null;
+  credentials: string;
   access_token: string | null;
   access_expires_at: number;
   status: "ok" | "reauth_required";
 }
 
 const SESSION_DAYS = 30;
+const LINK_MINUTES = 15;
 
 const hashToken = (token: string) => createHash("sha256").update(token).digest("base64url");
 
@@ -58,6 +64,125 @@ export function deleteSession(db: Db, token: string): void {
   run(db, "DELETE FROM sessions WHERE token_hash = ?", hashToken(token));
 }
 
+/** One-time sign-in link for an operator-created account (CLI). */
+export function createLoginLink(db: Db, userId: string, now = Date.now()): string {
+  const token = randomBytes(32).toString("base64url");
+  run(
+    db,
+    "INSERT INTO login_links (token_hash, user_id, expires_at) VALUES (?, ?, ?)",
+    hashToken(token),
+    userId,
+    now + LINK_MINUTES * 60_000,
+  );
+  return token;
+}
+
+export function consumeLoginLink(db: Db, token: string, now = Date.now()): string | undefined {
+  return tx(db, () => {
+    const row = one<{ user_id: string; expires_at: number }>(
+      db,
+      "SELECT user_id, expires_at FROM login_links WHERE token_hash = ?",
+      hashToken(token),
+    );
+    run(db, "DELETE FROM login_links WHERE token_hash = ?", hashToken(token));
+    return row && row.expires_at > now ? row.user_id : undefined;
+  });
+}
+
+const WEEKDAYS_9_TO_5 = JSON.stringify({
+  1: [[540, 1020]],
+  2: [[540, 1020]],
+  3: [[540, 1020]],
+  4: [[540, 1020]],
+  5: [[540, 1020]],
+});
+const EVENINGS = JSON.stringify(
+  Object.fromEntries([1, 2, 3, 4, 5, 6, 7].map((d) => [d, [[1080, 1320]]])),
+);
+
+/** Finds a user by email or creates one with the built-in hours sets. */
+export function ensureUser(db: Db, email: string, name: string, now = Date.now()): User {
+  return tx(db, () => {
+    const existing = one<User>(
+      db,
+      "SELECT id, email, name, time_zone FROM users WHERE email = ?",
+      email.toLowerCase(),
+    );
+    if (existing) return existing;
+    const id = randomUUID();
+    run(
+      db,
+      "INSERT INTO users (id, email, name, created_at) VALUES (?, ?, ?, ?)",
+      id,
+      email.toLowerCase(),
+      name,
+      now,
+    );
+    for (const [kind, label, weekly] of [
+      ["work", "Work hours", WEEKDAYS_9_TO_5],
+      ["meeting", "Meeting hours", WEEKDAYS_9_TO_5],
+      ["personal", "Personal hours", EVENINGS],
+    ] as const) {
+      run(
+        db,
+        "INSERT INTO hours_sets (id, user_id, kind, name, weekly, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+        randomUUID(),
+        id,
+        kind,
+        label,
+        weekly,
+        now,
+      );
+    }
+    return { id, email: email.toLowerCase(), name, time_zone: "UTC" };
+  });
+}
+
+export interface AccountInput {
+  userId: string;
+  provider: Provider;
+  externalId: string;
+  email: string;
+  serverUrl?: string;
+  /** Plain JSON; sealed before it is stored. */
+  credentials: Record<string, string>;
+  accessToken?: string;
+  accessExpiresAt?: number;
+  scope?: string;
+}
+
+export function upsertAccount(db: Db, box: SecretBox, a: AccountInput, now = Date.now()): string {
+  const existing = one<{ id: string }>(
+    db,
+    "SELECT id FROM accounts WHERE provider = ? AND external_id = ?",
+    a.provider,
+    a.externalId,
+  );
+  const id = existing?.id ?? randomUUID();
+  run(
+    db,
+    `INSERT INTO accounts (id, user_id, provider, external_id, email, server_url, credentials,
+       access_token, access_expires_at, scope, status, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ok', ?)
+     ON CONFLICT (id) DO UPDATE SET
+       email = excluded.email, server_url = excluded.server_url, credentials = excluded.credentials,
+       access_token = excluded.access_token, access_expires_at = excluded.access_expires_at,
+       scope = excluded.scope, status = 'ok'`,
+    id,
+    a.userId,
+    a.provider,
+    a.externalId,
+    a.email,
+    a.serverUrl ?? null,
+    box.seal(JSON.stringify(a.credentials)),
+    a.accessToken ? box.seal(a.accessToken) : null,
+    a.accessExpiresAt ?? 0,
+    a.scope ?? "",
+    now,
+  );
+  return id;
+}
+
 /**
  * Creates or updates the user and Google account after a successful login.
  * Google returns a refresh token only on first consent, so an existing one is kept.
@@ -70,86 +195,96 @@ export function upsertGoogleLogin(
   now = Date.now(),
 ): { user: User; accountId: string } {
   return tx(db, () => {
-    const existing = one<GoogleAccount>(
+    const existing = one<AccountRow>(
       db,
-      "SELECT * FROM google_accounts WHERE google_sub = ?",
+      "SELECT * FROM accounts WHERE provider = 'google' AND external_id = ?",
       identity.sub,
     );
-    let userId = existing?.user_id;
-    if (!userId) {
-      userId =
-        one<{ id: string }>(db, "SELECT id FROM users WHERE email = ?", identity.email)?.id ??
-        randomUUID();
-      run(
-        db,
-        `INSERT INTO users (id, email, name, created_at) VALUES (?, ?, ?, ?)
-         ON CONFLICT (id) DO NOTHING`,
-        userId,
-        identity.email,
-        identity.name,
-        now,
-      );
-    }
-    const refresh = tokens.refreshToken ? box.seal(tokens.refreshToken) : existing?.refresh_token;
-    if (!refresh) {
+    const user = existing
+      ? (one<User>(
+          db,
+          "SELECT id, email, name, time_zone FROM users WHERE id = ?",
+          existing.user_id,
+        ) as User)
+      : ensureUser(db, identity.email, identity.name, now);
+    const previous = existing
+      ? (JSON.parse(box.open(existing.credentials)) as { refreshToken?: string })
+      : {};
+    const refreshToken = tokens.refreshToken ?? previous.refreshToken;
+    if (!refreshToken) {
       throw new OAuthError("no_refresh_token", "Google did not return a refresh token");
     }
-    const accountId = existing?.id ?? randomUUID();
-    run(
+    const accountId = upsertAccount(
       db,
-      `INSERT INTO google_accounts
-         (id, user_id, google_sub, email, refresh_token, access_token, access_expires_at, scope, status, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ok', ?)
-       ON CONFLICT (id) DO UPDATE SET
-         email = excluded.email, refresh_token = excluded.refresh_token,
-         access_token = excluded.access_token, access_expires_at = excluded.access_expires_at,
-         scope = excluded.scope, status = 'ok'`,
-      accountId,
-      userId,
-      identity.sub,
-      identity.email,
-      refresh,
-      box.seal(tokens.accessToken),
-      tokens.expiresAt,
-      tokens.scope,
+      box,
+      {
+        userId: user.id,
+        provider: "google",
+        externalId: identity.sub,
+        email: identity.email,
+        credentials: { refreshToken },
+        accessToken: tokens.accessToken,
+        accessExpiresAt: tokens.expiresAt,
+        scope: tokens.scope,
+      },
       now,
     );
-    const user = one<User>(
-      db,
-      "SELECT id, email, name, time_zone FROM users WHERE id = ?",
-      userId,
-    ) as User;
     return { user, accountId };
   });
 }
 
-/** Returns a valid access token, refreshing it when needed. */
-export async function accessTokenFor(
-  db: Db,
-  box: SecretBox,
-  client: OAuthClient,
-  accountId: string,
-  now = Date.now(),
-): Promise<string> {
-  const acct = one<GoogleAccount>(db, "SELECT * FROM google_accounts WHERE id = ?", accountId);
-  if (!acct) throw new Error(`Unknown account ${accountId}`);
-  if (acct.status !== "ok") throw new OAuthError("reauth_required", "Account needs a new login");
-  if (acct.access_token && acct.access_expires_at > now) return box.open(acct.access_token);
-  let tokens: TokenSet;
-  try {
-    tokens = await refreshAccessToken(client, box.open(acct.refresh_token), now);
-  } catch (err) {
-    if (err instanceof OAuthError && err.code === "invalid_grant") {
-      run(db, "UPDATE google_accounts SET status = 'reauth_required' WHERE id = ?", accountId);
-    }
-    throw err;
-  }
+export function account(db: Db, accountId: string): AccountRow {
+  const row = one<AccountRow>(db, "SELECT * FROM accounts WHERE id = ?", accountId);
+  if (!row) throw new Error(`Unknown account ${accountId}`);
+  return row;
+}
+
+export function credentialsOf(box: SecretBox, row: AccountRow): Record<string, string> {
+  return JSON.parse(box.open(row.credentials)) as Record<string, string>;
+}
+
+function saveAccessToken(db: Db, box: SecretBox, id: string, t: TokenSet): void {
   run(
     db,
-    "UPDATE google_accounts SET access_token = ?, access_expires_at = ? WHERE id = ?",
-    box.seal(tokens.accessToken),
-    tokens.expiresAt,
-    accountId,
+    "UPDATE accounts SET access_token = ?, access_expires_at = ? WHERE id = ?",
+    box.seal(t.accessToken),
+    t.expiresAt,
+    id,
   );
+}
+
+/** A valid access token for a Google account, refreshed when needed. */
+export async function googleAccessToken(
+  db: Db,
+  box: SecretBox,
+  accountId: string,
+  opts: {
+    oauth?: OAuthClient | undefined;
+    serviceKey?: ServiceAccountKey | undefined;
+    now?: number;
+  },
+): Promise<string> {
+  const now = opts.now ?? Date.now();
+  const row = account(db, accountId);
+  if (row.status !== "ok") throw new OAuthError("reauth_required", "Account needs a new login");
+  if (row.access_token && row.access_expires_at > now) return box.open(row.access_token);
+  let tokens: TokenSet;
+  if (row.provider === "google_service") {
+    if (!opts.serviceKey) throw new Error("GOOGLE_SERVICE_ACCOUNT_JSON is not configured");
+    tokens = await serviceAccountToken(opts.serviceKey, { now });
+  } else {
+    if (!opts.oauth) throw new Error("Google OAuth is not configured");
+    const { refreshToken } = credentialsOf(box, row);
+    if (!refreshToken) throw new OAuthError("no_refresh_token", "Account has no refresh token");
+    try {
+      tokens = await refreshAccessToken(opts.oauth, refreshToken, now);
+    } catch (err) {
+      if (err instanceof OAuthError && err.code === "invalid_grant") {
+        run(db, "UPDATE accounts SET status = 'reauth_required' WHERE id = ?", accountId);
+      }
+      throw err;
+    }
+  }
+  saveAccessToken(db, box, accountId, tokens);
   return tokens.accessToken;
 }

@@ -135,6 +135,8 @@ export interface Snapshot {
   current: CurrentPlacement[];
   /** Managed events that ended in the current week: done habit occurrences and focus credit. */
   past?: CurrentPlacement[];
+  /** Demand keys the user dismissed (deleted buffers); never placed again. */
+  dismissedKeys?: string[];
   tasks: TaskItem[];
   habits: HabitItem[];
   buffers: BufferItem[];

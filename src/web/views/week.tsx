@@ -1,5 +1,5 @@
 import { signal } from "@preact/signals";
-import { useMemo, useRef } from "preact/hooks";
+import { useEffect, useMemo, useRef } from "preact/hooks";
 import { addDays, type LocalDate, localToUtc, MINUTE, utcToLocal } from "../../shared/time.ts";
 
 export interface WeekEvent {
@@ -84,6 +84,11 @@ const drag = signal<{ id: string; dx: number; dyMin: number } | null>(null);
 export function WeekView({ days, zone, events, now, onMove, onSelect }: Props) {
   const boxes = useMemo(() => layout(days, zone, events), [days, zone, events]);
   const gridRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    // Open at 07:00, where the working day starts for most people.
+    if (scrollRef.current) scrollRef.current.scrollTop = 7 * HOUR_PX;
+  }, []);
   const nowLocal = utcToLocal(zone, now);
   const todayIdx = days.indexOf(nowLocal.date);
 
@@ -133,7 +138,7 @@ export function WeekView({ days, zone, events, now, onMove, onSelect }: Props) {
           </div>
         ))}
       </div>
-      <div class="week-scroll">
+      <div class="week-scroll" ref={scrollRef}>
         <div class="week-body" style={{ height: `${DAY_PX}px` }}>
           <div class="hours">
             {Array.from({ length: 24 }, (_, h) => (

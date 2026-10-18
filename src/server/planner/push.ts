@@ -1,13 +1,9 @@
-// Writes the desired managed events to Google Calendar: creates, moves and
-// deletes events so that the calendar matches the plan.
+// Writes the desired managed events to calendars: creates, moves and deletes
+// events so that the calendars match the plan. Unchanged events get no write.
 import { randomUUID } from "node:crypto";
 import { all, type Db, one, run } from "../db.ts";
-import {
-  GoogleApiError,
-  type GoogleCalendarApi,
-  type GoogleEventInput,
-} from "../google/calendar.ts";
-import { applyWrittenEvent } from "../sync/pull.ts";
+import { type CalendarProvider, type EventWrite, ProviderError } from "../providers/types.ts";
+import { cacheEvent } from "../sync/pull.ts";
 
 export interface DesiredEvent {
   key: string;
@@ -26,7 +22,7 @@ export interface ManagedRow {
   id: string;
   user_id: string;
   calendar_id: string;
-  google_id: string | null;
+  event_id: string | null;
   key: string;
   kind: string;
   source_id: string;
@@ -37,14 +33,15 @@ export interface ManagedRow {
   description: string;
   color_id: string | null;
   locked: number;
+  user_edited: number;
   etag: string | null;
 }
 
 export interface PushContext {
   db: Db;
   userId: string;
-  zone: string;
-  apiFor: (calendarId: string) => { api: GoogleCalendarApi; googleCalendarId: string };
+  /** Provider and provider calendar id for one of our calendar ids. */
+  target: (calendarId: string) => { provider: CalendarProvider; providerCalendarId: string };
   now: number;
 }
 
@@ -55,35 +52,53 @@ export interface PushResult {
   conflicts: number;
 }
 
-/** Private extended properties that mark an event as managed by Tempoloom. */
+/** Private properties that mark an event as managed by Tempoloom. */
 export const MANAGED_PROP = "tl";
 export const KEY_PROP = "tl_key";
 
-function body(userId: string, d: DesiredEvent): GoogleEventInput {
+function write(userId: string, d: DesiredEvent): EventWrite {
   return {
     summary: d.title,
     description: d.description,
-    start: { dateTime: new Date(d.start).toISOString() },
-    end: { dateTime: new Date(d.end).toISOString() },
-    transparency: d.busy ? "opaque" : "transparent",
-    ...(d.colorId ? { colorId: d.colorId } : {}),
-    reminders: { useDefault: false },
-    extendedProperties: { private: { [MANAGED_PROP]: "1", [KEY_PROP]: d.key, tl_user: userId } },
+    start: d.start,
+    end: d.end,
+    busy: d.busy,
+    colorId: d.colorId,
+    privateProps: { [MANAGED_PROP]: "1", [KEY_PROP]: d.key, tl_user: userId },
   };
 }
 
-const differs = (row: ManagedRow, d: DesiredEvent) =>
-  row.start_ms !== d.start ||
-  row.end_ms !== d.end ||
-  row.title !== d.title ||
-  row.description !== d.description ||
-  Boolean(row.busy) !== d.busy ||
-  (row.color_id ?? null) !== (d.colorId ?? null) ||
-  row.calendar_id !== d.calendarId;
+interface Cached {
+  summary: string;
+  description: string;
+  busy: number;
+}
+
+function differs(row: ManagedRow, cached: Cached | undefined, d: DesiredEvent): boolean {
+  if (
+    row.start_ms !== d.start ||
+    row.end_ms !== d.end ||
+    row.title !== d.title ||
+    row.description !== d.description ||
+    Boolean(row.busy) !== d.busy ||
+    (row.color_id ?? null) !== (d.colorId ?? null) ||
+    row.calendar_id !== d.calendarId
+  ) {
+    return true;
+  }
+  // The calendar copy drifted (a user edit that does not lock): write it back.
+  return (
+    cached !== undefined &&
+    (cached.summary !== d.title ||
+      cached.description !== d.description ||
+      Boolean(cached.busy) !== d.busy)
+  );
+}
 
 /**
  * Makes the user's future managed events equal to `desired`. Events that
  * have started are never changed. Locked events are never moved or deleted.
+ * Writes run in the order deletes, updates, creates.
  */
 export async function pushSchedule(ctx: PushContext, desired: DesiredEvent[]): Promise<PushResult> {
   const { db, userId, now } = ctx;
@@ -95,37 +110,52 @@ export async function pushSchedule(ctx: PushContext, desired: DesiredEvent[]): P
     now,
   );
   const byKey = new Map(rows.map((r) => [r.key, r]));
-  const wanted = new Set<string>();
+  const wanted = new Set(desired.map((d) => d.key));
 
+  for (const row of rows) {
+    if (wanted.has(row.key) || row.locked || row.start_ms <= now) continue;
+    await deleteRemote(ctx, row);
+    run(db, "DELETE FROM managed_events WHERE id = ?", row.id);
+    result.deleted++;
+  }
+
+  const creates: DesiredEvent[] = [];
   for (const d of desired) {
-    wanted.add(d.key);
     const row = byKey.get(d.key);
-    if (row && (row.locked || row.start_ms <= now || !differs(row, d))) continue;
+    if (!row?.event_id || row.calendar_id !== d.calendarId) {
+      creates.push(d);
+      continue;
+    }
+    // Never change a started event; a locked event may get a new title or
+    // status but never a new time.
+    if (row.start_ms <= now) continue;
+    if (row.locked && (row.start_ms !== d.start || row.end_ms !== d.end)) continue;
+    const cached = one<Cached>(
+      db,
+      "SELECT summary, description, busy FROM events WHERE calendar_id = ? AND event_id = ?",
+      row.calendar_id,
+      row.event_id,
+    );
+    if (!differs(row, cached, d)) continue;
+    const { provider, providerCalendarId } = ctx.target(row.calendar_id);
     try {
-      if (!row?.google_id || row.calendar_id !== d.calendarId) {
-        if (row?.google_id) await deleteRemote(ctx, row);
-        const { api, googleCalendarId } = ctx.apiFor(d.calendarId);
-        const ev = await api.insertEvent(googleCalendarId, body(userId, d));
-        applyWrittenEvent(db, d.calendarId, ctx.zone, ev);
-        saveRow(db, userId, d, ev.id, ev.etag ?? null, row?.id);
-        result.created++;
-      } else {
-        const { api, googleCalendarId } = ctx.apiFor(row.calendar_id);
-        const ev = await api.patchEvent(googleCalendarId, row.google_id, body(userId, d), {
-          ...(row.etag ? { etag: row.etag } : {}),
-        });
-        applyWrittenEvent(db, row.calendar_id, ctx.zone, ev);
-        saveRow(db, userId, d, ev.id, ev.etag ?? null, row.id);
-        result.updated++;
-      }
+      const ev = await provider.updateEvent(
+        providerCalendarId,
+        row.event_id,
+        write(userId, d),
+        row.etag,
+      );
+      cacheEvent(db, row.calendar_id, ev);
+      saveRow(db, userId, d, ev.id, ev.etag, row.id);
+      result.updated++;
     } catch (err) {
-      // 412: the user changed the event in Google since our last read. The next
-      // pull picks up their change; the plan adapts on the following run.
-      if (err instanceof GoogleApiError && err.status === 412) {
+      // precondition_failed: the user changed the event since our last read. The
+      // next pull reads their change; the plan adapts on the following run.
+      if (err instanceof ProviderError && err.kind === "precondition_failed") {
         result.conflicts++;
         continue;
       }
-      if (err instanceof GoogleApiError && (err.status === 404 || err.status === 410) && row) {
+      if (err instanceof ProviderError && err.kind === "not_found") {
         run(db, "DELETE FROM managed_events WHERE id = ?", row.id);
         result.conflicts++;
         continue;
@@ -134,24 +164,28 @@ export async function pushSchedule(ctx: PushContext, desired: DesiredEvent[]): P
     }
   }
 
-  for (const row of rows) {
-    if (wanted.has(row.key) || row.locked || row.start_ms <= now) continue;
-    await deleteRemote(ctx, row);
-    run(db, "DELETE FROM managed_events WHERE id = ?", row.id);
-    result.deleted++;
+  for (const d of creates) {
+    const row = byKey.get(d.key);
+    if (row && (row.locked || row.start_ms <= now)) continue;
+    if (row?.event_id) await deleteRemote(ctx, row);
+    const { provider, providerCalendarId } = ctx.target(d.calendarId);
+    const ev = await provider.insertEvent(providerCalendarId, write(userId, d));
+    cacheEvent(db, d.calendarId, ev);
+    saveRow(db, userId, d, ev.id, ev.etag, row?.id);
+    result.created++;
   }
   return result;
 }
 
 async function deleteRemote(ctx: PushContext, row: ManagedRow): Promise<void> {
-  if (!row.google_id) return;
-  const { api, googleCalendarId } = ctx.apiFor(row.calendar_id);
-  await api.deleteEvent(googleCalendarId, row.google_id);
+  if (!row.event_id) return;
+  const { provider, providerCalendarId } = ctx.target(row.calendar_id);
+  await provider.deleteEvent(providerCalendarId, row.event_id);
   run(
     ctx.db,
-    "DELETE FROM events WHERE calendar_id = ? AND google_id = ?",
+    "DELETE FROM events WHERE calendar_id = ? AND event_id = ?",
     row.calendar_id,
-    row.google_id,
+    row.event_id,
   );
 }
 
@@ -159,23 +193,23 @@ function saveRow(
   db: Db,
   userId: string,
   d: DesiredEvent,
-  googleId: string,
+  eventId: string,
   etag: string | null,
   existingId: string | undefined,
 ): void {
   run(
     db,
-    `INSERT INTO managed_events (id, user_id, calendar_id, google_id, key, kind, source_id, start_ms, end_ms,
+    `INSERT INTO managed_events (id, user_id, calendar_id, event_id, key, kind, source_id, start_ms, end_ms,
        busy, title, description, color_id, locked, etag)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
      ON CONFLICT (user_id, key) DO UPDATE SET
-       calendar_id = excluded.calendar_id, google_id = excluded.google_id, start_ms = excluded.start_ms,
+       calendar_id = excluded.calendar_id, event_id = excluded.event_id, start_ms = excluded.start_ms,
        end_ms = excluded.end_ms, busy = excluded.busy, title = excluded.title,
        description = excluded.description, color_id = excluded.color_id, etag = excluded.etag`,
     existingId ?? randomUUID(),
     userId,
     d.calendarId,
-    googleId,
+    eventId,
     d.key,
     d.kind,
     d.sourceId,
@@ -186,14 +220,5 @@ function saveRow(
     d.description,
     d.colorId,
     etag,
-  );
-}
-
-export function managedRow(db: Db, userId: string, key: string): ManagedRow | undefined {
-  return one<ManagedRow>(
-    db,
-    "SELECT * FROM managed_events WHERE user_id = ? AND key = ?",
-    userId,
-    key,
   );
 }

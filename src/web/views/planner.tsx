@@ -1,0 +1,194 @@
+import { useCallback, useEffect, useMemo, useState } from "preact/hooks";
+import type { ReportEntry } from "../../scheduler/model.ts";
+import type { PlannerEvent } from "../../server/api/planner.ts";
+import { addDays, localToUtc, utcToLocal, weekdayOf } from "../../shared/time.ts";
+import { api } from "../lib/api.ts";
+import { formatWhen } from "../lib/format.ts";
+import { planNow, zone } from "../lib/state.ts";
+import { WeekView } from "./week.tsx";
+
+const REASONS: Record<string, string> = {
+  "outside-window": "starts after the scheduling window",
+  "no-hours": "its hours have no time in this period",
+  "too-long-for-hours": "longer than any range of its hours",
+  "all-day-block": "all-day events block every day",
+  "reserved-word": "an event with a reserved word exists that day",
+  "no-space-fixed": "no free time between your meetings",
+  "no-space-priority": "higher-priority items use the free time",
+  "after-due": "part of the work ends after the due date",
+};
+
+function mondayOf(z: string, t: number): string {
+  const d = utcToLocal(z, t).date;
+  return addDays(d, 1 - weekdayOf(d));
+}
+
+export function Planner() {
+  const z = zone();
+  const [weekStart, setWeekStart] = useState(() => mondayOf(z, Date.now()));
+  const [events, setEvents] = useState<PlannerEvent[]>([]);
+  const [report, setReport] = useState<ReportEntry[]>([]);
+  const [selected, setSelected] = useState<PlannerEvent | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const days = useMemo(
+    () => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)),
+    [weekStart],
+  );
+
+  const load = useCallback(async () => {
+    const from = localToUtc(z, weekStart, 0);
+    const to = localToUtc(z, addDays(weekStart, 7), 0);
+    const [ev, rep] = await Promise.all([
+      api<{ events: PlannerEvent[] }>("GET", `/api/planner/events?from=${from}&to=${to}`),
+      api<{ report: ReportEntry[] }>("GET", "/api/planner/report"),
+    ]);
+    setEvents(ev.events);
+    setReport(rep.report);
+  }, [z, weekStart]);
+
+  useEffect(() => {
+    void load();
+    const t = setInterval(() => void load(), 15_000);
+    return () => clearInterval(t);
+  }, [load]);
+
+  const run = async (fn: () => Promise<unknown>) => {
+    setBusy(true);
+    setError(null);
+    try {
+      await fn();
+      await planNow();
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onMove = (id: string, start: number) => {
+    // Optimistic: show the event at its new place at once.
+    setEvents((list) =>
+      list.map((e) =>
+        e.id === id ? { ...e, start, end: start + (e.end - e.start), locked: true, busy: true } : e,
+      ),
+    );
+    void run(() => api("POST", `/api/planner/events/${id}/move`, { start }));
+  };
+
+  return (
+    <div class="planner" data-testid="planner">
+      <div class="toolbar">
+        <button
+          type="button"
+          onClick={() => setWeekStart(addDays(weekStart, -7))}
+          aria-label="Previous week"
+        >
+          ‹
+        </button>
+        <button type="button" onClick={() => setWeekStart(mondayOf(z, Date.now()))}>
+          Today
+        </button>
+        <button
+          type="button"
+          onClick={() => setWeekStart(addDays(weekStart, 7))}
+          aria-label="Next week"
+        >
+          ›
+        </button>
+        <span class="title" data-testid="week-label">
+          Week of {weekStart}
+        </span>
+        {error && <span class="error">{error}</span>}
+        <span class="status">
+          {busy ? "Planning…" : `${events.filter((e) => e.kind !== "external").length} planned`}
+        </span>
+        <button
+          type="button"
+          class="primary"
+          disabled={busy}
+          onClick={() => void run(async () => {})}
+        >
+          Plan now
+        </button>
+      </div>
+      <WeekView
+        days={days}
+        zone={z}
+        events={events}
+        now={Date.now()}
+        onMove={onMove}
+        onSelect={(id) => setSelected(events.find((e) => e.id === id) ?? null)}
+      />
+      {report.length > 0 && (
+        <details class="issues" data-testid="issues">
+          <summary>{report.length} items need attention</summary>
+          <ul>
+            {report.slice(0, 50).map((r) => (
+              <li key={r.demandKey}>
+                <strong>{r.itemKind}</strong> {r.demandKey.split(":").slice(2).join(" ")} —{" "}
+                {r.status}: {REASONS[r.reason] ?? r.reason}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+      {selected && (
+        <aside class="drawer" data-testid="event-drawer">
+          <h2>{selected.title}</h2>
+          <div class="status">
+            {formatWhen(z, selected.start)} – {formatWhen(z, selected.end)}
+          </div>
+          <div class="status">
+            {selected.kind} · {selected.busy ? "busy" : "free"}
+            {selected.locked && selected.kind !== "external" ? " · locked" : ""}
+          </div>
+          {selected.kind !== "external" && (
+            <div class="actions">
+              <button
+                type="button"
+                onClick={() => {
+                  const id = selected.id;
+                  const locked = !selected.locked;
+                  setSelected(null);
+                  void run(() => api("POST", `/api/planner/events/${id}/lock`, { locked }));
+                }}
+              >
+                {selected.locked ? "Unlock" : "Lock"}
+              </button>
+              {selected.kind === "task" && selected.sourceId && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const id = selected.sourceId;
+                    setSelected(null);
+                    void run(() => api("POST", `/api/tasks/${id}/done`));
+                  }}
+                >
+                  Mark task done
+                </button>
+              )}
+              {selected.kind === "habit" && selected.sourceId && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const id = selected.sourceId;
+                    const date = utcToLocal(z, selected.start).date;
+                    setSelected(null);
+                    void run(() => api("POST", `/api/habits/${id}/skip`, { date }));
+                  }}
+                >
+                  Skip this day
+                </button>
+              )}
+            </div>
+          )}
+          <button type="button" onClick={() => setSelected(null)}>
+            Close
+          </button>
+        </aside>
+      )}
+    </div>
+  );
+}

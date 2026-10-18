@@ -1,24 +1,13 @@
-import { signal } from "@preact/signals";
 import type { ComponentChildren } from "preact";
 import { render } from "preact";
-import { useEffect } from "preact/hooks";
+import { useEffect, useState } from "preact/hooks";
 import { ApiError, api } from "./lib/api.ts";
 import { onLinkClick, path } from "./lib/router.ts";
-
-interface Me {
-  user: { id: string; email: string; name: string; time_zone: string };
-}
-
-const me = signal<Me | null | undefined>(undefined);
-
-async function loadMe(): Promise<void> {
-  try {
-    me.value = await api<Me>("GET", "/api/me");
-  } catch (err) {
-    if (err instanceof ApiError && err.status === 401) me.value = null;
-    else throw err;
-  }
-}
+import { loadMe, me } from "./lib/state.ts";
+import { Habits } from "./views/habits.tsx";
+import { Planner } from "./views/planner.tsx";
+import { Settings } from "./views/settings.tsx";
+import { Tasks } from "./views/tasks.tsx";
 
 const NAV: { href: string; label: string }[] = [
   { href: "/", label: "Planner" },
@@ -35,23 +24,114 @@ function Link({ href, children }: { href: string; children: ComponentChildren })
   );
 }
 
+function CalDavLogin() {
+  const [error, setError] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
+  const submit = async (e: Event) => {
+    e.preventDefault();
+    const f = new FormData(e.currentTarget as HTMLFormElement);
+    setPending(true);
+    setError(null);
+    try {
+      await api("POST", "/auth/caldav", {
+        serverUrl: f.get("serverUrl"),
+        username: f.get("username"),
+        password: f.get("password"),
+        ...(f.get("email") ? { email: f.get("email") } : {}),
+        timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      });
+      await loadMe();
+    } catch (err) {
+      const code =
+        err instanceof ApiError ? (err.body as { error?: string } | undefined)?.error : undefined;
+      setError(
+        code === "invalid_credentials"
+          ? "The server rejected the user name or password."
+          : code === "email_required"
+            ? "Enter your email address."
+            : code === "no_calendars"
+              ? "This account has no calendars."
+              : "Could not reach the CalDAV server.",
+      );
+    } finally {
+      setPending(false);
+    }
+  };
+  return (
+    <form class="login-form" onSubmit={submit} data-testid="caldav-form">
+      <label>
+        CalDAV server URL
+        <input name="serverUrl" type="url" required placeholder="https://dav.example.com/" />
+      </label>
+      <label>
+        User name
+        <input name="username" required autocomplete="username" />
+      </label>
+      <label>
+        Password
+        <input name="password" type="password" required autocomplete="current-password" />
+      </label>
+      <label>
+        Email (if the user name is not an email)
+        <input name="email" type="email" />
+      </label>
+      {error && (
+        <p class="error" role="alert">
+          {error}
+        </p>
+      )}
+      <button type="submit" class="primary" disabled={pending}>
+        {pending ? "Connecting…" : "Sign in with CalDAV"}
+      </button>
+    </form>
+  );
+}
+
 function Login() {
   const err = new URLSearchParams(location.search).get("login_error");
+  const [methods, setMethods] = useState<{ google: boolean } | null>(null);
+  useEffect(() => {
+    void api<{ google: boolean }>("GET", "/auth/methods").then(setMethods);
+  }, []);
   return (
     <div class="login">
       <div class="card">
         <h1>Tempoloom</h1>
         <p>Plan tasks, habits and focus time around your meetings.</p>
         {err && <p class="error">Sign-in failed: {err}</p>}
-        <a class="button primary" href="/auth/google/start">
-          Sign in with Google
-        </a>
+        {methods?.google && (
+          <a class="button primary" href="/auth/google/start">
+            Sign in with Google
+          </a>
+        )}
+        <details open={methods !== null && !methods.google}>
+          <summary>Use a CalDAV calendar</summary>
+          <CalDavLogin />
+        </details>
       </div>
     </div>
   );
 }
 
-function Shell({ children }: { children: ComponentChildren }) {
+function Page() {
+  switch (path.value) {
+    case "/tasks":
+      return <Tasks />;
+    case "/habits":
+      return <Habits />;
+    case "/settings":
+      return <Settings />;
+    default:
+      return <Planner />;
+  }
+}
+
+function App() {
+  useEffect(() => {
+    void loadMe();
+  }, []);
+  if (me.value === undefined) return null;
+  if (me.value === null) return <Login />;
   return (
     <div class="shell" data-testid="app-shell">
       <nav class="nav">
@@ -62,23 +142,18 @@ function Shell({ children }: { children: ComponentChildren }) {
           </Link>
         ))}
         <div class="spacer" />
-        <div class="status">{me.value?.user.email}</div>
+        <div class="status" data-testid="user-email">
+          {me.value.user.email}
+        </div>
         <form method="post" action="/auth/logout">
           <button type="submit">Sign out</button>
         </form>
       </nav>
-      <main class="main">{children}</main>
+      <main class="main">
+        <Page />
+      </main>
     </div>
   );
-}
-
-function App() {
-  useEffect(() => {
-    void loadMe();
-  }, []);
-  if (me.value === undefined) return null;
-  if (me.value === null) return <Login />;
-  return <Shell>{path.value}</Shell>;
 }
 
 const root = document.getElementById("app");

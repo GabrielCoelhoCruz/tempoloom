@@ -1,18 +1,13 @@
 // Runs calendar sync and planning for each user, one run at a time per user.
-import { accessTokenFor } from "../accounts.ts";
-import type { SecretBox } from "../crypto.ts";
-import { all, type Db } from "../db.ts";
-import { GoogleCalendarApi } from "../google/calendar.ts";
-import type { OAuthClient } from "../google/oauth.ts";
+import { all, one } from "../db.ts";
 import { replanUser } from "../planner/replan.ts";
+import { type ProviderDeps, ProviderPool } from "../providers/index.ts";
+import { applyCalendarEdits } from "./edits.ts";
 import { pullEvents, syncCalendarList } from "./pull.ts";
 
-export interface SyncServiceDeps {
-  db: Db;
-  box: SecretBox;
-  oauth: OAuthClient | undefined;
+export interface SyncServiceDeps extends ProviderDeps {
   intervalMs: number;
-  now?: () => number;
+  baseUrl: string;
   log?: (msg: string, err?: unknown) => void;
 }
 
@@ -20,8 +15,8 @@ const DEBOUNCE_MS = 300;
 
 export class SyncService {
   readonly #deps: SyncServiceDeps;
-  readonly #running = new Map<string, Promise<void>>();
-  readonly #pending = new Set<string>();
+  readonly #tail = new Map<string, Promise<void>>();
+  readonly #queued = new Map<string, Promise<void>>();
   readonly #timers = new Map<string, NodeJS.Timeout>();
   #interval: NodeJS.Timeout | undefined;
 
@@ -29,27 +24,26 @@ export class SyncService {
     this.#deps = deps;
   }
 
-  apiFor(accountId: string): GoogleCalendarApi {
-    const { db, box, oauth } = this.#deps;
-    if (!oauth) throw new Error("Google OAuth is not configured");
-    return new GoogleCalendarApi({
-      getAccessToken: () => accessTokenFor(db, box, oauth, accountId, this.#now()),
-    });
-  }
-
-  #now(): number {
-    return this.#deps.now?.() ?? Date.now();
-  }
-
   #log(msg: string, err?: unknown): void {
     (this.#deps.log ?? ((m, e) => console.error(m, e ?? "")))(msg, err);
+  }
+
+  pool(userId: string): ProviderPool {
+    return this.#pool(userId);
+  }
+
+  #pool(userId: string): ProviderPool {
+    const zone =
+      one<{ time_zone: string }>(this.#deps.db, "SELECT time_zone FROM users WHERE id = ?", userId)
+        ?.time_zone ?? "UTC";
+    return new ProviderPool(this.#deps, zone);
   }
 
   start(): void {
     this.#interval = setInterval(() => {
       for (const { user_id } of all<{ user_id: string }>(
         this.#deps.db,
-        "SELECT DISTINCT user_id FROM google_accounts WHERE status = 'ok'",
+        "SELECT DISTINCT user_id FROM accounts WHERE status = 'ok'",
       )) {
         this.request(user_id, 0);
       }
@@ -61,9 +55,10 @@ export class SyncService {
     for (const t of this.#timers.values()) clearTimeout(t);
   }
 
-  async onLogin(userId: string, accountId: string): Promise<void> {
+  /** Reads the account's calendar list, then plans. */
+  async onConnect(userId: string, accountId: string): Promise<void> {
     try {
-      await syncCalendarList(this.#deps.db, this.apiFor(accountId), accountId, userId);
+      await syncCalendarList(this.#deps.db, this.#pool(userId).get(accountId), accountId, userId);
     } catch (err) {
       this.#log(`calendar list sync failed for account ${accountId}`, err);
     }
@@ -82,51 +77,89 @@ export class SyncService {
     );
   }
 
-  /** Runs a sync and replan now. A run already in progress is followed by exactly one more. */
+  /** Runs fn after the user's queued work. Work for one user never overlaps. */
+  #enqueue<T>(userId: string, fn: () => Promise<T>): Promise<T> {
+    const prev = this.#tail.get(userId) ?? Promise.resolve();
+    const next = prev.then(fn, fn);
+    this.#tail.set(
+      userId,
+      next.then(
+        () => undefined,
+        () => undefined,
+      ),
+    );
+    return next;
+  }
+
+  /** Queues one sync and replan. A run that is queued but not started absorbs later calls. */
   runNow(userId: string): Promise<void> {
-    const current = this.#running.get(userId);
-    if (current) {
-      this.#pending.add(userId);
-      return current;
-    }
-    const run = this.#run(userId).finally(() => {
-      this.#running.delete(userId);
-      if (this.#pending.delete(userId)) void this.runNow(userId);
+    const queued = this.#queued.get(userId);
+    if (queued) return queued;
+    const run = this.#enqueue(userId, async () => {
+      this.#queued.delete(userId);
+      await this.#run(userId);
     });
-    this.#running.set(userId, run);
+    this.#queued.set(userId, run);
     return run;
   }
 
-  /** Resolves when no run is active or queued for the user. */
+  /** Runs a calendar write for the user inside the user's queue, then plans again. */
+  async exclusive<T>(userId: string, fn: (pool: ProviderPool) => Promise<T>): Promise<T> {
+    const result = await this.#enqueue(userId, () => fn(this.#pool(userId)));
+    this.request(userId, 0);
+    return result;
+  }
+
+  /** Resolves when no work is active or queued for the user. */
   async idle(userId: string): Promise<void> {
     for (;;) {
-      const t = this.#timers.get(userId);
-      const r = this.#running.get(userId);
-      if (!t && !r) return;
-      if (r) await r;
-      else await new Promise((res) => setTimeout(res, DEBOUNCE_MS + 10));
+      const tail = this.#tail.get(userId);
+      if (tail) await tail;
+      if (this.#timers.has(userId)) {
+        await new Promise((res) => setTimeout(res, DEBOUNCE_MS + 10));
+        continue;
+      }
+      if (this.#tail.get(userId) === tail) return;
     }
   }
 
   async #run(userId: string): Promise<void> {
     const { db } = this.#deps;
     try {
-      const user = all<{ time_zone: string }>(
+      const user = one<{ time_zone: string }>(
         db,
         "SELECT time_zone FROM users WHERE id = ?",
         userId,
-      )[0];
+      );
       if (!user) return;
+      const pool = this.#pool(userId);
       const calendars = all<{ id: string; account_id: string }>(
         db,
-        `SELECT c.id, c.account_id FROM calendars c JOIN google_accounts a ON a.id = c.account_id
-         WHERE a.user_id = ? AND a.status = 'ok' AND (c.check_availability = 1 OR c.is_primary = 1)`,
+        `SELECT c.id, c.account_id FROM calendars c JOIN accounts a ON a.id = c.account_id
+         WHERE a.user_id = ? AND a.status = 'ok' AND (c.check_availability = 1 OR c.is_primary = 1
+           OR EXISTS (SELECT 1 FROM managed_events m WHERE m.calendar_id = c.id))`,
         userId,
       );
+      const now = this.#deps.now();
       for (const cal of calendars) {
-        await pullEvents(db, this.apiFor(cal.account_id), cal.id, user.time_zone, this.#now());
+        await pullEvents(db, pool.get(cal.account_id), cal.id, now);
       }
-      await replanUser({ db, apiFor: (a) => this.apiFor(a), now: this.#now() }, userId);
+      applyCalendarEdits(
+        db,
+        userId,
+        calendars.map((c) => c.id),
+        user.time_zone,
+        now,
+      );
+      await replanUser(
+        {
+          db,
+          provider: (accountId) => pool.get(accountId),
+          now: this.#deps.now(),
+          baseUrl: this.#deps.baseUrl,
+        },
+        userId,
+      );
     } catch (err) {
       this.#log(`sync failed for user ${userId}`, err);
     }

@@ -10,6 +10,8 @@ const schema = z.object({
   DATA_DIR: z.string().default("./data"),
   GOOGLE_CLIENT_ID: z.string().min(1).optional(),
   GOOGLE_CLIENT_SECRET: z.string().min(1).optional(),
+  /** JSON key of a Google service account (operator-connected calendars). */
+  GOOGLE_SERVICE_ACCOUNT_JSON: z.string().min(1).optional(),
   /** 32 random bytes, base64. Encrypts OAuth tokens at rest. */
   SECRET_KEY: z
     .string()
