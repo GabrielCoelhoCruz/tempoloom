@@ -10,6 +10,7 @@
 // - a member can set the grant or use the provisioning API (rule 18)         -> 403 checks
 // - without a grant, provisioning fails or claims a calendar (rules 14, 15)  -> "calendar: none"
 // - a grant saved later does not reach people provisioned before it         -> W attached
+// - removing the grant leaves calendars attached, or drops a person's own    -> W and V after removal
 // - provisioning does not attach the calendar, or does not read its events
 //   (rule 12, T3)                                                            -> "calendar: attached", count
 // - Tempoloom writes to a person's calendar before first sign-in             -> calendar and managed rows
@@ -140,6 +141,13 @@ test("Calendar access attaches each provisioned person's calendar read-only, rea
     end: at(addDays(W, 3), "10:00"),
   });
   await rowShows(page, v.email, "calendar: attached (4 events read", 20_000);
+
+  // Removing calendar access detaches what it attached; V's own connection stays.
+  await grant.getByRole("button", { name: "Remove calendar access" }).click();
+  await page.reload();
+  await expect(grant.getByLabel("User name")).toHaveValue("");
+  await expect(row(page, w.email)).toContainText("calendar: none");
+  await expect(row(page, v.email)).toContainText("calendar: attached (4 events read");
 });
 
 test("The admin provisioning API adds a large import at a paced rate, with attributes and calendars through the grant; only team admins can use it (rules 10, 18)", async ({

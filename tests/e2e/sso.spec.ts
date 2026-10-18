@@ -14,8 +14,8 @@
 //   or the refusal does not point to SSO (rule 3, T1)                      -> refused CalDAV sign-in
 // - the SSO sign-in lands the person in a new team, or the session does not
 //   survive a reload (T1)                                                   -> team page after reload
-// - an SSO user cannot connect a calendar, or Tempoloom writes to it before
-//   the user creates an item (T1)                                           -> calendar checks
+// - an SSO user cannot connect a calendar, keeps a wrong time zone, or
+//   Tempoloom writes to it before the user creates an item (T1)             -> calendar checks
 // - SSO signs in to an account that signed up on its own in another team
 //   (account takeover through an identity provider)                         -> refused SSO sign-in
 // - people outside the SSO team lose their own sign-in (rule 2, edge case 4)-> CalDAV sign-ins
@@ -28,7 +28,7 @@
 // tests/unit/oidc.test.ts: a real identity provider does not send bad tokens.
 import type { Page } from "@playwright/test";
 import { addDays } from "../../src/shared/time.ts";
-import { BACKEND, BASE_URL, EMAIL, managed, planNow } from "./fixtures.ts";
+import { BACKEND, BASE_URL, EMAIL, managed, planNow, ZONE } from "./fixtures.ts";
 import { addTask, allEvents, titled, W } from "./helpers.ts";
 import { expect, type Idp, test } from "./sso-fixtures.ts";
 import { member, openTeam, role } from "./team-helpers.ts";
@@ -115,6 +115,8 @@ test("SSO only: people on the team's domain sign in through its identity provide
   await expect(connect).toHaveCount(0);
   await pu.getByRole("link", { name: "Settings" }).click();
   await expect(pu.getByTestId("calendar-list")).toContainText(`caldav, ${idp.email("u")}, main`);
+  // SSO brings no time zone; the first calendar connection takes the browser's.
+  await expect(pu.getByLabel("Time zone")).toHaveValue(ZONE);
   await planNow(pu);
   expect(managed(await allEvents(u.cal))).toHaveLength(0);
   await addTask(pu, { title: "Board deck", minutes: 60, due: `${addDays(W, 4)}T17:00` });
