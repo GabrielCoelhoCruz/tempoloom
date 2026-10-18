@@ -17,7 +17,7 @@ import {
   parseServiceAccountKey,
   serviceAccountToken,
 } from "../../src/server/google/service-account.ts";
-import { CalDavProvider } from "../../src/server/providers/caldav.ts";
+import { CalDavProvider, retryRead } from "../../src/server/providers/caldav.ts";
 import { GoogleProvider } from "../../src/server/providers/google.ts";
 import type { ProviderEvent } from "../../src/server/providers/types.ts";
 import { addDays, localToUtc, utcToLocal, weekdayOf } from "../../src/shared/time.ts";
@@ -129,7 +129,7 @@ async function caldavDriver(env: RadicaleUser, email = EMAIL): Promise<CalendarD
   });
   await client.login();
   // Start from one empty calendar: delete every calendar of the test user.
-  for (const cal of await client.fetchCalendars()) {
+  for (const cal of await retryRead(() => client.fetchCalendars())) {
     await client.deleteObject({ url: cal.url });
   }
   const home = client.account?.homeUrl;
@@ -147,7 +147,7 @@ async function caldavCalendar(
   const calendarId = new URL(`${name.toLowerCase()}-${randomUUID().slice(0, 8)}/`, home).toString();
   await client.makeCalendar({ url: calendarId, props: { displayname: name } });
   const putRaw = async (lines: string[]) => {
-    const cal = (await client.fetchCalendars()).find((c) => c.url === calendarId);
+    const cal = (await retryRead(() => client.fetchCalendars())).find((c) => c.url === calendarId);
     if (!cal) throw new Error("calendar missing");
     const uid = randomUUID();
     const res = await client.createCalendarObject({
@@ -249,9 +249,13 @@ async function caldavCalendar(
       ]),
     newCalendar: (name) => caldavCalendar(env, client, home, name, email),
     async guests(id) {
-      const cal = (await client.fetchCalendars()).find((c) => c.url === calendarId);
+      const cal = (await retryRead(() => client.fetchCalendars())).find(
+        (c) => c.url === calendarId,
+      );
       if (!cal) throw new Error("calendar missing");
-      const [obj] = await client.fetchCalendarObjects({ calendar: cal, objectUrls: [id] });
+      const [obj] = await retryRead(() =>
+        client.fetchCalendarObjects({ calendar: cal, objectUrls: [id] }),
+      );
       const lines = String(obj?.data ?? "")
         .replace(/\r?\n[ \t]/g, "")
         .split(/\r?\n/);

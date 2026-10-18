@@ -55,6 +55,22 @@ function readProps(ev: ICAL.Component): Record<string, string> {
   }
 }
 
+/**
+ * Runs a read-only request again after a server error (5xx), up to 3 tries.
+ * Some servers answer 500 to a read that races with a delete of one event.
+ */
+export async function retryRead<T>(read: () => Promise<T>): Promise<T> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await read();
+    } catch (err) {
+      const serverError = err instanceof Error && /\b5\d\d\b/.test(err.message);
+      if (!serverError || attempt === 3) throw err;
+      await new Promise((r) => setTimeout(r, 200 * attempt));
+    }
+  }
+}
+
 /** A CalDAV time-range value: UTC, basic format. */
 const davTime = (t: number) => `${new Date(t).toISOString().slice(0, 19).replace(/[-:]/g, "")}Z`;
 
@@ -259,7 +275,7 @@ export class CalDavProvider implements CalendarProvider {
 
   async #fetchCalendars(): Promise<DAVCalendar[]> {
     const client = await this.#connect();
-    const cals = (await client.fetchCalendars()).filter(
+    const cals = (await retryRead(() => client.fetchCalendars())).filter(
       (c) => !c.components || c.components.includes("VEVENT"),
     );
     this.#calendars = new Map(cals.map((c) => [c.url, c]));
@@ -300,24 +316,26 @@ export class CalDavProvider implements CalendarProvider {
     // One calendar-query that returns the data. Two requests (a query, then a
     // fetch of what it found) fail when an event is deleted between them.
     const objects = (
-      await client.calendarQuery({
-        url: cal.url,
-        props: { "d:getetag": {}, "c:calendar-data": {} },
-        filters: [
-          {
-            "comp-filter": {
-              _attributes: { name: "VCALENDAR" },
+      await retryRead(() =>
+        client.calendarQuery({
+          url: cal.url,
+          props: { "d:getetag": {}, "c:calendar-data": {} },
+          filters: [
+            {
               "comp-filter": {
-                _attributes: { name: "VEVENT" },
-                "time-range": {
-                  _attributes: { start: davTime(opts.timeMin), end: davTime(opts.timeMax) },
+                _attributes: { name: "VCALENDAR" },
+                "comp-filter": {
+                  _attributes: { name: "VEVENT" },
+                  "time-range": {
+                    _attributes: { start: davTime(opts.timeMin), end: davTime(opts.timeMax) },
+                  },
                 },
               },
             },
-          },
-        ],
-        depth: "1",
-      })
+          ],
+          depth: "1",
+        }),
+      )
     ).map((r) => ({
       url: new URL(r.href ?? "", cal.url).toString(),
       etag: davText(r.props?.getetag),
@@ -344,7 +362,9 @@ export class CalDavProvider implements CalendarProvider {
   async #readBack(url: string, fallback: EventWrite, etag: string | null): Promise<ProviderEvent> {
     const client = await this.#connect();
     const cal = this.#calendars.get(url.slice(0, url.lastIndexOf("/") + 1));
-    const objs = cal ? await client.fetchCalendarObjects({ calendar: cal, objectUrls: [url] }) : [];
+    const objs = cal
+      ? await retryRead(() => client.fetchCalendarObjects({ calendar: cal, objectUrls: [url] }))
+      : [];
     const obj = objs.find((o) => o.url === url) ?? objs[0];
     const data = typeof obj?.data === "string" ? obj.data : undefined;
     if (data) {
