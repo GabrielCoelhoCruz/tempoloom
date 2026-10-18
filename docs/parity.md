@@ -22,10 +22,10 @@ Evidence ids (`E-…`) refer to the private evidence index. Spec links point to
 ## Summary
 
 - Rows: 963
-- done (CalDAV): 245
+- done (CalDAV): 246
 - done (Google): 0
 - partial: 148
-- blocked: 570
+- blocked: 569
 
 "done (CalDAV)" means a full UI E2E test passes against a real CalDAV server (Radicale in a
 loopback container): Playwright drives the Tempoloom UI, the real API and scheduler write to the
@@ -689,7 +689,7 @@ the open questions in each spec list what is unknown.
 | 625 | Free, travel and break time tracking | E-0012 | [analytics-organization.md#behavior](specs/analytics-organization.md#behavior) | done (CalDAV) | Full UI E2E passes on CalDAV (Radicale): “a future range counts planned breaks and travel; an analytics-only member is counted but the scheduler never changes their calendar”; “team stats for a future week count planned tasks, recovery buffers and travel, with each member's days and work hours in their own time zone”. Google Calendar run pending (service-account key). |
 | 626 | Meeting cost across the workforce | E-0012 | [analytics-organization.md#behavior](specs/analytics-organization.md#behavior) | done (CalDAV) | Full UI E2E passes on CalDAV (Radicale): “organization analytics group last week by department, manager line and person, filter by custom attributes, score focus and fragmentation, cost meetings, trend week over week and export CSV for admins only”. Google Calendar run pending (service-account key). |
 | 627 | Assistant chat answers on workforce analytics | E-0012 | [analytics-organization.md#behavior](specs/analytics-organization.md#behavior) | blocked | Needs the assistant chat, which is not implemented. |
-| 628 | Analytics include provisioned users who never signed in; 24-hour refresh | E-0169 | [analytics-organization.md#behavior](specs/analytics-organization.md#behavior) | blocked | Not implemented yet. Reference note: needs calendar grant. |
+| 628 | Analytics include provisioned users who never signed in; 24-hour refresh | E-0169 | [analytics-organization.md#behavior](specs/analytics-organization.md#behavior) | done (CalDAV) | Full UI E2E passes on CalDAV (Radicale): “organization analytics count a provisioned person who never signed in, through the calendar access, without writing to their calendar”; “Calendar access attaches each provisioned person's calendar read-only, reads it on a slow cycle until first sign-in and in real time after it, and writes nothing before it”. The organization calendar access is a CalDAV account that reads every person's calendars; the 24-hour refresh is a setting (GRANT_REFRESH_SECONDS), 30 seconds in the test. Google Calendar run pending (service-account key). Reference note: needs calendar grant. |
 | 629 | Analytics-only seats | E-0003 | [analytics-organization.md#open-questions](specs/analytics-organization.md#open-questions) | done (CalDAV) | Full UI E2E passes on CalDAV (Radicale): “a future range counts planned breaks and travel; an analytics-only member is counted but the scheduler never changes their calendar”. The spec's proposed meaning: the calendar counts in analytics and the scheduler never changes it. Google Calendar run pending (service-account key). Reference note: add-on in reference. |
 | 630 | Policy analysis and industry benchmark reports | E-0012 | [analytics-organization.md#behavior](specs/analytics-organization.md#behavior) | blocked | Not needed for parity: the reference lists these reports as coming soon (analytics-organization.md rule 16). Reference note: announced, not shipped. |
 | 631 | Weekly report email on by default, opt-out in settings | E-0215, E-0003 | [analytics-weekly-reports.md#behavior](specs/analytics-weekly-reports.md#behavior) | blocked | Not implemented yet. Reference note: legacy only. |

@@ -103,6 +103,7 @@ T = {
     "ooo_perm": "members add out-of-office calendars while the team allows it; after an admin switches it off only admins can",
     "nm_self": "a #tl_free block keeps habits but not the organizer's flexible meetings or any booking link, even at a lowered priority",
     "nm_team": "a team no-meeting day invitation counts for each invitee who answers yes or maybe, not for an unanswered one",
+    "org_cover": "organization analytics count a provisioned person who never signed in, through the calendar access, without writing to their calendar",
 }
 
 # Row id -> E2E test keys that prove it on CalDAV.
@@ -163,7 +164,7 @@ E2E = {
     566: ["tpl_focus", "tpl_defaults"], 567: ["tpl_defaults", "tpl_focus"], 269: ["ooo_copy"],
     573: ["ooo_copy"], 574: ["ooo_copy"], 575: ["ooo_copy"], 583: ["ooo_copy"], 576: ["ooo_partial"],
     577: ["ooo_partial"], 579: ["ooo_partial"], 580: ["ooo_partial"], 578: ["ooo_perm"],
-    249: ["nm_self"], 251: ["nm_team"],
+    249: ["nm_self"], 251: ["nm_team"], 628: ["org_cover", "grant_read"],
 }
 
 # Row id -> how Tempoloom meets the row, when that differs from the reference's wording.
@@ -180,6 +181,7 @@ E2E_NOTES = {
     574: "Write access is read from the CalDAV privilege set; CalDAV has no groups to expand, and Google calendar access lists are not read",
     583: "Marketing-only in the reference; built: a teammate with write access who joins later takes part with no setup",
     269: "On CalDAV, an out-of-office event carries X-MICROSOFT-CDO-BUSYSTATUS:OOF",
+    628: "The organization calendar access is a CalDAV account that reads every person's calendars; the 24-hour refresh is a setting (GRANT_REFRESH_SECONDS), 30 seconds in the test",
 }
 
 # Row id -> reason, for rows implemented in part (some behavior has E2E, some does not).
