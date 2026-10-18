@@ -35,6 +35,16 @@ npm start
 
 Open `BASE_URL` and sign in with Google.
 
+### With Docker
+
+```bash
+cp .env.example .env    # fill in the values
+docker compose up -d
+```
+
+The database lives in the `tempoloom-data` volume. Back up that volume and
+keep `SECRET_KEY`: without it, the stored Google tokens cannot be read.
+
 ## Develop
 
 ```bash

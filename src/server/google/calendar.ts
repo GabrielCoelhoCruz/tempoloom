@@ -78,7 +78,8 @@ export class SyncTokenExpiredError extends GoogleApiError {}
 
 export interface EventPage {
   events: GoogleEvent[];
-  nextSyncToken: string;
+  /** Null when Google returns no token; the caller then reads the full window each time. */
+  nextSyncToken: string | null;
 }
 
 export interface CalendarApiOptions {
@@ -190,8 +191,7 @@ export class GoogleCalendarApi {
         pageToken = page.nextPageToken;
         continue;
       }
-      if (!page.nextSyncToken) throw new GoogleApiError(500, "no_sync_token", "No sync token");
-      return { events, nextSyncToken: page.nextSyncToken };
+      return { events, nextSyncToken: page.nextSyncToken ?? null };
     }
   }
 

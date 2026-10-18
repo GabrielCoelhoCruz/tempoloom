@@ -18,13 +18,16 @@
     "format": "biome check --write .",
     "test": "vitest run",
     "test:e2e": "playwright test",
-    "bench": "node bench/scheduler-week.ts"
+    "bench": "node bench/scheduler-week.ts",
+    "test:integration": "vitest run -c vitest.integration.config.ts"
   },
   "dependencies": {
     "@hono/node-server": "^2.1.5",
-    "hono": "^4.13.13",
-    "preact": "^11.0.1",
     "@preact/signals": "^2.11.3",
+    "hono": "^4.13.13",
+    "ical.js": "^2.2.1",
+    "preact": "^11.0.1",
+    "tsdav": "^2.5.0",
     "zod": "^4.6.7"
   },
   "devDependencies": {

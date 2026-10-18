@@ -1,0 +1,13 @@
+# docker compose up -d
+# Put SECRET_KEY, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET and BASE_URL in .env.
+services:
+  tempoloom:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "8787:8787"
+    volumes:
+      - tempoloom-data:/data
+volumes:
+  tempoloom-data:

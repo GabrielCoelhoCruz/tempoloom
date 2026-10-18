@@ -49,13 +49,35 @@ function wallClockAsUtc(zone: string, epochMs: number): number {
   return Date.UTC(n("year"), n("month") - 1, n("day"), n("hour"), n("minute"), n("second"));
 }
 
+// Offsets change only at transitions, and every transition since 1970 falls on
+// a quarter hour, so one Intl lookup per zone and 15-minute bucket is enough.
+const OFFSET_BUCKET = 15 * MINUTE;
+const CACHE_LIMIT = 200_000;
+const offsets = new Map<string, Map<number, number>>();
+
 /** Zone offset from UTC at an instant, in milliseconds. */
 export function zoneOffset(zone: string, epochMs: number): number {
-  const floored = Math.floor(epochMs / 1000) * 1000;
-  return wallClockAsUtc(zone, floored) - floored;
+  const bucket = Math.floor(epochMs / OFFSET_BUCKET);
+  let byBucket = offsets.get(zone);
+  if (!byBucket) {
+    byBucket = new Map();
+    offsets.set(zone, byBucket);
+  }
+  let offset = byBucket.get(bucket);
+  if (offset === undefined) {
+    const at = bucket * OFFSET_BUCKET;
+    offset = wallClockAsUtc(zone, at) - at;
+    if (byBucket.size >= CACHE_LIMIT) byBucket.clear();
+    byBucket.set(bucket, offset);
+  }
+  return offset;
 }
 
+const parsedDates = new Map<string, [number, number, number]>();
+
 function parseDate(date: LocalDate): [number, number, number] {
+  const cached = parsedDates.get(date);
+  if (cached) return cached;
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
   if (!m) throw new RangeError(`Invalid date: ${date}`);
   const y = Number(m[1]);
@@ -65,7 +87,10 @@ function parseDate(date: LocalDate): [number, number, number] {
   if (check.getUTCFullYear() !== y || check.getUTCMonth() !== mo - 1 || check.getUTCDate() !== d) {
     throw new RangeError(`Invalid date: ${date}`);
   }
-  return [y, mo, d];
+  if (parsedDates.size >= CACHE_LIMIT) parsedDates.clear();
+  const parts: [number, number, number] = [y, mo, d];
+  parsedDates.set(date, parts);
+  return parts;
 }
 
 /**
@@ -92,7 +117,7 @@ export interface LocalTime {
 }
 
 export function utcToLocal(zone: string, epochMs: number): LocalTime {
-  const wall = wallClockAsUtc(zone, epochMs);
+  const wall = epochMs + zoneOffset(zone, epochMs);
   const dayStart = Math.floor(wall / DAY) * DAY;
   const date = new Date(dayStart).toISOString().slice(0, 10);
   return { date, minuteOfDay: Math.floor((wall - dayStart) / MINUTE), weekday: weekdayOf(date) };
