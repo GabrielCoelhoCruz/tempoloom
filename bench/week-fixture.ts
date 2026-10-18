@@ -87,6 +87,7 @@ export function benchSnapshot(ZONE: string, MON: string, now: number): Snapshot 
     current: [],
     tasks,
     habits,
+    meetings: [],
     buffers: [
       {
         id: "rec",

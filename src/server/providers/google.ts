@@ -57,7 +57,14 @@ function toGoogleEvent(w: EventWrite): GoogleEventInput {
     transparency: w.busy ? "opaque" : "transparent",
     ...(w.colorId ? { colorId: w.colorId } : {}),
     ...(w.location ? { location: w.location } : {}),
-    ...(w.attendees ? { attendees: w.attendees.map((email) => ({ email })) } : {}),
+    ...(w.attendees || w.optionalAttendees
+      ? {
+          attendees: [
+            ...(w.attendees ?? []).map((email) => ({ email })),
+            ...(w.optionalAttendees ?? []).map((email) => ({ email, optional: true })),
+          ],
+        }
+      : {}),
     reminders: { useDefault: false },
     extendedProperties: { private: w.privateProps },
   };

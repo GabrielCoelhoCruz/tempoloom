@@ -20,6 +20,7 @@ import type {
   FocusItem,
   HabitItem,
   Level,
+  MeetingItem,
   Placement,
   PlacementKind,
   Plan,
@@ -108,6 +109,7 @@ function init(s: Snapshot): Ctx {
   const items = new Set<string>([
     ...s.tasks.map((t) => `task:${t.id}`),
     ...s.habits.map((h) => `habit:${h.id}`),
+    ...s.meetings.map((m) => `meeting:${m.id}`),
     ...s.buffers.map((b) => `buffer:${b.id}`),
     ...s.focus.map((f) => `focus:${f.id}`),
   ]);
@@ -578,6 +580,161 @@ function placeHabit(ctx: Ctx, h: HabitItem): void {
   }
 }
 
+// ---------------------------------------------------------------- meetings
+
+interface Period {
+  start: LocalDate;
+  days: LocalDate[];
+  ideal: LocalDate[];
+}
+
+function meetingPeriods(ctx: Ctx, m: MeetingItem): Period[] {
+  const { s } = ctx;
+  const first = utcToLocal(s.zone, ctx.earliest).date;
+  const last = utcToLocal(s.zone, ctx.end - 1).date;
+  const from = m.starting && m.starting > first ? m.starting : first;
+  const out: Period[] = [];
+  if (m.frequency.period === "daily") {
+    for (let d = from; d <= last; d = addDays(d, 1)) out.push({ start: d, days: [d], ideal: [d] });
+    return out;
+  }
+  const { everyWeeks, idealDays } = m.frequency;
+  const anchor = weekStartDate(ctx, m.starting ?? first);
+  for (let ws = weekStartDate(ctx, from); ws <= last; ws = addDays(ws, 7)) {
+    if ((dayDiff(ws, anchor) / 7) % everyWeeks !== 0) continue;
+    const days: LocalDate[] = [];
+    for (let i = 0; i < 7; i++) {
+      const d = addDays(ws, i);
+      if (d >= from && d <= last) days.push(d);
+    }
+    out.push({ start: ws, days, ideal: days.filter((d) => idealDays.includes(weekdayOf(d))) });
+  }
+  return out;
+}
+
+/** Rules 16-17: the full length first, then an ideal day, then nearest the ideal time. */
+function searchMeeting(
+  ctx: Ctx,
+  m: MeetingItem,
+  frees: { date: LocalDate; free: TimeSet; ideal: boolean }[],
+): Interval | null {
+  for (let l = m.durationMinutes; l >= m.shortestMinutes; l -= 5) {
+    let best: { t: number; ideal: boolean; dist: number } | null = null;
+    for (const { date, free, ideal } of frees) {
+      const target = localToUtc(ctx.s.zone, date, m.idealMinute);
+      for (const iv of free.intervals()) {
+        for (let t = ceilTo(iv.start, ctx.step); t + l * MINUTE <= iv.end; t += ctx.step) {
+          const dist = Math.abs(t - target);
+          if (
+            !best ||
+            (ideal && !best.ideal) ||
+            (ideal === best.ideal && (dist < best.dist || (dist === best.dist && t < best.t)))
+          )
+            best = { t, ideal, dist };
+        }
+      }
+    }
+    if (best) return { start: best.t, end: best.t + l * MINUTE };
+  }
+  return null;
+}
+
+function placeMeeting(ctx: Ctx, m: MeetingItem): void {
+  const { s } = ctx;
+  const done = new Set((s.past ?? []).map((p) => p.key));
+  const attendeeWindow = m.attendeeWindow ? TimeSet.from(m.attendeeWindow) : null;
+  const required = m.durationMinutes;
+  for (const period of meetingPeriods(ctx, m)) {
+    const key = `meeting:${m.id}:${period.start}`;
+    if (done.has(key) || ctx.fixedKeys.has(key) || ctx.dismissed.has(key)) continue;
+    const own = period.days.map((d) => dayWindow(ctx, m.hours, d));
+    if (own.every((w) => w.total() === 0)) continue;
+    const windows = attendeeWindow ? own.map((w) => w.intersect(attendeeWindow)) : own;
+    const cur = ctx.current.get(key);
+    const blocked = [...m.attendeeBusy, ...m.exclusions];
+    const frees = period.days.map((date, i) => ({
+      date,
+      ideal: period.ideal.includes(date),
+      free: minus((windows[i] as TimeSet).intersect(ctx.freeOther), blocked),
+    }));
+    let chosen: Interval | null = null;
+    if (cur && !m.changed) {
+      const l = len(cur);
+      const okLen = l >= m.shortestMinutes * MINUTE && l <= m.durationMinutes * MINUTE;
+      if (okLen && frees.some((f) => f.free.contains(cur)))
+        chosen = { start: cur.start, end: cur.end };
+    }
+    if (!chosen) {
+      // MEET-02 rule 8: an automatic move keeps the lead time.
+      const lead = cur ? ctx.earliest + m.leadMinutes * MINUTE : ctx.earliest;
+      chosen = searchMeeting(
+        ctx,
+        m,
+        frees.map((f) => ({ ...f, free: f.free.clip(lead, ctx.end) })),
+      );
+    }
+    if (chosen) {
+      const day = frees.find((f) => f.free.contains(chosen))?.free ?? TimeSet.empty();
+      ctx.habitSeen.set(key, minus(day, [chosen]));
+      occupy(ctx, chosen, "meeting");
+      ctx.placements.push({
+        key,
+        kind: "meeting",
+        itemId: m.id,
+        start: chosen.start,
+        end: chosen.end,
+        busy: true,
+        locked: false,
+        conflict: false,
+        afterDue: false,
+      });
+      continue;
+    }
+    const all = TimeSet.from(windows.flatMap((w) => [...w.intervals()]));
+    const lower = Math.max(ctx.earliest, localToUtc(s.zone, period.days[0] as LocalDate, 0));
+    const upper = localToUtc(s.zone, addDays(period.days.at(-1) as LocalDate, 1), 0);
+    let reason: ReasonCode | null =
+      all.total() === 0
+        ? "no-hours-overlap"
+        : baseReason(ctx, all, lower, upper, m.shortestMinutes * MINUTE);
+    if (!reason) {
+      const fixedOnly = minus(all, [...ctx.fixed.intervals(), ...blocked]);
+      reason = fits(fixedOnly, m.shortestMinutes * MINUTE, ctx.step)
+        ? "no-space-priority"
+        : "no-space-fixed";
+    }
+    if (m.whenUnplaceable === "keep_as_conflict") {
+      // MEET-02 rule 13: stay at the current time, or else at the ideal time.
+      const date = period.ideal[0] ?? (period.days[0] as LocalDate);
+      const start = localToUtc(s.zone, date, m.idealMinute);
+      const iv =
+        cur && !m.changed
+          ? { start: cur.start, end: cur.end }
+          : { start, end: start + m.durationMinutes * MINUTE };
+      ctx.placements.push({
+        key,
+        kind: "meeting",
+        itemId: m.id,
+        start: iv.start,
+        end: iv.end,
+        busy: true,
+        locked: false,
+        conflict: true,
+        afterDue: false,
+      });
+    }
+    report(ctx, {
+      itemKind: "meeting",
+      itemId: m.id,
+      demandKey: key,
+      requiredMinutes: required,
+      placedMinutes: 0,
+      status: m.whenUnplaceable === "keep_as_conflict" ? "conflict" : "unplaced",
+      reason,
+    });
+  }
+}
+
 // ---------------------------------------------------------------- buffers
 
 function compare(op: ">=" | "<=" | "=", a: number, b: number): boolean {
@@ -858,6 +1015,18 @@ function setStatus(ctx: Ctx): void {
       c.busy = alt.missing > 0;
     }
   }
+  const meetings = new Map(s.meetings.map((m) => [m.id, m]));
+  for (const p of ctx.placements) {
+    if (p.kind !== "meeting" || p.conflict || ctx.fixedKeys.has(p.key)) continue;
+    const m = meetings.get(p.itemId);
+    if (!m || m.defense !== "adaptive") {
+      p.busy = m?.defense !== "free";
+      continue;
+    }
+    const others = ctx.habitSeen.get(p.key) ?? TimeSet.empty();
+    p.busy =
+      p.start - s.now < ADAPTIVE_BUSY_AHEAD || !fits(others, m.shortestMinutes * MINUTE, ctx.step);
+  }
   for (const p of ctx.placements) {
     if (p.kind !== "habit" || p.conflict || ctx.fixedKeys.has(p.key)) continue;
     const h = habits.get(p.itemId);
@@ -880,14 +1049,21 @@ const taskKey = (a: TaskItem, b: TaskItem) =>
   a.createdAt - b.createdAt ||
   a.id.localeCompare(b.id);
 
-type Automation = { kind: "buffer"; item: BufferItem } | { kind: "habit"; item: HabitItem };
-const KIND_ORDER = { buffer: 0, habit: 1 } as const;
+type Automation =
+  | { kind: "meeting"; item: MeetingItem }
+  | { kind: "buffer"; item: BufferItem }
+  | { kind: "habit"; item: HabitItem };
+// Inside one level and rank, meetings go first (meetings-flexible.md rule 23).
+const KIND_ORDER = { meeting: 0, buffer: 1, habit: 2 } as const;
 
 export function plan(s: Snapshot): Plan {
   const ctx = init(s);
   const effective = new Map(s.tasks.map((t) => [t.id, effectiveLevel(ctx, t)]));
   for (const level of LEVELS) {
     const autos: Automation[] = [
+      ...s.meetings
+        .filter((m) => m.level === level)
+        .map((item) => ({ kind: "meeting" as const, item })),
       ...s.buffers
         .filter((b) => b.level === level)
         .map((item) => ({ kind: "buffer" as const, item })),
@@ -902,7 +1078,8 @@ export function plan(s: Snapshot): Plan {
         a.item.id.localeCompare(b.item.id),
     );
     for (const a of autos) {
-      if (a.kind === "buffer") placeBuffer(ctx, a.item);
+      if (a.kind === "meeting") placeMeeting(ctx, a.item);
+      else if (a.kind === "buffer") placeBuffer(ctx, a.item);
       else placeHabit(ctx, a.item);
     }
     if (level === 1) {

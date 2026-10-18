@@ -347,4 +347,42 @@ export const MIGRATIONS: readonly string[] = [
   -- Custom data from the booking page URL, sent in every webhook of the meeting.
   ALTER TABLE bookings ADD COLUMN custom_data TEXT NOT NULL DEFAULT '{"data":{},"errors":[]}';
   `,
+  // 9: flexible meetings (docs/specs/meetings-flexible.md)
+  `
+  CREATE TABLE meetings (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    title TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    location TEXT NOT NULL DEFAULT '',
+    enabled INTEGER NOT NULL DEFAULT 1,
+    level INTEGER NOT NULL CHECK (level BETWEEN 1 AND 4),
+    rank INTEGER NOT NULL DEFAULT 0,
+    -- JSON: {"period":"daily"} or {"period":"weekly","everyWeeks":1,"idealDays":[2]}
+    frequency TEXT NOT NULL,
+    ideal_minute INTEGER NOT NULL,
+    duration_minutes INTEGER NOT NULL,
+    shortest_minutes INTEGER NOT NULL,
+    hours_mode TEXT NOT NULL CHECK (hours_mode IN ('everyone', 'organizer')),
+    hours_set_id TEXT NOT NULL REFERENCES hours_sets(id),
+    starting TEXT,
+    defense TEXT NOT NULL CHECK (defense IN ('adaptive', 'busy', 'free')),
+    when_unplaceable TEXT NOT NULL CHECK (when_unplaceable IN ('remove', 'keep_as_conflict')),
+    lead_minutes INTEGER NOT NULL DEFAULT 720,
+    created_at INTEGER NOT NULL,
+    rules_changed_at INTEGER NOT NULL
+  ) STRICT;
+  CREATE INDEX meetings_user ON meetings(user_id);
+
+  CREATE TABLE meeting_attendees (
+    meeting_id TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+    email TEXT NOT NULL,
+    required INTEGER NOT NULL DEFAULT 1,
+    PRIMARY KEY (meeting_id, email)
+  ) STRICT;
+  CREATE INDEX meeting_attendees_email ON meeting_attendees(email);
+
+  -- Guests and location of a managed event, as JSON; a change rewrites the event.
+  ALTER TABLE managed_events ADD COLUMN extra TEXT NOT NULL DEFAULT '';
+  `,
 ];

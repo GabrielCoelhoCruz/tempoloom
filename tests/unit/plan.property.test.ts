@@ -133,6 +133,7 @@ const snapshotArb = fc
       current: [],
       tasks: r.tasks.map(toTask),
       habits: r.habits.map(toHabit),
+      meetings: [],
       buffers: [],
       focus: [],
     }),

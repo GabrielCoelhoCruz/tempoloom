@@ -19,6 +19,7 @@ import {
 } from "./accounts.ts";
 import { bookingRoutes, publicBookingRoutes } from "./api/booking.ts";
 import { itemRoutes } from "./api/items.ts";
+import { meetingRoutes } from "./api/meetings.ts";
 import { plannerRoutes } from "./api/planner.ts";
 import { settingsRoutes } from "./api/settings.ts";
 import { statsRoutes } from "./api/stats.ts";
@@ -255,6 +256,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
 
   app.route("/api", settingsRoutes(db, sync, now));
   app.route("/api", itemRoutes(db, sync, now));
+  app.route("/api", meetingRoutes(db, sync, now));
   app.route("/api/planner", plannerRoutes(db, sync, now));
   app.route("/api/booking", bookingRoutes(db, now));
   app.route("/api", webhookRoutes(db, box, config.WEBHOOK_ALLOW_PRIVATE, now));

@@ -16,6 +16,10 @@ export interface DesiredEvent {
   description: string;
   busy: boolean;
   colorId: string | null;
+  location?: string;
+  attendees?: string[];
+  optionalAttendees?: string[];
+  organizer?: string;
 }
 
 export interface ManagedRow {
@@ -35,7 +39,18 @@ export interface ManagedRow {
   locked: number;
   user_edited: number;
   etag: string | null;
+  extra: string;
 }
+
+/** Guests and location as stored in `managed_events.extra`. */
+const extraOf = (d: DesiredEvent) =>
+  d.attendees || d.optionalAttendees || d.location
+    ? JSON.stringify({
+        location: d.location ?? "",
+        attendees: d.attendees ?? [],
+        optional: d.optionalAttendees ?? [],
+      })
+    : "";
 
 export interface PushContext {
   db: Db;
@@ -65,6 +80,10 @@ function write(userId: string, d: DesiredEvent): EventWrite {
     busy: d.busy,
     colorId: d.colorId,
     privateProps: { [MANAGED_PROP]: "1", [KEY_PROP]: d.key, tl_user: userId },
+    ...(d.location ? { location: d.location } : {}),
+    ...(d.attendees ? { attendees: d.attendees } : {}),
+    ...(d.optionalAttendees ? { optionalAttendees: d.optionalAttendees } : {}),
+    ...(d.organizer ? { organizer: d.organizer } : {}),
   };
 }
 
@@ -83,7 +102,8 @@ function differs(row: ManagedRow, cached: Cached | undefined, d: DesiredEvent): 
     row.description !== d.description ||
     Boolean(row.busy) !== d.busy ||
     (row.color_id ?? null) !== (d.colorId ?? null) ||
-    row.calendar_id !== d.calendarId
+    row.calendar_id !== d.calendarId ||
+    row.extra !== extraOf(d)
   ) {
     return true;
   }
@@ -201,12 +221,13 @@ function saveRow(
   run(
     db,
     `INSERT INTO managed_events (id, user_id, calendar_id, event_id, key, kind, source_id, start_ms, end_ms,
-       busy, title, description, color_id, locked, etag)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+       busy, title, description, color_id, locked, etag, extra)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
      ON CONFLICT (user_id, key) DO UPDATE SET
        calendar_id = excluded.calendar_id, event_id = excluded.event_id, start_ms = excluded.start_ms,
        end_ms = excluded.end_ms, busy = excluded.busy, title = excluded.title,
-       description = excluded.description, color_id = excluded.color_id, etag = excluded.etag`,
+       description = excluded.description, color_id = excluded.color_id, etag = excluded.etag,
+       extra = excluded.extra`,
     existingId ?? randomUUID(),
     userId,
     d.calendarId,
@@ -221,5 +242,6 @@ function saveRow(
     d.description,
     d.colorId,
     etag,
+    extraOf(d),
   );
 }

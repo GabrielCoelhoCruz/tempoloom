@@ -288,6 +288,10 @@ label > textarea {
 }
 .ev-meeting {
   background: var(--meeting);
+  cursor: grab;
+}
+.warning {
+  color: var(--meeting);
 }
 .ev-external {
   background: var(--external);

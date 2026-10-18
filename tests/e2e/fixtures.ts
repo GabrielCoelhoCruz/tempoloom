@@ -10,7 +10,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { test as base, expect, type Page } from "@playwright/test";
+import { type BrowserContext, test as base, expect, type Page } from "@playwright/test";
 import { DAVClient } from "tsdav";
 import { GoogleCalendarApi } from "../../src/server/google/calendar.ts";
 import {
@@ -26,7 +26,8 @@ export const ZONE = "Europe/Berlin";
 export const PORT = Number(process.env.TEMPOLOOM_E2E_PORT ?? 8788);
 export const BASE_URL = `http://localhost:${PORT}`;
 const ROOT = join(import.meta.dirname, "../..");
-const EMAIL = "e2e@tempoloom.test";
+export const EMAIL = "e2e@tempoloom.test";
+export const COLLEAGUE_EMAIL = "colleague@tempoloom.test";
 export const BACKEND: "caldav" | "google" =
   process.env.TEMPOLOOM_E2E_BACKEND === "google" ? "google" : "caldav";
 const SA_JSON = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
@@ -56,6 +57,8 @@ export interface CalendarDriver {
   update(id: string, change: { start: number; end: number; summary?: string }): Promise<void>;
   remove(id: string): Promise<void>;
   events(from: number, to: number): Promise<ProviderEvent[]>;
+  /** Guests of an event, with the optional flag. */
+  guests(id: string): Promise<{ email: string; optional: boolean }[]>;
   /** A busy or free all-day event on a local date. */
   addAllDay(date: string, title: string, busy: boolean): Promise<string>;
   /** An invitation from someone else, with the user's answer (CalDAV only). */
@@ -86,10 +89,15 @@ export const local = (t: number) => {
   return `${l.date} ${String(Math.floor(l.minuteOfDay / 60)).padStart(2, "0")}:${String(l.minuteOfDay % 60).padStart(2, "0")}`;
 };
 
-interface RadicaleEnv {
+interface RadicaleUser {
   url: string;
   username: string;
   password: string;
+}
+
+interface RadicaleEnv extends RadicaleUser {
+  /** A second user, for meetings between two people. */
+  colleague: RadicaleUser;
 }
 
 function radicaleEnv(): RadicaleEnv {
@@ -100,10 +108,19 @@ function radicaleEnv(): RadicaleEnv {
       .split("\n")
       .map((l) => l.split(/=(.*)/s).slice(0, 2)),
   );
-  return { url: env.CALDAV_URL, username: env.CALDAV_USERNAME, password: env.CALDAV_PASSWORD };
+  return {
+    url: env.CALDAV_URL,
+    username: env.CALDAV_USERNAME,
+    password: env.CALDAV_PASSWORD,
+    colleague: {
+      url: env.CALDAV_URL,
+      username: env.CALDAV_USERNAME2,
+      password: env.CALDAV_PASSWORD2,
+    },
+  };
 }
 
-async function caldavDriver(env: RadicaleEnv): Promise<CalendarDriver> {
+async function caldavDriver(env: RadicaleUser, email = EMAIL): Promise<CalendarDriver> {
   const client = new DAVClient({
     serverUrl: env.url,
     credentials: { username: env.username, password: env.password },
@@ -117,14 +134,15 @@ async function caldavDriver(env: RadicaleEnv): Promise<CalendarDriver> {
   }
   const home = client.account?.homeUrl;
   if (!home) throw new Error("No calendar home on the CalDAV server");
-  return caldavCalendar(env, client, home, "Work");
+  return caldavCalendar(env, client, home, "Work", email);
 }
 
 async function caldavCalendar(
-  env: RadicaleEnv,
+  env: RadicaleUser,
   client: DAVClient,
   home: string,
   name: string,
+  email: string,
 ): Promise<CalendarDriver> {
   const calendarId = new URL(`${name.toLowerCase()}-${randomUUID().slice(0, 8)}/`, home).toString();
   await client.makeCalendar({ url: calendarId, props: { displayname: name } });
@@ -156,7 +174,7 @@ async function caldavCalendar(
       .replace(/[-:]/g, "")
       .replace(/\.\d{3}/, "");
   const provider = new CalDavProvider(
-    { serverUrl: env.url, username: env.username, password: env.password, email: EMAIL },
+    { serverUrl: env.url, username: env.username, password: env.password, email },
     ZONE,
   );
   const attendeesOf = new Map<string, string[]>();
@@ -182,10 +200,10 @@ async function caldavCalendar(
         busy: e.busy ?? true,
         colorId: null,
         privateProps: {},
-        ...(e.attendees ? { attendees: [EMAIL, ...e.attendees] } : {}),
+        ...(e.attendees ? { attendees: [email, ...e.attendees] } : {}),
         ...(e.location ? { location: e.location } : {}),
       });
-      if (e.attendees) attendeesOf.set(ev.id, [EMAIL, ...e.attendees]);
+      if (e.attendees) attendeesOf.set(ev.id, [email, ...e.attendees]);
       return ev.id;
     },
     async update(id, change) {
@@ -227,9 +245,23 @@ async function caldavCalendar(
         `SUMMARY:${e.title}`,
         "ORGANIZER:mailto:organizer@example.com",
         "ATTENDEE;PARTSTAT=ACCEPTED:mailto:organizer@example.com",
-        `ATTENDEE;PARTSTAT=${e.answer}:mailto:${EMAIL}`,
+        `ATTENDEE;PARTSTAT=${e.answer}:mailto:${email}`,
       ]),
-    newCalendar: (name) => caldavCalendar(env, client, home, name),
+    newCalendar: (name) => caldavCalendar(env, client, home, name, email),
+    async guests(id) {
+      const cal = (await client.fetchCalendars()).find((c) => c.url === calendarId);
+      if (!cal) throw new Error("calendar missing");
+      const [obj] = await client.fetchCalendarObjects({ calendar: cal, objectUrls: [id] });
+      const lines = String(obj?.data ?? "")
+        .replace(/\r?\n[ \t]/g, "")
+        .split(/\r?\n/);
+      return lines
+        .filter((l) => l.startsWith("ATTENDEE"))
+        .map((l) => ({
+          email: l.slice(l.toLowerCase().lastIndexOf("mailto:") + 7).toLowerCase(),
+          optional: /ROLE=OPT-PARTICIPANT/i.test(l),
+        }));
+    },
   };
 }
 
@@ -295,13 +327,23 @@ async function googleDriver(): Promise<CalendarDriver> {
     },
     addInvite: () => Promise.reject(new Error("A service account cannot receive invitations")),
     newCalendar: () => Promise.reject(new Error("Not supported for the Google backend yet")),
+    guests: () => Promise.reject(new Error("Not supported for the Google backend yet")),
   };
+}
+
+/** A second user of the same instance, with a CalDAV calendar of their own. */
+export interface Colleague {
+  email: string;
+  cal: CalendarDriver;
+  /** Signs the colleague in, in a browser context of their own. */
+  signIn: () => Promise<Page>;
 }
 
 type TestFixtures = {
   app: AppServer;
   cal: CalendarDriver;
   signIn: () => Promise<void>;
+  colleague: Colleague;
 };
 type WorkerFixtures = { radicale: RadicaleEnv | null };
 
@@ -397,6 +439,36 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
     if (info.status !== info.expectedStatus) {
       await info.attach("server.log", { body: log.join(""), contentType: "text/plain" });
     }
+  },
+
+  colleague: async ({ radicale, browser, app }, use) => {
+    if (!radicale) throw new Error("The colleague fixture needs the CalDAV backend.");
+    const env = radicale.colleague;
+    const cal = await caldavDriver(env, COLLEAGUE_EMAIL);
+    const contexts: BrowserContext[] = [];
+    await use({
+      email: COLLEAGUE_EMAIL,
+      cal,
+      signIn: async () => {
+        const ctx = await browser.newContext({
+          timezoneId: ZONE,
+          locale: "en-GB",
+          baseURL: app.baseUrl,
+        });
+        contexts.push(ctx);
+        const page = await ctx.newPage();
+        await page.goto("/");
+        const form = page.getByTestId("caldav-form");
+        await form.getByLabel("CalDAV server URL").fill(env.url);
+        await form.getByLabel("User name", { exact: true }).fill(env.username);
+        await form.getByLabel("Password", { exact: true }).fill(env.password);
+        await form.getByLabel(/^Email/).fill(COLLEAGUE_EMAIL);
+        await form.getByRole("button", { name: /sign in with caldav/i }).click();
+        await expect(page.getByTestId("app-shell")).toBeVisible();
+        return page;
+      },
+    });
+    for (const c of contexts) await c.close();
   },
 
   signIn: async ({ page, app, radicale }, use) => {

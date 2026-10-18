@@ -17,7 +17,7 @@ const minutes = z
   .min(15)
   .max(24 * 60 * 14)
   .multipleOf(15);
-const hhmm = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/);
+export const hhmm = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/);
 
 const taskInput = z.object({
   title: z.string().trim().min(1).max(255),
@@ -100,7 +100,7 @@ const focusInput = z.object({
   busy: z.boolean().optional(),
 });
 
-function badRequest(field: string, message: string): never {
+export function badRequest(field: string, message: string): never {
   throw new HTTPException(400, {
     res: Response.json(
       { error: "invalid_body", issues: [{ path: field, message }] },
@@ -109,7 +109,12 @@ function badRequest(field: string, message: string): never {
   });
 }
 
-function hoursSetId(db: Db, userId: string, requested: string | undefined, kind: string): string {
+export function hoursSetId(
+  db: Db,
+  userId: string,
+  requested: string | undefined,
+  kind: string,
+): string {
   const id =
     requested ??
     one<{ id: string }>(
@@ -124,7 +129,12 @@ function hoursSetId(db: Db, userId: string, requested: string | undefined, kind:
   return id;
 }
 
-function nextRank(db: Db, table: "habits" | "buffers", userId: string, lvl: number): number {
+export function nextRank(
+  db: Db,
+  table: "habits" | "buffers" | "meetings",
+  userId: string,
+  lvl: number,
+): number {
   return (
     (one<{ r: number | null }>(
       db,

@@ -1,5 +1,6 @@
 // Runs calendar sync and planning for each user, one run at a time per user.
 import { all, one, run } from "../db.ts";
+import { meetingPeers } from "../planner/meetings.ts";
 import { replanUser } from "../planner/replan.ts";
 import { type ProviderDeps, ProviderPool } from "../providers/index.ts";
 import { applyCalendarEdits } from "./edits.ts";
@@ -187,8 +188,9 @@ export class SyncService {
         userId,
       );
       const now = this.#deps.now();
+      let pulled = 0;
       for (const cal of calendars) {
-        await pullEvents(db, pool.get(cal.account_id), cal.id, now);
+        pulled += await pullEvents(db, pool.get(cal.account_id), cal.id, now);
       }
       applyCalendarEdits(
         db,
@@ -197,7 +199,7 @@ export class SyncService {
         user.time_zone,
         now,
       );
-      await replanUser(
+      const result = await replanUser(
         {
           db,
           provider: (accountId) => pool.get(accountId),
@@ -206,6 +208,14 @@ export class SyncService {
         },
         userId,
       );
+      // Flexible meetings join calendars of several users (meetings-flexible.md
+      // rules 13, 27): a change on one side plans the other side again.
+      const peers = meetingPeers(db, userId);
+      if (pulled > 0) for (const id of peers.organizers) this.request(id);
+      const p = result?.push;
+      if (p && p.created + p.updated + p.deleted > 0) {
+        for (const id of peers.attendees) this.request(id);
+      }
     } catch (err) {
       this.#log(`sync failed for user ${userId}`, err);
     }

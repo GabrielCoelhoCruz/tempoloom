@@ -85,7 +85,8 @@ export function applyCalendarEdits(
             // "Later": place the work again from the next day on.
             const nextDay = localToUtc(zone, addDays(utcToLocal(zone, row.start_ms).date, 1), 0);
             exclude(db, userId, "task", row.source_id, Math.min(row.start_ms, now), nextDay);
-          } else if (row.kind === "buffer") {
+          } else if (row.kind === "buffer" || row.kind === "meeting") {
+            // A deleted meeting occurrence skips its period (MEET-02 rule 20).
             run(
               db,
               "INSERT OR IGNORE INTO dismissed_keys (user_id, key) VALUES (?, ?)",

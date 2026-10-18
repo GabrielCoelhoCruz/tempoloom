@@ -23,12 +23,17 @@
 //     or takes time before other items.                                 (focus-time.md, SCH-68)
 // 18. Free/busy status is wrong for chunks, habits, focus and locked events. (DEF-*)
 // 19. Input order changes the output (non-determinism).
+// 20. A flexible meeting leaves everyone's hours, overlaps an attendee's busy
+//     time, picks a short or non-ideal slot over a better one, shortens past
+//     its limit, ignores a skip or start date, displaces the wrong items,
+//     churns, moves inside the lead time, or has the wrong free/busy.  (meetings-flexible.md)
 import { describe, expect, it } from "vitest";
 import type {
   BufferItem,
   ExternalEvent,
   FocusItem,
   HabitItem,
+  MeetingItem,
   Placement,
   Snapshot,
   TaskItem,
@@ -82,6 +87,7 @@ function snapshot(over: Partial<Snapshot> = {}): Snapshot {
     current: [],
     tasks: [],
     habits: [],
+    meetings: [],
     buffers: [],
     focus: [],
     ...over,
@@ -135,6 +141,26 @@ const habit = (over: Partial<HabitItem> & { id: string }): HabitItem => ({
   whenUnplaceable: "remove",
   reservedWords: [],
   skips: [],
+  exclusions: [],
+  changed: false,
+  ...over,
+});
+const meeting = (over: Partial<MeetingItem> & { id: string }): MeetingItem => ({
+  title: over.id,
+  level: 2,
+  rank: 0,
+  createdAt: 0,
+  hours: "work",
+  attendeeWindow: null,
+  attendeeBusy: [],
+  idealMinute: 600,
+  frequency: { period: "weekly", everyWeeks: 1, idealDays: [2] },
+  durationMinutes: 30,
+  shortestMinutes: 30,
+  starting: MON,
+  defense: "busy",
+  whenUnplaceable: "remove",
+  leadMinutes: 0,
   exclusions: [],
   changed: false,
   ...over,
@@ -728,6 +754,193 @@ describe("habits", () => {
     );
     expect(spans(of(result, "h")).filter((s) => s.startsWith(MON))).toEqual([`${MON}T09:00/10:00`]);
     expect(spans(of(result, "t"))).toEqual([`${MON}T10:15/11:15`]);
+  });
+});
+
+describe("flexible meetings", () => {
+  const weeks = (r: { placements: Placement[] }, id: string) => spans(of(r, id));
+
+  it("holds one occurrence per period on the ideal day, inside everyone's hours, around attendee busy time", () => {
+    const tue = day(1);
+    const result = plan(
+      snapshot({
+        meetings: [
+          meeting({
+            id: "sync",
+            // The attendee works 13:00 to 17:00 on weekdays and is busy Tuesday 13:00 to 14:00.
+            attendeeWindow: [0, 1, 2, 3, 4].flatMap((w) =>
+              [0, 7, 14].map((k) => ({
+                start: at(day(w + k), "13:00"),
+                end: at(day(w + k), "17:00"),
+              })),
+            ),
+            attendeeBusy: [{ start: at(tue, "13:00"), end: at(tue, "14:00") }],
+          }),
+        ],
+      }),
+    );
+    expect(weeks(result, "sync")).toEqual([
+      `${tue}T14:00/14:30`,
+      `${day(8)}T13:00/13:30`,
+      `${day(15)}T13:00/13:30`,
+    ]);
+  });
+
+  it("takes a full slot on another day before a short one on the ideal day, and the longest short one when nothing is full", () => {
+    const events = [
+      ...fill(MON, ["16:00", "16:15"]),
+      ...fill(day(1), ["10:00", "10:30"]),
+      ...fill(day(2), ["15:00", "16:00"]),
+      ...fill(day(3), ["09:00", "09:15"]),
+      ...fill(day(4), ["11:00", "11:15"]),
+    ];
+    const full = plan(
+      snapshot({
+        windowEnd: at(day(5), "00:00"),
+        events,
+        meetings: [meeting({ id: "m", durationMinutes: 60, shortestMinutes: 30 })],
+      }),
+    );
+    expect(weeks(full, "m")).toEqual([`${day(2)}T15:00/16:00`]);
+    const short = plan(
+      snapshot({
+        windowEnd: at(day(5), "00:00"),
+        events: events
+          .filter((e) => e.start < at(day(2), "00:00") || e.start >= at(day(3), "00:00"))
+          .concat(fill(day(2), ["15:00", "15:45"])),
+        meetings: [meeting({ id: "m", durationMinutes: 60, shortestMinutes: 30 })],
+      }),
+    );
+    expect(weeks(short, "m")).toEqual([`${day(2)}T15:00/15:45`]);
+    const none = plan(
+      snapshot({
+        windowEnd: at(day(5), "00:00"),
+        events: events
+          .filter((e) => e.start < at(day(1), "00:00") || e.start >= at(day(3), "00:00"))
+          .concat(fill(day(1), ["10:00", "10:15"]), fill(day(2), ["15:00", "15:15"])),
+        meetings: [meeting({ id: "m", durationMinutes: 60, shortestMinutes: 30 })],
+      }),
+    );
+    expect(weeks(none, "m")).toEqual([]);
+    expect(none.report.map((r) => [r.demandKey, r.status, r.reason])).toEqual([
+      [`meeting:m:${MON}`, "unplaced", "no-space-fixed"],
+    ]);
+  });
+
+  it("reports no-hours-overlap and keeps a conflict at the ideal time when asked", () => {
+    const evening = [0, 1, 2, 3, 4].map((w) => ({
+      start: at(day(w), "18:00"),
+      end: at(day(w), "20:00"),
+    }));
+    const result = plan(
+      snapshot({
+        windowEnd: at(day(5), "00:00"),
+        meetings: [
+          meeting({ id: "gone", attendeeWindow: evening }),
+          meeting({ id: "kept", attendeeWindow: evening, whenUnplaceable: "keep_as_conflict" }),
+        ],
+      }),
+    );
+    expect(result.report.map((r) => [r.itemId, r.status, r.reason])).toEqual([
+      ["gone", "unplaced", "no-hours-overlap"],
+      ["kept", "conflict", "no-hours-overlap"],
+    ]);
+    const kept = of(result, "kept")[0];
+    expect([kept && spans([kept])[0], kept?.conflict, kept?.busy]).toEqual([
+      `${day(1)}T10:00/10:30`,
+      true,
+      true,
+    ]);
+  });
+
+  it("goes before an equal-level habit, moves lower items, and never moves external or locked events", () => {
+    const tue = day(1);
+    const result = plan(
+      snapshot({
+        windowEnd: at(day(5), "00:00"),
+        events: [ext(at(tue, "09:00"), at(tue, "10:00"))],
+        current: [
+          {
+            key: `habit:locked:${tue}`,
+            itemId: "locked",
+            start: at(tue, "11:00"),
+            end: at(tue, "12:00"),
+            locked: true,
+          },
+        ],
+        habits: [
+          habit({ id: "same", level: 1, idealMinute: 600, minMinutes: 30, maxMinutes: 30 }),
+          habit({ id: "low", level: 3, idealMinute: 630, minMinutes: 30, maxMinutes: 30 }),
+          habit({ id: "locked", level: 4, idealMinute: 660 }),
+        ],
+        meetings: [meeting({ id: "m", level: 1, idealMinute: 600, durationMinutes: 60 })],
+      }),
+    );
+    expect(weeks(result, "m")).toEqual([`${tue}T10:00/11:00`]);
+    expect(spans(of(result, "same")).find((x) => x.startsWith(tue))).toBe(`${tue}T12:00/12:30`);
+    expect(spans(of(result, "low")).find((x) => x.startsWith(tue))).toBe(`${tue}T12:30/13:00`);
+    expect(spans(of(result, "locked")).find((x) => x.startsWith(tue))).toBe(`${tue}T11:00/12:00`);
+  });
+
+  it("skips a dismissed period, waits for its start date, and repeats every N weeks", () => {
+    const result = plan(
+      snapshot({
+        dismissedKeys: [`meeting:a:${day(7)}`],
+        meetings: [
+          meeting({ id: "a" }),
+          meeting({
+            id: "b",
+            starting: day(7),
+            frequency: { period: "weekly", everyWeeks: 1, idealDays: [3] },
+          }),
+          meeting({ id: "c", frequency: { period: "weekly", everyWeeks: 2, idealDays: [4] } }),
+        ],
+      }),
+    );
+    expect(weeks(result, "a")).toEqual([`${day(1)}T10:00/10:30`, `${day(15)}T10:00/10:30`]);
+    expect(weeks(result, "b")).toEqual([`${day(9)}T10:00/10:30`, `${day(16)}T10:00/10:30`]);
+    expect(weeks(result, "c")).toEqual([`${day(3)}T10:00/10:30`, `${day(17)}T10:00/10:30`]);
+  });
+
+  it("keeps an unchanged occurrence in place and moves it no sooner than the lead time", () => {
+    const tue = day(1);
+    const cur = {
+      key: `meeting:m:${MON}`,
+      itemId: "m",
+      start: at(tue, "11:00"),
+      end: at(tue, "11:30"),
+      locked: false,
+    };
+    const base = { now: at(tue, "08:00"), windowEnd: at(day(5), "00:00"), current: [cur] };
+    const stay = plan(snapshot({ ...base, meetings: [meeting({ id: "m", leadMinutes: 720 })] }));
+    expect(weeks(stay, "m")).toEqual([`${tue}T11:00/11:30`]);
+    const moved = plan(
+      snapshot({
+        ...base,
+        events: [ext(at(tue, "11:00"), at(tue, "12:00"))],
+        meetings: [meeting({ id: "m", leadMinutes: 720 })],
+      }),
+    );
+    // 12 hours after 08:00 is 20:00, after Tuesday's hours: the next day it is.
+    expect(weeks(moved, "m")).toEqual([`${day(2)}T10:00/10:30`]);
+  });
+
+  it("writes busy, free or adaptive status by its defense setting", () => {
+    const result = plan(
+      snapshot({
+        windowEnd: at(day(5), "00:00"),
+        meetings: [
+          meeting({ id: "busy", defense: "busy" }),
+          meeting({ id: "free", defense: "free", idealMinute: 660 }),
+          meeting({ id: "adaptive", defense: "adaptive", idealMinute: 720 }),
+        ],
+      }),
+    );
+    expect(["busy", "free", "adaptive"].map((id) => of(result, id)[0]?.busy)).toEqual([
+      true,
+      false,
+      false,
+    ]);
   });
 });
 

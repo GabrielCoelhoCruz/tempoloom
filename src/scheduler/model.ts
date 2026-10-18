@@ -77,6 +77,34 @@ export interface HabitItem {
   changed: boolean;
 }
 
+/** A flexible meeting (docs/specs/meetings-flexible.md); the user is the organizer. */
+export interface MeetingItem {
+  id: string;
+  title: string;
+  level: Level;
+  rank: number;
+  createdAt: number;
+  /** The organizer's hours set id. */
+  hours: string;
+  /** Time that suits every required attendee who is a user here; null: no limit (rule 11). */
+  attendeeWindow: Interval[] | null;
+  /** Time when a required attendee is busy (rule 13). */
+  attendeeBusy: Interval[];
+  idealMinute: number;
+  /** Daily: one per day. Weekly: one per N weeks, counted from `starting`. */
+  frequency: { period: "daily" } | { period: "weekly"; everyWeeks: number; idealDays: number[] };
+  durationMinutes: number;
+  /** The shortest length the meeting may shrink to (rule 17). */
+  shortestMinutes: number;
+  starting: LocalDate | null;
+  defense: "adaptive" | "busy" | "free";
+  whenUnplaceable: WhenUnplaceable;
+  /** An automatic move never starts sooner than this after now (MEET-02 rule 8). */
+  leadMinutes: number;
+  exclusions: Interval[];
+  changed: boolean;
+}
+
 export interface BufferFilter {
   text?: { values: string[]; fields: ("title" | "description" | "location")[] };
   participants?: { op: ">=" | "<=" | "="; value: number };
@@ -143,11 +171,12 @@ export interface Snapshot {
   dismissedKeys?: string[];
   tasks: TaskItem[];
   habits: HabitItem[];
+  meetings: MeetingItem[];
   buffers: BufferItem[];
   focus: FocusItem[];
 }
 
-export type PlacementKind = "task" | "habit" | "buffer" | "focus";
+export type PlacementKind = "task" | "habit" | "meeting" | "buffer" | "focus";
 
 export interface Placement {
   key: string;
@@ -165,6 +194,7 @@ export interface Placement {
 export type ReasonCode =
   | "outside-window"
   | "no-hours"
+  | "no-hours-overlap"
   | "too-long-for-hours"
   | "all-day-block"
   | "reserved-word"

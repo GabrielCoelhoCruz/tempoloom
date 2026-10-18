@@ -67,6 +67,8 @@ T = {
     "x_travel": "travel time wraps events at an address; flights get airport time instead",
     "w_flow": "booking, reschedule and cancel send signed requests with custom data; a new secret signs the next one",
     "w_retry": "a failing receiver gets retries with one request id and Retry-After; too much custom data is dropped; removed and deleted endpoints stop",
+    "m_sync": "a weekly meeting sits at the ideal time, moves around a colleague's busy time but not an unanswered invite, and moves the colleague's habit",
+    "m_hours": "a colleague's meeting hours limit the time, a full slot shrinks to fit, optional guests do not count, and skip or delete drop one period",
 }
 
 # Row id -> E2E test keys that prove it on CalDAV.
@@ -100,6 +102,9 @@ E2E = {
     405: ["w_flow"], 931: ["w_flow", "w_retry"], 932: ["w_flow", "w_retry"], 933: ["w_retry"], 935: ["w_flow"],
     937: ["w_retry"], 939: ["w_retry"], 940: ["w_flow"], 941: ["w_flow", "w_retry"], 942: ["w_flow"],
     943: ["w_flow", "w_retry"],
+    321: ["m_sync"], 323: ["m_sync"], 325: ["m_sync"], 329: ["m_sync"], 330: ["m_hours"], 335: ["m_sync"],
+    337: ["m_sync"], 338: ["m_sync"], 348: ["m_sync"], 351: ["m_sync", "m_hours"], 354: ["m_sync", "m_hours"],
+    363: ["m_sync"], 366: ["m_hours"], 371: ["m_sync"],
 }
 
 # Row id -> reason, for rows implemented in part (some behavior has E2E, some does not).
@@ -109,13 +114,39 @@ PARTIAL = {
     934: "http on a public host is rejected in E2E; the localhost and IP-literal checks are in code but not under E2E, because the E2E server allows private receivers (WEBHOOK_ALLOW_PRIVATE)",
     936: "success on 200 and failure on 500 are E2E-proven; the 10-second timeout is not under test",
     938: "the delivery worker suspends the endpoint and the page offers Resume; not under test (needs 24 hours of failures)",
+    320: "A meeting is created from a form, with E2E on CalDAV; each occurrence is its own event, not an instance of one recurring series",
+    322: "Availability of attendees who are users here is E2E-proven on CalDAV; the Google free/busy query for other emails is not implemented",
+    324: "Optional guests are written with the optional role and never limit the time (E2E); the E2E optional guest is not a user here",
+    328: "Every day, every week and every N weeks; no monthly or custom day counts. E2E covers weekly",
+    331: "Everyone's meeting hours (E2E) and the organizer's hours only (not under E2E); no item-specific hours",
+    332: "A start date delays the first occurrence; unit tests only",
+    333: "P1 to P4 with P2 by default; displacement by level has unit tests only",
+    334: "A rank is stored per level and orders placement; no reorder in the UI",
+    336: "Meetings are placed before focus time by the engine order; unit tests only",
+    339: "The common time of the organizer's and a colleague's meeting hours is E2E-proven; both use one time zone in the test",
+    341: "Adaptive (default), busy and free; a far occurrence is written free in E2E; the switch to busy has unit tests only",
+    342: "Busy or free only; no visibility or reminder settings",
+    343: "The description is written to every occurrence; not under E2E",
+    345: "A text location only; no conference link or room",
+    346: "Occurrences go to the organizer's main calendar only",
+    349: "The list is grouped by priority; no drag to reorder",
+    350: "No limit in code; not under test",
+    356: "Changed rules or hours place future occurrences again (engine change flag); unit tests only",
+    357: "A move keeps the notice set on the meeting (default 12 hours); unit tests only",
+    359: "A conflict is marked and listed with its reason on the meeting; no suggested times",
+    360: "Remove, or keep and mark the conflict (default); unit tests only",
+    364: "A resize in the calendar locks like a move; not under E2E for meetings",
+    367: "The planner drawer locks and unlocks any managed event (E2E for task chunks); not under E2E for meetings",
+    368: "A time edit in the calendar is kept and locks (E2E); free/busy is written back by the general drift rule, not under E2E for meetings",
+    372: "Delete removes future occurrences and the rules; no choice about guest notices",
+    374: "Unplaced and conflicting occurrences show their reason on the meeting; no shared attention list",
 }
 
 # Row id -> limits, for rows implemented with unit or property tests only.
 UNIT = {
     9: "cooldown options are in the engine and settings, not in the UI", 27: "API only; no UI yet",
     55: "engine only; no drag UI yet", 58: "", 59: "booking-link side not implemented", 70: "",
-    73: "several ranges per day; no copy-to-all", 90: "flexible meetings not implemented",
+    73: "several ranges per day; no copy-to-all", 90: "meetings, then buffers, then habits inside one level; unit tests only",
     100: "", 109: "", 152: "engine only", 154: "", 156: "daily and weekly; monthly and custom not implemented",
     161: "", 165: "", 178: "", 196: "", 197: "", 202: "", 203: "", 206: "", 208: "", 209: "", 219: "",
     221: "text, count, length, exact title and tag; no attendee or category filters", 225: "", 226: "API only",

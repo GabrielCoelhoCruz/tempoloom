@@ -24,9 +24,12 @@ case "${1:-}" in
     mkdir -p "$STATE/config"
     chmod 700 "$STATE"
     password=$(head -c 24 /dev/urandom | base64 | tr -d '/+=' )
+    password2=$(head -c 24 /dev/urandom | base64 | tr -d '/+=' )
     umask 077
-    printf '%s:%s\n' "$USER_NAME" "$password" > "$STATE/config/users"
+    # A second user is a colleague for tests of meetings between two people.
+    printf '%s:%s\n%s:%s\n' "$USER_NAME" "$password" "${USER_NAME}2" "$password2" > "$STATE/config/users"
     printf '%s\n' "$password" > "$STATE/password"
+    printf '%s\n' "$password2" > "$STATE/password2"
     chmod 644 "$STATE/config/users"
     cat > "$STATE/config/config" <<CONF
 [server]
@@ -62,6 +65,8 @@ CONF
     echo "CALDAV_URL=http://127.0.0.1:$PORT/"
     echo "CALDAV_USERNAME=$USER_NAME"
     echo "CALDAV_PASSWORD=$(cat "$STATE/password")"
+    echo "CALDAV_USERNAME2=${USER_NAME}2"
+    echo "CALDAV_PASSWORD2=$(cat "$STATE/password2")"
     ;;
   *) echo "usage: $0 start|stop|env" >&2; exit 2 ;;
 esac

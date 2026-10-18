@@ -45,6 +45,10 @@ export interface EventWrite {
   privateProps: Record<string, string>;
   location?: string;
   attendees?: string[];
+  /** Guests whose answer and availability do not count. */
+  optionalAttendees?: string[];
+  /** The organizer's email, written when the event has guests. */
+  organizer?: string;
 }
 
 export interface EventChanges {

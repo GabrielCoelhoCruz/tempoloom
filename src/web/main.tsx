@@ -7,6 +7,7 @@ import { loadMe, me } from "./lib/state.ts";
 import { PublicBooking } from "./views/book.tsx";
 import { Habits } from "./views/habits.tsx";
 import { Links } from "./views/links.tsx";
+import { Meetings } from "./views/meetings.tsx";
 import { Planner } from "./views/planner.tsx";
 import { Settings } from "./views/settings.tsx";
 import { StatsPage } from "./views/stats.tsx";
@@ -17,6 +18,7 @@ const NAV: { href: string; label: string }[] = [
   { href: "/", label: "Planner" },
   { href: "/tasks", label: "Tasks" },
   { href: "/habits", label: "Habits" },
+  { href: "/meetings", label: "Meetings" },
   { href: "/links", label: "Booking links" },
   { href: "/stats", label: "Stats" },
   { href: "/settings", label: "Settings" },
@@ -125,6 +127,8 @@ function Page() {
       return <Tasks />;
     case "/habits":
       return <Habits />;
+    case "/meetings":
+      return <Meetings />;
     case "/settings":
       return <Settings />;
     case "/links":

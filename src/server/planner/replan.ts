@@ -4,7 +4,6 @@ import type { WeeklyHours } from "../../scheduler/hours.ts";
 import type {
   BufferFilter,
   CurrentPlacement,
-  ExternalEvent,
   HabitItem,
   Level,
   Placement,
@@ -23,14 +22,10 @@ import {
 import { all, type Db, one, run } from "../db.ts";
 import type { CalendarProvider } from "../providers/types.ts";
 import { getSettings, type Settings } from "../settings.ts";
+import { externalEvents } from "./events.ts";
+import { attendeeOccurrences, attendeesOf, meetingItems } from "./meetings.ts";
 import { mirrorCopies } from "./mirror.ts";
-import {
-  type DesiredEvent,
-  MANAGED_PROP,
-  type ManagedRow,
-  type PushResult,
-  pushSchedule,
-} from "./push.ts";
+import { type DesiredEvent, type ManagedRow, type PushResult, pushSchedule } from "./push.ts";
 
 export interface ReplanContext {
   db: Db;
@@ -100,47 +95,10 @@ export function loadSnapshot(
   const hours: Record<string, WeeklyHours> = Object.fromEntries(
     hoursRows.map((h) => [h.id, JSON.parse(h.weekly) as WeeklyHours]),
   );
-  const events = all<{
-    event_id: string;
-    calendar_id: string;
-    summary: string;
-    description: string;
-    location: string;
-    start_ms: number;
-    end_ms: number;
-    all_day: number;
-    busy: number;
-    event_type: string;
-    self_response: ExternalEvent["selfResponse"];
-    attendee_count: number;
-    organizer_self: number;
-    private_props: string;
-  }>(
-    db,
-    `SELECT e.* FROM events e JOIN calendars c ON c.id = e.calendar_id JOIN accounts a ON a.id = c.account_id
-     WHERE a.user_id = ? AND a.status = 'ok' AND c.check_availability = 1 AND e.end_ms > ? AND e.start_ms < ?`,
-    userId,
-    now - DAY,
-    windowEnd,
-  )
-    .filter((e) => (JSON.parse(e.private_props) as Record<string, string>)[MANAGED_PROP] !== "1")
-    .map(
-      (e): ExternalEvent => ({
-        id: `${e.calendar_id}:${e.event_id}`,
-        start: e.start_ms,
-        end: e.end_ms,
-        allDay: e.all_day === 1,
-        busy: e.busy === 1,
-        title: e.summary,
-        description: e.description,
-        selfResponse: e.self_response,
-        organizerSelf: e.organizer_self === 1,
-        attendeeCount: e.attendee_count,
-        location: e.location,
-        eventType: e.event_type,
-        bookedViaLink: (JSON.parse(e.private_props) as Record<string, string>).tl_booking === "1",
-      }),
-    );
+  const events = [
+    ...externalEvents(db, userId, now - DAY, windowEnd),
+    ...attendeeOccurrences(db, userId, now, windowEnd),
+  ];
 
   const rows = all<ManagedRow>(db, "SELECT * FROM managed_events WHERE user_id = ?", userId);
   const toPlacement = (r: ManagedRow): CurrentPlacement => ({
@@ -322,6 +280,12 @@ export function loadSnapshot(
     };
   });
 
+  const meetings = meetingItems(db, userId, now, windowEnd, lastPlannedAt, exclusions);
+  for (const m of meetings.rows) {
+    notes.set(`meeting:${m.id}`, m.description);
+    titles.set(`meeting:${m.id}`, m.title);
+  }
+
   const snapshot: Snapshot = {
     now,
     zone,
@@ -339,6 +303,7 @@ export function loadSnapshot(
     dismissedKeys: dismissed,
     tasks,
     habits,
+    meetings: meetings.items,
     buffers,
     focus,
   };
@@ -353,7 +318,11 @@ export function titleFor(settings: Settings, base: string, p: Placement): string
 
 export async function replanUser(ctx: ReplanContext, userId: string): Promise<ReplanResult | null> {
   const { db, now } = ctx;
-  const user = one<{ time_zone: string }>(db, "SELECT time_zone FROM users WHERE id = ?", userId);
+  const user = one<{ time_zone: string; email: string }>(
+    db,
+    "SELECT time_zone, email FROM users WHERE id = ?",
+    userId,
+  );
   if (!user) return null;
   const settings = getSettings(db, userId);
   if (settings.paused) return null;
@@ -381,6 +350,25 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
     ).map((h) => [h.id, h.task_calendar_id]),
   );
   const taskHours = new Map(snapshot.tasks.map((t) => [t.id, t.hours]));
+  // Guests and location of each flexible meeting (meetings-flexible.md rules 35, 41).
+  const guests = new Map(
+    all<{ id: string; location: string }>(
+      db,
+      "SELECT id, location FROM meetings WHERE user_id = ?",
+      userId,
+    ).map((m) => {
+      const people = attendeesOf(db, m.id).filter((a) => a.email !== user.email);
+      return [
+        m.id,
+        {
+          organizer: user.email,
+          attendees: people.filter((a) => a.required).map((a) => a.email),
+          optionalAttendees: people.filter((a) => !a.required).map((a) => a.email),
+          ...(m.location ? { location: m.location } : {}),
+        },
+      ];
+    }),
+  );
   const desired: DesiredEvent[] = result.placements.map((p) => {
     const row = rowByKey.get(p.key);
     const itemKey = `${p.kind}:${p.itemId}`;
@@ -403,6 +391,7 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
         keepUserTitle && row ? row.description : itemNotes ? `${itemNotes}\n\n${FOOTER}` : FOOTER,
       busy: p.busy || p.locked,
       colorId: null,
+      ...(p.kind === "meeting" ? guests.get(p.itemId) : {}),
     };
   });
 
