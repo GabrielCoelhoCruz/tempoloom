@@ -21,6 +21,17 @@ feature list and the status of each feature.
 - Event categories and colors.
 - Personal stats, an automation library, a meeting cost calculator and a
   pomodoro timer.
+- Teams: invitations by email or link, join requests, roles and seat limits;
+  defaults and habit templates for new members; shared out-of-office
+  calendars; team no-meeting days.
+- Team booking links (all organizers free) and round-robin links, a team
+  directory of booking pages, branding, and team webhooks.
+- Delegated access for assistants, personal API keys, and live updates when
+  two people work in one account.
+- Team and organization analytics with CSV export; team policies for focus
+  time, buffers, meeting agendas and calendar fragmentation.
+- Single sign-on (OpenID Connect), domain capture, directory provisioning
+  (SCIM 2.0) and organization-wide calendar access for CalDAV servers.
 
 ## Goals
 

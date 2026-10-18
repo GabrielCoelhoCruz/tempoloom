@@ -123,6 +123,17 @@ T = {
     "acct_add": "a user adds a second CalDAV account and removes it after a confirmation; the main account stays",
     "acct_keys": "a personal API key creates a planned task; regenerate replaces the secret; delete revokes it",
     "acct_delete": "deleting the own account needs the email typed, is refused for a sole admin with members, and removes data and future managed events",
+    # Team links, round robin, booking pages, team webhooks (team-links, booking-pages, webhooks specs)
+    "tl_team": "a team link offers only times when every required organizer is free, invites everyone, and the co-organizer changes their own hours and most fields from the team links group",
+    "tl_opt": "an optional organizer is invited but not checked; another organizer can be host and gets the event",
+    "tl_recovery": "a team link keeps the longest recovery buffer among its organizers free, and the link can turn it off",
+    "tl_rr": "a round-robin link offers every pool member's time, names nobody before confirmation, balances the load, and keeps the member on reschedule while they are free",
+    "tl_pref": "a preferred pool member is chosen first, but a reschedule keeps the member who is still free",
+    "tl_rr_org": "a round-robin link with organizers checks the required ones, invites all of them, and drops a pool member who leaves the team",
+    "bp_starter": "a new booking page gets three starter links with their priorities and durations",
+    "bp_dir": "any member finds every team member's booking page and public links in the directory and copies one",
+    "bp_brand": "branding: the admin uploads a logo and banner and sets the team default; the page copies it, the link setting wins, and a member can choose custom",
+    "wh_team": "only a team admin manages endpoints in Team settings > Webhooks; a member attaches one to their own link",
 }
 
 # Row id -> E2E test keys that prove it on CalDAV.
@@ -192,6 +203,12 @@ E2E = {
     # Delegated access, assistants, API keys
     522: ["dg_give", "dg_remove"], 523: ["dg_switch", "dg_remove"], 524: ["dg_block", "acct_add", "acct_keys", "acct_delete"],
     525: ["dg_live"], 765: ["dg_switch", "dg_ea2", "dg_ea4"], 927: ["acct_keys"],
+    # Team links, round robin, booking pages, team webhooks
+    425: ["tl_team"], 426: ["tl_team"], 430: ["tl_team"], 439: ["tl_team"], 427: ["tl_opt"],
+    428: ["tl_opt"], 429: ["tl_recovery"], 431: ["tl_rr"], 433: ["tl_rr"], 422: ["tl_rr"],
+    435: ["tl_rr", "tl_pref"], 434: ["tl_pref"], 432: ["tl_rr_org"], 767: ["bp_starter"],
+    766: ["bp_dir", "dg_switch"], 423: ["bp_brand"], 570: ["bp_brand"], 571: ["wh_team"],
+    930: ["wh_team", "w_flow"],
 }
 
 # Row id -> how Tempoloom meets the row, when that differs from the reference's wording.
@@ -208,6 +225,11 @@ E2E_NOTES = {
     574: "Write access is read from the CalDAV privilege set; CalDAV has no groups to expand, and Google calendar access lists are not read",
     583: "Marketing-only in the reference; built: a teammate with write access who joins later takes part with no setup",
     269: "On CalDAV, an out-of-office event carries X-MICROSOFT-CDO-BUSYSTATUS:OOF",
+    423: "Branding applies to booking pages; Tempoloom sends no booking emails and has no embeds yet, and the link group is the user's booking page",
+    426: "Hours come from the organizer's hours sets; item-specific hours on a link are not built",
+    428: "The host part; Tempoloom has no conference integrations yet (they need vendor apps), so the host's integration has nothing to apply",
+    429: "A team link keeps the longest recovery buffer of its organizers' buffer automations free",
+    767: "The starter set follows booking-links.md rule 2, which owns this rule",
     524: "The blocked actions exist for the owner (E2E proves they work for the owner)",
     765: "Executive assistant journey T1, T2 and T4; T3 (booking pages directory) is row 766. T2 sets up a new flexible meeting: converting an existing calendar meeting is not built",
     927: "The expiry limit has unit tests; the rate limit is not built",
@@ -292,6 +314,9 @@ BLOCKED = {
     582: "Needs the assistant chat, which is not implemented",
     217: "No benchmark data: the evidence gives no targets per role (teams-policies.md open question 3)",
     594: "No benchmark data: the evidence gives no targets per role (teams-policies.md open question 3)",
+    436: "Needs video conferencing integrations, which need vendor apps and test accounts",
+    673: "The evidence names it only on the pricing page and gives no behavior to build (plans-feature-inventory.md open questions); org-chart data exists through SCIM managers",
+    768: "Needs a monthly habit frequency (habits-automation.md), which is not implemented, for the monthly reviews; the other executive routines exist as library entries (E2E: \u201ca habit entry fills the habit form\u2026\u201d) and as team habit templates (E2E: \u201cteam habit templates show at the top of every member's habits page\u2026\u201d)",
     928: "Needs the vendor's Zapier app and a Zapier account",
     929: "Needs the vendor's Zapier app and a Zapier account",
     591: "Needs the Slack app (a vendor developer app and a test workspace)",

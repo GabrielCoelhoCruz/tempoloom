@@ -8,12 +8,33 @@ restart.
 ## Backends
 
 - `caldav` (default): a Radicale CalDAV server in Docker on `127.0.0.1:5232`.
-  The test fixture starts it with empty storage and two local test users
-  (`e2e` and `e2e2`), and removes it at the end. Nothing to set up besides
-  Docker.
+  The test fixture starts it with empty storage and local test users, and
+  removes it at the end. Users `e2e` and `e2e2` to `e2e6` act as team
+  members; `e2e2` may change events in `e2e`'s calendars named `shared-*` and
+  `e2e3` may only read them (a shared team calendar); `e2egrant` reads every
+  user's calendars (an organization's calendar access). Nothing to set up
+  besides Docker.
 - `google`: Google Calendar through a service account that owns a fresh test
   calendar for each test. Tests that need two calendars, invitations or a
   second user skip themselves on this backend.
+
+## Other loopback servers
+
+The fixtures also start these in Docker, on `127.0.0.1` only, and remove them
+at the end:
+
+- Mailpit (`scripts/mail-server.sh`): receives the mail the server sends, for
+  example team invitations; tests read it through Mailpit's HTTP API.
+- Dex (`scripts/oidc-server.sh`): an OpenID Connect identity provider for the
+  single sign-on tests, with a test user whose password is new on each run.
+  It needs `mkpasswd` (package `whois`) or `htpasswd` (package
+  `apache2-utils`) to hash that password.
+
+Ports and container names come from environment variables, so several runs
+can share a host: `TEMPOLOOM_E2E_PORT`, `TEMPOLOOM_CALDAV_PORT`,
+`TEMPOLOOM_CALDAV_CONTAINER`, `TEMPOLOOM_E2E_STATE`, `TEMPOLOOM_MAIL_CONTAINER`,
+`TEMPOLOOM_MAIL_SMTP_PORT`, `TEMPOLOOM_MAIL_HTTP_PORT`, `TEMPOLOOM_OIDC_PORT`,
+`TEMPOLOOM_OIDC_CONTAINER`.
 
 ## Run on CalDAV
 
