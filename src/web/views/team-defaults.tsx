@@ -281,7 +281,7 @@ export function TeamDefaults() {
         <label>
           Mode
           <select name="mode">
-            <option value="proactive">Proactive: place focus time ahead</option>
+            <option value="proactive">Proactive</option>
           </select>
         </label>
         <label>
