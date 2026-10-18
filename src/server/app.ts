@@ -1,7 +1,9 @@
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { extname, join, normalize } from "node:path";
+import { brotliCompressSync, gzipSync } from "node:zlib";
 import type { Context } from "hono";
 import { Hono } from "hono";
+import { compress } from "hono/compress";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { csrf } from "hono/csrf";
 import { HTTPException } from "hono/http-exception";
@@ -80,6 +82,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   const secure = config.BASE_URL.startsWith("https://");
   const origin = new URL(config.BASE_URL).origin;
   const app = new Hono<AppEnv>();
+  app.use(compress());
 
   const startSession = (c: Context, userId: string) =>
     setCookie(c, SESSION_COOKIE, createSession(db, userId, now()), {
@@ -262,18 +265,54 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   app.route("/api", webhookRoutes(db, box, config.WEBHOOK_ALLOW_PRIVATE, now));
   app.route("/api", statsRoutes(db));
 
-  // Static client with a single-page fallback.
+  // Static client with a single-page fallback. Text files are compressed once
+  // per encoding and kept in memory; the build output does not change at run time.
+  const encoded = new Map<string, Uint8Array<ArrayBuffer>>();
+  const staticBody = async (file: string, encoding: "br" | "gzip" | null) => {
+    const key = `${encoding}:${file}`;
+    let body = encoded.get(key);
+    if (!body) {
+      const raw = await readFile(file);
+      body = new Uint8Array(
+        encoding === "br" ? brotliCompressSync(raw) : encoding === "gzip" ? gzipSync(raw) : raw,
+      );
+      encoded.set(key, body);
+    }
+    return body;
+  };
+  // Compress the build output at start, so the first visitor does not wait for it.
+  void (async () => {
+    for (const name of await readdir(config.WEB_DIST, { recursive: true })) {
+      if (!/\.(html|js|css|svg|json)$/.test(name)) continue;
+      const file = join(config.WEB_DIST, name);
+      await staticBody(file, "br");
+      await staticBody(file, "gzip");
+    }
+  })().catch(() => {});
   app.get("*", async (c) => {
     const path = normalize(decodeURIComponent(new URL(c.req.url).pathname));
     const isAsset = extname(path) !== "";
     const file = isAsset ? join(config.WEB_DIST, path) : join(config.WEB_DIST, "index.html");
+    const type = MIME[extname(file)] ?? "application/octet-stream";
+    const accept = c.req.header("accept-encoding") ?? "";
+    const encoding = !/^(text\/|application\/(javascript|json)|image\/svg)/.test(type)
+      ? null
+      : /\bbr\b/.test(accept)
+        ? "br"
+        : /\bgzip\b/.test(accept)
+          ? "gzip"
+          : null;
     try {
-      const body = await readFile(file);
-      const type = MIME[extname(file)] ?? "application/octet-stream";
+      const body = await staticBody(file, encoding);
       const cache = path.startsWith("/assets/")
         ? "public, max-age=31536000, immutable"
         : "no-cache";
-      return c.body(body, 200, { "content-type": type, "cache-control": cache });
+      return c.body(body, 200, {
+        "content-type": type,
+        "cache-control": cache,
+        vary: "accept-encoding",
+        ...(encoding ? { "content-encoding": encoding } : {}),
+      });
     } catch {
       return c.text("Not found", 404);
     }

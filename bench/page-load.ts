@@ -140,14 +140,12 @@ for (let i = 0; i < RUNS; i++) {
   );
   const m = await page.evaluate(async () => {
     const ready = performance.now();
-    const paint = await new Promise<PerformanceEntry[]>((resolve) => {
-      new PerformanceObserver((l) => resolve(l.getEntries())).observe({
-        type: "paint",
-        buffered: true,
-      });
-      setTimeout(() => resolve([]), 500);
-    });
-    const fcp = paint.find((e) => e.name === "first-contentful-paint")?.startTime ?? -1;
+    // Paint entries can arrive after "ready"; wait up to 1 s for the timeline entry.
+    let fcp = -1;
+    for (let i = 0; i < 100 && fcp < 0; i++) {
+      fcp = performance.getEntriesByName("first-contentful-paint")[0]?.startTime ?? -1;
+      if (fcp < 0) await new Promise((r) => setTimeout(r, 10));
+    }
     const bytes = performance
       .getEntriesByType("resource")
       .concat(performance.getEntriesByType("navigation"))
@@ -214,8 +212,9 @@ console.log(
       },
       coldLoadMs: {
         firstContentfulPaint: {
-          median: Math.round(median(load.map((l) => l.fcp))),
-          p95: Math.round(p95(load.map((l) => l.fcp))),
+          median: Math.round(median(load.map((l) => l.fcp).filter((v) => v >= 0))),
+          p95: Math.round(p95(load.map((l) => l.fcp).filter((v) => v >= 0))),
+          missing: load.filter((l) => l.fcp < 0).length,
         },
         plannerReady: {
           median: Math.round(median(load.map((l) => l.ready))),
