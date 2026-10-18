@@ -127,7 +127,7 @@ export function AccountPage() {
     <div class="page" data-testid="account-page">
       <h1>Account</h1>
       {message && (
-        <p class="status" role="status" data-testid="account-message">
+        <p class="status notice" role="status" data-testid="account-message">
           {message}
         </p>
       )}
@@ -335,11 +335,13 @@ export function AccountPage() {
           </label>
           <label>
             Expires
-            <select name="expires" defaultValue="never">
+            <select name="expires">
               <option value="30d">30 days</option>
               <option value="90d">90 days</option>
               <option value="1y">1 year</option>
-              <option value="never">Never</option>
+              <option value="never" selected>
+                Never
+              </option>
             </select>
           </label>
           <button type="submit" class="primary">

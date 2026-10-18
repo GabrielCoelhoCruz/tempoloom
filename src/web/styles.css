@@ -587,6 +587,14 @@ progress {
   border-radius: var(--radius);
   background: var(--panel);
 }
+/* A result message stays in view next to an action far down the page. */
+.notice {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  padding: 6px 0;
+  background: var(--bg);
+}
 .dialog h2 {
   margin: 0 0 8px;
   font-size: 16px;
