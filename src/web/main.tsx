@@ -1,7 +1,8 @@
-import type { ComponentChildren, FunctionComponent } from "preact";
+import type { ComponentChildren } from "preact";
 import { render } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import { ApiError, api } from "./lib/api.ts";
+import { lazyComponent } from "./lib/lazy.ts";
 import { onLinkClick, path } from "./lib/router.ts";
 import { loadMe, me } from "./lib/state.ts";
 import { PublicBooking } from "./views/book.tsx";
@@ -15,31 +16,15 @@ import { StatsPage } from "./views/stats.tsx";
 import { Tasks } from "./views/tasks.tsx";
 import { MeetingCost, Pomodoro } from "./views/tools.tsx";
 
-/** A view in its own chunk, loaded on first use, so the planner's cold load stays small. */
-function lazyView<P>(load: () => Promise<FunctionComponent<P>>): FunctionComponent<P> {
-  let View: FunctionComponent<P> | undefined;
-  return (props: P) => {
-    const [, setLoaded] = useState(false);
-    useEffect(() => {
-      if (View) return;
-      void load().then((v) => {
-        View = v;
-        setLoaded(true);
-      });
-    }, []);
-    return View ? <View {...(props as P & object)} /> : null;
-  };
-}
-
-const TeamPage = lazyView(() => import("./views/team.tsx").then((m) => m.TeamPage));
-const JoinPage = lazyView<{ token: string; login?: ComponentChildren }>(() =>
+const TeamPage = lazyComponent(() => import("./views/team.tsx").then((m) => m.TeamPage));
+const JoinPage = lazyComponent<{ token: string; login?: ComponentChildren }>(() =>
   import("./views/team.tsx").then((m) => m.JoinPage),
 );
-const TeamStats = lazyView(() => import("./views/team-stats.tsx").then((m) => m.TeamStats));
-const OrgAnalytics = lazyView(() =>
+const TeamStats = lazyComponent(() => import("./views/team-stats.tsx").then((m) => m.TeamStats));
+const OrgAnalytics = lazyComponent(() =>
   import("./views/org-analytics.tsx").then((m) => m.OrgAnalytics),
 );
-const ConnectCalendar = lazyView(() =>
+const ConnectCalendar = lazyComponent(() =>
   import("./views/connect.tsx").then((m) => m.ConnectCalendar),
 );
 

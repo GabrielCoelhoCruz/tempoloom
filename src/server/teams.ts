@@ -2,6 +2,7 @@
 // exactly one team; sign-up creates a team with the user as its admin.
 import { randomUUID } from "node:crypto";
 import { all, type Db, one, run, tx } from "./db.ts";
+import { applyTeamDefaults } from "./team-defaults.ts";
 
 export type Role = "admin" | "member";
 export type JoinMode = "invite_only" | "request" | "automatic";
@@ -136,6 +137,7 @@ function memberLeft(db: Db, teamId: string, userId: string): void {
   run(db, "DELETE FROM team_requests WHERE user_id = ?", userId);
   // Calendars attached through the old team's grant (admin-sso-provisioning.md rule 12).
   run(db, "DELETE FROM accounts WHERE user_id = ? AND grant_team_id = ?", userId, teamId);
+  run(db, "DELETE FROM team_onboarding WHERE user_id = ? AND team_id = ?", userId, teamId);
   if (memberCount(db, teamId) === 0) run(db, "DELETE FROM teams WHERE id = ?", teamId);
 }
 
@@ -167,6 +169,7 @@ export function joinTeam(
       userId,
     );
     memberLeft(db, current.team.id, userId);
+    applyTeamDefaults(db, teamId, userId, now);
   });
 }
 

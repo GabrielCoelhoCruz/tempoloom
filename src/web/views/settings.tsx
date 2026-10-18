@@ -4,6 +4,7 @@ import type { Settings as UserSettings } from "../../server/settings.ts";
 import { api } from "../lib/api.ts";
 import { CATEGORY_LABELS, COLORS } from "../lib/categories.ts";
 import { hhmm, parseHhmm } from "../lib/format.ts";
+import { lazyComponent } from "../lib/lazy.ts";
 import { templateFromUrl } from "../lib/library.ts";
 import { loadMe, me, planNow } from "../lib/state.ts";
 
@@ -22,9 +23,13 @@ interface Calendar {
   email: string;
 }
 
+const FocusRecommendation = lazyComponent(() =>
+  import("./team-recommendations.tsx").then((m) => m.FocusRecommendation),
+);
+
 const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
-function HoursEditor({
+export function HoursEditor({
   set,
   onSave,
 }: {
@@ -552,6 +557,7 @@ export function Settings() {
 
       <section>
         <h2>Focus time</h2>
+        <FocusRecommendation onDone={() => act(async () => {})} />
         {focus.length === 0 ? (
           <button
             type="button"

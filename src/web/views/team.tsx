@@ -4,6 +4,8 @@ import { ApiError, api } from "../lib/api.ts";
 import { navigate } from "../lib/router.ts";
 import { me } from "../lib/state.ts";
 import { CalendarAccess, ProvisionImport, SsoSettings } from "./team-admin.tsx";
+import { Onboarding, TeamDefaults } from "./team-defaults.tsx";
+import { OutOfOffice } from "./team-ooo.tsx";
 
 interface Member {
   userId: string;
@@ -222,6 +224,7 @@ export function TeamPage({ children }: { children?: ComponentChildren }) {
           join until seats are free.
         </p>
       )}
+      <Onboarding />
       <div data-testid="team-prompts">
         {info.prompts.colleagues.length > 0 && info.canInvite && (
           <form
@@ -490,8 +493,10 @@ export function TeamPage({ children }: { children?: ComponentChildren }) {
           <CalendarAccess />
           <Directory />
           <ProvisionImport />
+          <TeamDefaults />
         </>
       )}
+      <OutOfOffice />
       {children}
     </div>
   );

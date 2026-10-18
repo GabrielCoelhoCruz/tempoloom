@@ -146,6 +146,9 @@ function baseEvent(
   };
   const stamp =
     comp.getFirstPropertyValue("last-modified") ?? comp.getFirstPropertyValue("dtstamp");
+  // CalDAV has no event type for time away; Outlook-style clients mark it with
+  // this property, and Tempoloom reads it as Google's out-of-office type.
+  const away = str("x-microsoft-cdo-busystatus").toUpperCase() === "OOF";
   return {
     id,
     cancelled: str("status").toUpperCase() === "CANCELLED",
@@ -153,8 +156,8 @@ function baseEvent(
     summary: str("summary"),
     description: str("description"),
     location: str("location"),
-    busy: str("transp").toUpperCase() !== "TRANSPARENT",
-    eventType: "default",
+    busy: away || str("transp").toUpperCase() !== "TRANSPARENT",
+    eventType: away ? "outOfOffice" : "default",
     ...attendeeFacts(comp, selfEmail),
     recurringId: null,
     colorId: COLOR_IDS.get(str("color").toLowerCase()) ?? null,
@@ -241,8 +244,13 @@ export function objectFromWrite(uid: string, w: EventWrite, now: number): string
   ev.addPropertyWithValue("uid", uid);
   ev.addPropertyWithValue("dtstamp", toUtcTime(now));
   ev.addPropertyWithValue("last-modified", toUtcTime(now));
-  ev.addPropertyWithValue("dtstart", toUtcTime(w.start));
-  ev.addPropertyWithValue("dtend", toUtcTime(w.end));
+  if (w.allDayDates) {
+    ev.addPropertyWithValue("dtstart", ICAL.Time.fromDateString(w.allDayDates.start));
+    ev.addPropertyWithValue("dtend", ICAL.Time.fromDateString(w.allDayDates.end));
+  } else {
+    ev.addPropertyWithValue("dtstart", toUtcTime(w.start));
+    ev.addPropertyWithValue("dtend", toUtcTime(w.end));
+  }
   ev.addPropertyWithValue("summary", w.summary);
   if (w.description) ev.addPropertyWithValue("description", w.description);
   if (w.location) ev.addPropertyWithValue("location", w.location);
@@ -509,6 +517,32 @@ export class CalDavProvider implements CalendarProvider {
       },
       res.headers.get("etag"),
     );
+  }
+
+  /**
+   * This account's access to a calendar collection, from the server's
+   * DAV:current-user-privilege-set (RFC 3744): write, read only, or none.
+   */
+  async accessTo(calendarUrl: string): Promise<"write" | "read" | "none"> {
+    const res = await fetch(calendarUrl, {
+      method: "PROPFIND",
+      headers: {
+        authorization: `Basic ${Buffer.from(`${this.#creds.username}:${this.#creds.password}`).toString("base64")}`,
+        depth: "0",
+        "content-type": "application/xml; charset=utf-8",
+      },
+      body: '<?xml version="1.0" encoding="utf-8"?><d:propfind xmlns:d="DAV:"><d:prop><d:current-user-privilege-set/></d:prop></d:propfind>',
+    });
+    if (res.status === 401) throw new ProviderError("auth", 401, "CalDAV credentials rejected");
+    if (res.status !== 207) return "none";
+    const set =
+      /current-user-privilege-set[^>]*>([\s\S]*?)<\/(?:[\w-]+:)?current-user-privilege-set/i.exec(
+        await res.text(),
+      )?.[1];
+    if (!set) return "none";
+    const has = (name: string) => new RegExp(`<(?:[\\w-]+:)?${name}\\s*/?>`, "i").test(set);
+    if (has("all") || has("write") || has("write-content") || has("bind")) return "write";
+    return has("read") ? "read" : "none";
   }
 
   async deleteEvent(calendarId: string, eventId: string): Promise<void> {

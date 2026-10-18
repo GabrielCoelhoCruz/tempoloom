@@ -51,6 +51,8 @@ export interface EventWrite {
   optionalAttendees?: string[];
   /** The organizer's email, written when the event has guests. */
   organizer?: string;
+  /** An all-day event on these local dates (end exclusive); `start` and `end` are then not written. */
+  allDayDates?: { start: string; end: string };
 }
 
 export interface EventChanges {

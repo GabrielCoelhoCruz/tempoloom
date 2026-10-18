@@ -557,4 +557,64 @@ export const MIGRATIONS: readonly string[] = [
   CREATE INDEX provision_jobs_queue ON provision_jobs(state, id);
   CREATE INDEX provision_jobs_team ON provision_jobs(team_id, create_user, state);
   `,
+  // 15: templates: team habit templates, defaults for new members, out-of-office calendars
+  `
+  -- Habit templates an admin recommends to every member (teams-settings-templates.md rules 3-5).
+  CREATE TABLE team_habit_templates (
+    id TEXT PRIMARY KEY,
+    team_id TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    title TEXT NOT NULL,
+    -- JSON: {"idealTime":"09:00","minutes":60,"days":[1] or null,"level":3,"hours":"work"}
+    fields TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  ) STRICT;
+  CREATE INDEX team_habit_templates_team ON team_habit_templates(team_id);
+
+  -- What a member got from the team defaults on joining (rules 4, 9, 10).
+  CREATE TABLE team_onboarding (
+    user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    team_id TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    -- JSON copy of the team focus template when the member joined, or NULL.
+    focus TEXT,
+    focus_state TEXT NOT NULL DEFAULT 'none' CHECK (focus_state IN ('none', 'pending', 'accepted', 'off')),
+    welcome_done INTEGER NOT NULL DEFAULT 0,
+    joined_at INTEGER NOT NULL
+  ) STRICT;
+
+  -- Team out-of-office calendars (teams-ooo-calendar.md).
+  CREATE TABLE ooo_calendars (
+    id TEXT PRIMARY KEY,
+    team_id TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    -- The owner's shared calendar that receives the copies.
+    calendar_id TEXT REFERENCES calendars(id) ON DELETE SET NULL,
+    access_checked_at INTEGER,
+    created_at INTEGER NOT NULL
+  ) STRICT;
+  CREATE INDEX ooo_calendars_team ON ooo_calendars(team_id);
+
+  -- Each team member's access to the target calendar, as last read from the server.
+  CREATE TABLE ooo_access (
+    ooo_id TEXT NOT NULL REFERENCES ooo_calendars(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    access TEXT NOT NULL CHECK (access IN ('write', 'read', 'none')),
+    PRIMARY KEY (ooo_id, user_id)
+  ) STRICT;
+
+  -- One row per absence seen: its copy, or 'skip' when it did not count. The
+  -- display mode is fixed when the absence is first seen (edge case 6).
+  CREATE TABLE ooo_copies (
+    ooo_id TEXT NOT NULL REFERENCES ooo_calendars(id) ON DELETE CASCADE,
+    -- Source calendar id and event id.
+    source TEXT NOT NULL,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    mode TEXT NOT NULL CHECK (mode IN ('skip', 'exact', 'all_day')),
+    event_id TEXT,
+    -- JSON of the copy as last written, to skip writes that change nothing.
+    written TEXT NOT NULL DEFAULT '',
+    source_end_ms INTEGER NOT NULL,
+    PRIMARY KEY (ooo_id, source)
+  ) STRICT;
+  `,
 ];

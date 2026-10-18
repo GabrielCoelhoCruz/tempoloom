@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "preact/hooks";
 import { api } from "../lib/api.ts";
 import { duration, hhmm } from "../lib/format.ts";
+import { lazyComponent } from "../lib/lazy.ts";
 import { freeName, templateFromUrl } from "../lib/library.ts";
 import { LEVEL_NAMES, planNow } from "../lib/state.ts";
 
@@ -21,6 +22,10 @@ interface HoursSet {
   kind: string;
   name: string;
 }
+
+const TeamHabitTemplates = lazyComponent(() =>
+  import("./team-recommendations.tsx").then((m) => m.TeamHabitTemplates),
+);
 
 const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const DEFENSE: Record<string, string> = {
@@ -93,6 +98,7 @@ export function Habits() {
   return (
     <div class="page" data-testid="habits-page">
       <h1>Habits</h1>
+      <TeamHabitTemplates habits={habits.map((h) => h.title)} onAdded={load} />
       <form
         class="form"
         onSubmit={create}

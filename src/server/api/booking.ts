@@ -4,6 +4,7 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { Hono } from "hono";
 import { z } from "zod";
 import { type CalendarItem, type LinkRules, offeredTimes } from "../../scheduler/availability.ts";
+import { hasTag, TAG_FREE } from "../../scheduler/blocking.ts";
 import type { WeeklyHours } from "../../scheduler/hours.ts";
 import type { ExternalEvent, Level } from "../../scheduler/model.ts";
 import type { AppEnv } from "../app.ts";
@@ -131,6 +132,9 @@ export function calendarItems(db: Db, userId: string, from: number, to: number):
     } else if (!e.busy || e.self_response === "declined") {
       // Free events (with or without #tl_busy) and declined invitations never block a link.
       items.push({ ...span, cls: "free" });
+    } else if (hasTag({ title: e.summary, description: e.description }, TAG_FREE)) {
+      // No-meeting time is closed to every link, whatever its priority (events-tags.md rule 4).
+      items.push({ ...span, cls: "fixed" });
     } else {
       // Other busy events block, including unanswered invitations: a booking is final.
       // A level the user lowered lets higher-priority links offer the time (external priority rule 5).
