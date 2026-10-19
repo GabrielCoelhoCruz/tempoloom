@@ -75,15 +75,30 @@ interface CalendarInfo {
 
 const FOOTER = "Planned by Tempoloom.";
 
-export function writeCalendar(db: Db, userId: string): CalendarInfo | undefined {
-  return one<CalendarInfo>(
-    db,
-    `SELECT c.id, c.account_id, c.provider_id, c.is_primary, c.writable, c.check_availability
-     FROM calendars c JOIN accounts a ON a.id = c.account_id
-     WHERE a.user_id = ? AND a.status = 'ok' AND c.writable = 1
-     ORDER BY a.is_main DESC, c.is_primary DESC, a.created_at, c.name LIMIT 1`,
-    userId,
+/** Where new events go: the preferred calendar when the user can write to it, else the main one. */
+export function writeCalendar(
+  db: Db,
+  userId: string,
+  preferredId?: string | null,
+): CalendarInfo | undefined {
+  const pick = (only: string | null) =>
+    one<CalendarInfo>(
+      db,
+      `SELECT c.id, c.account_id, c.provider_id, c.is_primary, c.writable, c.check_availability
+       FROM calendars c JOIN accounts a ON a.id = c.account_id
+       WHERE a.user_id = ? AND a.status = 'ok' AND c.writable = 1 AND (? IS NULL OR c.id = ?)
+       ORDER BY a.is_main DESC, c.is_primary DESC, a.created_at, c.name LIMIT 1`,
+      userId,
+      only,
+      only,
+    );
+  if (!preferredId) return pick(null);
+  const chosen = pick(preferredId);
+  if (chosen) return chosen;
+  console.warn(
+    `calendar ${preferredId} is not writable for user ${userId}; using the main calendar`,
   );
+  return pick(null);
 }
 
 function weekStartOf(zone: string, now: number, weekStart: 1 | 7): number {

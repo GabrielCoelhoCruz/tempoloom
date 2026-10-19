@@ -17,6 +17,14 @@ import type { WeeklyHours } from "../../scheduler/hours.ts";
 import type { ExternalEvent, Level } from "../../scheduler/model.ts";
 import { isValidTimeZone } from "../../shared/time.ts";
 import type { AppEnv } from "../app.ts";
+import {
+  bookedLocation,
+  defaultLocation,
+  type LocationOption,
+  locationsOf,
+  locationText,
+  needsTravel,
+} from "../booking-location.ts";
 import { type Answer, type BookingChange, notifyBooking } from "../booking-mail.ts";
 import {
   assign,
@@ -26,6 +34,7 @@ import {
   linkPeople,
   type Party,
   recoveryMinutes,
+  travelMinutes,
   writeBookingEvents,
 } from "../booking-team.ts";
 import { all, type Db, one, run, tx } from "../db.ts";
@@ -34,6 +43,7 @@ import { limitRefusal } from "../limits.ts";
 import type { Mailer } from "../mail.ts";
 import { getPrefs } from "../meeting-prefs.ts";
 import { MANAGED_PROP } from "../planner/push.ts";
+import { writeCalendar } from "../planner/replan.ts";
 import { getSettings } from "../settings.ts";
 import type { SyncService } from "../sync/service.ts";
 import { membership, sameTeam } from "../teams.ts";
@@ -73,6 +83,13 @@ export interface LinkRow {
   invitee_name: string;
   invitee_email: string;
   created_at: number;
+  /** Last bookable date (YYYY-MM-DD); it replaces the rolling days when set. */
+  range_end_date: string | null;
+  /** The owner's calendar for booked events; null: the main calendar. */
+  calendar_id: string | null;
+  use_travel_buffer: number;
+  /** JSON list of location options; the first is the default. */
+  locations: string;
 }
 
 interface BookingRow {
@@ -93,6 +110,8 @@ interface BookingRow {
   assignee_id: string | null;
   answers: string;
   time_zone: string;
+  cc: string;
+  location: string | null;
 }
 
 const slugRe = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
@@ -206,7 +225,6 @@ const linkInput = z.object({
   bufferAfter: z.number().int().min(0).max(120).optional(),
   maxPerDay: z.number().int().min(1).max(50).nullable().optional(),
   maxPerWeek: z.number().int().min(1).max(200).nullable().optional(),
-  location: z.string().max(500).optional(),
   questions: z.array(question).max(10).optional(),
   reminder: z
     .object({
@@ -218,6 +236,21 @@ const linkInput = z.object({
   /** Must start with https:// (edge case 8); "" or null removes it. */
   redirectUrl: z.string().max(2000).nullable().optional(),
   defaultDuration: z.number().int().nullable().optional(),
+  /** A fixed last date instead of rolling days; null goes back to rolling days. */
+  rangeEndDate: z.iso.date().nullable().optional(),
+  /** One of the owner's writable calendars; null: the main calendar. */
+  calendarId: z.string().nullable().optional(),
+  useTravelBuffer: z.boolean().optional(),
+  /** Up to 10 options; the first is the default. */
+  locations: z
+    .array(
+      z.object({
+        kind: z.enum(["address", "phone", "custom"]),
+        value: z.string().trim().min(1).max(500),
+      }),
+    )
+    .max(10)
+    .optional(),
 });
 
 const BRANDINGS = ["sameAsGroup", "default", "none", "custom"] as const;
@@ -429,6 +462,7 @@ function rulesFor(db: Db, link: LinkRow, duration: number): TeamRules {
     weekStart: getSettings(db, link.user_id).weekStart,
     noticeMinutes: link.notice_minutes,
     rangeEndDays: link.range_end_days,
+    rangeEndDate: link.range_end_date,
     bufferBeforeMinutes: link.buffer_before,
     bufferAfterMinutes: link.buffer_after,
     maxPerDay: link.max_per_day,
@@ -460,6 +494,7 @@ export function linkInputs(
   from: number,
   to: number,
   now: number,
+  location: LocationOption | null = defaultLocation(link),
 ): { rules: TeamRules; required: Person[]; pool: Person[]; bookings: Booking[] } | null {
   const { people, usable } = linkTeam(db, link);
   if (!usable) return null;
@@ -487,7 +522,7 @@ export function linkInputs(
     selfResponse: null,
     organizerSelf: true,
     attendeeCount: organizers.length + (organizers.length < people.length ? 1 : 0) + 1,
-    location: link.location,
+    location: locationText(location),
     eventType: "default",
     bookedViaLink: true,
   };
@@ -499,6 +534,9 @@ export function linkInputs(
     zone: planningZone(db, p.userId),
     items: calendarItems(db, p.userId, from - pad, to + pad),
     recoveryMinutes: link.use_recovery_buffer ? recoveryMinutes(db, p.userId, meeting) : 0,
+    ...(link.use_travel_buffer && needsTravel(location)
+      ? travelMinutes(db, p.userId, meeting)
+      : {}),
     startMinutes: getPrefs(db, p.userId).startMinutes,
   });
   return {
@@ -518,8 +556,9 @@ export function linkTimes(
   to: number,
   now: number,
   rescheduling?: string,
+  location?: LocationOption | null,
 ): OfferedTime[] {
-  const inputs = linkInputs(db, link, duration, from, to, now);
+  const inputs = linkInputs(db, link, duration, from, to, now, location);
   if (!inputs) return [];
   const { rules, required, pool, bookings } = inputs;
   return teamOffers(rules, required, pool, bookings, now, from, to, rescheduling);
@@ -536,7 +575,8 @@ function publicLink(link: LinkRow) {
       link.default_duration && durations.includes(link.default_duration)
         ? link.default_duration
         : (durations[0] ?? null),
-    location: link.location,
+    location: locationText(defaultLocation(link)),
+    locations: locationsOf(link),
     questions: JSON.parse(link.questions) as Question[],
     redirectUrl: link.redirect_url,
     prefill:
@@ -599,6 +639,7 @@ function linkView(db: Db, link: LinkRow, oneOffDays: number) {
     ...link,
     durations: JSON.parse(link.durations) as number[],
     questions: JSON.parse(link.questions) as Question[],
+    locations: locationsOf(link),
     owner: { id: link.user_id, ...user(link.user_id) },
     page: link.group_id ?? (link.hidden ? "hidden" : "main"),
     pageSlug: linkPageSlug(db, link),
@@ -727,7 +768,7 @@ export function bookingRoutes(db: Db, now: () => number, oneOffDays: number): Ho
       b.bufferAfter ?? 0,
       b.maxPerDay ?? null,
       b.maxPerWeek ?? null,
-      b.location ?? "",
+      locationText(b.locations?.[0]),
       now(),
     );
     const options = [
@@ -735,6 +776,7 @@ export function bookingRoutes(db: Db, now: () => number, oneOffDays: number): Ho
         string,
         string | undefined,
       ],
+      ["locations", b.locations && JSON.stringify(b.locations)] as [string, string | undefined],
       ...optionColumns(b, undefined, now()),
     ].filter(([, v]) => v !== undefined);
     if (options.length > 0) {
@@ -873,6 +915,10 @@ export function bookingRoutes(db: Db, now: () => number, oneOffDays: number): Ho
         link.id,
       ) !== undefined);
 
+  /** A calendar the owner can write to, or null for the main calendar. */
+  const ownCalendar = (userId: string, id: string | null): string | null =>
+    id === null || writeCalendar(db, userId, id)?.id === id ? id : invalid("calendar");
+
   /** Saves changes to a link, or the settings of a new one-off link. */
   function applyChanges(link: LinkRow, b: Changes): void {
     // One-off links are on no page (sharing rule 11).
@@ -903,7 +949,18 @@ export function bookingRoutes(db: Db, now: () => number, oneOffDays: number): Ho
       ["buffer_after", b.bufferAfter],
       ["max_per_day", b.maxPerDay],
       ["max_per_week", b.maxPerWeek],
-      ["location", b.location],
+      // `location` keeps the default's text for the reminder query.
+      ["location", b.locations && locationText(b.locations[0])],
+      ["locations", b.locations && JSON.stringify(b.locations)],
+      ["range_end_date", b.rangeEndDate],
+      [
+        "calendar_id",
+        b.calendarId === undefined ? undefined : ownCalendar(link.user_id, b.calendarId),
+      ],
+      [
+        "use_travel_buffer",
+        b.useTravelBuffer === undefined ? undefined : b.useTravelBuffer ? 1 : 0,
+      ],
       [
         "use_recovery_buffer",
         b.useRecoveryBuffer === undefined ? undefined : b.useRecoveryBuffer ? 1 : 0,
@@ -961,7 +1018,14 @@ export function bookingRoutes(db: Db, now: () => number, oneOffDays: number): Ho
     const user = c.get("user");
     const { link, owner } = editable(c.req.param("id"), user.id);
     const b = await jsonBody(c, linkChanges);
-    if (!owner && (b.slug !== undefined || b.hidden !== undefined || b.page !== undefined))
+    // The target calendar is the owner's own calendar (booking-links.md, targetCalendar).
+    if (
+      !owner &&
+      (b.slug !== undefined ||
+        b.hidden !== undefined ||
+        b.page !== undefined ||
+        b.calendarId !== undefined)
+    )
       forbidden();
     applyChanges(link, b);
     const saved = one<LinkRow>(db, "SELECT * FROM booking_links WHERE id = ?", link.id);
@@ -990,11 +1054,12 @@ export function bookingRoutes(db: Db, now: () => number, oneOffDays: number): Ho
         `INSERT INTO booking_links (id, user_id, slug, hidden, title, description, title_template, durations,
            level, hours_set_id, notice_minutes, range_end_days, buffer_before, buffer_after, max_per_day,
            max_per_week, location, created_at, use_recovery_buffer, branding, questions, reminder_enabled,
-           reminder_hours, reminder_message, reminder_saved_at, redirect_url, default_duration, source_id)
+           reminder_hours, reminder_message, reminder_saved_at, redirect_url, default_duration, source_id,
+           range_end_date, calendar_id, use_travel_buffer, locations)
          SELECT ?, ?, ?, 1, title, description, title_template, durations, level, hours_set_id,
            notice_minutes, range_end_days, buffer_before, buffer_after, max_per_day, max_per_week, location,
            ?, use_recovery_buffer, branding, questions, reminder_enabled, reminder_hours, reminder_message,
-           ?, redirect_url, default_duration, id
+           ?, redirect_url, default_duration, id, range_end_date, calendar_id, use_travel_buffer, locations
          FROM booking_links WHERE id = ?`,
         id,
         user.id,
@@ -1087,6 +1152,9 @@ interface MeetingFacts {
   hostId: string;
   participants: string[];
   answers: Answer[];
+  /** The chosen location's text and the booker's CC guests. */
+  location: string;
+  cc: string[];
   rescheduled?: number;
   cancelled?: number;
 }
@@ -1126,9 +1194,9 @@ function meetingObject(db: Db, link: LinkRow, b: MeetingFacts, baseUrl: string) 
     ...(b.cancelled ? { cancelled_at: iso(b.cancelled) } : {}),
     participants: people,
     attendee: { email: b.email, name: b.name },
-    ccs: [],
+    ccs: b.cc,
     message: b.message,
-    location: link.location ? { text: link.location } : null,
+    location: b.location ? { text: b.location } : null,
     answers: b.answers
       .filter((a) => a.answer)
       .map((a) => ({ question: a.question, answer: a.answer })),
@@ -1335,6 +1403,10 @@ export function publicBookingRoutes(
     email: z.email(),
     message: z.string().max(4000).optional(),
     answers: z.array(z.string().max(4000)).max(10).optional(),
+    /** Guests the booker adds (booking page details form). */
+    cc: z.array(z.email()).max(10).optional(),
+    /** The index of the chosen location option. */
+    location: z.number().int().min(0).max(9).optional(),
     timeZone: zoneInput,
     params: z
       .array(z.tuple([z.string().max(200), z.string().max(2000)]))
@@ -1342,8 +1414,14 @@ export function publicBookingRoutes(
       .optional(),
   });
 
-  const slotAt = (link: LinkRow, start: number, duration: number, resched?: string) =>
-    linkTimes(db, link, duration, start, start + duration * 60_000, now(), resched).find(
+  const slotAt = (
+    link: LinkRow,
+    start: number,
+    duration: number,
+    resched: string | undefined,
+    location: LocationOption | null,
+  ) =>
+    linkTimes(db, link, duration, start, start + duration * 60_000, now(), resched, location).find(
       (t) => t.start === start,
     );
 
@@ -1372,6 +1450,8 @@ export function publicBookingRoutes(
       answers: Answer[];
       people: string[];
       token: string | null;
+      location: string;
+      cc: string[];
     },
   ) =>
     notifyBooking(db, mailer, baseUrl, change, {
@@ -1379,9 +1459,10 @@ export function publicBookingRoutes(
       title: link.title,
       start: b.start,
       end: b.end,
-      location: link.location,
+      location: b.location,
       bookerName: b.name,
       bookerEmail: b.email,
+      cc: b.cc,
       bookerZone: b.zone,
       message: b.message,
       answers: b.answers,
@@ -1401,11 +1482,24 @@ export function publicBookingRoutes(
     const checked = checkAnswers(link, body.answers ?? []);
     if ("error" in checked) return c.json(checked, 400);
     const { answers } = checked;
+    const options = locationsOf(link);
+    if (body.location !== undefined && body.location >= Math.max(1, options.length))
+      return c.json({ error: "invalid_location" }, 400);
+    const chosen = options[body.location ?? 0] ?? null;
+    const location = locationText(chosen);
+    const cc = [...new Set((body.cc ?? []).map((e) => e.toLowerCase()))].filter(
+      (e) => e !== body.email.toLowerCase(),
+    );
     const zone = body.timeZone ?? zoneOf(db, link.user_id);
     const result = await sync.exclusive(link.user_id, async () => {
       // Check again inside the owner's queue so two bookers cannot take one slot.
-      const slot = slotAt(link, body.start, body.duration);
-      if (!slot) return { error: "slot_taken" as const };
+      const slot = slotAt(link, body.start, body.duration, undefined, chosen);
+      if (!slot) {
+        // The time is free, but not the travel time the chosen address needs (availability rule 10).
+        if (needsTravel(chosen) && slotAt(link, body.start, body.duration, undefined, null))
+          return { error: "no_travel_time" as const };
+        return { error: "slot_taken" as const };
+      }
       const plan = placementFor(db, link, slot, null, now());
       const id = randomUUID();
       const token = randomBytes(24).toString("base64url");
@@ -1415,8 +1509,8 @@ export function publicBookingRoutes(
       run(
         db,
         `INSERT INTO bookings (id, link_id, user_id, start_ms, end_ms, name, email, message, token_hash, status,
-           created_at, updated_at, custom_data, host_id, assignee_id, assigned_at, answers, time_zone)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'booked', ?, ?, ?, ?, ?, ?, ?, ?)`,
+           created_at, updated_at, custom_data, host_id, assignee_id, assigned_at, answers, time_zone, cc, location)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'booked', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         id,
         link.id,
         link.user_id,
@@ -1434,6 +1528,8 @@ export function publicBookingRoutes(
         plan.assignee ? now() : null,
         JSON.stringify(answers),
         zone,
+        JSON.stringify(cc),
+        location,
       );
       let placed: { calendarId: string; eventId: string } | null;
       try {
@@ -1445,8 +1541,10 @@ export function publicBookingRoutes(
             description: description(body.message ?? "", answers, token),
             start: body.start,
             end,
-            location: link.location,
+            location,
             bookerEmail: body.email,
+            cc,
+            calendarId: plan.hostId === link.user_id ? link.calendar_id : null,
           },
         });
       } catch (err) {
@@ -1479,6 +1577,8 @@ export function publicBookingRoutes(
             hostId: plan.hostId,
             participants: plan.parties.map((p) => p.userId),
             answers,
+            location,
+            cc,
           },
           baseUrl,
         ),
@@ -1493,17 +1593,24 @@ export function publicBookingRoutes(
         answers,
         people,
         token,
+        location,
+        cc,
       });
       return {
         token,
         start: body.start,
         end,
         organizers: organizerNames(db, link),
+        location,
         // Round robin: the confirmation names the assigned member (team rule 23).
         assignee: contact(db, plan.assignee),
       };
     });
-    if ("error" in result) return c.json(result, result.error === "slot_taken" ? 409 : 500);
+    if ("error" in result)
+      return c.json(
+        result,
+        result.error === "slot_taken" || result.error === "no_travel_time" ? 409 : 500,
+      );
     return c.json(result, 201);
   });
 
@@ -1517,7 +1624,11 @@ export function publicBookingRoutes(
       b.id,
     ).map((p) => p.user_id);
 
-  const facts = (b: BookingRow, title: string) => ({
+  const facts = (
+    b: BookingRow,
+    link: LinkRow | undefined,
+    title: string,
+  ): Omit<MeetingFacts, "start" | "end"> => ({
     id: b.id,
     title,
     name: b.name,
@@ -1528,6 +1639,8 @@ export function publicBookingRoutes(
     hostId: b.host_id ?? b.user_id,
     participants: participants(b),
     answers: JSON.parse(b.answers) as Answer[],
+    location: link ? locationText(bookedLocation(link, b.location)) : (b.location ?? ""),
+    cc: JSON.parse(b.cc) as string[],
   });
 
   r.get("/bookings/:token", (c) => {
@@ -1563,12 +1676,13 @@ export function publicBookingRoutes(
     const zone = timeZone ?? b.time_zone;
     const duration = (b.end_ms - b.start_ms) / 60_000;
     const end = start + duration * 60_000;
+    const where = bookedLocation(link, b.location);
     const result = await sync.exclusive(b.user_id, async () => {
-      const slot = slotAt(link, start, duration, b.id);
+      const slot = slotAt(link, start, duration, b.id, where);
       if (!slot) return { error: "slot_taken" as const };
       const plan = placementFor(db, link, slot, b.assignee_id, now());
       const title = eventTitle(link, plan.organizerName, b.name);
-      const before = facts(b, title);
+      const before = facts(b, link, title);
       let placed: { calendarId: string; eventId: string } | null;
       try {
         placed = await writeBookingEvents(
@@ -1584,8 +1698,10 @@ export function publicBookingRoutes(
               description: description(b.message, before.answers, token),
               start,
               end,
-              location: link.location,
+              location: locationText(where),
               bookerEmail: b.email,
+              cc: JSON.parse(b.cc) as string[],
+              calendarId: plan.hostId === link.user_id ? link.calendar_id : null,
             },
           },
         );
@@ -1612,7 +1728,7 @@ export function publicBookingRoutes(
         zone,
         b.id,
       );
-      const after = facts({ ...b, host_id: plan.hostId }, title);
+      const after = facts({ ...b, host_id: plan.hostId }, link, title);
       event(link.id, "booking_link.meeting.updated", {
         previous_meeting: meetingObject(
           db,
@@ -1633,6 +1749,8 @@ export function publicBookingRoutes(
         answers: before.answers,
         people: [plan.hostId, ...plan.parties.map((p) => p.userId)],
         token,
+        location: locationText(where),
+        cc: before.cc,
       });
       return { start, end, assignee: contact(db, plan.assignee) };
     });
@@ -1650,7 +1768,7 @@ export function publicBookingRoutes(
       const title = link
         ? eventTitle(link, organizerName(db, link, b.assignee_id), b.name)
         : b.name;
-      const before = facts(b, title);
+      const before = facts(b, link, title);
       await writeBookingEvents(
         db,
         sync,
@@ -1678,6 +1796,8 @@ export function publicBookingRoutes(
           answers: before.answers,
           people: [before.hostId, ...before.participants],
           token: null,
+          location: before.location,
+          cc: before.cc,
         });
       }
     });
