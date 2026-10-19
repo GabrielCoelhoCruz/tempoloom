@@ -1,6 +1,7 @@
 // Public tools: meeting cost calculator and pomodoro timer
 // (docs/specs/tools-meeting-cost-calculator.md, tools-pomodoro-timer.md).
 // Both work without sign-in; the timer keeps its data in this browser only.
+import { render } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 
 const OCCURRENCES = {
@@ -119,6 +120,9 @@ interface TimerSettings {
   long: number;
   autoStart: boolean;
   sound: boolean;
+  /** Rule 14: an ambient track during work sessions. */
+  bgAudio: boolean;
+  bgTrack: Track;
 }
 interface TimerLog {
   sessions: { at: number; minutes: number }[];
@@ -129,7 +133,15 @@ interface TimerLog {
 const KEY = "tempoloom.pomodoro";
 const load = (): { settings: TimerSettings; log: TimerLog } => {
   const fallback = {
-    settings: { work: 25, short: 5, long: 15, autoStart: false, sound: true },
+    settings: {
+      work: 25,
+      short: 5,
+      long: 15,
+      autoStart: false,
+      sound: true,
+      bgAudio: false,
+      bgTrack: "white" as Track,
+    },
     log: { sessions: [], started: [], breaks: [], tasks: [] },
   };
   try {
@@ -155,6 +167,75 @@ function beep(): void {
     osc.start();
     osc.stop(ctx.currentTime + 0.4);
   } catch {}
+}
+
+// Rule 14: ambient tracks made in the browser, so the page needs no audio files.
+type Track = "white" | "brown";
+const TRACKS: Record<Track, string> = { white: "White noise", brown: "Brown noise" };
+let ambient: { ctx: AudioContext; source: AudioBufferSourceNode } | undefined;
+
+function playTrack(track: Track): void {
+  stopTrack();
+  try {
+    const ctx = new AudioContext();
+    const buffer = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    let last = 0;
+    for (let i = 0; i < data.length; i++) {
+      const white = Math.random() * 2 - 1;
+      last = (last + 0.02 * white) / 1.02;
+      data[i] = track === "white" ? white * 0.3 : last * 3;
+    }
+    const source = ctx.createBufferSource();
+    source.buffer = buffer;
+    source.loop = true;
+    const gain = ctx.createGain();
+    gain.gain.value = 0.25;
+    source.connect(gain).connect(ctx.destination);
+    source.start();
+    ambient = { ctx, source };
+  } catch {}
+}
+
+function stopTrack(): void {
+  if (!ambient) return;
+  ambient.source.stop();
+  void ambient.ctx.close();
+  ambient = undefined;
+}
+
+/** Rule 13: a small timer that stays in view, in its own window. */
+function MiniTimer(p: { phase: string; time: string; running: boolean; onToggle: () => void }) {
+  return (
+    <div style={{ font: "14px system-ui, sans-serif", textAlign: "center", padding: "8px" }}>
+      <div data-testid="mini-phase">{p.phase}</div>
+      <div data-testid="mini-timer" style={{ fontSize: "32px", fontWeight: 600 }}>
+        {p.time}
+      </div>
+      <button type="button" onClick={p.onToggle}>
+        {p.running ? "Pause" : "Start"}
+      </button>
+    </div>
+  );
+}
+
+/** Picture-in-picture where the browser offers it (always on top), else a small popup window. */
+async function openMiniWindow(): Promise<Window | null> {
+  const pip = (
+    window as {
+      documentPictureInPicture?: {
+        requestWindow(o: { width: number; height: number }): Promise<Window>;
+      };
+    }
+  ).documentPictureInPicture;
+  if (pip) {
+    try {
+      return await pip.requestWindow({ width: 240, height: 130 });
+    } catch {}
+  }
+  const win = window.open("", "tempoloom-pomodoro-mini", "popup,width=260,height=150");
+  if (win) win.document.title = "Pomodoro timer";
+  return win;
 }
 
 export function counters(log: TimerLog, now: number) {
@@ -186,6 +267,7 @@ export function Pomodoro() {
   const [running, setRunning] = useState(false);
   const [sinceLong, setSinceLong] = useState(0);
   const [showSettings, setShowSettings] = useState(false);
+  const [mini, setMini] = useState<Window | null>(null);
   const endAt = useRef<number | null>(null);
 
   useEffect(() => localStorage.setItem(KEY, JSON.stringify({ settings, log })), [settings, log]);
@@ -228,7 +310,9 @@ export function Pomodoro() {
   useEffect(() => {
     if (!running) return;
     const t = setInterval(() => {
-      const rest = Math.max(0, Math.round(((endAt.current ?? Date.now()) - Date.now()) / 1000));
+      // Paused or reset: this interval may fire once more before its cleanup runs.
+      if (endAt.current === null) return;
+      const rest = Math.max(0, Math.round((endAt.current - Date.now()) / 1000));
       setLeft(rest);
       if (rest === 0) finish();
     }, 250);
@@ -237,6 +321,42 @@ export function Pomodoro() {
 
   const mm = String(Math.floor(left / 60)).padStart(2, "0");
   const ss = String(left % 60).padStart(2, "0");
+  const toggle = () => {
+    if (running) {
+      setRunning(false);
+      endAt.current = null;
+    } else {
+      endAt.current = Date.now() + left * 1000;
+      setRunning(true);
+      if (phase === "work" && left === length("work"))
+        setLog((l) => ({ ...l, started: [...l.started, Date.now()] }));
+    }
+  };
+  const background = running && phase === "work" && settings.bgAudio;
+  useEffect(() => {
+    if (background) playTrack(settings.bgTrack);
+    else stopTrack();
+  }, [background, settings.bgTrack]);
+  useEffect(() => stopTrack, []);
+  useEffect(() => {
+    if (!mini) return;
+    if (mini.closed) return setMini(null);
+    render(
+      <MiniTimer
+        phase={PHASE_LABEL[phase]}
+        time={`${mm}:${ss}`}
+        running={running}
+        onToggle={toggle}
+      />,
+      mini.document.body,
+    );
+  });
+  useEffect(() => {
+    if (!mini) return;
+    const gone = () => setMini(null);
+    mini.addEventListener("pagehide", gone);
+    return () => mini.removeEventListener("pagehide", gone);
+  }, [mini]);
   useEffect(() => {
     document.title = running ? `${mm}:${ss} · ${PHASE_LABEL[phase]}` : "Pomodoro timer · Tempoloom";
   }, [running, mm, ss, phase]);
@@ -283,27 +403,27 @@ export function Pomodoro() {
         Sessions to long break {sinceLong}/4
       </p>
       <div class="actions">
-        <button
-          type="button"
-          class="primary"
-          onClick={() => {
-            if (running) {
-              setRunning(false);
-              endAt.current = null;
-            } else {
-              endAt.current = Date.now() + left * 1000;
-              setRunning(true);
-              if (phase === "work" && left === length("work"))
-                setLog((l) => ({ ...l, started: [...l.started, Date.now()] }));
-            }
-          }}
-        >
+        <button type="button" class="primary" onClick={toggle}>
           {running ? "Pause" : "Start"}
         </button>
         <button type="button" onClick={() => select(phase)}>
           Reset
         </button>
+        <button
+          type="button"
+          onClick={() => {
+            if (mini && !mini.closed) mini.focus();
+            else void openMiniWindow().then(setMini);
+          }}
+        >
+          Mini window
+        </button>
       </div>
+      {background && (
+        <p class="status" data-testid="bg-audio">
+          Playing: {TRACKS[settings.bgTrack]}
+        </p>
+      )}
       {showSettings && (
         <div class="form" data-testid="timer-settings">
           {(["work", "short", "long"] as const).map((k) => (
@@ -337,6 +457,29 @@ export function Pomodoro() {
               onChange={(e) => setSettings({ ...settings, sound: e.currentTarget.checked })}
             />
             Play a sound at the end of a phase
+          </label>
+          <label class="inline">
+            <input
+              type="checkbox"
+              checked={settings.bgAudio}
+              onChange={(e) => setSettings({ ...settings, bgAudio: e.currentTarget.checked })}
+            />
+            Background audio in work sessions
+          </label>
+          <label>
+            Track
+            <select
+              value={settings.bgTrack}
+              onChange={(e) =>
+                setSettings({ ...settings, bgTrack: e.currentTarget.value as Track })
+              }
+            >
+              {(Object.keys(TRACKS) as Track[]).map((t) => (
+                <option value={t} key={t}>
+                  {TRACKS[t]}
+                </option>
+              ))}
+            </select>
           </label>
         </div>
       )}

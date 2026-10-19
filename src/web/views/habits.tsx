@@ -16,6 +16,13 @@ import {
   MonthlyFields,
   readFrequency,
 } from "./habit-editor.tsx";
+import {
+  describeWeekly,
+  type HoursChoice,
+  HoursField,
+  ITEM,
+  itemHoursFrom,
+} from "./hours-field.tsx";
 
 interface Habit {
   id: string;
@@ -28,12 +35,8 @@ interface Habit {
   frequency: string;
   defense: string;
   event_settings: string;
-}
-
-interface HoursSet {
-  id: string;
-  kind: string;
-  name: string;
+  /** JSON weekly ranges when the habit has item-specific hours. */
+  item_hours: string | null;
 }
 
 const TeamHabitTemplates = lazyComponent(() =>
@@ -54,7 +57,7 @@ const withEmoji = (h: Habit) => {
 
 export function Habits() {
   const [habits, setHabits] = useState<Habit[]>([]);
-  const [hours, setHours] = useState<HoursSet[]>([]);
+  const [hours, setHours] = useState<HoursChoice[]>([]);
   const [error, setError] = useState<string | null>(null);
   // A library entry fills the form (automations-library.md rule 5).
   const template = templateFromUrl();
@@ -71,7 +74,7 @@ export function Habits() {
   const load = useCallback(async () => {
     const [h, hs] = await Promise.all([
       api<{ habits: Habit[] }>("GET", "/api/habits"),
-      api<{ hours: HoursSet[] }>("GET", "/api/hours"),
+      api<{ hours: HoursChoice[] }>("GET", "/api/hours"),
     ]);
     setHabits(h.habits);
     setHours(hs.hours);
@@ -114,7 +117,11 @@ export function Habits() {
         ...(words.length ? { reservedWords: words } : {}),
         ...(text("starting") ? { starting: text("starting") } : {}),
         ...(text("notes") ? { notes: text("notes") } : {}),
-        ...(text("hoursSetId") ? { hoursSetId: text("hoursSetId") } : {}),
+        ...(text("hoursSetId") === ITEM
+          ? { itemHours: itemHoursFrom(f) }
+          : text("hoursSetId")
+            ? { hoursSetId: text("hoursSetId") }
+            : {}),
         eventSettings: eventSettingsFrom(f),
         ...(preset && template ? { templateId: template.slug } : {}),
       });
@@ -201,23 +208,11 @@ export function Habits() {
             ))}
           </select>
         </label>
-        <label>
-          Hours
-          <select name="hoursSetId">
-            <option value="">Work hours</option>
-            {hours
-              .filter((h) => h.kind !== "work")
-              .map((h) => (
-                <option
-                  value={h.id}
-                  key={h.id}
-                  selected={preset?.hours === "personal" && h.id === personal}
-                >
-                  {h.name}
-                </option>
-              ))}
-          </select>
-        </label>
+        <HoursField
+          sets={hours}
+          allowItem
+          initial={preset?.hours === "personal" && personal ? personal : ""}
+        />
         <label>
           Show as
           <select name="defense">
@@ -290,6 +285,9 @@ export function Habits() {
                   {LEVEL_NAMES[h.level]} · ideal {hhmm(h.ideal_minute)} · {duration(h.min_minutes)}{" "}
                   to {duration(h.max_minutes)} · {frequencyText(f)} ·{" "}
                   {DEFENSE[h.defense] ?? h.defense}
+                  {h.item_hours
+                    ? ` · Item-specific hours: ${describeWeekly(JSON.parse(h.item_hours))}`
+                    : ""}
                   {h.enabled ? "" : " · off"} <PolicyMark id={h.id} />
                 </div>
               </div>

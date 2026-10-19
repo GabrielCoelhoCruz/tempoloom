@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "preact/hooks";
+import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { CATEGORIES } from "../../scheduler/categories.ts";
 import type { ReportEntry } from "../../scheduler/model.ts";
 import type { PlannerEvent } from "../../server/api/planner.ts";
@@ -8,12 +8,21 @@ import { CATEGORY_LABELS } from "../lib/categories.ts";
 import { formatWhen } from "../lib/format.ts";
 import { lazyComponent } from "../lib/lazy.ts";
 import { useLive } from "../lib/live.ts";
+import { blockPreview, conflictIds, extraZone, plannerReload } from "../lib/planner-signals.ts";
 import { overlay, withPreview } from "../lib/preview.ts";
 import { planNow, zone } from "../lib/state.ts";
 import { WeekView } from "./week.tsx";
 
 // The Issues and Recommendations panel loads on demand, after the week view.
 const IssuesPanel = lazyComponent(() => import("./issues-panel.tsx").then((m) => m.IssuesPanel));
+// Parts that load after the planner (docs/performance.md): the now line, prompts and event notes.
+const NowBar = lazyComponent<{ from: number; to: number }>(() =>
+  import("./planner-now.tsx").then((m) => m.NowBar),
+);
+const TravelPrompt = lazyComponent(() => import("./planner-now.tsx").then((m) => m.TravelPrompt));
+const EventExtras = lazyComponent<{ event: PlannerEvent; onDone: () => void }>(() =>
+  import("./planner-now.tsx").then((m) => m.EventExtras),
+);
 
 const REASONS: Record<string, string> = {
   "outside-window": "starts after the scheduling window",
@@ -63,6 +72,8 @@ export function Planner() {
   const [selected, setSelected] = useState<PlannerEvent | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // A planner link (?item=task:<id>, planning-event-content.md CNT-10) opens that item's event.
+  const openItem = useRef(new URLSearchParams(location.search).get("item"));
   const days = useMemo(
     () => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)),
     [weekStart],
@@ -77,6 +88,11 @@ export function Planner() {
     ]);
     setEvents(ev.events);
     setReport(rep.report);
+    const want = openItem.current;
+    if (want?.startsWith("event:")) {
+      openItem.current = null;
+      setSelected(ev.events.find((e) => e.id === want.slice(6)) ?? null);
+    }
   }, [z, weekStart]);
 
   useEffect(() => {
@@ -85,6 +101,23 @@ export function Planner() {
     return () => clearInterval(t);
   }, [load]);
   useLive(load);
+  useEffect(() => {
+    if (plannerReload.value > 0) void load();
+  }, [plannerReload.value]);
+  useEffect(() => {
+    const ref = openItem.current;
+    if (!ref) return;
+    void api<{ event: { id: string; start: number } | null }>(
+      "GET",
+      `/api/now/item?ref=${encodeURIComponent(ref)}`,
+    ).then(({ event }) => {
+      if (!event) return;
+      openItem.current = `event:${event.id}`;
+      const week = mondayOf(z, event.start);
+      if (week === weekStart) void load();
+      else setWeekStart(week);
+    });
+  }, []);
 
   const run = async (fn: () => Promise<unknown>) => {
     setBusy(true);
@@ -100,7 +133,38 @@ export function Planner() {
     }
   };
 
+  const preview = blockPreview.value;
+  const shown = useMemo(
+    () => [
+      ...events,
+      ...(preview?.blocks.map(
+        (b): PlannerEvent => ({
+          ...b,
+          title: preview.title,
+          kind: "preview",
+          busy: true,
+          locked: false,
+          movable: true,
+          sourceId: null,
+          manualCategory: null,
+          description: "",
+        }),
+      ) ?? []),
+    ],
+    [events, preview],
+  );
+
   const onMove = (id: string, start: number) => {
+    if (preview && id.startsWith("preview:")) {
+      // NXT-50: the user changes a proposed block before applying it.
+      blockPreview.value = {
+        ...preview,
+        blocks: preview.blocks.map((b) =>
+          b.id === id ? { ...b, start, end: start + (b.end - b.start) } : b,
+        ),
+      };
+      return;
+    }
     // Optimistic: show the event at its new place at once.
     setEvents((list) =>
       list.map((e) =>
@@ -146,6 +210,10 @@ export function Planner() {
           Plan now
         </button>
       </div>
+      <div class="now-bar" data-testid="now-bar">
+        <NowBar from={localToUtc(z, weekStart, 0)} to={localToUtc(z, addDays(weekStart, 7), 0)} />
+      </div>
+      <TravelPrompt />
       <PlannerHints />
       <PreviewPanel onApplied={() => void load()} />
       <FocusProgress week={weekStart} />
@@ -153,10 +221,12 @@ export function Planner() {
       <WeekView
         days={days}
         zone={z}
-        events={withPreview(events, overlay.value)}
+        events={withPreview(shown, overlay.value)}
         now={Date.now()}
         onMove={onMove}
         onSelect={(id) => setSelected(events.find((e) => e.id === id) ?? null)}
+        flagged={conflictIds.value}
+        extraZone={extraZone.value}
       />
       <IssuesPanel />
       {report.length > 0 && (
@@ -183,6 +253,7 @@ export function Planner() {
             {selected.locked && selected.kind !== "external" ? " · locked" : ""}
             {selected.category ? ` · ${CATEGORY_LABELS[selected.category]}` : ""}
           </div>
+          <EventExtras event={selected} onDone={() => setSelected(null)} />
           <label class="inline">
             Category
             <select

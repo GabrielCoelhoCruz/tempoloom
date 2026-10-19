@@ -64,6 +64,11 @@ and can be tied to focus time and habit events through saved task searches.
   is in progress now; otherwise the task with the earliest future chunk today;
   otherwise the first open task in scheduler order. With suggestions only,
   it is the first item of "Suggested now".
+  Tempoloom decision: the planner shows it on the line above the week
+  ("Next up"). "Today" is the local day in the planning zone. "Scheduler
+  order" here and in NXT-32 and NXT-33 means: next-up rank, then priority,
+  then due date (no due date last), then more remaining work, then creation
+  time; the scheduler's urgency lifts are not used.
 
 ### Task suggestions (current reference)
 
@@ -81,6 +86,12 @@ and can be tied to focus time and habit events through saved task searches.
 - **NXT-33.** Proposed default rule for "At risk": open tasks that are past
   due, or that the scheduler could not fully place before the due date, or
   (with suggestions only) that are due within 48 hours.
+  Tempoloom decision: both lists open from the "Tasks" button on the line
+  above the week. A task in "At risk" has work left and a due date, and
+  shows why it is there. The task search filter of NXT-32 belongs to saved
+  task searches (NXT-40 to NXT-45). The details of a focus time event list
+  "Suggested tasks": the first 5 open tasks that may start by the block's
+  start, in scheduler order (`platform-current-version.md` rule 9).
 - **NXT-34.** The user can ask the assistant chat which task to do next, for a
   short task, or for another choice (E-0192, E-0098).
 
@@ -117,6 +128,12 @@ and can be tied to focus time and habit events through saved task searches.
   Tempoloom proposes one or more work-block events as a preview. The user
   changes, discards or applies them (E-0192). Chat details: assistant chat
   spec.
+  Tempoloom decision: without the assistant chat, the request is a "Block
+  time" button on a task in "Suggested now" (task placement `suggestions`).
+  Tempoloom proposes the events that the scheduler would place for that task
+  now, draws them dashed in the week and writes nothing. The user drags a
+  block to change it, then applies or discards all of them. Applied blocks
+  are locked, busy task events on the calendar of the task's hours set.
 
 ## Outputs
 

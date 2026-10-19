@@ -75,7 +75,7 @@ export function settingsRoutes(db: Db, sync: SyncService, now: () => number): Ho
         task_calendar_id: string | null;
       }>(
         db,
-        "SELECT id, kind, name, weekly, task_calendar_id FROM hours_sets WHERE user_id = ? ORDER BY created_at",
+        "SELECT id, kind, name, weekly, task_calendar_id FROM hours_sets WHERE user_id = ? AND item_specific = 0 ORDER BY created_at",
         c.get("user").id,
       ).map((h) => ({ ...h, weekly: JSON.parse(h.weekly) })),
     }),

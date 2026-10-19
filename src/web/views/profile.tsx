@@ -1,0 +1,121 @@
+// Profile page (docs/specs/settings-profile.md PRF-1, PRF-4, PRF-8): the
+// fields that come from the calendar account are read-only; the user's own
+// fields are saved when they change.
+import { useState } from "preact/hooks";
+import type { Settings } from "../../server/settings.ts";
+import { COMPANY_SIZES, USE_CASES } from "../../shared/profile.ts";
+import { api } from "../lib/api.ts";
+import { loadMe, me } from "../lib/state.ts";
+
+const USE_CASE_LABELS: Record<(typeof USE_CASES)[number], string> = {
+  work: "Work",
+  personal: "Personal",
+  both: "Work and personal",
+};
+
+export function ProfilePage() {
+  const m = me.value;
+  const [message, setMessage] = useState<string | null>(null);
+  if (!m) return null;
+  const profile = m.settings.profile;
+  const save = async (patch: Partial<Settings["profile"]>) => {
+    setMessage(null);
+    try {
+      await api("PATCH", "/api/settings", { profile: patch });
+      await loadMe();
+      setMessage("Saved");
+    } catch {
+      setMessage("That did not save. Try again.");
+    }
+  };
+  return (
+    <div class="page" data-testid="profile-page">
+      <h1>Profile</h1>
+      {message && (
+        <p class="status notice" data-testid="profile-message">
+          {message}
+        </p>
+      )}
+      <section data-testid="profile-fixed">
+        <h2>From your calendar account</h2>
+        <div class="list">
+          <div class="row">
+            <span>Name</span>
+            <strong>{m.user.name}</strong>
+          </div>
+          <div class="row">
+            <span>Email</span>
+            <strong>{m.user.email}</strong>
+          </div>
+          <div class="row">
+            <span>Time zone</span>
+            <strong>{m.user.time_zone}</strong>
+          </div>
+          <div class="row">
+            <span>Week starts on</span>
+            <strong>{m.settings.weekStart === 7 ? "Sunday" : "Monday"}</strong>
+          </div>
+        </div>
+        <p class="status">
+          Change these in your calendar account; Tempoloom reads them from there. Plan in another
+          zone for a while with a travel time zone in Settings.
+        </p>
+      </section>
+      <section>
+        <h2>About you</h2>
+        <div class="form">
+          <label>
+            Job title
+            <input
+              maxLength={100}
+              value={profile.jobTitle}
+              onChange={(e) => void save({ jobTitle: e.currentTarget.value })}
+            />
+          </label>
+          <label>
+            Company
+            <input
+              maxLength={100}
+              value={profile.company}
+              onChange={(e) => void save({ company: e.currentTarget.value })}
+            />
+          </label>
+          <label>
+            Company size
+            <select
+              value={profile.companySize}
+              onChange={(e) =>
+                void save({
+                  companySize: e.currentTarget.value as Settings["profile"]["companySize"],
+                })
+              }
+            >
+              <option value="">Not set</option>
+              {COMPANY_SIZES.map((s) => (
+                <option value={s} key={s}>
+                  {s === "1" ? "Just me" : `${s} people`}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Use case
+            <select
+              value={profile.useCase}
+              onChange={(e) =>
+                void save({ useCase: e.currentTarget.value as Settings["profile"]["useCase"] })
+              }
+            >
+              <option value="">Not set</option>
+              {USE_CASES.map((u) => (
+                <option value={u} key={u}>
+                  {USE_CASE_LABELS[u]}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+      </section>
+    </div>
+  );
+}

@@ -1,3 +1,4 @@
+import { signal } from "@preact/signals";
 import type { ComponentChildren } from "preact";
 import { render } from "preact";
 import { useEffect, useState } from "preact/hooks";
@@ -62,6 +63,20 @@ const Automations = lazyComponent(() =>
 const AutomationForm = lazyComponent(() =>
   import("./views/automation-form.tsx").then((m) => m.AutomationForm),
 );
+// r3 s3: profile page, New task form (TSK-5, TSK-6) and event start alerts (NTF-1, NTF-2).
+const ProfilePage = lazyComponent(() => import("./views/profile.tsx").then((m) => m.ProfilePage));
+const NewTaskDialog = lazyComponent<{ onClose: () => void }>(() =>
+  import("./views/task-dialog.tsx").then((m) => m.NewTaskDialog),
+);
+const Alerts = lazyComponent(() => import("./views/alerts.tsx").then((m) => m.Alerts));
+const newTask = signal(false);
+addEventListener("keydown", (e) => {
+  const t = e.target as HTMLElement | null;
+  if (e.key !== "c" || e.ctrlKey || e.metaKey || e.altKey || !me.value) return;
+  if (t?.closest("input, textarea, select, [contenteditable], [role=dialog]")) return;
+  e.preventDefault();
+  newTask.value = true;
+});
 
 const NAV: { href: string; label: string }[] = [
   { href: "/", label: "Planner" },
@@ -268,6 +283,8 @@ function Page() {
       return <MeetingChecks />;
     case "/automations":
       return <Automations />;
+    case "/profile":
+      return <ProfilePage />;
     default:
       if (path.value.startsWith("/join/")) return <JoinPage token={path.value.slice(6)} />;
       if (path.value === "/help" || path.value.startsWith("/help/")) return <HelpPage />;
@@ -293,6 +310,9 @@ function App() {
       <nav class="nav">
         <div class="brand">Tempoloom</div>
         <CreateMenu />
+        <button type="button" class="primary" onClick={() => (newTask.value = true)}>
+          New task
+        </button>
         {NAV.map((n) => (
           <Link href={n.href} key={n.href}>
             {n.label}
@@ -313,6 +333,8 @@ function App() {
         {!me.value.accounts.some((a) => !a.viaGrant) && <ConnectCalendar />}
         <Page />
       </main>
+      {newTask.value && <NewTaskDialog onClose={() => (newTask.value = false)} />}
+      <Alerts />
     </div>
   );
 }

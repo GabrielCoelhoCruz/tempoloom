@@ -899,3 +899,16 @@ fieldset {
   align-items: end;
   margin: 8px 0;
 }
+
+/* r3 s3: the planner's now line; its parts load later (src/web/views/parts.css) */
+.now-bar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 38px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+  white-space: nowrap;
+}

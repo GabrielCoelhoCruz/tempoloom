@@ -56,6 +56,12 @@ of ranges instead of a named set. It is not saved as a named set and other
 items cannot use it. Tasks cannot use item-specific hours (E-0172, E-0077,
 E-0081, E-0176).
 
+Tempoloom decision: habits have item-specific hours: the chosen weekdays,
+each with one range. Tempoloom keeps them as a hidden set that no hours menu
+or hours page lists and no other item can use; it goes with the habit. Focus
+time, flexible meetings and booking links do not offer item-specific hours
+yet.
+
 ## Behavior
 
 - **HRS-1.** The scheduler places an item only inside the ranges of its hours
@@ -82,10 +88,17 @@ E-0081, E-0176).
 - **HRS-10.** To delete a custom set, the user opens its menu and picks
   delete. If items use the set, Tempoloom first asks the user to choose
   another set for them (E-0172).
+  Tempoloom decision: the replacement can be any other named set. Tasks,
+  habits, focus time and flexible meetings that use the set move to it and
+  are placed again; booking links that used it fall back to the meeting
+  hours. A set that no item uses goes after a plain confirmation.
 - **HRS-11.** In an item's editor, the hours menu lists the built-in sets,
   the custom sets allowed for that kind, and (except for tasks)
   "item-specific hours". An info icon next to the menu shows a preview of the
   chosen set's ranges and a link to the hours page (E-0172).
+  Tempoloom decision: the preview lists each weekday with its ranges ("off"
+  for a day without hours) and a link "Edit hours" to the hours section of
+  Settings. Task and habit editors have it.
 - **HRS-12.** Each set has a "calendar for task chunks" menu. Task chunks that
   use the set go to that calendar (E-0172, E-0193; `planning-tasks.md`
   TSK-50).
@@ -98,6 +111,10 @@ E-0081, E-0176).
 - **HRS-15.** First run: after the user connects the primary calendar,
   Tempoloom asks the user to review work, meeting and personal hours
   (E-0098).
+  Tempoloom decision: the line above the planner's week asks a new user to
+  review the hours. "Review hours" opens the three built-in sets in a
+  dialog; "Done", or "Looks right" on that line, records the review, and the
+  question does not come back.
 - **HRS-16.** Ranges are wall-clock times. On a day with a daylight-saving
   change, a range keeps its wall-clock start and end. Proposed default.
 
@@ -130,6 +147,11 @@ Tempoloom has no plans; custom sets are always available.
    Tempoloom must not change the home time zone from the browser without the
    user's confirmation. Proposed default; E-0222 shows the reference can set
    a wrong zone this way.
+   Tempoloom decision: the home zone changes only in Settings. The planner's
+   travel prompt (`timezones-home-and-travel.md` rule 11) says that an
+   extension or a privacy setting can make a browser report UTC. The hours
+   page names the zone in which hours apply now; during a trip it names the
+   travel zone and the trip's last date, so a forgotten trip is found.
 
 ## Observed API shapes
 

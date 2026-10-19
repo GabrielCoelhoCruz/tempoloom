@@ -32,11 +32,13 @@ import { delegationGuard, delegationRoutes } from "./api/delegation.ts";
 import { eventActionRoutes } from "./api/event-actions.ts";
 import { focusExtraRoutes } from "./api/focus-extras.ts";
 import { helpRoutes } from "./api/help.ts";
+import { hoursExtraRoutes } from "./api/hours-extra.ts";
 import { insightRoutes } from "./api/insights.ts";
 import { itemRoutes } from "./api/items.ts";
 import { meetingCheckRoutes } from "./api/meeting-checks.ts";
 import { meetingRoutes } from "./api/meetings.ts";
 import { mirrorRoutes } from "./api/mirrors.ts";
+import { nowRoutes } from "./api/now.ts";
 import { oooRoutes } from "./api/ooo.ts";
 import { plannerRoutes } from "./api/planner.ts";
 import { policyRoutes } from "./api/policies.ts";
@@ -47,8 +49,10 @@ import { settingsRoutes } from "./api/settings.ts";
 import { ssoAdminRoutes, ssoAuthRoutes } from "./api/sso.ts";
 import { statsRoutes } from "./api/stats.ts";
 import { taskSearchRoutes } from "./api/task-searches.ts";
+import { taskTimeRoutes } from "./api/task-time.ts";
 import { publicInviteRoutes, teamRoutes } from "./api/team.ts";
 import { teamDefaultRoutes } from "./api/team-defaults.ts";
+import { travelRoutes } from "./api/travel.ts";
 import { webhookRoutes } from "./api/webhooks.ts";
 import { apiKeyUser } from "./api-keys.ts";
 import type { Config } from "./config.ts";
@@ -457,6 +461,11 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   app.route("/api", mirrorRoutes(db, sync, now));
   app.route("/api/booking", bookingViewerRoutes(db, now));
   app.route("/api/booking", bookingShareRoutes(db, now));
+  // r3 s3: planner now line, task time, travel time zones, hours deletion.
+  app.route("/api", nowRoutes(db, now));
+  app.route("/api", taskTimeRoutes(db, sync, config.BASE_URL, now));
+  app.route("/api", travelRoutes(db, sync, now));
+  app.route("/api", hoursExtraRoutes(db, sync, now));
 
   // Static client with a single-page fallback. Text files are compressed once
   // per encoding and kept in memory; the build output does not change at run time.

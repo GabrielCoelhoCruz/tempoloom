@@ -92,6 +92,16 @@ export function AccountMenu() {
           )}
           <a
             role="menuitem"
+            href="/profile"
+            onClick={(e) => {
+              setOpen(false);
+              onLinkClick(e);
+            }}
+          >
+            Profile
+          </a>
+          <a
+            role="menuitem"
             href="/account"
             onClick={(e) => {
               setOpen(false);

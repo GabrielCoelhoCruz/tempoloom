@@ -59,6 +59,10 @@ import from a closed competitor, which Tempoloom does not need.
    placed automatically. The system instead suggests tasks to work on
    during the user's free focus time. The task list itself carries over.
    The core planning area must specify this; this spec only records it.
+   Tempoloom decision: with task placement `suggestions`
+   (`planning-tasks.md` TSK-70) tasks get no events of their own, and the
+   details of a focus time event list the suggested tasks
+   (`planning-next-up.md` NXT-33).
 
 ### Upgrade from legacy
 

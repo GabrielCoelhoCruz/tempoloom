@@ -1,6 +1,8 @@
+import type { ComponentChildren } from "preact";
 import { useCallback, useEffect, useState } from "preact/hooks";
 import { CATEGORIES } from "../../scheduler/categories.ts";
 import type { Settings as UserSettings } from "../../server/settings.ts";
+import { defaultEventSettings, readEventSettings } from "../../shared/event-settings.ts";
 import { api } from "../lib/api.ts";
 import { CATEGORY_LABELS, COLORS } from "../lib/categories.ts";
 import { hhmm, parseHhmm } from "../lib/format.ts";
@@ -10,6 +12,14 @@ import { loadMe, me, planNow } from "../lib/state.ts";
 import { BufferEditor } from "./buffer-editor.tsx";
 import { FocusOptionsList, MeetingOverloadSection } from "./focus-options.tsx";
 import { MeetingSettings } from "./meeting-settings.tsx";
+import {
+  AlertSettings,
+  DeleteHoursSet,
+  FocusNotes,
+  HoursZoneNote,
+  PlacementSetting,
+  TravelSettings,
+} from "./settings-extra.tsx";
 
 interface HoursSet {
   id: string;
@@ -30,9 +40,11 @@ const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 export function HoursEditor({
   set,
   onSave,
+  children,
 }: {
   set: HoursSet;
   onSave: (weekly: HoursSet["weekly"]) => Promise<void>;
+  children?: ComponentChildren;
 }) {
   const [weekly, setWeekly] = useState(set.weekly);
   const update = (day: string, i: number, which: 0 | 1, value: string) => {
@@ -90,6 +102,7 @@ export function HoursEditor({
       <button type="button" class="primary" onClick={() => void onSave(weekly)}>
         Save {set.name.toLowerCase()}
       </button>
+      {children}
     </div>
   );
 }
@@ -108,9 +121,9 @@ export function Settings() {
       calendar_scope: string | null;
     }[]
   >([]);
-  const [focus, setFocus] = useState<{ id: string; title: string; weekly_goal_minutes: number }[]>(
-    [],
-  );
+  const [focus, setFocus] = useState<
+    { id: string; title: string; weekly_goal_minutes: number; event_settings: string }[]
+  >([]);
   // The buffer editor's calendar scope lists the connected calendars.
   const [calendars, setCalendars] = useState<{ id: string; name: string }[]>([]);
   const [message, setMessage] = useState<string | null>(null);
@@ -132,6 +145,12 @@ export function Settings() {
     await loadPolicyMarks();
   }, []);
   useEffect(() => void load(), [load]);
+  // The hours preview of item editors links here (planning-hours.md HRS-11).
+  const ready = settings !== null;
+  useEffect(() => {
+    if (ready && new URLSearchParams(location.search).get("section") === "hours")
+      document.getElementById("hours")?.scrollIntoView();
+  }, [ready]);
 
   const act = async (fn: () => Promise<unknown>, done = "Saved") => {
     setMessage(null);
@@ -240,17 +259,23 @@ export function Settings() {
               <option value="paused">Paused</option>
             </select>
           </label>
+          <PlacementSetting settings={settings} act={act} />
         </div>
       </section>
 
-      <section>
+      <AlertSettings settings={settings} act={act} />
+
+      <section id="hours">
         <h2>Hours</h2>
+        <HoursZoneNote />
         {hours.map((h) => (
           <HoursEditor
             key={h.id}
             set={h}
             onSave={(weekly) => act(() => api("PUT", `/api/hours/${h.id}`, { weekly }))}
-          />
+          >
+            {h.kind === "custom" && <DeleteHoursSet set={h} sets={hours} act={act} />}
+          </HoursEditor>
         ))}
         <form
           class="actions"
@@ -285,6 +310,8 @@ export function Settings() {
           <button type="submit">+ Custom hours</button>
         </form>
       </section>
+
+      <TravelSettings />
 
       <CalendarSettings />
       <MirrorSettings />
@@ -463,6 +490,14 @@ export function Settings() {
               <span>
                 {f.title} · {f.weekly_goal_minutes / 60} h per week <PolicyMark id={f.id} />
               </span>
+              <FocusNotes
+                id={f.id}
+                notes={
+                  readEventSettings(f.event_settings, defaultEventSettings("focus_time"))
+                    .description
+                }
+                act={act}
+              />
               {!policyMarks.value[f.id] && (
                 <button
                   type="button"

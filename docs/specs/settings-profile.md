@@ -44,6 +44,11 @@ Google. The user edits a few other profile fields in Tempoloom.
 - **PRF-7.** Hours sets use `timeZone` (E-0172; `planning-hours.md` HRS-13).
 - **PRF-8.** `jobTitle`, `company`, `companySize` and `useCase` are saved when
   the user changes them (E-0199).
+  Tempoloom decision: the user menu has "Profile". The page shows name,
+  email, time zone and week start without inputs, with a note to change them
+  in the calendar account, and the four fields, saved as each one changes.
+  Choices: `companySize` 1, 2-10, 11-50, 51-200, 201-1000, 1001+; `useCase`
+  work, personal, both (open question 2).
 
 ## Outputs
 

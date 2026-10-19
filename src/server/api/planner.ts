@@ -30,6 +30,8 @@ export interface PlannerEvent {
   locked: boolean;
   movable: boolean;
   sourceId: string | null;
+  /** Markdown notes of the event (planning-event-content.md CNT-12). */
+  description: string;
 }
 
 const range = z.object({ from: z.coerce.number().int(), to: z.coerce.number().int() });
@@ -78,6 +80,7 @@ export function plannerEvents(db: Db, userId: string, from: number, to: number):
     locked: m.locked === 1,
     movable: true,
     sourceId: m.source_id,
+    description: m.description,
   }));
   const levels = new Map(
     all<{ calendar_id: string; target_id: string; level: number }>(
@@ -101,6 +104,7 @@ export function plannerEvents(db: Db, userId: string, from: number, to: number):
       locked: true,
       movable: false,
       sourceId: null,
+      description: e.description,
       level:
         levels.get(`${e.calendar_id}:${e.event_id}`) ??
         (e.recurring_id ? levels.get(`${e.calendar_id}:${e.recurring_id}`) : undefined) ??

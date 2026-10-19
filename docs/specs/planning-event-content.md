@@ -46,10 +46,20 @@ Marker settings (marker choice and position) are in `events-title-emoji.md`.
 - **CNT-10.** The description of a managed event holds the item's `notes`,
   followed by a link that opens the item in the Tempoloom planner (E-0193,
   E-0206, E-0130).
+  Tempoloom decision: the link is a line "Open in Tempoloom:
+  <base URL>/?item=<kind>:<id>" after the notes, on task, habit and focus
+  time events (open question 4). Flexible meeting events get no link,
+  because they go to guests. The planner opens the item's next event, or its
+  last one, in the details panel.
 - **CNT-11.** Notes use markdown. Supported elements: bold, italic, headings
   level 1 to 3, numbered list, bullet list, checklist, link, and image from an
   `http` or `https` address (E-0206).
 - **CNT-12.** The planner renders the markdown (E-0206).
+  Tempoloom decision: the details panel of every event shows its notes:
+  headings, numbered, bullet and check lists (read-only boxes), bold, italic,
+  links and `http(s)` images; a bare `http(s)` address becomes a link. Links
+  with `javascript:`, `vbscript:`, `data:` or `file:` stay plain text. The
+  link line and the "Planned by Tempoloom." footer are not shown.
 - **CNT-13.** Google Calendar does not render markdown. Tempoloom writes the
   notes to the Google description as plain markdown text. Link addresses stay
   in the text, so Google can still make them clickable (E-0206).

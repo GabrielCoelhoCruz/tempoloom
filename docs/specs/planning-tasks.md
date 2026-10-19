@@ -97,6 +97,11 @@ When `splitUp` is false, `minChunkMinutes` and `maxChunkMinutes` both equal
   evidence for the key, E-0054, E-0193; chat in E-0192).
 - **TSK-6.** On the task creation form, a "create another" switch keeps the
   form open after save, so the user can add several tasks in a row (E-0192).
+  Tempoloom decision: the "New task" button in the navigation and the key `C`
+  open the form in a dialog on every page; the key does nothing while the
+  user types in a field. "Create another" is off until the user turns it on;
+  the browser remembers the choice. After a save only the title clears; the
+  other fields keep their values.
 - **TSK-7.** The user can select a future time range in the planner (click
   or drag) and make a task there. The task gets `totalMinutes` equal to the selected
   range, and its one chunk is placed at that range and locked (legacy
@@ -209,6 +214,11 @@ When `splitUp` is false, `minChunkMinutes` and `maxChunkMinutes` both equal
   `chunks` (default, this spec) and `suggestions` (current reference
   behavior). With `suggestions`, Tempoloom creates no chunk events and shows
   tasks as described in `planning-next-up.md`.
+  Tempoloom decision: with `suggestions` the scheduler places no task work
+  and deletes unlocked future chunks. Locked task events stay: work blocks
+  the user applied (`planning-next-up.md` NXT-50) and chunks the user locked.
+  Back on `chunks`, the remaining work is placed again. The setting is
+  "Task placement" in Settings.
 
 ## Outputs
 

@@ -1,0 +1,133 @@
+/* Styles of the planner parts and editors that load on demand: the now line,
+   prompts, previews, conflicts, notes, dialogs and the hours preview. */
+.now-bar .spacer {
+  flex: 1;
+}
+.now-bar .button,
+.now-bar button {
+  padding: 2px 8px;
+}
+.popover {
+  position: absolute;
+  z-index: 20;
+  display: grid;
+  gap: 6px;
+  min-width: 260px;
+  max-width: 460px;
+  max-height: 60vh;
+  overflow: auto;
+  padding: 12px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.12);
+}
+.popover h3 {
+  margin: 4px 0 0;
+  font-size: 13px;
+}
+.now-bar .popover {
+  top: 36px;
+  right: 16px;
+  white-space: normal;
+}
+.banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  font-size: 13px;
+}
+.timer-bar,
+.block-preview {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.ev-preview {
+  background: color-mix(in srgb, var(--task) 25%, transparent);
+  color: var(--fg);
+  border: 2px dashed var(--task);
+  cursor: grab;
+}
+.ev-conflict {
+  outline: 2px solid var(--danger);
+  outline-offset: -2px;
+}
+.zone-head {
+  padding: 8px 4px;
+  font-size: 11px;
+  color: var(--muted);
+  text-align: right;
+}
+.extra-hours .hour-label {
+  color: var(--accent);
+}
+.md {
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.md h3,
+.md h4,
+.md h5 {
+  margin: 8px 0 4px;
+}
+.md p,
+.md ul,
+.md ol {
+  margin: 4px 0;
+}
+.md img {
+  max-width: 100%;
+}
+.toast {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 40;
+  padding: 10px 14px;
+  border-radius: var(--radius);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.12);
+}
+.hours-info {
+  position: relative;
+  align-self: end;
+}
+.hours-info .popover {
+  top: 100%;
+  left: 0;
+}
+.hours-line {
+  display: block;
+}
+.item-hours {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.wide-dialog {
+  max-width: 720px;
+  max-height: 90vh;
+  overflow: auto;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.review {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
