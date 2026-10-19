@@ -48,6 +48,12 @@ copies all-day events turned on (E-0111; the option name is in the
 9. Tempoloom ignores free all-day holiday events, as in rule 5 (E-0111).
 10. A company can share a holiday calendar whose all-day events are busy and that invites a company mailing list. When the user answers yes or maybe, the holiday is an away event for that user (E-0111).
 11. Tempoloom does not read Google's built-in public holiday calendars. The user can subscribe to a custom holiday feed and add it as a calendar that Tempoloom reads (E-0111).
+    Tempoloom decision: the user adds a holiday feed (an https or webcal
+    iCalendar URL) in the Calendars section of Settings. Every event of the
+    feed blocks time like time away, also when the feed marks it free.
+    Tempoloom reads the feed at most every 6 hours, and at once on "Refresh
+    calendar list". The feed is a connected, read-only calendar; the user can
+    remove it.
 
 ### Scheduler interaction
 

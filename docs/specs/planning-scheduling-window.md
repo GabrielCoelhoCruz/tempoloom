@@ -52,6 +52,8 @@ zone) that is `schedulingWindowWeeks` × 7 days after today.
   (legacy evidence, E-0190).
 - **WIN-7.** Calendar mirroring uses `mirroringWindow`, not this window
   (E-0042). Mirroring spec owns its rules.
+  Tempoloom decision: `mirroringWindow` is fixed at 365 days and is not a
+  setting.
 
 ## Outputs
 

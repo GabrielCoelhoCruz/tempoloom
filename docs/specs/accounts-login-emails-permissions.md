@@ -49,6 +49,15 @@ provider only for the permissions that the features in use need.
    3. The email is a secondary email of two or more Tempoloom accounts and
       the main email of none: offer sign-up of one more Tempoloom account.
    4. The email is unknown: start sign-up.
+   Tempoloom decision (CalDAV): a CalDAV server proves the calendar
+   account, not the typed email. So Tempoloom resolves a CalDAV sign-in by
+   the calendar account: the Tempoloom account where it is the main email;
+   then a person who exists before a first calendar (provisioning, single
+   sign-on), by email; then the one account that holds it as a secondary
+   email. With several such accounts and no main one, the sign-in page
+   offers "Create a new Tempoloom account". An unknown calendar account
+   signs up, unless its email is already the main email of an account with
+   calendars: then the sign-in is refused with a message.
 4. An email can be the main email of at most one Tempoloom account. It can be
    a secondary email of many Tempoloom accounts (E-0124).
 5. The sign-up screen tells existing users to add a second provider to their
@@ -77,6 +86,10 @@ provider only for the permissions that the features in use need.
     confirmation dialog asks the user to confirm the switch. After
     confirmation, that email is main (E-0094). For the effect on connected
     calendars, see `accounts-connected-calendars.md` rule 9.
+    Tempoloom decision: the switch also makes that email the account's
+    email (shown in the app and used for the team). Managed events that
+    exist on the old main calendar stay there; new ones go to the new main
+    calendar.
 12. The switch fails in two cases, each with its own message (E-0094):
     - The email is `disconnected` (rule 14).
     - The email is the main email of another Tempoloom account. Proposed
@@ -87,6 +100,12 @@ provider only for the permissions that the features in use need.
     back in with the current main email and retries (E-0094). Proposed: when
     the forgotten account has no items and no other emails, Tempoloom offers
     to delete it after the user signs in with that email.
+    Tempoloom decision: the message is "<email> is the main email of
+    another Tempoloom account. This is often an older account that you
+    forgot. To fix it, sign in with <email>, then delete that account or make
+    another email its main email. Then sign in here again and retry." The
+    fix uses the existing account deletion; Tempoloom offers no separate
+    delete flow.
 
 ### Disconnected emails
 

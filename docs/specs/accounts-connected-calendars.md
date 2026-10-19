@@ -43,6 +43,14 @@ kind of event.
   no limit (E-0003, E-0060). See open questions.
 - On downgrade to the free plan, the main calendar stays connected and all
   other connected calendars are turned off (E-0060).
+- Tempoloom decision: Tempoloom has no plans. The operator can set the
+  instance limit `max_connected_calendars` (off by default; see
+  `plans-feature-inventory.md`). It counts connected calendars, holiday feeds
+  included. Checking one more is refused with a message that names the
+  limit. When the operator lowers it, the main calendar and the calendars of
+  enabled mirroring policies stay connected; the other connected calendars
+  stay in list order up to the limit, and the rest are turned off. A
+  mirroring policy whose calendars would go over the limit is refused.
 
 ## Behavior
 
@@ -61,13 +69,25 @@ kind of event.
    - group, resource, holiday and birthday calendars that the provider makes
      (on Google, calendar ids under `group.v.calendar.google.com`, such as
      the national holiday calendars).
+   Tempoloom decision (CalDAV): the server's DAV:current-user-privilege-set
+   decides. A server that reports no privileges keeps the account's own
+   calendars writable. Holiday feeds (`events-out-of-office.md` rule 11) are
+   listed too, as read-only calendars of their own kind.
 5. The help text tells the user how to replace a holiday calendar: make an
    own calendar with the holidays they want and connect it (E-0106).
 6. When two added accounts can see the same calendar, the list shows it once
    (E-0106). Proposed: under the account that the user added first.
+   Tempoloom decision: the same calendar means the same calendar id (on
+   CalDAV, the same URL). Tempoloom reads it once, through the account added
+   first.
 7. An "add another account" button starts the provider sign-in. After it
    ends, the new account and its calendars show in the list (E-0041, E-0106).
 8. The user can set a `category` for each connected calendar (E-0106).
+   Tempoloom decision: the default is `business` for every calendar, so the
+   automatic category rules decide as before. `personal` makes the events of
+   the calendar personal; `travel` makes them travel, except flights and
+   events whose category the user set. The color rules then paint those
+   events by their new category.
 9. When the user changes the main email, the old main calendar stops being
    connected and the new main calendar becomes connected (E-0060). Proposed:
    when the old main calendar is used in a mirroring policy, it stays
@@ -140,6 +160,12 @@ kind of event.
       events.
     - Use mirroring when other people book time directly on the user's
       calendar and must see the busy time.
+    Tempoloom decision: the Calendars section of Settings says "Connected
+    calendars: Tempoloom plans around their events. Other people do not see
+    them." and "Mirroring: Tempoloom copies the busy time into another
+    calendar, so people who book time on that calendar see it. Use it when
+    other people book time directly on your calendar." Its "New mirroring
+    policy" button moves to the mirroring form.
 29. Both features appear on the same settings page, with a button to create
     a new mirroring policy (E-0106).
 
@@ -148,6 +174,12 @@ kind of event.
 30. A calendar that another person shared with an added account can be
     connected when the share gives full read and write access (E-0059,
     E-0106).
+    Tempoloom decision (CalDAV): many CalDAV servers do not show calendars
+    that other people shared in the user's calendar home. The user adds such
+    a calendar by its URL under one of their CalDAV accounts. Tempoloom
+    checks the server's privileges and refuses read-only access with:
+    "Tempoloom needs read and write access to this calendar. This calendar is
+    shared with you read-only."
 31. Calendars from other services (for example iCloud) must first be added
     to a Google or Microsoft account. Then they can be connected or mirrored.
     The other service can delay changes by many hours (E-0059).
