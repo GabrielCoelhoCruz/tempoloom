@@ -1,9 +1,10 @@
 // Public booking pages: no sign-in. Times show in the zone the booker picks,
 // in a 12- or 24-hour format (docs/specs/booking-links-booking-page.md).
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
-import { isValidTimeZone, localToUtc, utcToLocal } from "../../shared/time.ts";
+import { isValidTimeZone, localToUtc } from "../../shared/time.ts";
 import { ApiError, api } from "../lib/api.ts";
-import { pad } from "../lib/format.ts";
+import { lazyComponent } from "../lib/lazy.ts";
+import { dayOf, dayText, FORMAT_KEY, savedFormat, timeText, type View } from "../lib/zoned.ts";
 
 interface Question {
   label: string;
@@ -78,41 +79,20 @@ function Brand({ b }: { b: Branding }) {
   );
 }
 
+// Only organizers use the inspector (availability rule 18): load it on demand.
+const Inspector = lazyComponent<{
+  page: string;
+  link: string;
+  duration: number;
+  view: View;
+  startDay: string | null;
+}>(() => import("./book-inspector.tsx").then((m) => m.Inspector));
+
 const withWhom = (organizers: string[]) =>
   organizers.length > 0 ? `with ${organizers.join(", ")}` : "";
 
 const browserZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 const SPAN = 14 * 86_400_000;
-
-/** How times are written: the selected zone and the 12- or 24-hour format (rules 6-8). */
-interface View {
-  zone: string;
-  format: "12" | "24";
-}
-
-const FORMAT_KEY = "tl-time-format";
-function savedFormat(): "12" | "24" {
-  const saved = localStorage.getItem(FORMAT_KEY);
-  if (saved === "12" || saved === "24") return saved;
-  // Proposed default: the browser locale's clock.
-  const cycle = new Intl.DateTimeFormat(undefined, { hour: "numeric" }).resolvedOptions().hourCycle;
-  return cycle === "h11" || cycle === "h12" ? "12" : "24";
-}
-
-export function timeText(v: View, t: number): string {
-  const m = utcToLocal(v.zone, t).minuteOfDay;
-  const h = Math.floor(m / 60);
-  if (v.format === "24") return `${pad(h)}:${pad(m % 60)}`;
-  return `${h % 12 || 12}:${pad(m % 60)} ${h < 12 ? "AM" : "PM"}`;
-}
-export const dayText = (v: View, t: number) =>
-  new Intl.DateTimeFormat(undefined, {
-    timeZone: v.zone,
-    weekday: "long",
-    day: "numeric",
-    month: "long",
-  }).format(t);
-const dayOf = (v: View, t: number) => utcToLocal(v.zone, t).date;
 
 /** Reads the URL parameters once (rule 9). Invalid values are ignored. */
 function urlParams() {
@@ -501,6 +481,7 @@ function BookingPage({ page, link }: { page: string; link: string }) {
   const [done, setDone] = useState<Booked | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [overlay, setOverlay] = useState(() => localStorage.getItem(OVERLAY_KEY) === "1");
+  const [inspect, setInspect] = useState(params.inspect);
   const preselectDone = useRef(false);
   useEffect(() => {
     api<LinkInfo>("GET", `/pub/pages/${page}/${link}`)
@@ -585,12 +566,35 @@ function BookingPage({ page, link }: { page: string; link: string }) {
           Show my calendar
         </label>
       )}
+      {viewer?.organizer && (
+        <label class="inline">
+          <input
+            type="checkbox"
+            checked={inspect}
+            onChange={(e) => {
+              const on = e.currentTarget.checked;
+              setParam("inspect", on ? "1" : null);
+              setInspect(on);
+            }}
+          />
+          Inspect availability
+        </label>
+      )}
       {notice && (
         <p class="error" role="alert">
           {notice}
         </p>
       )}
-      {!picked ? (
+      {inspect && viewer?.organizer ? (
+        <Inspector
+          key={`${duration}-${view.zone}`}
+          page={page}
+          link={link}
+          duration={duration}
+          view={view}
+          startDay={params.day}
+        />
+      ) : !picked ? (
         <Times
           key={`${duration}-${view.zone}`}
           page={page}

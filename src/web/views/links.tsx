@@ -134,6 +134,11 @@ export function Links() {
     }
   }, []);
   useEffect(() => void load(), [load]);
+  // ?edit=<link id> opens that link's editor, for links from the availability inspector.
+  useEffect(() => {
+    const id = new URLSearchParams(location.search).get("edit");
+    if (id) setEditing(id);
+  }, []);
 
   const act = async (fn: () => Promise<unknown>) => {
     setError(null);

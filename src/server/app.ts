@@ -352,7 +352,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
 
   app.route("/api", teamDefaultRoutes(db, now));
   app.route("/api", oooRoutes(db, sync, now));
-  app.route("/api/booking", bookingViewerRoutes(db));
+  app.route("/api/booking", bookingViewerRoutes(db, now));
 
   // Static client with a single-page fallback. Text files are compressed once
   // per encoding and kept in memory; the build output does not change at run time.

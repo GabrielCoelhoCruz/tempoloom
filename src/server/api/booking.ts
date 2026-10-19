@@ -5,6 +5,7 @@ import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { z } from "zod";
 import {
+  type Booking,
   type CalendarItem,
   type OfferedTime,
   type Person,
@@ -277,7 +278,7 @@ export function calendarItems(db: Db, userId: string, from: number, to: number):
   )) {
     const props = JSON.parse(e.private_props) as Record<string, string>;
     if (props[MANAGED_PROP] === "1") continue;
-    const span = { start: e.start_ms, end: e.end_ms };
+    const span = { start: e.start_ms, end: e.end_ms, title: e.summary };
     if (props.tl_booking === "1") {
       items.push({
         ...span,
@@ -329,14 +330,15 @@ export function calendarItems(db: Db, userId: string, from: number, to: number):
     end_ms: number;
     busy: number;
     locked: number;
+    title: string;
   }>(
     db,
-    "SELECT kind, source_id, start_ms, end_ms, busy, locked FROM managed_events WHERE user_id = ? AND end_ms > ? AND start_ms < ?",
+    "SELECT kind, source_id, start_ms, end_ms, busy, locked, title FROM managed_events WHERE user_id = ? AND end_ms > ? AND start_ms < ?",
     userId,
     from,
     to,
   )) {
-    const span = { start: m.start_ms, end: m.end_ms };
+    const span = { start: m.start_ms, end: m.end_ms, title: m.title };
     if (m.locked) items.push({ ...span, cls: "fixed" });
     else if (!m.busy) items.push({ ...span, cls: "free" });
     else {
@@ -346,7 +348,7 @@ export function calendarItems(db: Db, userId: string, from: number, to: number):
     }
   }
   for (const h of bookingHolds(db, userId, from, to)) {
-    items.push({ start: h.start, end: h.end, cls: "booked", bookingId: h.id });
+    items.push({ start: h.start, end: h.end, cls: "booked", bookingId: h.id, title: h.title });
   }
   return items;
 }
@@ -382,18 +384,17 @@ function linkTeam(db: Db, link: LinkRow): { people: LinkPerson[]; usable: boolea
   return { people: people.filter((p) => p.kind === "organizer" || inTeam(p)), usable };
 }
 
-/** Times of one link, each with the pool members who pass (round robin). */
-export function linkTimes(
+/** What availability needs for one link and duration: rules, people and bookings. */
+export function linkInputs(
   db: Db,
   link: LinkRow,
   duration: number,
   from: number,
   to: number,
   now: number,
-  rescheduling?: string,
-): OfferedTime[] {
+): { rules: TeamRules; required: Person[]; pool: Person[]; bookings: Booking[] } | null {
   const { people, usable } = linkTeam(db, link);
-  if (!usable) return [];
+  if (!usable) return null;
   const bookings = all<{ id: string; start_ms: number; end_ms: number }>(
     db,
     "SELECT id, start_ms, end_ms FROM bookings WHERE link_id = ? AND status = 'booked' AND end_ms > ?",
@@ -425,16 +426,28 @@ export function linkTimes(
     items: calendarItems(db, p.userId, from - pad, to + pad),
     recoveryMinutes: link.use_recovery_buffer ? recoveryMinutes(db, p.userId, meeting) : 0,
   });
-  return teamOffers(
-    rulesFor(db, link, duration),
-    organizers.filter((p) => p.required).map(person),
-    people.filter((p) => p.kind === "pool").map(person),
+  return {
+    rules: rulesFor(db, link, duration),
+    required: organizers.filter((p) => p.required).map(person),
+    pool: people.filter((p) => p.kind === "pool").map(person),
     bookings,
-    now,
-    from,
-    to,
-    rescheduling,
-  );
+  };
+}
+
+/** Times of one link, each with the pool members who pass (round robin). */
+export function linkTimes(
+  db: Db,
+  link: LinkRow,
+  duration: number,
+  from: number,
+  to: number,
+  now: number,
+  rescheduling?: string,
+): OfferedTime[] {
+  const inputs = linkInputs(db, link, duration, from, to, now);
+  if (!inputs) return [];
+  const { rules, required, pool, bookings } = inputs;
+  return teamOffers(rules, required, pool, bookings, now, from, to, rescheduling);
 }
 
 function publicLink(link: LinkRow) {

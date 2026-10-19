@@ -702,3 +702,37 @@ table.heat td {
 button[data-mine="busy"] {
   border-style: dashed;
 }
+/* Availability inspector (booking-links-availability.md rules 18-22) */
+button.not-offered {
+  color: var(--muted);
+}
+.dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-left: 4px;
+  vertical-align: middle;
+}
+.dot-grey {
+  background: #9aa0a8;
+}
+.dot-orange {
+  background: #d08a1e;
+}
+.dot-purple {
+  background: #7a52c7;
+}
+.dot-red {
+  background: #c2413a;
+}
+.dot-blue {
+  background: #3b6fd8;
+}
+.inspect-details {
+  margin: 8px 0;
+  padding-left: 16px;
+}
+.inspect-details a {
+  margin-left: 6px;
+}
