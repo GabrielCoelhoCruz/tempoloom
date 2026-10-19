@@ -146,11 +146,10 @@ function attendeeFacts(ev: ICAL.Component, selfEmail: string) {
     }
   }
   const organizer = ev.getFirstPropertyValue("organizer");
+  // The user's RSVP note (events-tags.md) is the X-RESPONSE-COMMENT of the
+  // user's own attendee line. A COMMENT on the event is the organizer's text
+  // (edge case 5: someone else's note is ignored).
   const organizerSelf = organizer === null || organizer === undefined || mailto(organizer) === self;
-  // The user's RSVP note (events-tags.md): the comment parameter of the user's
-  // attendee line, or the COMMENT that goes with the answer on an invitation.
-  const comment = ev.getFirstPropertyValue("comment");
-  if (!note && !organizerSelf && typeof comment === "string") note = comment;
   return {
     selfResponse,
     rsvpNote: note,
