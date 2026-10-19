@@ -3,6 +3,7 @@
 import { createHash } from "node:crypto";
 import { diffDays, type LocalDate, utcToLocal, weekdayOf } from "../shared/time.ts";
 import { all, type Db, one } from "./db.ts";
+import { planningZone } from "./travel.ts";
 
 export interface Series {
   /** A short stable id for links: /meetings?adopt=<key>. */
@@ -29,15 +30,16 @@ export const seriesKey = (calendarId: string, seriesId: string) =>
 const pad = (n: number) => String(n).padStart(2, "0");
 
 /**
- * The local date of an instance as the series recurrence rule makes it: the
+ * The local date of a series instance as its recurrence rule makes it, in the
+ * planning zone (`planningZone`); the one date basis for the adopt list
+ * (`seriesFrequency`) and the planner's period keys (`adoptInstances`): the
  * date in its recurrence id (CalDAV `<url>#<id>`, Google `<series>_<id>`). A
  * moved instance keeps it. A UTC recurrence id (`...T003000Z`) becomes a date
- * in the user's zone, so a meeting near UTC midnight keeps its day across a
+ * in that zone, so a meeting near UTC midnight keeps its day across a
  * DST change; a date or floating time is already local. Without a recurrence
- * id, the local date of the instance's start. The planner counts the
- * instances' periods from the same date.
+ * id, the local date of the instance's start.
  */
-function ruleDate(zone: string, eventId: string, startMs: number): LocalDate {
+export function seriesInstanceDate(zone: string, eventId: string, startMs: number): LocalDate {
   const m =
     /#(\d{4})-?(\d{2})-?(\d{2})(?:T(\d{2}):?(\d{2}):?(\d{2})(Z)?)?/.exec(eventId) ??
     /_(\d{4})(\d{2})(\d{2})(?:T(\d{2})(\d{2})(\d{2})(Z)?)?$/.exec(eventId);
@@ -61,7 +63,9 @@ function seriesFrequency(
   zone: string,
   list: { event_id: string; start_ms: number }[],
 ): number | "daily" | null {
-  const dates = [...new Set(list.map((r) => ruleDate(zone, r.event_id, r.start_ms)))].sort();
+  const dates = [
+    ...new Set(list.map((r) => seriesInstanceDate(zone, r.event_id, r.start_ms))),
+  ].sort();
   const steps = dates.slice(1).map((d, i) => diffDays(dates[i] ?? d, d));
   if (steps.length === 0) return 1;
   const step = Math.min(...steps);
@@ -76,12 +80,9 @@ function seriesFrequency(
  * series where the user is only a guest is not listed).
  */
 export function adoptableSeries(db: Db, userId: string, now: number): Series[] {
-  const user = one<{ email: string; time_zone: string }>(
-    db,
-    "SELECT email, time_zone FROM users WHERE id = ?",
-    userId,
-  );
+  const user = one<{ email: string }>(db, "SELECT email FROM users WHERE id = ?", userId);
   if (!user) return [];
+  const zone = planningZone(db, userId);
   const rows = all<{
     calendar_id: string;
     event_id: string;
@@ -116,13 +117,13 @@ export function adoptableSeries(db: Db, userId: string, now: number): Series[] {
   for (const list of groups.values()) {
     const [first] = list;
     if (!first) continue;
-    const everyWeeks = seriesFrequency(user.time_zone, list);
+    const everyWeeks = seriesFrequency(zone, list);
     if (everyWeeks === null) continue;
     const attendees = (JSON.parse(first.attendees) as string[]).filter(
       (e) => e !== user.email.toLowerCase(),
     );
     if (attendees.length === 0) continue;
-    const local = utcToLocal(user.time_zone, first.start_ms);
+    const local = utcToLocal(zone, first.start_ms);
     out.push({
       key: seriesKey(first.calendar_id, first.recurring_id),
       calendarId: first.calendar_id,

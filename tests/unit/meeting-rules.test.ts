@@ -23,13 +23,14 @@ import { ensureUser, type User } from "../../src/server/accounts.ts";
 import { meetingRoutes } from "../../src/server/api/meetings.ts";
 import type { AppEnv } from "../../src/server/app.ts";
 import { all, type Db, one, openDb, run } from "../../src/server/db.ts";
+import { observeMeetings } from "../../src/server/planner/meeting-log.ts";
 import { meetingItems } from "../../src/server/planner/meetings.ts";
 import { loadSnapshot } from "../../src/server/planner/replan.ts";
 import { eventsFromObject } from "../../src/server/providers/caldav.ts";
 import { getSettings } from "../../src/server/settings.ts";
 import { cacheEvent } from "../../src/server/sync/pull.ts";
 import type { SyncService } from "../../src/server/sync/service.ts";
-import { localToUtc } from "../../src/shared/time.ts";
+import { addDays, localToUtc, utcToLocal } from "../../src/shared/time.ts";
 
 const DAY = 86_400_000;
 const T0 = Date.parse("2026-10-19T08:00:00Z"); // a Monday
@@ -334,6 +335,53 @@ describe("series adoption", () => {
   // Google instance ids carry the recurrence id as a UTC time; in Los Angeles a
   // 16:30 instance is 23:30Z in summer and 00:30Z the next UTC day in winter.
   // The clocks go back on 2026-11-01, inside the pull window.
+  const LA = "America/Los_Angeles";
+  /** A 16:30 Los Angeles series from `first`, one instance every `step` days for four weeks. */
+  function laSeries(first: string, step: number, ids: boolean) {
+    const s = setup();
+    run(s.db, "UPDATE users SET time_zone = ? WHERE id = ?", LA, s.owner.id);
+    run(
+      s.db,
+      `INSERT INTO accounts (id, user_id, provider, external_id, email, credentials, created_at)
+       VALUES ('acc', ?, 'google', 'owner', 'owner@example.com', '', ?)`,
+      s.owner.id,
+      T0,
+    );
+    run(
+      s.db,
+      "INSERT INTO calendars (id, account_id, provider_id, name, is_primary) VALUES ('cal', 'acc', 'cal', 'Work', 1)",
+    );
+    const starts: number[] = [];
+    for (let day = 0; day < 28; day += step) {
+      const date = new Date(Date.parse(`${first}T00:00:00Z`) + day * DAY);
+      const start = localToUtc(LA, date.toISOString().slice(0, 10), 990);
+      starts.push(start);
+      const rid = new Date(start).toISOString().replace(/[-:]|\.\d+/g, "");
+      cacheEvent(s.db, "cal", {
+        id: ids ? `standup_${rid}` : `standup-${day}`,
+        cancelled: false,
+        etag: null,
+        summary: "Standup",
+        description: "",
+        location: "",
+        start,
+        end: start + 30 * 60_000,
+        allDay: false,
+        busy: true,
+        eventType: "default",
+        selfResponse: "accepted",
+        attendeeCount: 2,
+        attendees: ["owner@example.com", "dana@example.com"],
+        organizerSelf: true,
+        recurringId: "standup",
+        colorId: null,
+        updated: null,
+        privateProps: {},
+      });
+    }
+    return { ...s, starts };
+  }
+
   it.each([
     { series: "weekly", step: 7, everyWeeks: 1, ids: true },
     { series: "daily", step: 1, everyWeeks: "daily", ids: true },
@@ -341,53 +389,73 @@ describe("series adoption", () => {
   ])(
     "reads a $series 16:30 Los Angeles series across a DST change (recurrence ids: $ids)",
     async ({ step, everyWeeks, ids }) => {
-      const s = setup();
-      run(s.db, "UPDATE users SET time_zone = 'America/Los_Angeles' WHERE id = ?", s.owner.id);
-      run(
-        s.db,
-        `INSERT INTO accounts (id, user_id, provider, external_id, email, credentials, created_at)
-         VALUES ('acc', ?, 'google', 'owner', 'owner@example.com', '', ?)`,
-        s.owner.id,
-        T0,
-      );
-      run(
-        s.db,
-        "INSERT INTO calendars (id, account_id, provider_id, name, is_primary) VALUES ('cal', 'acc', 'cal', 'Work', 1)",
-      );
-      for (let day = 0; day < 28; day += step) {
-        const date = Date.UTC(2026, 9, 20 + day);
-        const start = localToUtc(
-          "America/Los_Angeles",
-          new Date(date).toISOString().slice(0, 10),
-          990,
-        );
-        const rid = new Date(start).toISOString().replace(/[-:]|\.\d+/g, "");
-        cacheEvent(s.db, "cal", {
-          id: ids ? `standup_${rid}` : `standup-${day}`,
-          cancelled: false,
-          etag: null,
-          summary: "Standup",
-          description: "",
-          location: "",
-          start,
-          end: start + 30 * 60_000,
-          allDay: false,
-          busy: true,
-          eventType: "default",
-          selfResponse: "accepted",
-          attendeeCount: 2,
-          attendees: ["owner@example.com", "dana@example.com"],
-          organizerSelf: true,
-          recurringId: "standup",
-          colorId: null,
-          updated: null,
-          privateProps: {},
-        });
-      }
+      const s = laSeries("2026-10-20", step, ids);
       const { series } = (await s.call("GET", "/meetings/series")) as {
         series: { everyWeeks: number | "daily"; idealTime: string }[];
       };
       expect(series.map((x) => [x.everyWeeks, x.idealTime])).toEqual([[everyWeeks, "16:30"]]);
+    },
+  );
+
+  // The planner counts an adopted series' instances in the periods of their
+  // local dates, as the adopt list reads them. Keyed by the UTC date of the
+  // recurrence id, each winter instance falls one day late: the 2026-11-01
+  // period stays empty and the plan writes a second event there.
+  it.each([
+    { series: "daily", first: "2026-10-20", step: 1, frequency: { period: "daily" } },
+    {
+      series: "weekly on Sunday",
+      first: "2026-10-25",
+      step: 7,
+      frequency: { period: "weekly", everyWeeks: 1, idealDays: [7] },
+    },
+  ])(
+    "keys each instance of a $series 16:30 Los Angeles series to its own period across a DST change",
+    async ({ first, step, frequency }) => {
+      const s = laSeries(first, step, true);
+      const [x] = (await s.call("GET", "/meetings/series")).series as {
+        calendarId: string;
+        seriesId: string;
+      }[];
+      const { id } = (await s.call(
+        "POST",
+        "/meetings",
+        sync1("Standup", {
+          frequency,
+          idealTime: "16:30",
+          series: { calendarId: x?.calendarId, seriesId: x?.seriesId },
+        }),
+      )) as { id: string };
+      observeMeetings(s.db, s.owner.id, ["cal"], T0);
+      const settings = getSettings(s.db, s.owner.id);
+      const rows = all<{ key: string; start_ms: number }>(
+        s.db,
+        "SELECT key, start_ms FROM managed_events WHERE source_id = ? ORDER BY start_ms",
+        id,
+      );
+      // Monday weeks: a Sunday belongs to the week that starts six days before.
+      const period = (t: number) => {
+        const date = utcToLocal(LA, t).date;
+        return step === 1 ? date : addDays(date, -6);
+      };
+      const windowEnd = localToUtc(
+        LA,
+        addDays("2026-10-19", settings.schedulingWindowWeeks * 7 + 1),
+        0,
+      );
+      expect(rows.map((r) => [r.key, r.start_ms])).toEqual(
+        s.starts.filter((t) => t < windowEnd).map((t) => [`meeting:${id}:${period(t)}`, t]),
+      );
+      expect(rows.map((r) => r.key)).toContain(
+        `meeting:${id}:${step === 1 ? "2026-11-01" : "2026-10-26"}`,
+      );
+      // No period of the plan is without its series instance: the plan writes no new event.
+      const keys = new Set(rows.map((r) => r.key));
+      const planned = plan(loadSnapshot(s.db, s.owner.id, LA, settings, T0, 0).snapshot)
+        .placements.filter((p) => p.kind === "meeting" && p.itemId === id)
+        .map((p) => p.key);
+      expect(planned.length).toBeGreaterThan(0);
+      expect(planned.filter((k) => !keys.has(k))).toEqual([]);
     },
   );
 });
