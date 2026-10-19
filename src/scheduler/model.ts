@@ -100,13 +100,16 @@ export type HabitFrequency =
 /**
  * How often a flexible meeting happens (meetings-flexible.md `frequency`).
  * Daily: one per N days. Weekly: one per N weeks. Monthly: one per N months,
- * ideally on a day of the month. N counts from `starting`, or from the day the
+ * ideally on a day of the month or an Nth weekday. N counts from `starting`, or from the day the
  * meeting was created.
  */
 export type MeetingFrequency =
   | { period: "daily"; everyDays?: number }
   | { period: "weekly"; everyWeeks: number; idealDays: number[] }
-  | { period: "monthly"; everyMonths?: number; dayOfMonth: number };
+  | ({ period: "monthly"; everyMonths?: number } & (
+      | { dayOfMonth: number }
+      | { nth: 1 | 2 | 3 | 4 | 5 | "last"; weekday: number }
+    ));
 
 /** A flexible meeting (docs/specs/meetings-flexible.md); the user is the organizer. */
 export interface MeetingItem {

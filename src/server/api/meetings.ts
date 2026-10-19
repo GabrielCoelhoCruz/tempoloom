@@ -38,18 +38,33 @@ const meetingInput = z.object({
     .min(1)
     .max(50),
   // Every N days, weeks or months, N 1 to 52 (meetings-flexible.md `frequency`).
-  frequency: z.discriminatedUnion("period", [
+  frequency: z.union([
     z.object({ period: z.literal("daily"), everyDays: z.number().int().min(1).max(52).optional() }),
     z.object({
       period: z.literal("weekly"),
       everyWeeks: z.number().int().min(1).max(52),
       idealDays: z.array(z.number().int().min(1).max(7)).min(1).max(7),
     }),
-    z.object({
-      period: z.literal("monthly"),
-      everyMonths: z.number().int().min(1).max(52).optional(),
-      dayOfMonth: z.number().int().min(1).max(31),
-    }),
+    z.union([
+      z.object({
+        period: z.literal("monthly"),
+        everyMonths: z.number().int().min(1).max(52).optional(),
+        dayOfMonth: z.number().int().min(1).max(31),
+      }),
+      z.object({
+        period: z.literal("monthly"),
+        everyMonths: z.number().int().min(1).max(52).optional(),
+        nth: z.union([
+          z.literal(1),
+          z.literal(2),
+          z.literal(3),
+          z.literal(4),
+          z.literal(5),
+          z.literal("last"),
+        ]),
+        weekday: z.number().int().min(1).max(7),
+      }),
+    ]),
   ]),
   idealTime: hhmm,
   durationMinutes: fiveMinutes,

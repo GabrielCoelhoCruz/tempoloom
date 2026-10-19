@@ -734,7 +734,12 @@ function meetingPeriods(ctx: Ctx, m: MeetingItem): Period[] {
       const next = `${addDays(month, 32).slice(0, 8)}01`;
       if ((((monthIndex(month) - monthIndex(anchorDate)) % every) + every) % every === 0) {
         const days = inRange(month, dayDiff(next, month));
-        const ideal = monthlyDate(month, { period: "monthly", dayOfMonth: f.dayOfMonth });
+        const ideal = monthlyDate(
+          month,
+          "nth" in f
+            ? { period: "monthly", nth: f.nth, weekday: f.weekday }
+            : { period: "monthly", dayOfMonth: f.dayOfMonth },
+        );
         // Rule 20: a month whose ideal day is past the planning window waits for it.
         if (days.length > 0 && (!ideal || ideal <= last))
           out.push({ start: month, days, ideal: days.filter((d) => d === ideal) });
@@ -766,24 +771,42 @@ function startAllowed(ctx: Ctx, m: MeetingItem, date: LocalDate): (t: number) =>
   return (t) => allowed.has(Math.floor((t - dayStart) / MINUTE) % 60);
 }
 
+/**
+ * The distance of a start from the ideal: first in days from the nearest
+ * ideal day of the period (0 on an ideal day), then from the ideal time on its
+ * own day. So a monthly meeting whose ideal day is full goes to a day near it.
+ */
+function distanceOf(
+  ctx: Ctx,
+  m: MeetingItem,
+  frees: { date: LocalDate; ideal: boolean }[],
+): (date: LocalDate, t: number) => number {
+  const ideal = frees.filter((f) => f.ideal).map((f) => f.date);
+  return (date, t) => {
+    const days = ideal.length ? Math.min(...ideal.map((d) => Math.abs(dayDiff(d, date)))) : 0;
+    return days * 1e12 + Math.abs(t - localToUtc(ctx.s.zone, date, m.idealMinute));
+  };
+}
+
 function searchMeeting(
   ctx: Ctx,
   m: MeetingItem,
   frees: { date: LocalDate; free: TimeSet; ideal: boolean; window: TimeSet }[],
 ): Interval | null {
+  const distance = distanceOf(ctx, m, frees);
   const frag = ctx.s.fragmentation;
   const shift = (frag?.maxShiftMinutes ?? 0) * MINUTE;
   for (let l = m.durationMinutes; l >= m.shortestMinutes; l -= 5) {
     let best: { t: number; ideal: boolean; dist: number; cost: number } | null = null;
     for (const { date, free, ideal, window } of frees) {
-      const target = localToUtc(ctx.s.zone, date, m.idealMinute);
       const allowed = startAllowed(ctx, m, date);
       for (const iv of free.intervals()) {
         const added = frag ? fragmentCost(window, frag.minBlockMinutes * MINUTE, iv) : null;
         for (let t = ceilTo(iv.start, ctx.step); t + l * MINUTE <= iv.end; t += ctx.step) {
           if (!allowed(t)) continue;
-          const dist = Math.abs(t - target);
-          const cost = added ? (dist > shift ? OUT_OF_SHIFT : added(t, l * MINUTE)) : 0;
+          const dist = distance(date, t);
+          // The fragmentation shift counts from the ideal time on the same day.
+          const cost = added ? (dist % 1e12 > shift ? OUT_OF_SHIFT : added(t, l * MINUTE)) : 0;
           if (
             !best ||
             (ideal && !best.ideal) ||
@@ -806,14 +829,14 @@ function suggestMeeting(
   m: MeetingItem,
   frees: { date: LocalDate; free: TimeSet; ideal: boolean }[],
 ): Interval[] {
+  const distance = distanceOf(ctx, m, frees);
   for (let l = m.durationMinutes; l >= m.shortestMinutes; l -= 5) {
     const found: { t: number; ideal: boolean; dist: number }[] = [];
     for (const { date, free, ideal } of frees) {
-      const target = localToUtc(ctx.s.zone, date, m.idealMinute);
       const allowed = startAllowed(ctx, m, date);
       for (const iv of free.intervals())
         for (let t = ceilTo(iv.start, ctx.step); t + l * MINUTE <= iv.end; t += ctx.step)
-          if (allowed(t)) found.push({ t, ideal, dist: Math.abs(t - target) });
+          if (allowed(t)) found.push({ t, ideal, dist: distance(date, t) });
     }
     if (found.length === 0) continue;
     found.sort((a, b) => Number(b.ideal) - Number(a.ideal) || a.dist - b.dist || a.t - b.t);

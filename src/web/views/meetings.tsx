@@ -25,6 +25,11 @@ interface Meeting {
   shortest_minutes: number;
   hours_mode: string;
   starting: string | null;
+  description: string;
+  location: string;
+  when_unplaceable: string;
+  lead_minutes: number;
+  auto_reschedule: string;
   defense: string;
   frequency: Frequency;
   item_hours: string | null;
@@ -44,15 +49,57 @@ interface Meeting {
 type Frequency =
   | { period: "daily"; everyDays?: number }
   | { period: "weekly"; everyWeeks: number; idealDays: number[] }
-  | { period: "monthly"; everyMonths?: number; dayOfMonth: number };
+  | ({ period: "monthly"; everyMonths?: number } & (
+      | { dayOfMonth: number }
+      | { nth: number | "last"; weekday: number }
+    ));
+
+const NTH: Record<string, string> = {
+  1: "first",
+  2: "second",
+  3: "third",
+  4: "fourth",
+  5: "fifth",
+  last: "last",
+};
+const WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
 /** "every 2 weeks, ideally Tue", "every month, ideally on day 15". */
 function describeFrequency(f: Frequency): string {
   const every = (n: number, unit: string) => (n === 1 ? `every ${unit}` : `every ${n} ${unit}s`);
   if (f.period === "daily") return every(f.everyDays ?? 1, "day");
   if (f.period === "monthly")
-    return `${every(f.everyMonths ?? 1, "month")}, ideally on day ${f.dayOfMonth}`;
+    return `${every(f.everyMonths ?? 1, "month")}, ideally on ${
+      "nth" in f ? `the ${NTH[f.nth]} ${WEEKDAYS[f.weekday - 1]}` : `day ${f.dayOfMonth}`
+    }`;
   return `${every(f.everyWeeks, "week")}, ideally ${f.idealDays.map((d) => DAY_NAMES[d - 1]).join(", ")}`;
+}
+
+const EVERY: [string, string][] = [
+  ["1", "Every week"],
+  ["2", "Every 2 weeks"],
+  ["4", "Every 4 weeks"],
+  ["daily", "Every day"],
+  ["monthly", "Every month"],
+  ["custom", "Custom"],
+];
+
+/** The "How often" choice that shows a frequency, with the custom count and unit. */
+function everyOf(f: Frequency): { every: string; unit: string; n: number } {
+  if (f.period === "daily") {
+    const n = f.everyDays ?? 1;
+    return n === 1 ? { every: "daily", unit: "days", n } : { every: "custom", unit: "days", n };
+  }
+  if (f.period === "monthly") {
+    const n = f.everyMonths ?? 1;
+    return n === 1
+      ? { every: "monthly", unit: "months", n }
+      : { every: "custom", unit: "months", n };
+  }
+  const n = f.everyWeeks;
+  return [1, 2, 4].includes(n)
+    ? { every: String(n), unit: "weeks", n }
+    : { every: "custom", unit: "weeks", n };
 }
 
 const VISIBILITY: Record<string, string> = {
@@ -174,6 +221,9 @@ export function Meetings() {
   const [unit, setUnit] = useState("weeks");
   const [hoursMode, setHoursMode] = useState("everyone");
   const [saved, setSaved] = useState(0);
+  // The meeting whose rules the form edits (MEET-02 rule 4: a rule change places it again).
+  const [editing, setEditing] = useState<Meeting | null>(null);
+  const ed = editing;
 
   const load = useCallback(async () => {
     setMeetings((await api<{ meetings: Meeting[] }>("GET", "/api/meetings")).meetings);
@@ -195,6 +245,37 @@ export function Meetings() {
     const t = setInterval(() => void loadSeries(), 10_000);
     return () => clearInterval(t);
   }, [loadSeries]);
+  const edit = (m: Meeting) => {
+    const init = everyOf(m.frequency);
+    setEditing(m);
+    setSeed(null);
+    setEvery(init.every);
+    setUnit(init.unit);
+    setHoursMode(m.item_hours ? "itemSpecific" : m.hours_mode);
+    setPreview(null);
+    void lookup(
+      m.attendees
+        .filter((a) => a.required)
+        .map((a) => a.email)
+        .join(", "),
+    );
+    scrollTo(0, 0);
+  };
+  const stopEditing = () => {
+    setEditing(null);
+    setSaved((n) => n + 1);
+    setEvery("1");
+    setHoursMode("everyone");
+    setPeople([]);
+  };
+  const everyInit = ed
+    ? everyOf(ed.frequency).every
+    : seed
+      ? String(seed.everyWeeks)
+      : preset?.everyWeeks === 2
+        ? "2"
+        : "1";
+  const fq = ed?.frequency;
   const pick = (x: Series | null) => {
     setSeed(x);
     setEvery("1");
@@ -235,12 +316,16 @@ export function Meetings() {
     const days = f.getAll("days").map(Number);
     const n = Number(f.get("everyN") || 1);
     const monthDay = Number(f.get("dayOfMonth") || 1);
+    const nth = text("nth");
+    const onDay = nth
+      ? { nth: nth === "last" ? "last" : Number(nth), weekday: Number(f.get("weekday")) }
+      : { dayOfMonth: monthDay };
     const how = text("every") === "custom" ? text("everyUnit") : text("every");
     const frequency =
       how === "daily" || how === "days"
         ? { period: "daily", everyDays: how === "days" ? n : 1 }
         : how === "monthly" || how === "months"
-          ? { period: "monthly", everyMonths: how === "months" ? n : 1, dayOfMonth: monthDay }
+          ? { period: "monthly", everyMonths: how === "months" ? n : 1, ...onDay }
           : {
               period: "weekly",
               everyWeeks: how === "weeks" ? n : Number(how),
@@ -284,16 +369,23 @@ export function Meetings() {
         // A new key after each save draws a fresh form: reset() would pick the first
         // option of each select, because Preact sets `selected` as a property only.
         key={
-          seed
-            ? `series-${seed.key}`
-            : template
-              ? `${template.slug}-${meetings.length}`
-              : `new-${saved}`
+          ed
+            ? `edit-${ed.id}`
+            : seed
+              ? `series-${seed.key}`
+              : template
+                ? `${template.slug}-${meetings.length}`
+                : `new-${saved}`
         }
         onSubmit={(e) => {
           e.preventDefault();
           const form = e.currentTarget as HTMLFormElement;
           void act(async () => {
+            if (ed) {
+              await api("PUT", `/api/meetings/${ed.id}`, body(form));
+              stopEditing();
+              return;
+            }
             await api("POST", "/api/meetings", body(form));
             setSaved((n) => n + 1);
             setPeople([]);
@@ -305,7 +397,8 @@ export function Meetings() {
           });
         }}
       >
-        <label class="wide">
+        {ed && <p class="wide status">Editing “{ed.title}”</p>}
+        <label class="wide" hidden={ed !== null}>
           From an existing meeting
           <select
             name="series"
@@ -327,14 +420,16 @@ export function Meetings() {
             required
             maxLength={255}
             defaultValue={
-              seed
-                ? seed.title
-                : template
-                  ? freeName(
-                      template.name,
-                      meetings.map((m) => m.title),
-                    )
-                  : ""
+              ed
+                ? ed.title
+                : seed
+                  ? seed.title
+                  : template
+                    ? freeName(
+                        template.name,
+                        meetings.map((m) => m.title),
+                      )
+                    : ""
             }
           />
         </label>
@@ -344,7 +439,16 @@ export function Meetings() {
             name="guests"
             required
             placeholder="ana@example.com, ben@example.com"
-            defaultValue={seed ? seed.attendees.join(", ") : ""}
+            defaultValue={
+              ed
+                ? ed.attendees
+                    .filter((a) => a.required)
+                    .map((a) => a.email)
+                    .join(", ")
+                : seed
+                  ? seed.attendees.join(", ")
+                  : ""
+            }
             onChange={(e) => void lookup(e.currentTarget.value)}
           />
         </label>
@@ -359,30 +463,40 @@ export function Meetings() {
         )}
         <label class="wide">
           Optional guests (comma list)
-          <input name="optional" />
+          <input
+            name="optional"
+            defaultValue={
+              ed
+                ? ed.attendees
+                    .filter((a) => !a.required)
+                    .map((a) => a.email)
+                    .join(", ")
+                : ""
+            }
+          />
         </label>
         <label>
           How often
           <select name="every" onChange={(e) => setEvery(e.currentTarget.value)}>
-            <option value="1">Every week</option>
-            <option value="2" selected={seed ? seed.everyWeeks === 2 : preset?.everyWeeks === 2}>
-              Every 2 weeks
-            </option>
-            <option value="4" selected={seed?.everyWeeks === 4}>
-              Every 4 weeks
-            </option>
-            <option value="daily" selected={seed?.everyWeeks === "daily"}>
-              Every day
-            </option>
-            <option value="monthly">Every month</option>
-            <option value="custom">Custom</option>
+            {EVERY.map(([v, l]) => (
+              <option value={v} key={v} selected={v === everyInit}>
+                {l}
+              </option>
+            ))}
           </select>
         </label>
         {every === "custom" && (
           <>
             <label>
               Repeat every
-              <input name="everyN" type="number" min={1} max={52} defaultValue="2" required />
+              <input
+                name="everyN"
+                type="number"
+                min={1}
+                max={52}
+                defaultValue={String(fq ? everyOf(fq).n : 2)}
+                required
+              />
             </label>
             <label>
               Unit
@@ -399,10 +513,43 @@ export function Meetings() {
           </>
         )}
         {(every === "monthly" || (every === "custom" && unit === "months")) && (
-          <label>
-            Day of the month
-            <input name="dayOfMonth" type="number" min={1} max={31} defaultValue="1" required />
-          </label>
+          <>
+            <label>
+              Day of the month
+              <input
+                name="dayOfMonth"
+                type="number"
+                min={1}
+                max={31}
+                defaultValue={String(fq && "dayOfMonth" in fq ? fq.dayOfMonth : 1)}
+              />
+            </label>
+            <label>
+              Or on the
+              <select name="nth">
+                <option value="">Not used</option>
+                {Object.entries(NTH).map(([v, l]) => (
+                  <option value={v} key={v} selected={fq && "nth" in fq && String(fq.nth) === v}>
+                    {l}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Weekday
+              <select name="weekday">
+                {WEEKDAYS.map((d, i) => (
+                  <option
+                    value={i + 1}
+                    key={d}
+                    selected={fq && "weekday" in fq && fq.weekday === i + 1}
+                  >
+                    {d}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </>
         )}
         <label>
           Ideal time
@@ -410,7 +557,7 @@ export function Meetings() {
             name="idealTime"
             type="time"
             step={900}
-            defaultValue={seed?.idealTime ?? "10:00"}
+            defaultValue={ed ? hhmm(ed.ideal_minute) : (seed?.idealTime ?? "10:00")}
           />
         </label>
         <label>
@@ -422,21 +569,32 @@ export function Meetings() {
             max={480}
             step={5}
             defaultValue={String(
-              seed
-                ? Math.max(5, Math.round((seed.end - seed.start) / 300_000) * 5)
-                : (preset?.durationMinutes ?? 30),
+              ed
+                ? ed.duration_minutes
+                : seed
+                  ? Math.max(5, Math.round((seed.end - seed.start) / 300_000) * 5)
+                  : (preset?.durationMinutes ?? 30),
             )}
           />
         </label>
         <label>
           Can shorten to (minutes)
-          <input name="shortest" type="number" min={5} max={480} step={5} />
+          <input
+            name="shortest"
+            type="number"
+            min={5}
+            max={480}
+            step={5}
+            defaultValue={
+              ed && ed.shortest_minutes < ed.duration_minutes ? String(ed.shortest_minutes) : ""
+            }
+          />
         </label>
         <label>
           Priority
           <select name="level">
             {[1, 2, 3, 4].map((l) => (
-              <option value={l} key={l} selected={l === (preset?.level ?? 2)}>
+              <option value={l} key={l} selected={l === (ed?.level ?? preset?.level ?? 2)}>
                 {LEVEL_NAMES[l]}
               </option>
             ))}
@@ -454,12 +612,14 @@ export function Meetings() {
             <option value="itemSpecific">Item-specific hours</option>
           </select>
         </label>
-        {hoursMode === "itemSpecific" && <ItemHoursFields />}
+        {hoursMode === "itemSpecific" && (
+          <ItemHoursFields initial={ed?.item_hours ? JSON.parse(ed.item_hours) : undefined} />
+        )}
         <label>
           Show as
           <select name="defense">
             {Object.entries(DEFENSE).map(([v, l]) => (
-              <option value={v} key={v}>
+              <option value={v} key={v} selected={v === ed?.defense}>
                 {l}
               </option>
             ))}
@@ -469,18 +629,26 @@ export function Meetings() {
           When there is no time
           <select name="whenUnplaceable">
             <option value="keep_as_conflict">Keep it and mark the conflict</option>
-            <option value="remove">Remove it for that period</option>
+            <option value="remove" selected={ed?.when_unplaceable === "remove"}>
+              Remove it for that period
+            </option>
           </select>
         </label>
         <label>
           Move notice (hours)
-          <input name="leadHours" type="number" min={0} max={168} defaultValue="12" />
+          <input
+            name="leadHours"
+            type="number"
+            min={0}
+            max={168}
+            defaultValue={String(ed ? ed.lead_minutes / 60 : 12)}
+          />
         </label>
         <label>
           Automatic moves
           <select name="autoReschedule">
             {MOVES.map(([v, l]) => (
-              <option value={v} key={v} selected={v === "moderate"}>
+              <option value={v} key={v} selected={v === (ed?.auto_reschedule ?? "moderate")}>
                 {l}
               </option>
             ))}
@@ -488,11 +656,15 @@ export function Meetings() {
         </label>
         <label>
           Starting
-          <input name="starting" type="date" />
+          <input name="starting" type="date" defaultValue={ed?.starting ?? ""} />
         </label>
         <label>
           Location
-          <input name="location" maxLength={500} defaultValue={seed?.location ?? ""} />
+          <input
+            name="location"
+            maxLength={500}
+            defaultValue={ed ? ed.location : (seed?.location ?? "")}
+          />
         </label>
         <fieldset class="wide days">
           <legend>Ideal days (weekly)</legend>
@@ -502,7 +674,13 @@ export function Meetings() {
                 type="checkbox"
                 name="days"
                 value={i + 1}
-                defaultChecked={seed ? i === seed.idealDay - 1 : i === 1}
+                defaultChecked={
+                  fq?.period === "weekly"
+                    ? fq.idealDays.includes(i + 1)
+                    : seed
+                      ? i === seed.idealDay - 1
+                      : i === 1
+                }
               />
               {n}
             </label>
@@ -514,10 +692,14 @@ export function Meetings() {
             name="description"
             rows={2}
             maxLength={8000}
-            defaultValue={seed?.description ?? ""}
+            defaultValue={ed ? ed.description : (seed?.description ?? "")}
           />
         </label>
-        <EventSettingsFields kind="meeting" initial={defaultEventSettings("meeting")} />
+        <EventSettingsFields
+          kind="meeting"
+          initial={ed?.event_settings ?? defaultEventSettings("meeting")}
+          editing={ed !== null}
+        />
         <div class="actions wide">
           <button
             type="button"
@@ -531,8 +713,13 @@ export function Meetings() {
             Preview
           </button>
           <button type="submit" class="primary">
-            Add meeting
+            {ed ? "Save meeting" : "Add meeting"}
           </button>
+          {ed && (
+            <button type="button" onClick={stopEditing}>
+              Cancel
+            </button>
+          )}
         </div>
       </form>
       {preview && (
@@ -665,6 +852,9 @@ export function Meetings() {
                     )}
                   </div>
                   <div class="actions">
+                    <button type="button" onClick={() => edit(m)}>
+                      Edit
+                    </button>
                     <button
                       type="button"
                       onClick={() =>

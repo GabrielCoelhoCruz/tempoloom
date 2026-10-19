@@ -73,11 +73,14 @@ interface Form {
   every?: string;
   custom?: { n: number; unit: "Days" | "Weeks" | "Months" };
   dayOfMonth?: number;
+  nthWeekday?: { nth: string; weekday: string };
   hours?: "Everyone's meeting hours" | "My meeting hours only" | "Item-specific hours";
   itemHours?: { days: string[]; from: string; to: string };
   level?: 1 | 2 | 3 | 4;
   starting?: string;
   description?: string;
+  location?: string;
+  defense?: "Free until time gets short" | "Always busy" | "Always free";
 }
 
 /** Fills the meeting form; `save` false leaves it unsaved. */
@@ -96,6 +99,10 @@ async function fillMeeting(page: Page, m: Form, save = true) {
     await form.getByLabel("Unit").selectOption({ label: m.custom.unit });
   }
   if (m.dayOfMonth) await form.getByLabel("Day of the month").fill(String(m.dayOfMonth));
+  if (m.nthWeekday) {
+    await form.getByLabel("Or on the").selectOption({ label: m.nthWeekday.nth });
+    await form.getByLabel("Weekday").selectOption({ label: m.nthWeekday.weekday });
+  }
   if (m.days) {
     const ideal = form.locator("fieldset.days");
     for (const d of ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"])
@@ -111,6 +118,8 @@ async function fillMeeting(page: Page, m: Form, save = true) {
   if (m.level) await form.getByLabel("Priority").selectOption(String(m.level));
   if (m.starting) await form.getByLabel("Starting").fill(m.starting);
   if (m.description) await form.getByLabel("Description").fill(m.description);
+  if (m.location) await form.getByLabel("Location").fill(m.location);
+  if (m.defense) await form.getByLabel("Show as").selectOption({ label: m.defense });
   if (!save) return form;
   await form.getByRole("button", { name: "Add meeting" }).click();
   await expect(page.locator(`[data-meeting-title="${m.title}"]`)).toBeVisible();
@@ -198,16 +207,40 @@ test("a colleague's hours count in the colleague's time zone, an optional user d
   );
   await expect(row(page, "Optional").getByTestId("meeting-attendees")).toContainText("(optional)");
   check(await range(cal));
+
+  // MEET-02 rule 5: the colleague's new meeting hours (from 10:00 New York time)
+  // place the organizer's meeting again.
+  await other.getByRole("link", { name: "Settings" }).click();
+  for (const d of [1, 2, 3, 4, 5]) {
+    await other.getByTestId(`range-meeting-${d}-0`).locator("input").first().fill("10:00");
+  }
+  await other.getByRole("button", { name: "Save meeting hours" }).click();
+  await expect(other.getByTestId("settings-message")).toHaveText("Saved");
+  const ny10 = (d: string) => localToUtc("America/New_York", d, 10 * 60);
+  const moved = (l: Evs) =>
+    expect(starts(l, "Common")).toEqual(
+      [day(1), day(8)].map((d) => `${local(ny10(d))}-${hm(ny10(d) + 30 * 60_000)}`),
+    );
+  await eventually(() => range(cal), moved);
+  await page.reload();
+  moved(await range(cal));
 });
 
-test("frequency: every day, every 3 days, every month on a day, and every 2 weeks from a start date (concepts frequency; rule 10)", async ({
+test("frequency: every day, every 3 days, every month on a day or an Nth weekday, every 2 months, and every 2 weeks from a start date (concepts frequency; rule 10)", async ({
   page,
   cal,
   signIn,
 }) => {
   await blockUntil(cal, W);
   await signIn();
+  // Plan 12 weeks ahead, so the window holds three months of one ideal day.
+  await page.getByRole("link", { name: "Settings" }).click();
+  await page.getByLabel("Plan ahead (weeks)").fill("12");
+  await page.getByLabel("Plan ahead (weeks)").blur();
+  await expect(page.getByTestId("settings-message")).toHaveText("Saved");
   const monthDay = Number(day(2).slice(8));
+  // The same Wednesday as the Nth Wednesday of its month.
+  const nth = ["first", "second", "third", "fourth", "fifth"][Math.ceil(monthDay / 7) - 1] ?? "";
 
   await fillMeeting(page, {
     title: "Daily",
@@ -228,6 +261,21 @@ test("frequency: every day, every 3 days, every month on a day, and every 2 week
     idealTime: "13:00",
     every: "Every month",
     dayOfMonth: monthDay,
+  });
+  await fillMeeting(page, {
+    title: "Bimonthly",
+    guests: "dana@example.com",
+    idealTime: "14:00",
+    custom: { n: 2, unit: "Months" },
+    dayOfMonth: monthDay,
+    starting: day(2),
+  });
+  await fillMeeting(page, {
+    title: "Weekday",
+    guests: "dana@example.com",
+    idealTime: "16:00",
+    every: "Every month",
+    nthWeekday: { nth, weekday: "Wednesday" },
   });
   await fillMeeting(page, {
     title: "Fortnight",
@@ -253,15 +301,29 @@ test("frequency: every day, every 3 days, every month on a day, and every 2 week
     expect(local(monthly[0]?.start ?? 0)).toBe(`${day(2)} 13:00`);
     for (const e of monthly) expect(Number(local(e.start).slice(8, 10))).toBe(monthDay);
     expect(starts(l, "Fortnight")).toEqual([`${day(3)} 15:00-15:30`]);
+    expect(starts(l, "Weekday")[0]).toBe(`${day(2)} 16:00-16:30`);
+  };
+  // Every month: three ideal days in the window; every 2 months: the first and the third.
+  const months = (l: Evs) => {
+    const dates = (title: string) => titled(l, title).map((e) => local(e.start).slice(0, 10));
+    const monthly = dates("Monthly");
+    expect(monthly).toHaveLength(3);
+    expect(monthly[0]).toBe(day(2));
+    expect(dates("Bimonthly")).toEqual([monthly[0], monthly[2]]);
+    for (const e of titled(l, "Bimonthly")) expect(hm(e.start)).toBe("14:00");
   };
   await eventually(() => range(cal), check);
+  await eventually(() => range(cal, 85), months);
 
   await page.reload();
   await expect(row(page, "Third")).toContainText("every 3 days");
   await expect(row(page, "Monthly")).toContainText(`every month, ideally on day ${monthDay}`);
   await expect(row(page, "Fortnight")).toContainText("every 2 weeks, ideally Thu");
   await expect(row(page, "Daily")).toContainText("every day");
+  await expect(row(page, "Bimonthly")).toContainText(`every 2 months, ideally on day ${monthDay}`);
+  await expect(row(page, "Weekday")).toContainText(`every month, ideally on the ${nth} Wednesday`);
   check(await range(cal));
+  months(await range(cal, 85));
 });
 
 test("priority: a P1 meeting moves a P3 habit, a P4 meeting goes before focus time, and adaptive defense turns busy when the day is tight or the occurrence is locked (rules 14-15, 23-25, 30)", async ({
@@ -313,6 +375,14 @@ test("priority: a P1 meeting moves a P3 habit, a P4 meeting goes before focus ti
     idealTime: "14:00",
     level: 4,
   });
+  // A P4 meeting does not take the P3 habit's time.
+  await fillMeeting(page, {
+    title: "Low",
+    guests: "dana@example.com",
+    idealTime: "10:00",
+    days: ["Wed"],
+    level: 4,
+  });
   await fillMeeting(page, {
     title: "Tight",
     guests: "dana@example.com",
@@ -325,6 +395,8 @@ test("priority: a P1 meeting moves a P3 habit, a P4 meeting goes before focus ti
     expect(starts(l, "Sync")).toEqual([`${day(1)} 10:00-10:30`, `${day(8)} 10:00-10:30`]);
     expect(starts(l, "Late")).toEqual([`${day(1)} 14:00-14:30`, `${day(8)} 14:00-14:30`]);
     expect(starts(l, "Tight")).toEqual([`${day(3)} 12:00-12:30`, `${day(10)} 10:00-10:30`]);
+    expect(starts(l, "Low")).toEqual([`${day(2)} 09:30-10:00`, `${day(9)} 09:30-10:00`]);
+    expect(starts(l, "Review")).toContain(`${day(2)} 10:00-11:00`);
     // The P1 meeting took the P3 habit's time: the habit moved.
     expect(covers(l, "Review", at(day(1), "10:00"))).toBe(false);
     expect(titled(l, "Review").some((e) => local(e.start).startsWith(day(1)))).toBe(true);
@@ -358,7 +430,7 @@ test("priority: a P1 meeting moves a P3 habit, a P4 meeting goes before focus ti
   expect(starts(l, "Late")).toEqual([`${day(1)} 14:00-14:30`, `${day(8)} 14:00-14:30`]);
 });
 
-test("rank and priority come from the automation list: a drag swaps two meetings that want one slot and another drag changes the priority; a meeting hours change places them again (rules 23, 33; edge case 9; MEET-02 trigger rule change)", async ({
+test("rank and priority come from the automation list: a drag swaps two meetings that want one slot and another drag changes the priority; an hours change and an edit of the rules place them again (rules 23, 33; edge case 9; MEET-02 rules 4-5)", async ({
   page,
   cal,
   signIn,
@@ -423,6 +495,32 @@ test("rank and priority come from the automation list: a drag swaps two meetings
   await eventually(() => range(cal), after);
   await page.reload();
   after(await range(cal));
+
+  // MEET-02 rule 4: an edit of the rules (ideal day and time, duration, start
+  // date) places the meeting again; a later start date pauses it until then.
+  await page.getByRole("link", { name: "Meetings" }).click();
+  await row(page, "Alpha").getByRole("button", { name: "Edit" }).click();
+  const form = page.getByTestId("meeting-form");
+  await expect(form.getByLabel("Title")).toHaveValue("Alpha");
+  await expect(form.getByLabel("Priority")).toHaveValue("1");
+  await form.getByLabel("Ideal time").fill("15:00");
+  await form.getByLabel("Duration (minutes)").fill("60");
+  await form.getByLabel("Starting").fill(day(7));
+  const days = form.locator("fieldset.days");
+  await days.getByLabel("Tue", { exact: true }).uncheck();
+  await days.getByLabel("Thu", { exact: true }).check();
+  await form.getByRole("button", { name: "Save meeting" }).click();
+  await expect(row(page, "Alpha")).toContainText("every week, ideally Thu at 15:00 · 1 h");
+  const edited = (l: Evs) => {
+    expect(starts(l, "Alpha")).toEqual([`${day(10)} 15:00-16:00`]);
+    expect(starts(l, "Beta")).toEqual([`${day(1)} 13:30-14:00`, `${day(8)} 13:30-14:00`]);
+  };
+  await eventually(() => range(cal), edited);
+  await page.reload();
+  await expect(row(page, "Alpha").getByTestId("meeting-settings")).toContainText(
+    `starting ${day(7)}`,
+  );
+  edited(await range(cal));
 });
 
 test("event settings, description and start date reach every occurrence, on the main calendar of another account (concepts visibility, reminders, targetCalendar, startDate; rules 9, 38)", async ({
@@ -452,6 +550,8 @@ test("event settings, description and start date reach every occurrence, on the 
       idealTime: "10:00",
       starting: day(7),
       description: agenda,
+      location: "Room 4",
+      defense: "Always busy",
     },
     false,
   );
@@ -475,6 +575,9 @@ test("event settings, description and start date reach every occurrence, on the 
     expect(titled(await range(cal, 21), "Board")).toEqual([]);
     for (const e of titled(l, "Board")) {
       expect(e.description).toContain(agenda);
+      expect(e.location).toBe("Room 4");
+      // Always busy, even weeks ahead where the default (adaptive) writes free.
+      expect(e.busy).toBe(true);
       const ics = await rawEvent(e.id);
       expect(eventProp(ics, "CLASS")).toBe("PRIVATE");
       expect(alarms(ics)).toEqual(["-PT15M"]);
@@ -499,6 +602,76 @@ test("event settings, description and start date reach every occurrence, on the 
     `starting ${day(7)} · private · reminder 15 min before · own calendar`,
   );
   await check();
+  // The calendar is fixed after creation: the edit form shows it and does not change it.
+  await row(page, "Board").getByRole("button", { name: "Edit" }).click();
+  const calendar = page.getByTestId("meeting-form").getByLabel("Calendar", { exact: true });
+  await expect(calendar).toBeDisabled();
+  await expect(calendar.locator("option:checked")).toHaveText(`Work (${second.email})`);
+  await page.getByTestId("meeting-form").getByRole("button", { name: "Cancel" }).click();
+  // CNT-12: the planner's details panel shows the agenda as markdown.
+  await openWeek(page, day(7));
+  await openEvent(page, "Board");
+  const notes = page.getByTestId("event-drawer").getByTestId("event-notes");
+  await expect(notes.locator("strong")).toHaveText("Agenda");
+  await expect(notes.locator("li")).toHaveText(["Budget", "Hiring"]);
+});
+
+test("adaptive defense writes busy within 12 hours and free later; always busy and always free keep their value (rules 30-31)", async ({
+  page,
+  cal,
+  signIn,
+}) => {
+  await signIn();
+  // Today and the next days, all day: the meeting can sit in the next hours.
+  const soon = Date.now() + 2 * 3_600_000;
+  const l0 = local(soon);
+  const minute = Math.ceil((Number(l0.slice(11, 13)) * 60 + Number(l0.slice(14, 16))) / 15) * 15;
+  const ideal = `${String(Math.floor(minute / 60) % 24).padStart(2, "0")}:${String(minute % 60).padStart(2, "0")}`;
+  const allDay = {
+    days: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+    from: "00:00",
+    to: "00:00",
+  };
+  for (const [title, defense] of [
+    ["Adaptive", "Free until time gets short"],
+    ["Busy", "Always busy"],
+    ["Open", "Always free"],
+  ] as const) {
+    await fillMeeting(page, {
+      title,
+      guests: "dana@example.com",
+      idealTime: ideal,
+      every: "Every day",
+      hours: "Item-specific hours",
+      itemHours: allDay,
+      defense,
+    });
+  }
+  const now = Date.now();
+  const next = (l: Evs, title: string) =>
+    titled(l, title).filter((e) => e.end > now && e.start < now + 4 * 86_400_000);
+  const check = (l: Evs) => {
+    for (const title of ["Adaptive", "Busy", "Open"]) {
+      // One soon (inside 12 hours) and later ones (more than 12 hours ahead).
+      expect(
+        next(l, title).some((e) => e.start - now < 12 * 3_600_000),
+        title,
+      ).toBe(true);
+      expect(
+        next(l, title).some((e) => e.start - now > 13 * 3_600_000),
+        title,
+      ).toBe(true);
+    }
+    for (const e of next(l, "Adaptive"))
+      expect(e.busy, local(e.start)).toBe(e.start - now < 12 * 3_600_000);
+    for (const e of next(l, "Busy")) expect(e.busy).toBe(true);
+    for (const e of next(l, "Open")) expect(e.busy).toBe(false);
+  };
+  const read = () => cal.events(now - 3_600_000, now + 4 * 86_400_000);
+  await eventually(read, check);
+  await page.reload();
+  await expect(row(page, "Open")).toContainText("Always free");
+  check(await read());
 });
 
 test("no limit on meetings per organizer, and stats count flexible meetings as one-to-one or group time next to booked meetings (rule 36; analytics summary)", async ({
