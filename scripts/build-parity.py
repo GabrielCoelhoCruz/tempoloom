@@ -789,9 +789,10 @@ T.update({
     "mr_settings": "event settings, description and start date reach every occurrence, on the main calendar of another account",
     "mr_defense": "adaptive defense writes busy within 12 hours and free later; always busy and always free keep their value",
     "mr_many": "no limit on meetings per organizer, and stats count flexible meetings as one-to-one or group time next to booked meetings",
+    "mr_series": "a series every 3 weeks fills the form as custom every 3 weeks, keeps its instances when saved, and cannot take a monthly frequency",
 })
 E2E.update({
-    324: ["mr_hours"], 328: ["mr_freq"], 331: ["mr_hours"], 332: ["mr_settings", "mr_rank"],
+    324: ["mr_hours"], 328: ["mr_freq", "mr_series"], 331: ["mr_hours"], 332: ["mr_settings", "mr_rank"],
     333: ["mr_prio"], 334: ["mr_rank"], 336: ["mr_prio"], 339: ["mr_hours"],
     341: ["mr_prio", "mr_defense"], 342: ["mr_settings", "mr_defense"], 343: ["mr_settings"],
     346: ["mr_settings"], 349: ["mr_rank"], 350: ["mr_many"], 353: ["mr_many", "x_stats"],
@@ -799,17 +800,17 @@ E2E.update({
 })
 E2E_NOTES.update({
     324: "The optional guest is a user here who is busy and outside the time zone of the meeting hours",
-    328: "Custom is every N days, weeks or months (N 1 to 52); monthly is a day of the month or an Nth weekday; a month whose ideal day is past the planning window waits for it",
+    328: "Custom is every N days, weeks or months (N 1 to 52), counted from the start date or the creation day; monthly is a day of the month or an Nth weekday; a month without its ideal day, or whose ideal day has passed, gets no new occurrence (unit test); a month whose ideal day is past the planning window waits for it; an adopted series repeats daily or every N weeks from its first instance",
     331: "Item-specific hours are a private hours set of the meeting, used alone",
     332: "A start date on a new meeting delays it; an edit that sets a later start date pauses it until then",
     339: "The colleague works in America/New_York; the organizer in Europe/Berlin",
     341: "Busy within 12 hours (DEF-30), when the occurrence has the last free slot of its day, or when it is locked",
     342: "Visibility and reminders use the shared event settings (CLASS, VALARM on CalDAV)",
     343: "The markdown is written as plain text to every occurrence (CNT-13); the planner details panel renders it (CNT-12)",
-    346: "The calendar is the main calendar of any connected account, set at creation",
+    346: "The calendar is the main calendar of any connected account, set at creation; that account is the organizer of each occurrence",
     349: "The rules list is the Automations page, grouped by priority; a drag changes rank or priority and places the meetings again",
     353: "Flexible meetings count as one-to-one or group time by their number of people",
-    356: "An edit of the rules, a rank or priority change, and an hours change of the organizer or of an attendee who is a user here place future occurrences again, outside the move limit",
+    356: "An edit of the rules, a rank or priority change, and an hours change of the organizer or of an attendee who is a user here place future occurrences again, outside the move limit; an edit of the title, notes or location keeps the times, and an attendee's time zone change or new meeting hours set also places again (unit tests)",
 })
 BLOCKED[322] = "Needs a Google account: the free/busy query for emails that are not users here is a Google Calendar API call; availability of attendees who are users here is E2E-proven (rows 321, 339)"
 BLOCKED[345] = "Needs Google Meet (a Google account), the Zoom vendor app and Google Workspace room resources; an address or a custom text or link is written as the location of every occurrence (E2E: \u201c" + T["mr_settings"] + "\u201d)"
