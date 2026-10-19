@@ -7,7 +7,8 @@
 // - the planner shows the copy as a second item, or the item does not
 //   name its source calendar and where it is copied to                     -> one item
 // - an event on another connected calendar offers a priority change, or
-//   gives no note that it stays P1; a main-calendar event loses the control -> P1
+//   gives no note that it stays P1; a main-calendar event loses the control;
+//   the API accepts a level for a copy on the main calendar               -> P1
 // Every test reloads the page and reads the calendar again.
 import { addPolicy, copies, openSettings, policyRow, week } from "./calendar-helpers.ts";
 import { at, BACKEND, blockUntil, eventually, expect, test } from "./fixtures.ts";
@@ -94,20 +95,45 @@ test("copies and events on other connected calendars stay P1 (rule 34)", async (
   const priv = await cal.newCalendar("Private");
   await priv.addEvent({ title: "Gym", start: at(W, "07:00"), end: at(W, "08:00") });
   await addPolicy(page, { from: "Private", to: "Work" });
-  await eventually(
-    () => week(cal),
-    (evs) => expect(copies(evs)).toHaveLength(1),
-  );
+  const copy = copies(
+    await eventually(
+      () => week(cal),
+      (evs) => expect(copies(evs)).toHaveLength(1),
+    ),
+  )[0];
+  // The copy is on the main calendar, where a level can change; the API refuses it.
+  await openWeek(page);
+  await expect
+    .poll(() =>
+      page.evaluate(
+        async ({ from, to, eventId }) => {
+          const r = await fetch(`/api/planner/events?from=${from}&to=${to}`);
+          const { events } = (await r.json()) as { events: { id: string; title: string }[] };
+          const [, calendarId] = (events.find((e) => e.title === "Standup")?.id ?? "").split(":");
+          const post = await fetch(
+            `/api/planner/external/${encodeURIComponent(calendarId ?? "")}/${encodeURIComponent(eventId)}/priority`,
+            {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ level: 4 }),
+            },
+          );
+          return `${post.status} ${((await post.json()) as { reason?: string }).reason ?? ""}`;
+        },
+        { from: at(W, "00:00"), to: at(W, "23:59"), eventId: copy?.id ?? "" },
+      ),
+    )
+    .toBe("400 mirror-copy");
   for (const pass of ["first", "after reload"]) {
     if (pass === "first") await openWeek(page);
     else await page.reload();
     await page.locator(".ev-external", { hasText: "Gym" }).click();
-    const fixed = page.getByTestId("external-priority");
+    const fixed = page.getByTestId("external-priority-fixed");
     await expect(fixed.getByLabel("Priority for booking links")).toBeDisabled();
     await expect(fixed.getByLabel("Priority for booking links")).toHaveValue("1");
-    await expect(fixed.getByRole("button", { name: "Save priority" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Save priority" })).toHaveCount(0);
     await expect(fixed).toContainText(
-      "Events on other connected calendars and mirrored copies stay P1.",
+      "Events from other calendars stay P1: only events on your main calendar can change.",
     );
     await page.getByRole("button", { name: "Close" }).click();
     // A main-calendar event keeps the control.

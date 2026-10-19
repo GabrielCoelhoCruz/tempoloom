@@ -363,9 +363,7 @@ export function Planner() {
                   <option value="1">P1</option>
                 </select>
               </label>
-              <p class="status wide">
-                {LEVEL_FIXED_NOTES[selected.levelFixed]}
-              </p>
+              <p class="status wide">{LEVEL_FIXED_NOTES[selected.levelFixed]}</p>
             </div>
           )}
           {selected.kind !== "external" && (

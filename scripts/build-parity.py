@@ -352,7 +352,7 @@ UNIT = StatusMap("UNIT", {
     607: "meetings, focus and booking counts; no breaks or travel",
     704: "phase tabs E2E-proven; reset not covered by E2E", 708: "sound on or off; one alarm sound", 712: "today's summary only",
     297: "",
-    298: "only main-calendar events can change", 238: "a fixed 30 minutes; no setting yet",
+    238: "a fixed 30 minutes; no setting yet",
     243: "travel buffers follow their event; a manual length is not kept", 244: "",
 })
 
@@ -872,10 +872,12 @@ T.update({
 E2E.update({
     458: ["u16_onboarding"],
     485: ["u16_p1"],
+    298: ["u03_other", "u16_p1"],
 })
 E2E_NOTES.update({
     458: "Tempoloom decision: the offer is a planner hint, shown while the user has no policy and has at least two calendars; the other policy fields keep their defaults",
-    485: "The priority control of an event on another connected calendar is disabled at P1 with a note; a main-calendar event keeps the control, and copies are not separate planner items",
+    485: "The priority control of an event on another connected calendar is disabled at P1 with a note; a main-calendar event keeps the control. Copies are not separate planner items, and the API refuses a level for a copy on the main calendar",
+    298: "Tempoloom decision: copies are not separate planner items (mirroring rule 33), so the source event carries the note. The control of an event on another connected calendar is disabled at P1 with a note, and the API refuses a level for a copy on the main calendar",
 })
 BLOCKED.update({
     484: "The calendar add-on part needs a Google Workspace add-on (the vendor's developer app and a test account). The planner part has full UI E2E on CalDAV: the source event and its copy are one item that names its calendar, the calendars it is copied to and its details (\u201c" + T["u16_one_item"] + "\u201d)",
