@@ -188,10 +188,11 @@ describe("repaint", () => {
       NOW - 2 * HOUR,
     );
     const google = fakeGoogle({ etag: '"e-new"' });
-    // Every call for the account that needs a new login fails like the real token store.
+    // The run must skip the account that needs a new login: any call to it fails
+    // with an error that keeps the request, so only the query filter clears it.
     const locked = new Proxy({} as CalendarProvider, {
       get: () => async () => {
-        throw new OAuthError("reauth_required", "Account needs a new login");
+        throw new Error("the account that needs a new login was called");
       },
     });
     const provider = (id: string) => (id === "acc2" ? locked : google.provider);
@@ -214,6 +215,38 @@ describe("repaint", () => {
       },
     });
     await runPaint({ db, provider: () => badPassword }, userId, {
+      paints: [{ calendarId: "cal", eventId: "ev1", series: false, color: "2", managedId: "m1" }],
+      requestedAt: NOW,
+    });
+    expect(requested(db)).toBeNull();
+  });
+
+  it("keeps a repaint all request when the token endpoint fails for a short time (rule 12)", async () => {
+    const { db, userId } = setup("2");
+    requestRepaint(db, userId, NOW);
+    for (const code of ["temporarily_unavailable", "http_503"]) {
+      const outage = new Proxy({} as CalendarProvider, {
+        get: () => async () => {
+          throw new OAuthError(code, "Token request failed");
+        },
+      });
+      await runPaint({ db, provider: () => outage }, userId, {
+        paints: [{ calendarId: "cal", eventId: "ev1", series: false, color: "2", managedId: "m1" }],
+        requestedAt: NOW,
+      });
+      expect(requested(db)).toBe(NOW);
+    }
+  });
+
+  it("clears a repaint all request when the refresh token is no longer valid (rule 12)", async () => {
+    const { db, userId } = setup("2");
+    requestRepaint(db, userId, NOW);
+    const revoked = new Proxy({} as CalendarProvider, {
+      get: () => async () => {
+        throw new OAuthError("invalid_grant", "Token has been revoked");
+      },
+    });
+    await runPaint({ db, provider: () => revoked }, userId, {
       paints: [{ calendarId: "cal", eventId: "ev1", series: false, color: "2", managedId: "m1" }],
       requestedAt: NOW,
     });

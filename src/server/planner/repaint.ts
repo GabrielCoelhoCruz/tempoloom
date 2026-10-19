@@ -50,6 +50,8 @@ export function repaintRequest(db: Db, userId: string): number | null {
  * false when the write must be tried again; events the calendar refuses or
  * that are gone are skipped (rule 10).
  */
+const LOGIN_GONE = new Set(["reauth_required", "invalid_grant", "no_refresh_token"]);
+
 export async function writePaint(ctx: PaintContext, p: Paint): Promise<boolean> {
   const { db } = ctx;
   const cal = one<{ account_id: string; provider_id: string }>(
@@ -97,8 +99,9 @@ export async function writePaint(ctx: PaintContext, p: Paint): Promise<boolean> 
   } catch (err) {
     // Refused (rule 10: mail-made events, birthdays), gone, or the account needs
     // a new login: a retry cannot succeed, so it must not hold a "repaint all".
+    // A token endpoint outage (5xx, 429, temporarily_unavailable) is retried.
     return (
-      err instanceof OAuthError ||
+      (err instanceof OAuthError && LOGIN_GONE.has(err.code)) ||
       (err instanceof ProviderError &&
         (err.kind === "auth" || [400, 401, 403, 404, 410].includes(err.status)))
     );
