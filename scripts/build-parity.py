@@ -286,14 +286,6 @@ PARTIAL = StatusMap("PARTIAL", {
     349: "The list is grouped by priority; no drag to reorder",
     350: "No limit in code; not under test",
     356: "Changed rules or hours place future occurrences again (engine change flag); unit tests only",
-    357: "A move keeps the notice set on the meeting (default 12 hours); unit tests only",
-    359: "A conflict is marked and listed with its reason on the meeting; no suggested times",
-    360: "Remove, or keep and mark the conflict (default); unit tests only",
-    364: "A resize in the calendar locks like a move; not under E2E for meetings",
-    367: "The planner drawer locks and unlocks any managed event (E2E for task chunks); not under E2E for meetings",
-    368: "A time edit in the calendar is kept and locks (E2E); free/busy is written back by the general drift rule, not under E2E for meetings",
-    372: "Delete removes future occurrences and the rules; no choice about guest notices",
-    374: "Unplaced and conflicting occurrences show their reason on the meeting; no shared attention list",
     764: "E2E adds Lunch at 12:00 on each workday from the library; the 11:30 to 14:00 window is not set",
     759: "E2E checks the prefilled form (personal hours, three days); the habit is not saved in that test",
     278: "The category is computed again from the cached attendees on each run; not under E2E",
@@ -311,7 +303,6 @@ PARTIAL = StatusMap("PARTIAL", {
     255: "#tl_flight gives airport time and the flight category; E2E covers flight numbers in the title, not the tag",
     256: "#tl_trip gives the travel category (unit tests); no buffer is added",
     257: "#tl_focus counts an event as focus in stats; not under test",
-    385: "Booked events go to the main calendar; no choice of calendar",
 })
 
 # Library entries (automations-library.md): row = 718 + entry number.
@@ -357,10 +348,6 @@ UNIT = StatusMap("UNIT", {
     228: "",
     259: "title and description; not the RSVP note", 292: "settings field; no UI yet", 506: "API only",
     517: "status is stored; no reconnect UI yet",
-    383: "set through the API; the form derives the slug from the title", 384: "several durations work; the default is the first",
-    388: "", 389: "rolling days only; no fixed end date", 390: "before and after buffers; no travel or recovery buffer checks",
-    392: "a free-text location only; no Meet, Zoom or Gong", 398: "busy event with the booker as guest and manage link; no conference link",
-    408: "", 412: "the page marks preferred times; no legend yet",
     456: "", 467: "", 468: "API only; no UI switch",
     470: "", 471: "stored per policy; no UI", 472: "", 473: "the skip half is E2E-proven; free copies in details mode are not",
     475: "", 476: "copies the details; the provider visibility is not set to private", 480: "",
@@ -690,9 +677,6 @@ E2E_NOTES.update({
     440: "The lifetime is an instance setting (ONEOFF_LINK_DAYS, default 30); the test checks the 30-day date, then restarts the server with 0 days to show the expired page",
     443: "LinkedIn, X and Facebook through their public share URLs; no vendor API",
 })
-PARTIAL.update({
-    420: "Name, email, message and screening questions are E2E-proven on CalDAV (\u201cscreening questions keep their order\u2026\u201d); no CC list or location choice",
-})
 # --- end s6 ---
 
 # --- s7: preview mode, MCP, stats and support ---
@@ -788,6 +772,59 @@ BLOCKED[700] = "Setup guides for vendor AI apps belong to integrations-ai-tools.
 for n in [664, 665, 666, 667, 668]:
     BLOCKED[n] = "The pricing page names it and gives no behavior to build (plans-feature-inventory.md open questions); it also needs meeting notes, transcripts or a room provider"
 # --- end merge ---
+
+# --- U07: flexible meeting limits and actions, booking link settings ---
+T.update({
+    "u7_notice": "the move notice: an automatic move never starts sooner than the notice after the move, and a meeting with notice 0 takes the nearest time",
+    "u7_notime": "with no time in a period, 'remove' leaves the period empty and 'keep' keeps the occurrence at its time as a marked conflict; both say why in the meeting and in the attention list, and the next period is placed",
+    "u7_manual": "manual actions: lock and unlock from the planner hold and free an occurrence; a resize in the calendar is kept and locks; a title edit is kept, a free/busy edit is written back",
+    "u7_delete": "delete asks first: with email the guests get the cancelled times, without email they get nothing; both remove every future occurrence and the rules",
+    "u7_url": "URL names: a title in use gets -2; the owner renames the URL, the old one stops working and a name in use is refused; up to 3 durations with a default that the page preselects",
+    "u7_range": "notice and range: no time inside the notice; the last day is a fixed date or today plus the rolling days; both survive a reload",
+    "u7_buffers": "buffers: times that leave no buffer before or after a busy event are not offered; at an address the travel time stays free while the link keeps it, and not after it is turned off",
+    "u7_locations": "locations, CC and calendar: the booker chooses one of the link's locations and adds CC guests; the busy event goes to the chosen calendar with the location, guests and manage links, and keeps them on reschedule",
+    "u7_focus": "placed focus time is offered by a P1 link only",
+    "u7_preferred": "preferred times: a time with nothing else on the calendar has a green dot and the legend explains it; a time over a free event is offered without the dot",
+    "u7_travel_kind": "travel time follows the kind of the chosen location: an address keeps it free with or without commas, other text with commas does not, and a booker who picks the address is held to it",
+    "u7_calendar_kept": "the calendar for booked events is kept when the editor saves while the calendar list cannot load",
+    "u7_reminder_loc": "the reminder names the location the booker chose, not the link's default",
+    "u7_cc_mail": "CC guests get the booked, rescheduled and cancelled emails with the chosen location and without the booker's links; an organizer in CC gets no second copy",
+    "u7_delete_series": "delete on rules attached to an existing series offers no cancel email: the series stays on the calendar and the guests get nothing",
+})
+E2E.update({
+    357: ["u7_notice"],
+    359: ["s5_limit"],
+    360: ["u7_notime", "s5_daily"],
+    367: ["u7_manual"],
+    372: ["u7_delete", "u7_delete_series"],
+    374: ["u7_notime"],
+    383: ["u7_url"],
+    384: ["u7_url"],
+    385: ["u7_locations", "u7_calendar_kept"],
+    388: ["u7_range"],
+    389: ["u7_range"],
+    390: ["u7_buffers", "u7_travel_kind", "tl_recovery"],
+    408: ["u7_focus"],
+    412: ["u7_preferred"],
+    420: ["u7_locations", "u7_travel_kind", "u7_cc_mail", "u7_reminder_loc", "s6_questions", "s6_emails"],
+})
+E2E_NOTES.update({
+    359: "The flag shows on the meeting in the Meetings page with up to 3 suggested times",
+    372: "Tempoloom sends the cancel email itself, because it writes calendars without the provider's guest emails; it needs SMTP_URL, and without it the page offers no email. Rules attached to an existing series leave the series on the calendar, so that delete offers no cancel email",
+    374: "The attention list is at the top of the Meetings page",
+    389: "The date replaces the rolling days; it is not limited to 100 days",
+    390: "Recovery buffers: \u201ca team link keeps the longest recovery buffer among its organizers free\u201d; travel time uses the person's travel buffer automations and applies when the chosen or default location option is of kind address",
+    420: "CC guests are invited to the event and get the booked, rescheduled and cancelled emails (they need SMTP_URL); the location choice shows when the link has several",
+})
+PARTIAL.update({
+    364: "A resize of one occurrence in the calendar is kept and locks it, with full UI E2E on CalDAV (\u201c" + T["u7_manual"] + "\u201d); a resize of the following or all occurrences of a series does not change the meeting's duration yet",
+    368: "Title and time edits in the calendar are kept and free/busy is written back, with full UI E2E on CalDAV (\u201c" + T["u7_manual"] + "\u201d); privacy is not written back, because meetings have no visibility setting yet (row 342)",
+})
+BLOCKED.update({
+    392: "Meet, Zoom and Gong options need the vendors' developer apps and test accounts (integrations-video-conferencing.md). The other options have full UI E2E on CalDAV: address, phone and other (text or URL), with a default and the booker's choice (\u201c" + T["u7_locations"] + "\u201d)",
+    398: "A conference link needs Meet or Zoom, which need the vendors' developer apps and test accounts. The rest has full UI E2E on CalDAV: a busy event with the booker and CC guests invited, the chosen location and the manage links (\u201c" + T["u7_locations"] + "\u201d; \u201c" + T["b_book"] + "\u201d)",
+})
+# --- end U07 ---
 
 GOOGLE_PENDING = "Google E2E pending: the service-account key is not available yet (1Password token missing)."
 

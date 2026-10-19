@@ -463,6 +463,15 @@ button[aria-selected="true"] {
 button.preferred {
   border-color: color-mix(in srgb, var(--habit) 60%, var(--line));
 }
+.dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 4px;
+  border-radius: 50%;
+  background: #1a9e4b;
+  vertical-align: middle;
+}
 a.row {
   text-decoration: none;
   color: var(--fg);
