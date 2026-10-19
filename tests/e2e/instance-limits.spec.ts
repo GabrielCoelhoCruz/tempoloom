@@ -75,12 +75,10 @@ test("a window limit caps planning but never booking links (plans rule 3; T1)", 
     v
       .locator('[data-testid="times"] button[data-start]')
       .evaluateAll((els) => els.map((e) => Number(e.getAttribute("data-start"))));
-  for (let i = 0; i < 8 && !(await starts()).some((s) => s >= late); i++) {
-    const first = (await starts())[0];
-    await v.getByRole("button", { name: "Later" }).click();
-    // Wait for the next days to replace the shown ones.
-    await expect.poll(async () => (await starts())[0]).not.toBe(first);
-  }
+  // Open the link at the day 20 days ahead (URL parameter `day`).
+  await expect(v.getByTestId("times")).toBeVisible();
+  await v.goto(`${new URL(v.url()).pathname}?day=${addDays(today, 20)}`);
+  await expect(v.getByTestId("times")).toBeVisible();
   expect((await starts()).some((s) => s >= late)).toBe(true);
 });
 

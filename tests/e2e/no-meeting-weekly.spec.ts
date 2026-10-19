@@ -36,14 +36,22 @@ const TITLE = "No meetings #tl_free";
 /** Offered starts on one local date, from the page's first two spans of two weeks. */
 async function offered(browser: Browser, path: string, date: string): Promise<string[]> {
   const v = await visitor(browser);
+  const fromOf = (u: string) => Number(new URL(u).searchParams.get("from"));
+  const firstAnswer = v.waitForResponse((r) => r.url().includes("/times?") && r.ok());
   await v.goto(path);
+  const from = fromOf((await firstAnswer).url());
   await expect(v.getByTestId("times")).toBeVisible();
   const read = () =>
     v
       .locator('[data-testid="times"] button[data-start]')
       .evaluateAll((bs) => bs.map((b) => Number(b.getAttribute("data-start"))));
   const first = await read();
+  // The next two weeks replace the shown ones once their answer is drawn.
+  const next = v.waitForResponse(
+    (r) => r.url().includes("/times?") && r.ok() && fromOf(r.url()) > from,
+  );
   await v.getByRole("button", { name: "Later" }).click();
+  await next;
   await expect(v.getByRole("button", { name: "Earlier" })).toBeVisible();
   await expect(v.getByTestId("times")).toBeVisible();
   const list = [...first, ...(await read())];
