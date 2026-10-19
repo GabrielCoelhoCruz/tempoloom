@@ -7,7 +7,7 @@
 // - "Keep going" stops the timer, or "Discard" writes an event         -> bar after; Radicale empty
 // - the record is written before the user applies it                   -> Radicale before "Log time"
 // - edited minutes are ignored                                         -> event length 25 min
-// - the logged event goes to the main calendar, not the chosen one     -> event on "Log" only
+// - the logged event goes to the main calendar, not the chosen one     -> event on "Worklog" only
 // - the logged event is not in the past, ending at the stop time       -> end within 2 minutes of stop
 // - logged time does not reduce the remaining work                     -> future chunk 95 min, "left"
 // - "Mark the task done" is ignored, or leaves future chunks           -> Done list, Radicale
@@ -24,9 +24,13 @@ test("the task timer logs the recorded time as a past event on the chosen calend
   cal,
   signIn,
 }) => {
-  const log = await cal.newCalendar("Log");
   await blockUntil(cal, W);
   await signIn();
+  // A second calendar for the logged time; its address sorts after the main one.
+  const log = await cal.newCalendar("Worklog");
+  await page.getByRole("link", { name: "Settings" }).click();
+  await page.getByRole("button", { name: "Refresh calendar list" }).click();
+  await expect(page.getByTestId("calendar-list")).toContainText("Worklog");
   await addTask(page, { title: "AT-Timer", minutes: 120, split: false, due: "" });
   await eventually(
     () => allEvents(cal),
@@ -57,9 +61,9 @@ test("the task timer logs the recorded time as a past event on the chosen calend
   await row.getByRole("button", { name: "Start timer" }).click();
   await row.getByRole("button", { name: "Stop" }).click();
   await dialog.getByLabel("Minutes").fill("25");
-  await dialog.getByLabel("Calendar").selectOption({ label: "Log" });
+  await dialog.getByLabel("Calendar").selectOption({ label: "Worklog" });
   await expect(dialog.getByTestId("timer-preview")).toContainText("25 min");
-  await expect(dialog.getByTestId("timer-preview")).toContainText("Log");
+  await expect(dialog.getByTestId("timer-preview")).toContainText("Worklog");
   expect(
     titled(await log.events(Date.now() - 86_400_000, Date.now() + 86_400_000), "AT-Timer"),
   ).toHaveLength(0);

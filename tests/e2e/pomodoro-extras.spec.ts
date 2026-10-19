@@ -42,10 +42,11 @@ const playing = (page: Page) =>
 
 test("background audio plays the chosen track during work sessions only (rule 14)", async ({
   page,
+  app,
 }) => {
   await watchSources(page);
   await page.clock.install({ time: new Date("2026-11-09T09:00:00") });
-  await page.goto("/tools/pomodoro");
+  await page.goto(`${app.baseUrl}/tools/pomodoro`);
   await page.getByRole("button", { name: "Settings" }).click();
   const settings = page.getByTestId("timer-settings");
   await settings.getByLabel("Background audio in work sessions").check();
@@ -77,9 +78,9 @@ test("background audio plays the chosen track during work sessions only (rule 14
   await expect(settings.getByLabel("Track")).toHaveValue("brown");
 });
 
-test("the mini window shows the running timer and controls it (rule 13)", async ({ page }) => {
+test("the mini window shows the running timer and controls it (rule 13)", async ({ page, app }) => {
   await page.clock.install({ time: new Date("2026-11-09T09:00:00") });
-  await page.goto("/tools/pomodoro");
+  await page.goto(`${app.baseUrl}/tools/pomodoro`);
   const [mini] = await Promise.all([
     page.waitForEvent("popup"),
     page.getByRole("button", { name: "Mini window" }).click(),

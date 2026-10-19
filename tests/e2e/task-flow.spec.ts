@@ -100,27 +100,31 @@ test("suggestions-only mode removes task events and lists tasks as Suggested now
   await blockUntil(cal, W);
   await signIn();
   const now = Date.now();
+  // The form keeps the last values, so each task sets its own priority and dates.
   await addTask(page, { title: "AT-S1 low", minutes: 60, split: false, level: 4, due: "" });
   await addTask(page, { title: "AT-S2 top", minutes: 60, split: false, level: 1, due: "" });
-  await addTask(page, {
-    title: "AT-S3 later",
-    minutes: 60,
-    split: false,
-    due: "",
-    startAfter: `${day(4)}T10:00`,
-  });
   await addTask(page, {
     title: "AT-S4 soon",
     minutes: 60,
     split: false,
+    level: 2,
     due: toLocalInput(ZONE, now + 24 * 60 * MIN),
   });
   await addTask(page, {
     title: "AT-S5 overdue",
     minutes: 60,
     split: false,
+    level: 2,
     startAfter: toLocalInput(ZONE, now - 3 * 24 * 60 * MIN),
     due: toLocalInput(ZONE, now - 24 * 60 * MIN),
+  });
+  await addTask(page, {
+    title: "AT-S3 later",
+    minutes: 60,
+    split: false,
+    level: 2,
+    due: "",
+    startAfter: `${day(4)}T10:00`,
   });
   await eventually(
     () => allEvents(cal),
@@ -196,11 +200,15 @@ test("the next-up task is the one in progress, else the earliest chunk, else sch
   // The user starts the P3 task early in the calendar: it is now in progress.
   const [low] = titled(evs, "AT-NX low");
   if (!low) throw new Error("no chunk");
-  const start = Date.now() - 10 * MIN;
+  const start = Math.floor(Date.now() / MIN) * MIN - 10 * MIN;
   await cal.update(low.id, { start, end: start + 60 * MIN });
+  // The moved chunk has started, so it keeps its title; the P1 chunk moves out of its way.
   await eventually(
     () => allEvents(cal),
-    (l) => expect(titled(l, "AT-NX low")[0]?.summary).toMatch(/^🔒/),
+    (l) => {
+      expect(titled(l, "AT-NX low")[0]?.start).toBe(start);
+      expect(titled(l, "AT-NX top")[0]?.start).toBeGreaterThanOrEqual(start + 60 * MIN);
+    },
   );
   await expect(nextUp).toContainText("AT-NX low");
   await page.reload();

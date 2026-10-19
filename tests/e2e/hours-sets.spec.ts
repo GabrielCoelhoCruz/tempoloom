@@ -142,11 +142,12 @@ test("the hours menu of an item editor previews the chosen hours and links to th
   await form.getByLabel("Hours").selectOption({ label: "Personal hours" });
   await form.getByRole("button", { name: "Preview hours" }).click();
   const preview = form.getByTestId("hours-preview");
-  await expect(preview).toContainText("Mon 17:00–21:00");
-  await expect(preview).toContainText("Sat 09:00–21:00");
+  // Personal hours out of the box: every evening 18:00 to 22:00.
+  await expect(preview).toContainText("Mon 18:00–22:00");
+  await expect(preview).toContainText("Sun 18:00–22:00");
 
   await page.getByRole("link", { name: "Settings" }).click();
-  await page.getByTestId("range-personal-1-0").locator("input").first().fill("18:00");
+  await page.getByTestId("range-personal-1-0").locator("input").first().fill("19:00");
   await page.getByRole("button", { name: "Save personal hours" }).click();
   await expect(page.getByTestId("settings-message")).toHaveText("Saved");
 
@@ -154,7 +155,7 @@ test("the hours menu of an item editor previews the chosen hours and links to th
   const habit = page.getByTestId("habit-form");
   await habit.getByLabel("Hours").selectOption({ label: "Personal hours" });
   await habit.getByRole("button", { name: "Preview hours" }).click();
-  await expect(habit.getByTestId("hours-preview")).toContainText("Mon 18:00–21:00");
+  await expect(habit.getByTestId("hours-preview")).toContainText("Mon 19:00–22:00");
   await page.reload();
   await page.getByTestId("habit-form").getByRole("button", { name: "Preview hours" }).click();
   // Work hours is the default choice.

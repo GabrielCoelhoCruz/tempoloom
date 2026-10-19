@@ -88,7 +88,9 @@ test("task notes keep their markdown in the calendar, render in the planner and 
 
   // The link in the calendar opens the task's event in the planner.
   await page.goto(link.replace(app.baseUrl, ""));
-  await expect(page.getByTestId("event-drawer").getByRole("heading")).toHaveText("AT-C1");
+  await expect(page.getByTestId("event-drawer").getByRole("heading", { level: 2 })).toHaveText(
+    "AT-C1",
+  );
   await expect(page.getByTestId("week-label")).toContainText(W);
 });
 

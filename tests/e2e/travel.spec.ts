@@ -189,7 +189,7 @@ test("the planner prompts for a travel zone when the browser is elsewhere, shows
   );
 
   // Back home: the home browser offers to end the trip early.
-  await page.reload();
+  await page.goto("/");
   await expect(page.getByTestId("zone-head")).toHaveText(["Berlin", "Tokyo"]);
   const home = page.getByTestId("travel-prompt");
   await expect(home).toContainText(TOKYO);
