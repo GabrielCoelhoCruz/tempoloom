@@ -321,6 +321,9 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
     box,
     allowPrivate: config.WEBHOOK_ALLOW_PRIVATE,
     retryBaseMs: config.WEBHOOK_RETRY_BASE_MS,
+    suspendAfterMs: config.WEBHOOK_SUSPEND_AFTER_SECONDS * 1000,
+    mailer: deps.mailer,
+    baseUrl: config.BASE_URL,
     now,
   };
   app.route(

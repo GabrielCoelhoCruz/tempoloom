@@ -77,8 +77,10 @@ async function setup(status: "active" | "suspended", mailer?: Mailer) {
     box,
     allowPrivate: true,
     retryBaseMs: 60_000,
+    suspendAfterMs: DAY,
+    mailer: mailer ?? { configured: false, send: async () => {} },
+    baseUrl: "http://localhost:8787",
     now: () => now,
-    ...(mailer ? { mailer } : {}),
   };
   const delivery = () =>
     one<{ created_at: number; next_attempt_at: number }>(
