@@ -780,6 +780,58 @@ for n in [664, 665, 666, 667, 668]:
     BLOCKED[n] = "The pricing page names it and gives no behavior to build (plans-feature-inventory.md open questions); it also needs meeting notes, transcripts or a room provider"
 # --- end merge ---
 
+# --- U05: event tags, time away, colors, markers and external priority ---
+T.update({
+    "u5_tags": "travel tags in the title, the description and the user's own RSVP note add travel time; #tl_flight adds airport time and #tl_trip only the travel category, also at an address; a removed tag removes its buffers",
+    "u5_quick": "a busy event titled only #tl_busy turns free and still keeps tasks out; a longer title stays busy",
+    "u5_focus": "an event tagged #tl_focus counts toward the weekly focus goal, so less focus time is placed",
+    "u5_away": "out-of-office time blocks habits and counts as vacation from 8 hours, else as a personal commitment; #tl_free in its title lets habits back",
+    "u5_holiday": "a company holiday blocks the day once the user accepts its invitation; an unanswered one and a free holiday do not",
+    "u5_guests": "a meeting gets a new category and color when its guests change in the calendar",
+    "u5_repaint": "a new category color repaints events that ended too; Repaint all events puts back colors changed in the calendar, at most twice a minute",
+    "u5_markers": "chosen markers after the title replace the defaults on new and changed events; the planner shows plain titles; back before the title rewrites them",
+    "u5_series": "a priority for one occurrence of a series changes only that one; for the whole series it changes every occurrence",
+    "u5_fixed": "an event of another connected calendar, which a copy mirrors to the main calendar, shows a fixed P1 with the reason",
+    "u5_copies": "copies of travel buffers on mirrored calendars show what each policy shows, while the main calendar keeps them with the travel marker",
+})
+E2E.update({
+    245: ["s1_kinds", "u5_copies"],
+    253: ["u5_quick"],
+    254: ["u5_tags"],
+    255: ["u5_tags"],
+    256: ["u5_tags"],
+    257: ["u5_focus"],
+    259: ["u5_tags"],
+    261: ["u5_away"],
+    262: ["u5_away"],
+    263: ["u5_away"],
+    265: ["u5_holiday"],
+    278: ["u5_guests"],
+    283: ["c_paint", "u5_repaint"],
+    285: ["c_paint", "u5_repaint"],
+    292: ["u5_markers"],
+    297: ["u5_series"],
+    298: ["u5_fixed"],
+})
+E2E_NOTES.update({
+    245: "A travel buffer is the one managed event that mirroring copies, so its copy follows the policy",
+    253: "Quick block: the event turns free within one run",
+    259: "On CalDAV the RSVP note is the X-RESPONSE-COMMENT of the user's attendee line, or the COMMENT of an invitation copy",
+    261: "On CalDAV an out-of-office event is one marked X-MICROSOFT-CDO-BUSYSTATUS:OOF, as Outlook-style clients write it; the planner shows it as vacation or personal commitment",
+    262: "Exactly 8 hours is vacation; stats show personal commitments on their own line",
+    265: "A shared holiday calendar of busy all-day invitations works the same way; holiday feeds are row 266",
+    285: "Repaint all events is a button in the Colors section; it counts toward the same limit of 2 a minute",
+    292: "Settings, Title markers: one field for each state marker and a position before or after the title",
+    298: "The planner shows a mirrored copy as its source event, so one control covers both",
+})
+BLOCKED[284] = "Needs a Google Calendar account: the events that cannot change color (made from mail, birthdays) exist only in Google Calendar; a CalDAV server lets the owner change every event. Painting skips refused events and never stops a run (code)"
+BLOCKED[317] = "The chat app channel needs the Slack app (a vendor developer app and a test workspace); the daily digest by email, at a time the user sets, has full UI E2E on CalDAV (\u201clibrary entry 'Flag meeting problems' turns on the checks and an email digest of open, not ignored, issues at the chosen time, once a day\u201d)"
+for n in [245, 253, 254, 255, 256, 257, 259, 261, 262, 263, 265, 278, 283, 284, 285, 292, 297, 298, 317]:
+    PARTIAL.pop(n, None)
+    UNIT.pop(n, None)
+    GOOGLE_ROWS.pop(n, None)
+# --- end U05 ---
+
 GOOGLE_PENDING = "Google E2E pending: the service-account key is not available yet (1Password token missing)."
 
 def status(row_id, spec_file, notes):
