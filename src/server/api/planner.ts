@@ -22,6 +22,11 @@ export interface PlannerEvent {
   level?: number;
   levelEditable?: boolean;
   recurring?: boolean;
+  /** External events: the calendar name and the calendars that hold its mirror copies (mirroring rule 33). */
+  calendar?: string;
+  copies?: string[];
+  /** External events: on the main calendar; others stay P1 (mirroring rule 34). */
+  mainCalendar?: boolean;
   start: number;
   end: number;
   title: string;
@@ -51,10 +56,11 @@ export function plannerEvents(db: Db, userId: string, from: number, to: number):
       all_day: number;
       private_props: string;
       is_primary: number;
+      calendar_name: string;
     }
   >(
     db,
-    `SELECT e.*, c.is_primary
+    `SELECT e.*, c.is_primary, c.name AS calendar_name
      FROM events e JOIN calendars c ON c.id = e.calendar_id JOIN accounts a ON a.id = c.account_id
      WHERE a.user_id = ? AND c.check_availability = 1 AND e.end_ms > ? AND e.start_ms < ?
      ORDER BY e.start_ms`,
@@ -89,6 +95,22 @@ export function plannerEvents(db: Db, userId: string, from: number, to: number):
       userId,
     ).map((x) => [`${x.calendar_id}:${x.target_id}`, x.level]),
   );
+  // Mirroring rule 33: the copies stay hidden; their source names where they are.
+  const copiedTo = new Map<string, string[]>();
+  for (const m of all<{ key: string; policy_id: string; source_calendar_id: string; dest: string }>(
+    db,
+    `SELECT m.key, p.id AS policy_id, p.source_calendar_id, d.name AS dest
+     FROM managed_events m JOIN mirror_policies p ON p.id = m.source_id
+       JOIN calendars d ON d.id = p.dest_calendar_id
+     WHERE m.user_id = ? AND m.kind = 'mirror' AND m.event_id IS NOT NULL AND m.end_ms > ? AND m.start_ms < ?
+     ORDER BY d.name`,
+    userId,
+    from,
+    to,
+  )) {
+    const k = `${m.source_calendar_id}:${m.key.slice(`mirror:${m.policy_id}:`.length)}`;
+    copiedTo.set(k, [...(copiedTo.get(k) ?? []), m.dest]);
+  }
   for (const e of external) {
     if (e.all_day) continue;
     if ((JSON.parse(e.private_props) as Record<string, string>)[MANAGED_PROP] === "1") continue;
@@ -113,6 +135,9 @@ export function plannerEvents(db: Db, userId: string, from: number, to: number):
         e.is_primary === 1 &&
         (JSON.parse(e.private_props) as Record<string, string>).tl_booking !== "1",
       recurring: e.recurring_id !== null,
+      calendar: e.calendar_name,
+      mainCalendar: e.is_primary === 1,
+      copies: copiedTo.get(`${e.calendar_id}:${e.event_id}`) ?? [],
     });
   }
   return out.sort((a, b) => a.start - b.start || a.id.localeCompare(b.id));
@@ -229,9 +254,9 @@ export function plannerRoutes(db: Db, sync: SyncService, now: () => number): Hon
       c,
       z.object({ level: z.number().int().min(1).max(4), series: z.boolean().default(false) }),
     );
-    const ev = one<{ recurring_id: string | null; is_primary: number }>(
+    const ev = one<{ recurring_id: string | null; is_primary: number; private_props: string }>(
       db,
-      `SELECT e.recurring_id, c.is_primary FROM events e JOIN calendars c ON c.id = e.calendar_id
+      `SELECT e.recurring_id, e.private_props, c.is_primary FROM events e JOIN calendars c ON c.id = e.calendar_id
        JOIN accounts a ON a.id = c.account_id WHERE a.user_id = ? AND e.calendar_id = ? AND e.event_id = ?`,
       user.id,
       c.req.param("calendarId"),
@@ -239,6 +264,9 @@ export function plannerRoutes(db: Db, sync: SyncService, now: () => number): Hon
     );
     if (!ev) notFound("event");
     if (!ev.is_primary) return c.json({ error: "not_main_calendar" }, 400);
+    // Mirroring rule 34: a copy stays P1.
+    if ((JSON.parse(ev.private_props) as Record<string, string>)[MANAGED_PROP] === "1")
+      return c.json({ error: "managed_event" }, 400);
     const target = series && ev.recurring_id ? ev.recurring_id : c.req.param("eventId");
     run(
       db,

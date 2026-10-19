@@ -826,6 +826,25 @@ BLOCKED.update({
 })
 # --- end U07 ---
 
+# --- U16: mirroring rows that said only "Not implemented yet" ---
+T.update({
+    "u16_onboarding": "onboarding offers a first mirroring policy with one source and one destination",
+    "u16_one_item": "the planner shows a source event and its copy as one item with the source details",
+    "u16_p1": "copies and events on other connected calendars stay P1",
+})
+E2E.update({
+    458: ["u16_onboarding"],
+    485: ["u16_p1"],
+})
+E2E_NOTES.update({
+    458: "Tempoloom decision: the offer is a planner hint, shown while the user has no policy and has at least two calendars; the other policy fields keep their defaults",
+    485: "The priority control of an event on another connected calendar is disabled at P1 with a note; a main-calendar event keeps the control, and copies are not separate planner items",
+})
+BLOCKED.update({
+    484: "The calendar add-on part needs a Google Workspace add-on (the vendor's developer app and a test account). The planner part has full UI E2E on CalDAV: the source event and its copy are one item that names its calendar, the calendars it is copied to and its details (\u201c" + T["u16_one_item"] + "\u201d)",
+})
+# --- end U16 ---
+
 GOOGLE_PENDING = "Google E2E pending: the service-account key is not available yet (1Password token missing)."
 
 def e2e_status(row_id, tests):

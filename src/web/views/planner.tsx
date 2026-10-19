@@ -267,6 +267,16 @@ export function Planner() {
             {selected.locked && selected.kind !== "external" ? " · locked" : ""}
             {selected.category ? ` · ${CATEGORY_LABELS[selected.category]}` : ""}
           </div>
+          {selected.calendar && (
+            <div class="status" data-testid="event-source">
+              Calendar: {selected.calendar}
+            </div>
+          )}
+          {selected.copies && selected.copies.length > 0 && (
+            <div class="status" data-testid="event-copies">
+              Copied to: {selected.copies.join(", ")}
+            </div>
+          )}
           <EventExtras event={selected} onDone={() => setSelected(null)} />
           <label class="inline">
             Category
@@ -336,6 +346,19 @@ export function Planner() {
                 Only booking links read this. Tempoloom never moves this event.
               </p>
             </form>
+          )}
+          {selected.kind === "external" && selected.mainCalendar === false && (
+            <div class="form" data-testid="external-priority">
+              <label>
+                Priority for booking links
+                <select disabled>
+                  <option value="1">P1</option>
+                </select>
+              </label>
+              <p class="status wide">
+                Events on other connected calendars and mirrored copies stay P1.
+              </p>
+            </div>
           )}
           {selected.kind !== "external" && (
             <div class="actions">
