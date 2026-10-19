@@ -1,18 +1,21 @@
 // Meeting emails: guest update emails for flexible meeting changes
 // (planning-notifications.md NTF-20 to NTF-22), the daily digest of meeting
 // issues (automations-meeting-quality.md rule 6), the at-risk digest
-// (meetings-flexible-rescheduling.md rule 35) and the new recurring meeting
-// email (NTF-30). Each daily email goes out at its local time; a new time
-// takes effect at its next occurrence.
+// (meetings-flexible-rescheduling.md rule 35), the new recurring meeting
+// email (NTF-30) and the weekly report (analytics-weekly-reports.md). Each
+// daily email goes out at its local time; a new time takes effect at its next
+// occurrence.
 import type { ReportEntry } from "../scheduler/model.ts";
 import { addDays, DAY, localToUtc, utcToLocal } from "../shared/time.ts";
 import { all, type Db, one, run } from "./db.ts";
-import type { Mailer } from "./mail.ts";
+import type { Mailer, Message } from "./mail.ts";
 import { openIssues } from "./meeting-checks.ts";
 import { getPrefs } from "./meeting-prefs.ts";
 import { adoptableSeries } from "./meeting-series.ts";
 import { attendeesOf } from "./planner/meetings.ts";
+import { claimWeeklyReport, weeklyReport } from "./weekly-report.ts";
 
+/** "weekly" rows are claimed in weekly-report.ts. */
 export type DailyKind = "checks" | "daily";
 
 const pad = (n: number) => String(n).padStart(2, "0");
@@ -76,13 +79,15 @@ export interface DailyMailDeps {
   now: () => number;
   baseUrl: string;
   intervalMs: number;
+  /** false: no weekly reports (the operator's WEEKLY_REPORTS=off). */
+  weeklyReports?: boolean;
   log?: (msg: string, err?: unknown) => void;
 }
 
 export class DailyMailWorker {
   readonly #d: DailyMailDeps;
   #timer: NodeJS.Timeout | undefined;
-  #running: Promise<void> | undefined;
+  #running: Promise<unknown> | undefined;
 
   constructor(deps: DailyMailDeps) {
     this.#d = deps;
@@ -106,20 +111,29 @@ export class DailyMailWorker {
   }
 
   async #send(to: string, subject: string, text: string, ics?: string) {
+    await this.#mail({
+      to,
+      subject,
+      text,
+      ...(ics ? { icalEvent: { method: "REQUEST", content: ics } } : {}),
+    });
+  }
+
+  /** True when the message went out. */
+  async #mail(m: Message): Promise<boolean> {
     try {
-      await this.#d.mailer.send({
-        to,
-        subject,
-        text,
-        ...(ics ? { icalEvent: { method: "REQUEST", content: ics } } : {}),
-      });
+      await this.#d.mailer.send(m);
+      return true;
     } catch (err) {
-      this.#log(`meeting email to ${to} failed`, err);
+      this.#log(`email to ${m.to} failed`, err);
+      return false;
     }
   }
 
-  async tick(): Promise<void> {
-    if (!this.#d.mailer.configured) return;
+  /** Sends the emails due now; returns how many weekly reports went out. */
+  async tick(): Promise<number> {
+    if (!this.#d.mailer.configured) return 0;
+    let reports = 0;
     await this.#guestUpdates();
     const { db } = this.#d;
     const now = this.#d.now();
@@ -140,7 +154,12 @@ export class DailyMailWorker {
         if (prefs.atRiskDigest) await this.#atRisk(u, now);
         if (prefs.newSeriesEmail) await this.#newSeries(u, now);
       }
+      if (this.#d.weeklyReports !== false && prefs.weeklyReport) {
+        const week = claimWeeklyReport(db, u.id, u.time_zone, now);
+        if (week && (await this.#mail(weeklyReport(db, u, week, this.#d.baseUrl, now)))) reports++;
+      }
     }
+    return reports;
   }
 
   /** Rule 6: open issues of the next 7 days; nothing when there are none. */

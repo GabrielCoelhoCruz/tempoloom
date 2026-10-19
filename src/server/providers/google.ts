@@ -7,6 +7,7 @@ import {
   type GoogleEventTime,
   SyncTokenExpiredError,
 } from "../google/calendar.ts";
+import { OAuthError } from "../google/oauth.ts";
 import {
   type CalendarProvider,
   type EventChanges,
@@ -41,6 +42,7 @@ export function fromGoogleEvent(e: GoogleEvent, zone: string): ProviderEvent {
     busy: e.transparency !== "transparent",
     eventType: e.eventType ?? "default",
     selfResponse: self?.responseStatus ?? null,
+    rsvpNote: self?.comment ?? "",
     attendeeCount: e.attendees?.filter((a) => !a.resource).length ?? 0,
     attendees: (e.attendees ?? [])
       .filter((a) => !a.resource && a.email)
@@ -114,6 +116,10 @@ function mapError(err: unknown): never {
             : "other";
     throw new ProviderError(kind, err.status, err.message);
   }
+  // A revoked refresh token or an account that needs a new login is a
+  // rejected login of this account only (accounts-login-emails-permissions.md rule 16).
+  if (err instanceof OAuthError && (err.code === "invalid_grant" || err.code === "reauth_required"))
+    throw new ProviderError("auth", 401, err.message);
   throw err;
 }
 
@@ -197,6 +203,7 @@ export class GoogleProvider implements CalendarProvider {
     const patch: Partial<GoogleEventInput> = {};
     if (change.summary !== undefined) patch.summary = change.summary;
     if (change.description !== undefined) patch.description = change.description;
+    if (change.busy !== undefined) patch.transparency = change.busy ? "opaque" : "transparent";
     if (change.end !== undefined) patch.end = { dateTime: new Date(change.end).toISOString() };
     if (change.start !== undefined)
       patch.start = { dateTime: new Date(change.start).toISOString() };
