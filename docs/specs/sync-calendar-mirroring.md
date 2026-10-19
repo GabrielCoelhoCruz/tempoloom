@@ -55,6 +55,10 @@ combines policies for two-way setups and for setups with many calendars.
 - Free plan: 1 policy. Paid plans: no limit. One pricing card shows 3
   policies for the lowest paid plan; the comparison table shows no limit
   (E-0003). See open questions.
+- Tempoloom decision: Tempoloom has no plans. The operator can set the
+  instance limit `max_mirrors` (off by default; see
+  `plans-feature-inventory.md`). It counts every policy of a person, on or
+  off.
 - Free plan: `visibility` is limited to the label option, with the label set
   to the personal or the work label for all copies (E-0064).
 
@@ -74,11 +78,19 @@ combines policies for two-way setups and for setups with many calendars.
    different providers (Google and Microsoft) (E-0053, E-0008).
 4. When the chosen destination is the main calendar of another Tempoloom
    account, Tempoloom shows an error and does not save the policy (E-0202).
+   Tempoloom decision: the destination is another account's main calendar
+   when another Tempoloom account has, as its main email, an account whose
+   primary calendar has the same calendar id (on CalDAV, the same calendar
+   URL). The policy form shows: "This calendar is the main calendar of
+   another Tempoloom account. Choose another destination."
 5. Tempoloom must have read and write access to both calendars. The pickers
    do not offer calendars with free/busy-only access (E-0053, E-0106).
 6. The policy list shows all policies of the user. One tab per added account
    filters the list to policies where the source or the destination belongs
    to that account. An "All" tab shows every policy (E-0128).
+   Tempoloom decision: the tabs follow the order in which the accounts were
+   added. A policy is under an account's tab when its source or its
+   destination calendar belongs to that account.
 7. The user opens a policy to see all its fields. The user can change any
    field and save (E-0128). Proposed: a change of `source` or `destination`
    removes the old copies and creates new copies, as if the policy were
@@ -87,6 +99,8 @@ combines policies for two-way setups and for setups with many calendars.
    note that each toggle writes many events and that the user should wait a
    few minutes between toggles, because the provider can slow down the
    account (E-0128).
+   Tempoloom decision: the note reads "Each switch writes many events. Wait a
+   few minutes between switches."
 9. Turning a policy off and on again runs a full reconcile of that policy.
    After the reconcile, every copy matches the current source state
    (E-0221).
@@ -112,6 +126,8 @@ applies rules 14 to 23 in order. The first rule that decides wins.
     current time and start less than 12 months after the current time
     (E-0003 shows a 12-month range for mirroring). Proposed: Tempoloom does
     not create, change or delete copies of events that ended in the past.
+    Tempoloom decision: 12 months is 365 days. Tempoloom reads the calendars
+    of enabled policies 380 days ahead, whatever the scheduling window.
 15. No chaining: skip a source event that is a copy written by Tempoloom
     under any policy. With policies A to B and B to C, events from A do not
     reach C (E-0202).
@@ -123,6 +139,9 @@ applies rules 14 to 23 in order. The first rule that decides wins.
 17. Destination already invited: skip a source event when the destination
     calendar id (its email) is an attendee of the source event. The event is
     already on the destination, so a copy would be a duplicate (E-0084).
+    Tempoloom decision: the destination's address is its calendar id and, for
+    a primary calendar, the email of its account (CalDAV calendar ids are
+    URLs, so only the account email can match there).
 18. Declined: skip a source event when the owner response is `declined`. If
     a copy exists, delete it (E-0091).
 19. All-day events: with `all_day_mode = none`, skip all-day events. With
@@ -135,6 +154,8 @@ applies rules 14 to 23 in order. The first rule that decides wins.
     1. The provider created the event from an email (such as a flight or
        a restaurant booking found in Gmail): busy, even when the source
        event is free (E-0084).
+       Tempoloom decision: an event is made from an email when Google gives
+       it the event type `fromGmail`. CalDAV servers have no such type.
     2. The source owner is the organizer and is not in the attendee list:
        busy (E-0091).
     3. The owner response is `accepted` or `tentative`: busy (E-0091).
@@ -166,6 +187,12 @@ applies rules 14 to 23 in order. The first rule that decides wins.
 27. Label table for `label_only`. Rows are the category of the source event
     (from the automatic category rules). Columns are the policy
     `calendar_type` (E-0064):
+    Tempoloom decision: the source category comes from the automatic
+    category rules on the source event itself (its title, description, event
+    type and guests), or from a category the user set on that event. The
+    policy's calendar type does not change it. "Meeting" means team meeting,
+    one-on-one or external meeting; "Vacation" is out-of-office time longer
+    than 8 hours.
 
     | Source category | `personal` | `business` | `travel` |
     |---|---|---|---|
@@ -190,6 +217,9 @@ applies rules 14 to 23 in order. The first rule that decides wins.
     `color_override` is not set, the color rules decide.
 30. Reminders: a copy never alerts the user. On Google, set
     `reminders.useDefault = false` with no overrides (E-0224).
+    Tempoloom decision: when a copy gets an alert on the calendar (a CalDAV
+    VALARM, or Google reminders), Tempoloom writes the copy again without it
+    on the next sync.
 31. Proposed: a copy has no attendees, and Tempoloom sends no invitation or
     update email for a copy. (The evidence says only that copies never
     notify.)
@@ -228,6 +258,13 @@ applies rules 14 to 23 in order. The first rule that decides wins.
 39. A full reconcile of all enabled policies runs twice a day (E-0126). It
     compares every source event in the window with every copy and creates,
     updates or deletes copies to match.
+    Tempoloom decision: the interval is the operator setting
+    `MIRROR_RECONCILE_SECONDS` (default 43200, twice a day). The full
+    reconcile reads every calendar of an enabled policy in full and also puts
+    back the time and color of each copy; a normal sync puts back the title,
+    description and free/busy at once. Turning a policy on (rule 9) starts a
+    full reconcile on the next run. The settings page shows the time of the
+    last full reconcile.
 40. To remove a copy for good, the user declines or deletes the source
     event, or adds `#tl_nosync` to it (E-0117, E-0126). The help text and the
     copy description (rule 32) tell the user this.
@@ -307,6 +344,8 @@ applies rules 14 to 23 in order. The first rule that decides wins.
 14. Proposed: Tempoloom rejects a policy whose source equals its destination,
     and a second policy with the same source and destination as an existing
     one.
+    Tempoloom decision: the message names both calendars: "A mirroring
+    policy from Private to Work already exists."
 15. A source event that is private on the source calendar, with
     `details_default`: see open questions. Proposed: copy it as
     `details_private` so that a private event never becomes visible by
@@ -314,6 +353,9 @@ applies rules 14 to 23 in order. The first rule that decides wins.
 16. A user sees duplicates when the source and the destination are both
     shown in the calendar app. This is by design (E-0100). The help text
     suggests hiding the source calendar in the calendar app.
+    Tempoloom decision: the mirroring section of Settings shows three tips:
+    how a copy goes away for good (rule 40), the family calendar case (edge
+    case 11) and this duplicate view.
 17. An out-of-office event on the vacation calendar mirrored into the main
     calendar counts as time off only when `all_day_mode` lets it through
     (E-0111).

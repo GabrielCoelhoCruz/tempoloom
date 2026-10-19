@@ -98,6 +98,8 @@ export interface PushContext {
   /** Provider and provider calendar id for one of our calendar ids. */
   target: (calendarId: string) => { provider: CalendarProvider; providerCalendarId: string };
   now: number;
+  /** Also compare the time and color of mirroring copies with the calendar (full reconcile). */
+  fullCheck?: boolean;
 }
 
 export interface PushResult {
@@ -134,9 +136,18 @@ interface Cached {
   description: string;
   busy: number;
   etag: string | null;
+  start_ms: number;
+  end_ms: number;
+  color_id: string | null;
+  alerts: number;
 }
 
-function differs(row: ManagedRow, cached: Cached | undefined, d: DesiredEvent): boolean {
+function differs(
+  row: ManagedRow,
+  cached: Cached | undefined,
+  d: DesiredEvent,
+  fullCheck: boolean,
+): boolean {
   if (
     row.start_ms !== d.start ||
     row.end_ms !== d.end ||
@@ -148,6 +159,18 @@ function differs(row: ManagedRow, cached: Cached | undefined, d: DesiredEvent): 
     row.extra !== extraOf(d)
   ) {
     return true;
+  }
+  if (row.kind === "mirror" && cached) {
+    // A copy never alerts (mirroring rule 30).
+    if (cached.alerts) return true;
+    // The full reconcile also puts back a copy's time and color (rules 38, 39).
+    if (
+      fullCheck &&
+      (cached.start_ms !== d.start ||
+        cached.end_ms !== d.end ||
+        (cached.color_id ?? null) !== (d.colorId ?? null))
+    )
+      return true;
   }
   // The calendar copy drifted (a user edit that does not lock): write it back.
   return (
@@ -197,11 +220,12 @@ export async function pushSchedule(ctx: PushContext, desired: DesiredEvent[]): P
     if (row.locked && (row.start_ms !== d.start || row.end_ms !== d.end)) continue;
     const cached = one<Cached>(
       db,
-      "SELECT summary, description, busy, etag FROM events WHERE calendar_id = ? AND event_id = ?",
+      `SELECT summary, description, busy, etag, start_ms, end_ms, color_id, alerts
+       FROM events WHERE calendar_id = ? AND event_id = ?`,
       row.calendar_id,
       row.event_id,
     );
-    if (!differs(row, cached, d)) continue;
+    if (!differs(row, cached, d, ctx.fullCheck ?? false)) continue;
     const { provider, providerCalendarId } = ctx.target(row.calendar_id);
     try {
       const ev = await provider.updateEvent(

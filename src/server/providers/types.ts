@@ -39,6 +39,8 @@ export interface ProviderEvent {
   responses?: Record<string, ResponseStatus>;
   /** The event's conference link (CalDAV CONFERENCE, Google Meet), or "". */
   conference?: string;
+  /** The event alerts: a VALARM, or Google reminders. Mirroring copies never do. */
+  alerts?: boolean;
 }
 
 export interface EventWrite {

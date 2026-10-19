@@ -14,6 +14,7 @@ import {
   createSession,
   deleteSession,
   ensureUser,
+  loginTarget,
   type User,
   upsertAccount,
   upsertGoogleLogin,
@@ -24,6 +25,7 @@ import { automationRoutes } from "./api/automations.ts";
 import { bookingRoutes, publicBookingRoutes } from "./api/booking.ts";
 import { brandingRoutes, publicBrandingRoutes } from "./api/branding.ts";
 import { bufferFilterRoutes } from "./api/buffer-filters.ts";
+import { calendarRoutes } from "./api/calendars.ts";
 import { delegationGuard, delegationRoutes } from "./api/delegation.ts";
 import { eventActionRoutes } from "./api/event-actions.ts";
 import { focusExtraRoutes } from "./api/focus-extras.ts";
@@ -32,6 +34,7 @@ import { insightRoutes } from "./api/insights.ts";
 import { itemRoutes } from "./api/items.ts";
 import { meetingCheckRoutes } from "./api/meeting-checks.ts";
 import { meetingRoutes } from "./api/meetings.ts";
+import { mirrorRoutes } from "./api/mirrors.ts";
 import { oooRoutes } from "./api/ooo.ts";
 import { plannerRoutes } from "./api/planner.ts";
 import { policyRoutes } from "./api/policies.ts";
@@ -110,6 +113,8 @@ const caldavLogin = z.object({
   password: z.string().min(1).max(1000),
   email: z.email().optional(),
   timeZone: z.string().refine(isValidTimeZone, "Unknown time zone").optional(),
+  /** Sign up with an email that several accounts hold as a secondary email (rule 3.3). */
+  newAccount: z.boolean().optional(),
 });
 
 export function createApp(deps: AppDeps): Hono<AppEnv> {
@@ -212,13 +217,30 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
     // Domains that a team registered for SSO (admin-sso-provisioning.md rules 3, 4, 9).
     const rule = otherSignIn(db, email, config.TEAM_SEAT_LIMIT);
     if ("refuse" in rule) return c.json({ error: rule.refuse }, 403);
+    // Any email of an account signs in to it (accounts-login-emails-permissions.md rules 2-4).
+    const externalId = `${new URL(body.serverUrl).href}|${body.username}`;
+    const target = loginTarget(db, "caldav", externalId, email);
+    if (target && "taken" in target) return c.json({ error: "email_taken" }, 409);
+    if (target && "several" in target && !body.newAccount)
+      return c.json({ error: "several_accounts" }, 409);
+    if (target && "userId" in target && isDeactivated(db, target.userId))
+      return c.json({ error: "deactivated" }, 403);
+    if (target && "several" in target && one(db, "SELECT 1 FROM users WHERE email = ?", email))
+      return c.json({ error: "email_taken" }, 409);
     // A provisioned person (SCIM) exists before their first sign-in.
+    const user =
+      target && "userId" in target
+        ? (one<User>(
+            db,
+            "SELECT id, email, name, time_zone FROM users WHERE id = ?",
+            target.userId,
+          ) as User)
+        : ensureUser(db, email, body.username, now(), rule.teamId);
     const isNew = !one(
       db,
-      "SELECT 1 FROM users WHERE email = ? AND first_sign_in_at IS NOT NULL",
-      email,
+      "SELECT 1 FROM users WHERE id = ? AND first_sign_in_at IS NOT NULL",
+      user.id,
     );
-    const user = ensureUser(db, email, body.username, now(), rule.teamId);
     // CalDAV has no account time zone; take the browser's on first sign-in.
     if (isNew && body.timeZone)
       run(db, "UPDATE users SET time_zone = ? WHERE id = ?", body.timeZone, user.id);
@@ -228,7 +250,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
       {
         userId: user.id,
         provider: "caldav",
-        externalId: `${new URL(body.serverUrl).href}|${body.username}`,
+        externalId,
         email,
         serverUrl: body.serverUrl,
         credentials: { username: body.username, password: body.password },
@@ -341,8 +363,8 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
       settings: getSettings(db, user.id),
       accounts: all(
         db,
-        `SELECT id, provider, email, status, grant_team_id IS NOT NULL AS viaGrant
-         FROM accounts WHERE user_id = ? ORDER BY created_at`,
+        `SELECT id, provider, email, status, grant_team_id IS NOT NULL AS viaGrant, is_main
+         FROM accounts WHERE user_id = ? AND provider <> 'ics' ORDER BY created_at`,
         user.id,
       ),
     });
@@ -414,6 +436,13 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   app.route("/api", bufferFilterRoutes(db, now));
   app.route("/api", meetingCheckRoutes(db, sync, now));
   app.route("/api", automationRoutes(db, sync));
+
+  // Round 3 s4: connected calendars, holiday feeds and mirroring policies.
+  app.route(
+    "/api",
+    calendarRoutes({ db, box, sync, allowPrivate: config.WEBHOOK_ALLOW_PRIVATE, now }),
+  );
+  app.route("/api", mirrorRoutes(db, sync, now));
 
   // Static client with a single-page fallback. Text files are compressed once
   // per encoding and kept in memory; the build output does not change at run time.

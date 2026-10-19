@@ -120,11 +120,13 @@ function CreateMenu() {
 function CalDavLogin() {
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
-  const submit = async (e: Event) => {
-    e.preventDefault();
-    const f = new FormData(e.currentTarget as HTMLFormElement);
+  // An email that several accounts hold may start one more (accounts-login-emails-permissions.md rule 3.3).
+  const [offer, setOffer] = useState<HTMLFormElement | null>(null);
+  const send = async (form: HTMLFormElement, newAccount: boolean) => {
+    const f = new FormData(form);
     setPending(true);
     setError(null);
+    setOffer(null);
     try {
       await api("POST", "/auth/caldav", {
         serverUrl: f.get("serverUrl"),
@@ -132,27 +134,37 @@ function CalDavLogin() {
         password: f.get("password"),
         ...(f.get("email") ? { email: f.get("email") } : {}),
         timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        ...(newAccount ? { newAccount } : {}),
       });
       await loadMe();
     } catch (err) {
       const code =
         err instanceof ApiError ? (err.body as { error?: string } | undefined)?.error : undefined;
+      if (code === "several_accounts") setOffer(form);
       setError(
-        code === "invalid_credentials"
-          ? "The server rejected the user name or password."
-          : code === "deactivated"
-            ? "Your organization deactivated this account."
-            : code === "sso_required" || code === "no_seats"
-              ? (LOGIN_ERRORS[code] ?? "")
-              : code === "email_required"
-                ? "Enter your email address."
-                : code === "no_calendars"
-                  ? "This account has no calendars."
-                  : "Could not reach the CalDAV server.",
+        code === "several_accounts"
+          ? "This email belongs to more than one Tempoloom account, so Tempoloom cannot choose one. You can create a new Tempoloom account with it."
+          : code === "email_taken"
+            ? "This email is the main email of another Tempoloom account. Sign in with that account's calendar, then add this one there."
+            : code === "invalid_credentials"
+              ? "The server rejected the user name or password."
+              : code === "deactivated"
+                ? "Your organization deactivated this account."
+                : code === "sso_required" || code === "no_seats"
+                  ? (LOGIN_ERRORS[code] ?? "")
+                  : code === "email_required"
+                    ? "Enter your email address."
+                    : code === "no_calendars"
+                      ? "This account has no calendars."
+                      : "Could not reach the CalDAV server.",
       );
     } finally {
       setPending(false);
     }
+  };
+  const submit = (e: Event) => {
+    e.preventDefault();
+    void send(e.currentTarget as HTMLFormElement, false);
   };
   return (
     <form class="login-form" onSubmit={submit} data-testid="caldav-form">
@@ -176,6 +188,11 @@ function CalDavLogin() {
         <p class="error" role="alert">
           {error}
         </p>
+      )}
+      {offer && (
+        <button type="button" disabled={pending} onClick={() => void send(offer, true)}>
+          Create a new Tempoloom account
+        </button>
       )}
       <button type="submit" class="primary" disabled={pending}>
         {pending ? "Connecting…" : "Sign in with CalDAV"}

@@ -138,30 +138,62 @@ export function AccountPage() {
 
       <Section title="Calendar accounts" id="accounts">
         <div class="list" data-testid="account-list">
-          {m.accounts.map((a, i) => (
+          {m.accounts.map((a) => (
             <div class="row" key={a.id} data-account={a.email}>
               <span>
                 {a.email} <span class="meta">{a.provider}</span>{" "}
-                {i === 0 && <span class="badge">main</span>}{" "}
+                {a.is_main === 1 && (
+                  <span class="badge" data-testid="main-badge">
+                    main
+                  </span>
+                )}{" "}
                 <span class="badge">{a.status === "ok" ? "connected" : "disconnected"}</span>
               </span>
-              {i > 0 && (
-                <button
-                  type="button"
-                  class="danger"
-                  onClick={() =>
-                    setAsk({
-                      title: "Remove account",
-                      text: `Remove ${a.email}? Tempoloom stops reading and writing its calendars and removes the coming events it placed there.`,
-                      action: "Remove account",
-                      onYes: () =>
-                        void act(() => api("DELETE", `/api/accounts/${a.id}`), "Account removed."),
-                    })
-                  }
-                >
-                  Remove
-                </button>
-              )}
+              <div class="actions">
+                {a.is_main !== 1 && !a.viaGrant && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      acting
+                        ? setMessage(
+                            `Delegates cannot add or remove accounts or calendars. Ask ${owner} to do it.`,
+                          )
+                        : setAsk({
+                            title: "Change main email",
+                            text: `Use ${a.email} as your main email? Tempoloom then writes new events to its main calendar. You can still sign in with every email of this account.`,
+                            action: "Use as main",
+                            onYes: () =>
+                              void act(
+                                () => api("POST", `/api/accounts/${a.id}/main`),
+                                `${a.email} is your main email.`,
+                              ),
+                          })
+                    }
+                  >
+                    Use as main
+                  </button>
+                )}
+                {a.is_main !== 1 && (
+                  <button
+                    type="button"
+                    class="danger"
+                    onClick={() =>
+                      setAsk({
+                        title: "Remove account",
+                        text: `Remove ${a.email}? Tempoloom stops reading and writing its calendars and removes the coming events it placed there.`,
+                        action: "Remove account",
+                        onYes: () =>
+                          void act(
+                            () => api("DELETE", `/api/accounts/${a.id}`),
+                            "Account removed.",
+                          ),
+                      })
+                    }
+                  >
+                    Remove
+                  </button>
+                )}
+              </div>
             </div>
           ))}
         </div>

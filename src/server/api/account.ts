@@ -87,20 +87,8 @@ export function accountRoutes(
             502,
           );
     }
+    // An email can be a secondary email of many Tempoloom accounts (rule 4, edge case 2).
     const externalId = `${new URL(b.serverUrl).href}|${b.username}`;
-    const holder = one<{ user_id: string }>(
-      db,
-      "SELECT user_id FROM accounts WHERE provider = 'caldav' AND external_id = ?",
-      externalId,
-    );
-    if (holder && holder.user_id !== user.id)
-      return c.json(
-        {
-          error: "account_in_use",
-          message: "This calendar account belongs to another Tempoloom user.",
-        },
-        409,
-      );
     // SSO brings no time zone: the first own calendar takes the browser's, as CalDAV sign-in does.
     const first = !one(
       db,
@@ -128,23 +116,105 @@ export function accountRoutes(
     return c.json({ id }, 201);
   });
 
-  /** Removes an added account; the main (first) account stays (rules 7, 8). */
+  /**
+   * Removes an added account; the main email stays (rules 7, 8). Its calendars
+   * go, and with them the mirroring policies that use them; the next run
+   * deletes their copies (sync-calendar-mirroring.md edge case 9).
+   */
   r.delete("/accounts/:id", async (c) => {
     const user = c.get("user");
     const id = c.req.param("id");
-    const ids = all<{ id: string }>(
+    const row = one<{ is_main: number }>(
       db,
-      "SELECT id FROM accounts WHERE user_id = ? AND grant_team_id IS NULL ORDER BY created_at",
+      "SELECT is_main FROM accounts WHERE id = ? AND user_id = ? AND grant_team_id IS NULL",
+      id,
       user.id,
-    ).map((a) => a.id);
-    if (!ids.includes(id)) notFound("account");
-    if (ids[0] === id)
+    );
+    if (!row) notFound("account");
+    if (row.is_main)
       return c.json({ error: "main_account", message: "The main account cannot be removed." }, 400);
     await sync.exclusive(user.id, async (pool) => {
       await removeManagedEvents(db, pool, user.id, now(), id);
       run(db, "DELETE FROM accounts WHERE id = ?", id);
     });
     return c.body(null, 204);
+  });
+
+  /**
+   * Makes an added account the main email (rules 10-13; connected calendars
+   * rule 9): its primary calendar becomes the connected, locked main calendar,
+   * and the old main calendar stops being connected unless a policy uses it.
+   */
+  r.post("/accounts/:id/main", (c) => {
+    const user = c.get("user");
+    const a = one<{
+      id: string;
+      provider: string;
+      external_id: string;
+      email: string;
+      status: string;
+      is_main: number;
+    }>(
+      db,
+      `SELECT id, provider, external_id, email, status, is_main FROM accounts
+       WHERE id = ? AND user_id = ? AND grant_team_id IS NULL AND provider <> 'ics'`,
+      c.req.param("id"),
+      user.id,
+    );
+    if (!a) notFound("account");
+    if (a.is_main) return c.json({ ok: true });
+    if (a.status !== "ok")
+      return c.json(
+        {
+          error: "disconnected",
+          message: `${a.email} is disconnected. Reconnect it before you make it your main email.`,
+        },
+        409,
+      );
+    const email = a.email.toLowerCase();
+    const taken = one(
+      db,
+      `SELECT 1 FROM users u WHERE u.id <> ? AND (u.email = ? OR EXISTS (
+         SELECT 1 FROM accounts o WHERE o.user_id = u.id AND o.is_main = 1
+           AND o.provider = ? AND o.external_id = ?))`,
+      user.id,
+      email,
+      a.provider,
+      a.external_id,
+    );
+    if (taken)
+      return c.json(
+        {
+          error: "main_email_taken",
+          message: `${a.email} is the main email of another Tempoloom account. This is often an older account that you forgot. To fix it, sign in with ${a.email}, then delete that account or make another email its main email. Then sign in here again and retry.`,
+        },
+        409,
+      );
+    tx(db, () => {
+      const old = one<{ id: string }>(
+        db,
+        `SELECT c.id FROM calendars c JOIN accounts o ON o.id = c.account_id
+         WHERE o.user_id = ? AND o.is_main = 1 AND c.is_primary = 1`,
+        user.id,
+      );
+      run(db, "UPDATE accounts SET is_main = (id = ?) WHERE user_id = ?", a.id, user.id);
+      run(db, "UPDATE users SET email = ? WHERE id = ?", email, user.id);
+      run(
+        db,
+        "UPDATE calendars SET check_availability = 1 WHERE account_id = ? AND is_primary = 1",
+        a.id,
+      );
+      if (old)
+        run(
+          db,
+          `UPDATE calendars SET check_availability = 0 WHERE id = ? AND NOT EXISTS (
+             SELECT 1 FROM mirror_policies p WHERE p.enabled = 1
+               AND (p.source_calendar_id = calendars.id OR p.dest_calendar_id = calendars.id))`,
+          old.id,
+        );
+    });
+    sync.request(user.id, 0);
+    return c.json({ ok: true });
   });
 
   r.get("/keys", (c) => c.json({ keys: listApiKeys(db, c.get("user").id) }));

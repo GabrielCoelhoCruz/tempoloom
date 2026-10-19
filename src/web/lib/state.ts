@@ -16,7 +16,15 @@ export interface Me {
   owners: Person[];
   settings: Settings;
   /** viaGrant: 1 when attached through the team's calendar grant (read-only). */
-  accounts: { id: string; provider: string; email: string; status: string; viaGrant: number }[];
+  accounts: {
+    id: string;
+    provider: string;
+    email: string;
+    status: string;
+    viaGrant: number;
+    /** The main email (accounts-login-emails-permissions.md rule 10). */
+    is_main: number;
+  }[];
 }
 
 export const me = signal<Me | null | undefined>(undefined);

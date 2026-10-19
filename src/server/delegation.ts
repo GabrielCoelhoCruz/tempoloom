@@ -137,7 +137,10 @@ export function blockedForDelegate(
   owner: string,
 ): string | undefined {
   if (method === "GET" || method === "HEAD") return undefined;
-  if (/^\/api\/accounts(\/|$)/.test(path) || /^\/api\/calendars\/(?!refresh$)[^/]+$/.test(path))
+  if (
+    /^\/api\/(accounts|holiday-feeds)(\/|$)/.test(path) ||
+    /^\/api\/calendars\/(?!refresh$)[^/]+$/.test(path)
+  )
     return `Delegates cannot add or remove accounts or calendars. Ask ${owner} to do it.`;
   if (/^\/api\/keys(\/|$)/.test(path))
     return `Delegates cannot create or change API keys. Ask ${owner} to do it.`;

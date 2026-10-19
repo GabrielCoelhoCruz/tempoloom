@@ -94,6 +94,7 @@ export async function attachThroughGrant(
       email: user.email,
       serverUrl: g.server_url,
       credentials: { homeUrl: home },
+      isMain: false,
     },
     now,
   );

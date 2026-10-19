@@ -12,8 +12,13 @@ export interface CategoryContext {
   userEmail: string;
   /** Manual categories by `calendarId:eventId` (rule 4). */
   manual: Map<string, Category>;
-  /** Calendars whose events are personal: sources of a mirroring policy of type personal. */
+  /**
+   * Calendars whose events are personal: connected calendars of category
+   * personal, and sources of a mirroring policy of type personal.
+   */
   personalCalendars: Set<string>;
+  /** Connected calendars of category travel (accounts-connected-calendars.md rule 8). */
+  travelCalendars: Set<string>;
 }
 
 export function categoryContext(db: Db, userId: string): CategoryContext {
@@ -30,9 +35,20 @@ export function categoryContext(db: Db, userId: string): CategoryContext {
     personalCalendars: new Set(
       all<{ source_calendar_id: string }>(
         db,
-        "SELECT source_calendar_id FROM mirror_policies WHERE user_id = ? AND calendar_type = 'personal'",
+        `SELECT source_calendar_id FROM mirror_policies WHERE user_id = ? AND calendar_type = 'personal'
+         UNION SELECT c.id FROM calendars c JOIN accounts a ON a.id = c.account_id
+         WHERE a.user_id = ? AND c.category = 'personal'`,
+        userId,
         userId,
       ).map((p) => p.source_calendar_id),
+    ),
+    travelCalendars: new Set(
+      all<{ id: string }>(
+        db,
+        `SELECT c.id FROM calendars c JOIN accounts a ON a.id = c.account_id
+         WHERE a.user_id = ? AND c.category = 'travel'`,
+        userId,
+      ).map((c) => c.id),
     ),
   };
 }
@@ -51,7 +67,7 @@ export interface CachedEvent {
 
 /** The category of an external event from the cache. */
 export function externalCategory(ctx: CategoryContext, e: CachedEvent): Category {
-  return categoryOf(
+  const category = categoryOf(
     {
       title: e.summary,
       description: e.description,
@@ -68,6 +84,12 @@ export function externalCategory(ctx: CategoryContext, e: CachedEvent): Category
     },
     ctx.userEmail,
   );
+  // A travel calendar makes its events travel, except flights and set categories.
+  return ctx.travelCalendars.has(e.calendar_id) &&
+    category !== "flight" &&
+    !ctx.manual.has(`${e.calendar_id}:${e.event_id}`)
+    ? "travel"
+    : category;
 }
 
 /** The color id a category gets, or null for the calendar's own color. */

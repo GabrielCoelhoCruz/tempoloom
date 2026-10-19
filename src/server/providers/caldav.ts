@@ -25,6 +25,11 @@ export interface CalDavCredentials {
    * (docs/specs/admin-sso-provisioning.md rule 12). Its calendars are read-only.
    */
   homeUrl?: string;
+  /**
+   * Calendars that other people shared with this account, by URL
+   * (docs/specs/accounts-connected-calendars.md rule 30).
+   */
+  sharedUrls?: string[];
 }
 
 const PROPS_PROPERTY = "x-tempoloom-props";
@@ -177,7 +182,37 @@ function baseEvent(
     privateProps: readProps(comp),
     // RFC 7986 CONFERENCE: a video call link (automations-meeting-quality.md, video_link).
     conference: str("conference"),
+    alerts: comp.getAllSubcomponents("valarm").length > 0,
   };
+}
+
+const PROPFIND_ACCESS =
+  '<?xml version="1.0" encoding="utf-8"?><d:propfind xmlns:d="DAV:" xmlns:cs="http://calendarserver.org/ns/"><d:prop><d:displayname/><d:resourcetype/><d:current-user-privilege-set/><d:sync-token/><cs:getctag/></d:prop></d:propfind>';
+
+/** Access in a DAV:current-user-privilege-set (RFC 3744), or null when the server gives none. */
+function accessIn(xml: string): "write" | "read" | "none" | null {
+  const set =
+    /current-user-privilege-set[^>]*>([\s\S]*?)<\/(?:[\w-]+:)?current-user-privilege-set/i.exec(
+      xml,
+    )?.[1];
+  if (set === undefined) return null;
+  const has = (name: string) => new RegExp(`<(?:[\\w-]+:)?${name}\\s*/?>`, "i").test(set);
+  if (has("all") || has("write") || has("write-content") || has("bind")) return "write";
+  return has("read") ? "read" : "none";
+}
+
+/** Text of one property in a PROPFIND response. */
+const propText = (xml: string, name: string) =>
+  new RegExp(`<(?:[\\w-]+:)?${name}[^>/]*>([^<]*)<`, "i").exec(xml)?.[1]?.trim() ?? null;
+
+/** The responses of a multistatus body, by absolute URL. */
+function responses(xml: string, base: string): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const part of xml.split(/<(?:[\w-]+:)?response[\s>]/i).slice(1)) {
+    const href = propText(part, "href");
+    if (href) out.set(new URL(href, base).toString(), part);
+  }
+  return out;
 }
 
 /** Parses one calendar object and expands recurring series inside [from, to). */
@@ -306,6 +341,8 @@ export class CalDavProvider implements CalendarProvider {
   readonly #now: () => number;
   #client: Promise<DAVClient> | undefined;
   #calendars = new Map<string, DAVCalendar>();
+  /** Write access of each listed calendar, when the server reports it. */
+  #access = new Map<string, "write" | "read" | "none">();
 
   constructor(creds: CalDavCredentials, zone: string, now: () => number = Date.now) {
     this.#creds = creds;
@@ -344,8 +381,71 @@ export class CalDavProvider implements CalendarProvider {
     const cals = (
       await retryRead(() => client.fetchCalendars(account ? { account } : undefined))
     ).filter((c) => !c.components || c.components.includes("VEVENT"));
+    this.#access = new Map();
+    for (const url of this.#creds.sharedUrls ?? []) {
+      if (cals.some((c) => c.url === url)) continue;
+      // A share that is gone drops out; a network error fails the read, so nothing is lost.
+      const shared = await this.describe(url);
+      if (!shared || shared.access === "none") continue;
+      this.#access.set(url, shared.access);
+      cals.push({
+        url,
+        displayName: shared.name,
+        ctag: shared.tag ?? undefined,
+        components: ["VEVENT"],
+      } as DAVCalendar);
+    }
     this.#calendars = new Map(cals.map((c) => [c.url, c]));
     return cals;
+  }
+
+  async #propfind(url: string, depth: "0" | "1"): Promise<Response> {
+    const res = await fetch(url, {
+      method: "PROPFIND",
+      headers: {
+        authorization: `Basic ${Buffer.from(`${this.#creds.username}:${this.#creds.password}`).toString("base64")}`,
+        depth,
+        "content-type": "application/xml; charset=utf-8",
+      },
+      body: PROPFIND_ACCESS,
+    });
+    if (res.status === 401) throw new ProviderError("auth", 401, "CalDAV credentials rejected");
+    return res;
+  }
+
+  /** Write access of the calendars in a calendar home, from one request. */
+  async #accessUnder(home: string): Promise<Map<string, "write" | "read" | "none">> {
+    const out = new Map<string, "write" | "read" | "none">();
+    try {
+      const res = await this.#propfind(home, "1");
+      if (res.status !== 207) return out;
+      for (const [url, part] of responses(await res.text(), home)) {
+        const access = accessIn(part);
+        if (access) out.set(url, access);
+      }
+    } catch (err) {
+      if (err instanceof ProviderError && err.kind === "auth") throw err;
+    }
+    return out;
+  }
+
+  /**
+   * Name, change tag and this account's access of one calendar collection
+   * (a calendar that someone shared by URL), or null when it is not a calendar.
+   */
+  async describe(
+    url: string,
+  ): Promise<{ name: string; tag: string | null; access: "write" | "read" | "none" } | null> {
+    const res = await this.#propfind(url, "0");
+    if (res.status >= 500) throw new ProviderError("other", res.status, `PROPFIND ${res.status}`);
+    if (res.status !== 207) return null;
+    const xml = await res.text();
+    if (!/<(?:[\w-]+:)?calendar\s*\/>/i.test(xml)) return null;
+    return {
+      name: propText(xml, "displayname") || url,
+      tag: propText(xml, "getctag") ?? propText(xml, "sync-token"),
+      access: accessIn(xml) ?? "write",
+    };
   }
 
   async #calendar(id: string): Promise<DAVCalendar> {
@@ -358,11 +458,19 @@ export class CalDavProvider implements CalendarProvider {
 
   async listCalendars(): Promise<ProviderCalendar[]> {
     const cals = (await this.#fetchCalendars()).sort((a, b) => a.url.localeCompare(b.url));
-    return cals.map((c, i) => ({
+    const home = (await this.#connect()).account?.homeUrl;
+    const own = home && !this.#creds.homeUrl ? await this.#accessUnder(home) : new Map();
+    // The first calendar of the own home is the primary one; a shared calendar never is.
+    const shared = new Set(this.#creds.sharedUrls ?? []);
+    const primary = cals.find((c) => !shared.has(c.url));
+    return cals.map((c) => ({
       id: c.url,
       name: davName(c),
-      primary: i === 0,
-      writable: this.#creds.homeUrl === undefined,
+      primary: c === primary,
+      // A server that reports no privileges keeps today's rule: the own home is writable.
+      writable:
+        this.#creds.homeUrl === undefined &&
+        (this.#access.get(c.url) ?? own.get(c.url) ?? "write") === "write",
       timeZone: null,
       color: c.calendarColor ?? null,
     }));

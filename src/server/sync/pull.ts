@@ -9,6 +9,13 @@ const WINDOW_PAST = 84 * DAY;
 const WINDOW_FUTURE = 120 * DAY;
 /** A full read runs again when less than this much future remains in the window. */
 const WINDOW_REFRESH = 90 * DAY;
+/**
+ * Mirroring keeps copies 12 months ahead, longer than the planning window
+ * (sync-calendar-mirroring.md rule 14; planning-scheduling-window.md WIN-7).
+ */
+export const MIRROR_WINDOW = 365 * DAY;
+/** How far ahead the calendars of an enabled mirroring policy are read. */
+export const MIRROR_READ_AHEAD = MIRROR_WINDOW + 15 * DAY;
 
 export interface CalendarRow {
   id: string;
@@ -117,20 +124,30 @@ export function cacheEvent(db: Db, calendarId: string, e: ProviderEvent): void {
     JSON.stringify(e.responses ?? {}),
     e.conference ?? "",
   );
+  // Alerts on Tempoloom's own events, so a copy that someone gave an alert is written again.
+  if (e.privateProps.tl === "1")
+    run(
+      db,
+      "UPDATE events SET alerts = ? WHERE calendar_id = ? AND event_id = ?",
+      e.alerts ? 1 : 0,
+      calendarId,
+      e.id,
+    );
 }
 
-/** Pulls changes for one calendar. Returns the number of changed events. */
+/** Pulls changes for one calendar, `ahead` into the future. Returns the number of changed events. */
 export async function pullEvents(
   db: Db,
   provider: CalendarProvider,
   calendarId: string,
   now: number,
+  ahead = WINDOW_FUTURE,
 ): Promise<number> {
   const cal = one<CalendarRow>(db, "SELECT * FROM calendars WHERE id = ?", calendarId);
   if (!cal) return 0;
-  const stale = (cal.window_end ?? 0) < now + WINDOW_REFRESH;
+  const stale = (cal.window_end ?? 0) < now + ahead - (WINDOW_FUTURE - WINDOW_REFRESH);
   const windowStart = stale ? now - WINDOW_PAST : (cal.window_start as number);
-  const windowEnd = stale ? now + WINDOW_FUTURE : (cal.window_end as number);
+  const windowEnd = stale ? now + ahead : (cal.window_end as number);
   const read = async (syncToken: string | null) =>
     provider.listEvents(cal.provider_id, { syncToken, timeMin: windowStart, timeMax: windowEnd });
   let changes: Awaited<ReturnType<typeof read>>;

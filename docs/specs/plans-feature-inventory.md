@@ -191,14 +191,29 @@ or file family that specifies the feature.
    no tier gate in code (proposal).
 2. An instance admin can set the quantity limits in the table above. Each
    limit defaults to the value in the last column.
+   Tempoloom decision: the operator sets a limit with `node
+   src/server/cli.ts limit --name <limit> --value <number|none>`; without
+   `--name` it prints them all. Every limit is off by default,
+   `max_scheduling_window_weeks` included (the window's own maximum is 12
+   weeks). Tempoloom has no instance-admin role, so there is no web page for
+   the limits. The server reads them on each use, so a change applies
+   without a restart.
 3. The scheduling window limit applies to managed events (tasks, habits,
    focus time, flexible meetings, buffers). It never limits booking link
    availability. The scheduling window rules belong to
    `planning-scheduling-window.md`.
+   Tempoloom decision: a lower limit caps the user's window when Tempoloom
+   plans; the settings page shows "This server plans at most N weeks ahead"
+   and refuses a longer window. The user's own value comes back when the
+   limit goes.
 4. When a user reaches a count limit (booking links, automations, mirrors,
    connected calendars), the create action is refused with a message that
    names the limit and its value. Existing items keep working (proposal,
    matching the seat overage rule in `teams-membership.md` rule 27).
+   Tempoloom decision: automations are habits, focus time goals and
+   buffers, team policy ones included. Booking links count every link the
+   person owns, the default links of the booking page included. The message
+   reads like "This server allows at most 4 booking links per person."
 5. When `mcp_write_enabled` is false, MCP clients and the ChatGPT app can
    read but not stage changes (`assistant-mcp-server.md`).
 

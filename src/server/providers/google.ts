@@ -56,8 +56,15 @@ export function fromGoogleEvent(e: GoogleEvent, zone: string): ProviderEvent {
         .map((a) => [(a.email ?? "").toLowerCase(), a.responseStatus as ResponseStatus]),
     ),
     conference: e.hangoutLink ?? "",
+    alerts: e.reminders?.useDefault === true || (e.reminders?.overrides?.length ?? 0) > 0,
   };
 }
+
+/**
+ * Calendars that Google makes, such as national holidays and birthdays, are
+ * not offered (accounts-connected-calendars.md rules 4, 5).
+ */
+export const providerMade = (id: string) => id.endsWith("@group.v.calendar.google.com");
 
 function toGoogleEvent(w: EventWrite): GoogleEventInput {
   return {
@@ -121,14 +128,16 @@ export class GoogleProvider implements CalendarProvider {
 
   async listCalendars(): Promise<ProviderCalendar[]> {
     const list = await this.#api.listCalendars().catch(mapError);
-    return list.map((c) => ({
-      id: c.id,
-      name: c.summary,
-      primary: c.primary === true,
-      writable: c.accessRole === "owner" || c.accessRole === "writer",
-      timeZone: c.timeZone ?? null,
-      color: c.backgroundColor ?? null,
-    }));
+    return list
+      .filter((c) => !providerMade(c.id))
+      .map((c) => ({
+        id: c.id,
+        name: c.summary,
+        primary: c.primary === true,
+        writable: c.accessRole === "owner" || c.accessRole === "writer",
+        timeZone: c.timeZone ?? null,
+        color: c.backgroundColor ?? null,
+      }));
   }
 
   async listEvents(
