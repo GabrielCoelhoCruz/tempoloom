@@ -26,7 +26,7 @@ export interface ExternalEvent {
   location: string;
   eventType: string;
   bookedViaLink: boolean;
-  /** events-categories-and-colors.md; unknown when not given. */
+  /** events-categories-and-colors.md; unknown when not given. Buffers read flights from it (buffers-travel.md rule 5). */
   category?: Category;
   /** The calendar that holds the event (buffer calendar scope). */
   calendarId?: string;

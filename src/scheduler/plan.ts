@@ -10,14 +10,7 @@ import {
   utcToLocal,
   weekdayOf,
 } from "../shared/time.ts";
-import {
-  allDayBlocks,
-  attends,
-  blockingIntervals,
-  hasTag,
-  isFlightTitle,
-  TAG_FOCUS,
-} from "./blocking.ts";
+import { allDayBlocks, attends, blockingIntervals, hasTag, TAG_FOCUS } from "./blocking.ts";
 import { hoursToTimeSet } from "./hours.ts";
 import type {
   BufferFilter,
@@ -960,9 +953,12 @@ function hasPerson(e: ExternalEvent, people: string[]): boolean {
   });
 }
 
-/** buffers-travel.md rule 5: the flight category (also set by hand), the tag, or a flight title. */
+/**
+ * buffers-travel.md rule 5: the flight category, which the user sets by hand or
+ * the tag or a flight title gives (categoryOf).
+ */
 export function isFlight(e: ExternalEvent): boolean {
-  return e.category === "flight" || hasTag(e, "#tl_flight") || isFlightTitle(e.title);
+  return e.category === "flight";
 }
 
 export function hasAddress(e: ExternalEvent): boolean {
