@@ -46,7 +46,7 @@ import {
 } from "./markers.ts";
 import { recordMeetingChanges } from "./meeting-log.ts";
 import { attendeeOccurrences, attendeesOf, meetingItems } from "./meetings.ts";
-import { mirrorCopies } from "./mirror.ts";
+import { LABELS, mirrorCopies } from "./mirror.ts";
 import { type DesiredEvent, type ManagedRow, type PushResult, pushSchedule } from "./push.ts";
 
 export interface ReplanContext {
@@ -618,14 +618,15 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
     userId,
   );
   const mirrorTypes = new Map(policies.map((p) => [p.id, p.calendar_type]));
-  // Marker table: a copy with the personal commitment label gets the house marker.
+  // Marker table: a copy that shows the personal commitment label gets the house
+  // marker; other labels of a personal policy (PTO, Travel, Flight) do not.
   const personalLabels = new Set(
     policies
       .filter((p) => p.visibility === "label_only" && p.calendar_type === "personal")
       .map((p) => p.id),
   );
   for (const d of desired) {
-    if (d.kind === "mirror" && personalLabels.has(d.sourceId)) {
+    if (d.kind === "mirror" && personalLabels.has(d.sourceId) && d.title === LABELS.personal) {
       d.title = `${PERSONAL_COPY_MARKER} ${d.title}`;
     }
   }

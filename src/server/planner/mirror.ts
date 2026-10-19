@@ -10,7 +10,7 @@ import type { DesiredEvent } from "./push.ts";
 import { MANAGED_PROP } from "./push.ts";
 
 export const TAG_NOSYNC = "#tl_nosync";
-const LABELS = {
+export const LABELS = {
   personal: "Personal commitment",
   business: "Work commitment",
   travel: "Travel",

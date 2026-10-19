@@ -82,7 +82,7 @@ test("the policy list filters by account; an edit rewrites and moves the copies;
   await addPolicy(page, { from: theirs, to: "Side" });
   await eventually(
     () => week(cal),
-    (l) => expect(copies(l).map((e) => e.summary)).toEqual(["Personal commitment"]),
+    (l) => expect(copies(l).map((e) => e.summary)).toEqual(["🏠 Personal commitment"]),
   );
   await eventually(
     () => week(side),
@@ -298,7 +298,7 @@ test("labels follow the event category and the calendar type; an event that invi
         [`${day(1)} 07:00`, "Travel", "3"],
         [`${day(1)} 13:00`, "Work commitment", "11"],
         [`${day(2)} 08:00`, "PTO", "3"],
-        [`${day(3)} 18:00`, "Personal commitment", "3"],
+        [`${day(3)} 18:00`, "🏠 Personal commitment", "3"],
       ]),
   );
 
