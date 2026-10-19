@@ -4,7 +4,7 @@
 //   node src/server/cli.ts seat-limit --email admin@example.com --seats 10|none
 //   node src/server/cli.ts limit [--name max_mirrors --value 3|none]
 //   node src/server/cli.ts booking-reminders [--now 2026-10-20T08:00:00Z]
-//   node src/server/cli.ts weekly-reports [--now 2026-10-23T08:30:00Z]
+//   node src/server/cli.ts weekly-reports [--now 2026-10-23T08:30:00Z]   (--now: TEMPOLOOM_TEST_MODE=1 only)
 import { parseArgs } from "node:util";
 import { createLoginLink, ensureUser, upsertAccount } from "./accounts.ts";
 import { sendDueReminders } from "./booking-mail.ts";
@@ -43,6 +43,10 @@ if (command === "booking-reminders") {
 if (command === "weekly-reports") {
   // One run of the server's email worker at --now (default: the server clock):
   // the weekly reports due then, and the other daily emails due then.
+  // --now is for tests only: at a moved instant the run also sends the other
+  // emails due then and moves their next send time, which a real server must not do.
+  if (values.now && !config.TEMPOLOOM_TEST_MODE)
+    throw new Error("--now needs TEMPOLOOM_TEST_MODE=1 (tests only)");
   const at = values.now ? Date.parse(values.now) : clockOf(config)();
   if (Number.isNaN(at)) throw new Error("--now must be an ISO date and time");
   const worker = new DailyMailWorker({
