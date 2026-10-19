@@ -750,6 +750,36 @@ E2E_NOTES.update({
 PARTIAL.pop(299, None)
 # --- end s8 ---
 
+# --- merge: rows that need the work of more than one stream ---
+E2E.update({282: ["s1_habit_es", "s1_task_color", "s4_labels"]})
+E2E_NOTES.update({282: "Habits, focus time, buffers and tasks have their own color (stream s1); a mirroring policy has a color override (stream s4)"})
+# Rows this round did not build, each with the concrete reason.
+CHAT = "Needs the assistant chat (a language-model chat), which is not built; preview mode and the MCP server, which it would use, exist"
+for n in [6, 47, 130, 316, 369, 609, 612, 661, 662, 672, 674, 675, 676, 677, 678, 679, 680, 681,
+          682, 684, 685, 686, 687, 689]:
+    BLOCKED[n] = CHAT
+BLOCKED[683] = CHAT + "; the morning email digest of meeting checks is built (row 317)"
+BLOCKED[769] = "Needs the assistant chat, which is not built; the other parts of the baseline are built (preview mode, automations, issues, insights, MCP server)"
+MICROSOFT = "Needs a Microsoft 365 account and a Microsoft Graph calendar provider, which is not built"
+for n in [520, 521, 526, 527, 528, 529, 530, 531, 532, 533, 534, 535, 536, 669, 670]:
+    BLOCKED[n] = MICROSOFT
+BLOCKED[451] = "Needs Google and Microsoft calendar accounts; mirroring between calendars of two CalDAV accounts is built (rows 453, 460)"
+BLOCKED[145] = "Needs a Google account: these fields come from the Google profile; the editable profile fields are built (row 146)"
+BLOCKED[491] = "Needs a Google Workspace account: the trigger is Google calendar sharing"
+BLOCKED[492] = "Needs a Google Workspace account: the help covers Workspace sharing and Gmail-made events"
+BLOCKED[493] = "Needs Google or Microsoft accounts that subscribe to the iCloud calendar; a CalDAV server connects directly"
+BLOCKED[519] = "Needs a Google Workspace domain and a super admin"
+BLOCKED[671] = "Needs Google Meet (a Google account and the Calendar conference API)"
+for n in [446, 447]:
+    BLOCKED[n] = "Needs the Gmail and Google Calendar add-on, a vendor app; the same actions exist on the Booking links page (rows 440 to 443)"
+for n in [268, 293]:
+    BLOCKED[n] = "Needs the Slack app (a vendor developer app and a test workspace)"
+BLOCKED[344] = "Needs the vendor apps of third-party agenda tools (Docs notes, Lattice, Fellow)"
+BLOCKED[700] = "Setup guides for vendor AI apps belong to integrations-ai-tools.md; the MCP server they connect to is built (rows 697 to 699)"
+for n in [664, 665, 666, 667, 668]:
+    BLOCKED[n] = "The pricing page names it and gives no behavior to build (plans-feature-inventory.md open questions); it also needs meeting notes, transcripts or a room provider"
+# --- end merge ---
+
 GOOGLE_PENDING = "Google E2E pending: the service-account key is not available yet (1Password token missing)."
 
 def status(row_id, spec_file, notes):
