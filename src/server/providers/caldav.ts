@@ -135,19 +135,29 @@ function attendeeFacts(ev: ICAL.Component, selfEmail: string) {
   const self = selfEmail.toLowerCase();
   const attendees = ev.getAllProperties("attendee");
   let selfResponse: ResponseStatus | null = null;
+  let note = "";
   const responses: Record<string, ResponseStatus> = {};
   for (const a of attendees) {
     const email = mailto(a.getFirstValue());
     if (email) responses[email] = responseOf(a);
-    if (email === self) selfResponse = responseOf(a);
+    if (email === self) {
+      selfResponse = responseOf(a);
+      note = String(a.getParameter("x-response-comment") ?? "");
+    }
   }
   const organizer = ev.getFirstPropertyValue("organizer");
+  const organizerSelf = organizer === null || organizer === undefined || mailto(organizer) === self;
+  // The user's RSVP note (events-tags.md): the comment parameter of the user's
+  // attendee line, or the COMMENT that goes with the answer on an invitation.
+  const comment = ev.getFirstPropertyValue("comment");
+  if (!note && !organizerSelf && typeof comment === "string") note = comment;
   return {
     selfResponse,
+    rsvpNote: note,
     responses,
     attendeeCount: attendees.length,
     attendees: attendees.map((a) => mailto(a.getFirstValue())).filter(Boolean),
-    organizerSelf: organizer === null || organizer === undefined || mailto(organizer) === self,
+    organizerSelf,
   };
 }
 
@@ -713,6 +723,10 @@ export class CalDavProvider implements CalendarProvider {
     if (change.description !== undefined) {
       ev.removeAllProperties("description");
       if (change.description) ev.addPropertyWithValue("description", change.description);
+    }
+    if (change.busy !== undefined) {
+      ev.removeAllProperties("transp");
+      ev.addPropertyWithValue("transp", change.busy ? "OPAQUE" : "TRANSPARENT");
     }
     if (change.end !== undefined) {
       ev.removeAllProperties("duration");

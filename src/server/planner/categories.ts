@@ -63,6 +63,7 @@ export interface CachedEvent {
   event_type: string;
   attendees: string;
   recurring_id: string | null;
+  rsvp_note?: string;
 }
 
 /** The category of an external event from the cache. */
@@ -71,6 +72,7 @@ export function externalCategory(ctx: CategoryContext, e: CachedEvent): Category
     {
       title: e.summary,
       description: e.description,
+      rsvpNote: e.rsvp_note ?? "",
       start: e.start_ms,
       end: e.end_ms,
       eventType: e.event_type,

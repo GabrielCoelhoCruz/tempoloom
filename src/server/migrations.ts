@@ -1143,4 +1143,8 @@ export const MIGRATIONS: readonly string[] = [
   `
   ALTER TABLE meeting_overloads ADD COLUMN rank INTEGER NOT NULL DEFAULT 0;
   `,
+  // 27: the user's own RSVP note on an invitation, where tags count too (events-tags.md).
+  `
+  ALTER TABLE events ADD COLUMN rsvp_note TEXT NOT NULL DEFAULT '';
+  `,
 ];

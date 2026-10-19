@@ -25,6 +25,7 @@ export function externalEvents(db: Db, userId: string, from: number, to: number)
     private_props: string;
     attendees: string;
     recurring_id: string | null;
+    rsvp_note: string;
   }>(
     db,
     `SELECT e.* FROM events e JOIN calendars c ON c.id = e.calendar_id JOIN accounts a ON a.id = c.account_id
@@ -45,6 +46,7 @@ export function externalEvents(db: Db, userId: string, from: number, to: number)
         busy: e.busy === 1,
         title: e.summary,
         description: e.description,
+        rsvpNote: e.rsvp_note,
         selfResponse: e.self_response,
         organizerSelf: e.organizer_self === 1,
         attendeeCount: e.attendee_count,

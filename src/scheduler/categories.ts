@@ -1,5 +1,5 @@
 // Event categories (docs/specs/events-categories-and-colors.md rules 1-5).
-import { isFlightTitle } from "./blocking.ts";
+import { hasTag, isFlightTitle } from "./blocking.ts";
 
 export const CATEGORIES = [
   "team_meeting",
@@ -17,6 +17,8 @@ export type Category = (typeof CATEGORIES)[number];
 export interface CategoryInput {
   title: string;
   description: string;
+  /** The user's own RSVP note on an invitation. */
+  rsvpNote?: string;
   start: number;
   end: number;
   eventType: string;
@@ -46,8 +48,8 @@ const domainOf = (email: string) => email.slice(email.lastIndexOf("@") + 1).toLo
 export function categoryOf(e: CategoryInput, userEmail: string): Category {
   if (e.manual) return e.manual;
   const text = `${e.title}\n${e.description}`;
-  if (/#tl_flight\b/i.test(text)) return "flight";
-  if (/#tl_trip\b/i.test(text)) return "travel";
+  if (hasTag(e, "#tl_flight")) return "flight";
+  if (hasTag(e, "#tl_trip")) return "travel";
   if (e.eventType === "outOfOffice")
     return e.end - e.start > EIGHT_HOURS ? "vacation" : "personal_commitment";
   if (!e.managedKind && isFlightTitle(e.title)) return "flight";

@@ -7,9 +7,19 @@ export const TAG_FREE = "#tl_free";
 export const TAG_BUSY = "#tl_busy";
 export const TAG_FOCUS = "#tl_focus";
 
-export function hasTag(e: Pick<ExternalEvent, "title" | "description">, tag: string): boolean {
-  const t = tag.toLowerCase();
-  return e.title.toLowerCase().includes(t) || e.description.toLowerCase().includes(t);
+/**
+ * events-tags.md: the tag in the title, the description or the user's own RSVP
+ * note, as a whole token in any case. Before it: the start or a character that
+ * is not a letter, digit or `_`; after it: the end, whitespace or punctuation
+ * other than `_` (`#tl_freedom` and `x#tl_free` do not match).
+ */
+export function hasTag(
+  e: Pick<ExternalEvent, "title" | "description"> & { rsvpNote?: string | undefined },
+  tag: string,
+): boolean {
+  const t = tag.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const re = new RegExp(`(^|[^\\p{L}\\p{N}_])${t}(?![\\p{L}\\p{N}_])`, "iu");
+  return [e.title, e.description, e.rsvpNote ?? ""].some((text) => re.test(text));
 }
 
 /** True when the user takes part: organizer, own event, or answered yes or maybe. */
