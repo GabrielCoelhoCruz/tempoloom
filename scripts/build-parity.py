@@ -780,6 +780,46 @@ for n in [664, 665, 666, 667, 668]:
     BLOCKED[n] = "The pricing page names it and gives no behavior to build (plans-feature-inventory.md open questions); it also needs meeting notes, transcripts or a room provider"
 # --- end merge ---
 
+# --- U03: core planning ---
+T.update({
+    "u03_spacing": "the time between chunks of a task is a setting: once a day puts each chunk on its own day, 2 hours keeps a 2-hour gap",
+    "u03_calendar": "each hours set has a calendar for task chunks; chunks of tasks in that set go there",
+    "u03_order": "inside one level meetings go first, then habits, then tasks; a higher level goes before all of them",
+    "u03_urgency": "the urgency setting decides whether a low task that is short of time goes first",
+    "u03_focus": "focus time goes after a P4 task, keeps the free/busy status set on it, and counts as P2 for booking links",
+    "u03_series": "the level of a recurring external event applies to this event or to the whole series",
+    "u03_other": "events of another connected calendar stay P1: the control is disabled with a note, and links never offer their time",
+    "u03_meeting_hours": "flexible meetings use meeting hours: a change there moves the meeting, and tasks keep work hours",
+    "u03_ranges": "a day can have several ranges and copy to all copies them to every day that is on; chunks never span the gap",
+    "u03_moved": "a chunk moved in the calendar leaves its old time closed to that task only",
+})
+E2E.update({
+    9: ["u03_spacing"],
+    27: ["u03_calendar"],
+    55: ["s1_drag"],
+    56: ["u03_order"],
+    58: ["u03_urgency"],
+    59: ["u03_focus"],
+    60: ["u03_series"],
+    61: ["u03_other"],
+    70: ["u03_meeting_hours"],
+    73: ["u03_ranges"],
+    90: ["u03_order", "u03_focus"],
+    100: ["u03_focus"],
+    109: ["u03_moved"],
+})
+E2E_NOTES.update({
+    9: "The choice is a user task default on the Settings page; existing chunks keep their place while they stay valid",
+    27: "A chunk keeps the calendar it was written to; a new choice applies to new chunks",
+    58: "E2E covers the default and priority only; the 48-hour mode has unit tests only",
+    90: "E2E covers tasks, habits, flexible meetings and focus time; buffers inside a level have unit tests only",
+})
+PARTIAL.pop(78, None)
+GOOGLE_ROWS.pop(147, None)
+BLOCKED[78] = "Needs a Google account: the zone comes from the Google Calendar setting. The hours page shows the zone that hours apply in and an active trip (E2E on CalDAV: \u201ca browser that reports UTC gets a warning\u2026\u201d)"
+BLOCKED[147] = "Needs a Google OAuth client and a Google test account: incremental consent can only be built and proven against Google sign-in; today Google sign-in asks for calendar scopes up front"
+# --- end U03 ---
+
 GOOGLE_PENDING = "Google E2E pending: the service-account key is not available yet (1Password token missing)."
 
 def status(row_id, spec_file, notes):
