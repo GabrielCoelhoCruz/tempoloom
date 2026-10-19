@@ -32,6 +32,51 @@ feature list and the status of each feature.
   time, buffers, meeting agendas and calendar fragmentation.
 - Single sign-on (OpenID Connect), domain capture, directory provisioning
   (SCIM 2.0) and organization-wide calendar access for CalDAV servers.
+- An Automations page lists habits, focus time, buffers, flexible meetings,
+  meeting overload and meeting checks by priority. Drag to rank, filter by
+  type, turn off or remove; a Create menu sits in the top bar.
+- Event settings for habits, focus time and buffers: emoji, category and
+  color, visibility, target calendar, location, description and reminders.
+  Title markers show done, partly done, travel, flight and personal copies.
+- Habits: make one from a recurring event, reschedule one occurrence, edit
+  from any event, monthly habits. Focus time: proactive or reactive mode,
+  auto-decline with a message, weekly progress. Meeting overload: daily and
+  weekly meeting limits. Saved task searches on habits and focus time.
+- Buffer filters from a plain-language description, with a live list of
+  matching events, by person, by calendar, and after a run of meetings.
+- Tasks as suggestions only, with Suggested now and At risk lists, the
+  next-up task and work blocks on request. A timer on tasks and habits logs
+  time that stats count.
+- Travel time zones with dates; hours, habits and booking links follow them.
+  Hours: replacement on delete, item-specific hours for habits, a preview in
+  item forms, a first-run review and a check for a wrong browser zone.
+- The planner shows the next meeting with a join link, flags overlapping
+  meetings, and gives a tab alert and a chime at event start. Event notes
+  support markdown and link back to the item.
+- Meeting checks (overlaps, declines, unanswered invitations, missing video
+  links) in an Issues tab, with ignore, a daily email digest and company
+  checks for team admins; recommendations beside them.
+- Flexible meetings can take over an existing recurring meeting, move when a
+  required guest declines, follow a daily move limit, keep a change log per
+  occurrence and email guests about changes. Start-time intervals and a
+  weekly no-meeting day.
+- Booking links: screening questions, redirect after booking, emails on
+  booking, reschedule, cancel and before the meeting, an availability
+  inspector, a time zone picker, 12- or 24-hour times, URL parameters, a
+  calendar overlay for signed-in bookers, link groups, one-off links, shared
+  times, a share menu and website embeds.
+- Calendar mirroring: a policy list per account, edits after creation,
+  labels by category, a color per policy, copies that never alert, a full
+  check twice a day and copies 12 months ahead. Connected calendars: a
+  category per calendar, calendars shared by URL, holiday feeds.
+- Several calendar accounts per person: sign in with any of them and change
+  the main email.
+- Preview mode stages changes from AI tools, automation edits and planner
+  drags until you apply them. An MCP server at `/mcp` lets any MCP client
+  read the schedule and propose changes, with a personal API key.
+- Help pages with an event lookup and Tempoloom's own change log; stats for
+  deep and shallow work, breaks, travel, time away, people met, insights and
+  planned versus actual time.
 
 ## Goals
 
@@ -64,6 +109,18 @@ Open `BASE_URL` and sign in with Google or with a CalDAV account.
 
 Webhooks go only to public `https` hosts. To send them to a receiver on a
 private network, set `WEBHOOK_ALLOW_PRIVATE=true`.
+
+Mail (invitations, booking and meeting emails, daily digests) needs
+`SMTP_URL`. Other settings are in `.env.example`. Tempoloom has no paid
+tiers; an operator can set limits per server with the CLI, all off by default:
+
+```bash
+node src/server/cli.ts limit --name max_connected_calendars --value 5   # or none
+node src/server/cli.ts booking-reminders                              # send due reminders now
+```
+
+Limit names: `max_scheduling_window_weeks`, `max_connected_calendars`,
+`max_mirrors`, `max_booking_links`, `max_automations_per_user`.
 
 ### With Docker
 
