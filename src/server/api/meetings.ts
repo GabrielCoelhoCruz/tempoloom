@@ -271,6 +271,20 @@ function seriesRules(
   return f.period === "weekly" && firstDate ? weekStartOf(db, userId, firstDate) : firstDate;
 }
 
+/**
+ * The frequency of an adopted series comes from the series on the calendar: an
+ * edit keeps its period and count, and its start date (rules 1, 10). Ideal days
+ * stay editable: they do not change the periods.
+ */
+function keepSeriesFrequency(old: MeetingRow, f: MeetingInput["frequency"]): LocalDate | null {
+  const was = JSON.parse(old.frequency) as MeetingInput["frequency"];
+  const count = (x: MeetingInput["frequency"]) =>
+    x.period === "weekly" ? x.everyWeeks : x.period === "daily" ? (x.everyDays ?? 1) : null;
+  if (was.period !== f.period || count(was) !== count(f))
+    badRequest("frequency", "A recurring meeting keeps the frequency of its calendar series");
+  return old.starting;
+}
+
 function seriesTarget(db: Db, m: MeetingRow) {
   return one<{ account_id: string; provider_id: string }>(
     db,
@@ -405,8 +419,7 @@ export function meetingRoutes(db: Db, sync: SyncService, now: () => number): Hon
       row.rules_changed_at = rulesChangedAt(db, old, row, attendees, body, t);
       row.series_event_id = old.series_event_id;
       row.series_calendar_id = old.series_calendar_id;
-      if (old.series_event_id)
-        row.starting = seriesRules(db, user.id, body.frequency, old.starting);
+      if (old.series_event_id) row.starting = keepSeriesFrequency(old, body.frequency);
     }
     const zone =
       one<{ time_zone: string }>(db, "SELECT time_zone FROM users WHERE id = ?", user.id)
@@ -491,7 +504,7 @@ export function meetingRoutes(db: Db, sync: SyncService, now: () => number): Hon
     const body = await jsonBody(c, meetingInput);
     const t = now();
     const { row, attendees } = rowFrom(db, user.id, old.id, body, t, old.rank);
-    if (old.series_event_id) row.starting = seriesRules(db, user.id, body.frequency, old.starting);
+    if (old.series_event_id) row.starting = keepSeriesFrequency(old, body.frequency);
     const rulesChanged = rulesChangedAt(db, old, row, attendees, body, t);
     tx(db, () => {
       if (body.hoursMode === "itemSpecific" && body.itemHours)

@@ -285,6 +285,8 @@ export function Meetings() {
   // A series repeats every day or every N weeks from its first instance (rules 1, 10).
   const forSeries = seed !== null || Boolean(ed?.series_event_id);
   const shownUnit = forSeries ? "weeks" : unit;
+  // An adopted series keeps the frequency of the calendar series: its edit shows it read-only.
+  const locked = Boolean(ed?.series_event_id);
   const pick = (x: Series | null) => {
     const init = x ? everyOf(seedFrequency(x)) : { every: "1", unit: "weeks" };
     setSeed(x);
@@ -486,16 +488,24 @@ export function Meetings() {
             }
           />
         </label>
-        <label>
-          How often
-          <select name="every" onChange={(e) => setEvery(e.currentTarget.value)}>
-            {EVERY.filter(([v]) => !forSeries || v !== "monthly").map(([v, l]) => (
-              <option value={v} key={v} selected={v === everyInit}>
-                {l}
-              </option>
-            ))}
-          </select>
-        </label>
+        {locked ? (
+          <label>
+            How often
+            <input type="hidden" name="every" value={everyInit} />
+            <input readOnly value={EVERY.find(([v]) => v === everyInit)?.[1] ?? ""} />
+          </label>
+        ) : (
+          <label>
+            How often
+            <select name="every" onChange={(e) => setEvery(e.currentTarget.value)}>
+              {EVERY.filter(([v]) => !forSeries || v !== "monthly").map(([v, l]) => (
+                <option value={v} key={v} selected={v === everyInit}>
+                  {l}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         {every === "custom" && (
           <>
             <label>
@@ -506,21 +516,30 @@ export function Meetings() {
                 min={1}
                 max={52}
                 defaultValue={String(fq ? everyOf(fq).n : 2)}
+                readOnly={locked}
                 required
               />
             </label>
-            <label>
-              Unit
-              <select
-                name="everyUnit"
-                value={shownUnit}
-                onChange={(e) => setUnit(e.currentTarget.value)}
-              >
-                {!forSeries && <option value="days">Days</option>}
-                <option value="weeks">Weeks</option>
-                {!forSeries && <option value="months">Months</option>}
-              </select>
-            </label>
+            {locked ? (
+              <label>
+                Unit
+                <input type="hidden" name="everyUnit" value="weeks" />
+                <input readOnly value="Weeks" />
+              </label>
+            ) : (
+              <label>
+                Unit
+                <select
+                  name="everyUnit"
+                  value={shownUnit}
+                  onChange={(e) => setUnit(e.currentTarget.value)}
+                >
+                  {!forSeries && <option value="days">Days</option>}
+                  <option value="weeks">Weeks</option>
+                  {!forSeries && <option value="months">Months</option>}
+                </select>
+              </label>
+            )}
           </>
         )}
         {(every === "monthly" || (every === "custom" && shownUnit === "months")) && (

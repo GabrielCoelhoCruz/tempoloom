@@ -10,16 +10,19 @@
 //    or counts its periods from "now" instead of the creation day.
 // 3. A change of an attendee's meeting hours or time zone does not place the
 //    meeting again; a change of a set the attendee's meetings do not use does.
-// 4. An edit of a meeting that manages a series sets a monthly or every-N-days
-//    frequency, or moves its start date: its periods stop matching the series'
-//    instances and the push deletes them (rules 1, 10).
+// 4. An edit of a meeting that manages a series changes its frequency or moves
+//    its start date: its periods stop matching the series' instances and the
+//    push deletes them (rules 1, 10).
 import { Hono } from "hono";
 import { describe, expect, it } from "vitest";
+import { plan } from "../../src/scheduler/plan.ts";
 import { ensureUser, type User } from "../../src/server/accounts.ts";
 import { meetingRoutes } from "../../src/server/api/meetings.ts";
 import type { AppEnv } from "../../src/server/app.ts";
-import { type Db, one, openDb, run } from "../../src/server/db.ts";
+import { all, type Db, one, openDb, run } from "../../src/server/db.ts";
 import { meetingItems } from "../../src/server/planner/meetings.ts";
+import { loadSnapshot } from "../../src/server/planner/replan.ts";
+import { getSettings } from "../../src/server/settings.ts";
 import type { SyncService } from "../../src/server/sync/service.ts";
 
 const DAY = 86_400_000;
@@ -106,33 +109,118 @@ describe("meeting edits", () => {
 });
 
 describe("series edits", () => {
-  it("refuses a monthly or every-N-days frequency for a series and keeps its start date", async () => {
-    const { db, call, status } = setup();
-    const { id } = (await call("POST", "/meetings", sync1("Standup"))) as { id: string };
-    // As POST with `series` leaves it: the series' calendar and id, periods from its first week.
+  /**
+   * A meeting that manages a series, as POST with `series` leaves it, with one
+   * managed instance in each period the planner gives it now.
+   */
+  async function seriesMeeting(frequency: Record<string, unknown>) {
+    const s = setup();
+    const { id } = (await s.call("POST", "/meetings", sync1("Standup", { frequency }))) as {
+      id: string;
+    };
     run(
-      db,
+      s.db,
+      `INSERT INTO accounts (id, user_id, provider, external_id, email, credentials, created_at)
+       VALUES ('acc', ?, 'caldav', 'owner', 'owner@example.com', '', ?)`,
+      s.owner.id,
+      T0,
+    );
+    run(
+      s.db,
+      "INSERT INTO calendars (id, account_id, provider_id, name, is_primary) VALUES ('cal', 'acc', 'cal', 'Work', 1)",
+    );
+    for (const p of placed(s.db, s.owner.id, id))
+      run(
+        s.db,
+        `INSERT INTO managed_events (id, user_id, calendar_id, event_id, key, kind, source_id, start_ms, end_ms, busy, title)
+         VALUES (?, ?, 'cal', ?, ?, 'meeting', ?, ?, ?, 1, 'Standup')`,
+        p.key,
+        s.owner.id,
+        `ser#${p.key}`,
+        p.key,
+        id,
+        p.start,
+        p.end,
+      );
+    run(
+      s.db,
       "UPDATE meetings SET series_calendar_id = 'cal', series_event_id = 'ser', starting = '2026-10-19' WHERE id = ?",
       id,
     );
-    const starting = () =>
-      one<{ s: string | null }>(db, "SELECT starting AS s FROM meetings WHERE id = ?", id)?.s;
-    const frequency = () =>
-      one<{ f: string }>(db, "SELECT frequency AS f FROM meetings WHERE id = ?", id)?.f;
-    const monthly = sync1("Standup", { frequency: { period: "monthly", dayOfMonth: 1 } });
-    const every3 = sync1("Standup", { frequency: { period: "daily", everyDays: 3 } });
-    expect(await status("PUT", `/meetings/${id}`, monthly)).toBe(400);
-    expect(await status("PUT", `/meetings/${id}`, every3)).toBe(400);
-    expect(JSON.parse(frequency() ?? "{}")).toMatchObject({ period: "weekly" });
-    // A typed or cleared start date does not move the series' periods.
-    await call("PUT", `/meetings/${id}`, sync1("Standup", { starting: "2026-11-30" }));
-    expect(starting()).toBe("2026-10-19");
-    await call("PUT", `/meetings/${id}`, sync1("Standup", { starting: null }));
-    expect(starting()).toBe("2026-10-19");
-    // Every day stays allowed; a meeting without a series takes any frequency.
-    await call("PUT", `/meetings/${id}`, sync1("Standup", { frequency: { period: "daily" } }));
-    expect(starting()).toBe("2026-10-19");
+    const saved = () =>
+      one<{ f: string; s: string | null }>(
+        s.db,
+        "SELECT frequency AS f, starting AS s FROM meetings WHERE id = ?",
+        id,
+      );
+    return { ...s, id, saved };
+  }
+  /** The meeting's placements of a planning run now: the push deletes managed instances not among them. */
+  const placed = (db: Db, userId: string, id: string) =>
+    plan(
+      loadSnapshot(db, userId, "UTC", getSettings(db, userId), T0, 0).snapshot,
+    ).placements.filter((p) => p.kind === "meeting" && p.itemId === id);
+  const instances = (db: Db, id: string) =>
+    all<{ key: string }>(
+      db,
+      "SELECT key FROM managed_events WHERE source_id = ? ORDER BY key",
+      id,
+    ).map((r) => r.key);
+
+  const weekly = (everyWeeks: number, idealDays = [2]) => ({
+    period: "weekly",
+    everyWeeks,
+    idealDays,
+  });
+  it.each([
+    { was: "every 3 weeks", from: weekly(3), now: "every 2 weeks", to: weekly(2) },
+    { was: "every day", from: { period: "daily" }, now: "every week", to: weekly(1) },
+    { was: "every week", from: weekly(1), now: "every day", to: { period: "daily" } },
+    {
+      was: "every week",
+      from: weekly(1),
+      now: "every month",
+      to: { period: "monthly", dayOfMonth: 1 },
+    },
+    {
+      was: "every day",
+      from: { period: "daily" },
+      now: "every 3 days",
+      to: { period: "daily", everyDays: 3 },
+    },
+  ])(
+    "refuses to change a series from $was to $now, in the edit and its preview",
+    async ({ from, to }) => {
+      const { id, saved, status } = await seriesMeeting(from);
+      const before = saved();
+      const edit = sync1("Standup", { frequency: to });
+      expect(await status("POST", `/meetings/preview?id=${id}`, edit)).toBe(400);
+      expect(await status("PUT", `/meetings/${id}`, edit)).toBe(400);
+      expect(saved()).toEqual(before);
+    },
+  );
+
+  it("takes other ideal days and keeps every instance and the start date", async () => {
+    const { db, owner, id, saved, call } = await seriesMeeting(weekly(3));
+    const kept = instances(db, id);
+    expect(kept.length).toBeGreaterThan(1);
+    const edit = sync1("Standup", { frequency: weekly(3, [4]), starting: "2026-11-30" });
+    await call("POST", `/meetings/preview?id=${id}`, edit);
+    await call("PUT", `/meetings/${id}`, edit);
+    expect(JSON.parse(saved()?.f ?? "{}")).toMatchObject({ idealDays: [4] });
+    expect(saved()?.s).toBe("2026-10-19");
+    // The next planning run keeps a placement for each instance: the push deletes none.
+    expect(
+      placed(db, owner.id, id)
+        .map((p) => p.key)
+        .sort(),
+    ).toEqual(kept);
+  });
+
+  it("a meeting without a series takes any frequency", async () => {
+    const { call, status } = setup();
     const plain = (await call("POST", "/meetings", sync1("Plain"))) as { id: string };
+    const monthly = sync1("Plain", { frequency: { period: "monthly", dayOfMonth: 1 } });
     expect(await status("PUT", `/meetings/${plain.id}`, monthly)).toBe(200);
   });
 });

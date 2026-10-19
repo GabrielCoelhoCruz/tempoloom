@@ -683,7 +683,7 @@ test("adaptive defense writes busy within 12 hours and free later; always busy a
   check(await read());
 });
 
-test("a series every 3 weeks fills the form as custom every 3 weeks, keeps its instances when saved, and cannot take a monthly frequency or a start date, when added or edited (rules 1, 10)", async ({
+test("a series every 3 weeks fills the form as custom every 3 weeks, keeps its instances when saved, cannot take a monthly frequency or a start date when added, and shows its frequency read-only when edited, where other ideal days move its instances (rules 1, 10)", async ({
   page,
   cal,
   signIn,
@@ -758,10 +758,33 @@ test("a series every 3 weeks fills the form as custom every 3 weeks, keeps its i
   );
   await page.reload();
   await expect(row(page, "Triweekly")).toContainText("every 3 weeks, ideally Tue");
-  // The edit form of the adopted series offers the same frequencies only.
+  // The edit form of the adopted series shows its frequency read-only: it comes from the calendar.
   await row(page, "Triweekly").getByRole("button", { name: "Edit" }).click();
-  await expect(form.getByLabel("Repeat every")).toHaveValue("3");
-  await seriesOnly();
+  await expect(form.getByLabel("Title")).toHaveValue("Triweekly");
+  for (const [label, value] of [
+    ["How often", "Custom"],
+    ["Repeat every", "3"],
+    ["Unit", "Weeks"],
+  ]) {
+    await expect(form.getByLabel(label as string)).toHaveValue(value as string);
+    await expect(form.getByLabel(label as string)).not.toBeEditable();
+  }
+  await expect(form.getByLabel("Starting")).toHaveCount(0);
+  // Other ideal days stay editable: the instances move inside the series, and none is deleted.
+  await form.getByLabel("Tue", { exact: true }).uncheck();
+  await form.getByLabel("Thu", { exact: true }).check();
+  await form.getByRole("button", { name: "Save meeting" }).click();
+  await expect(row(page, "Triweekly")).toContainText("every 3 weeks, ideally Thu");
+  await eventually(
+    () => range(cal, 28),
+    (l) => {
+      const mine = titled(l, "Triweekly");
+      // This week's instance moves to Thursday; the one three weeks on stays an instance.
+      expect(mine.map((e) => local(e.start))[0]).toBe(`${day(3)} 10:00`);
+      expect(mine).toHaveLength(2);
+      expect(mine.every((e) => e.recurringId === series)).toBe(true);
+    },
+  );
 });
 
 test("no limit on meetings per organizer, and stats count flexible meetings as one-to-one or group time next to booked meetings (rule 36; analytics summary)", async ({
