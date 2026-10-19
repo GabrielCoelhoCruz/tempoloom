@@ -7,6 +7,8 @@ export interface GoogleCalendarListEntry {
   id: string;
   summary: string;
   description?: string;
+  /** Email of the account that owns the calendar; set only on secondary calendars. */
+  dataOwner?: string;
   primary?: boolean;
   accessRole: "freeBusyReader" | "reader" | "writer" | "owner";
   timeZone?: string;

@@ -24,6 +24,7 @@ import {
   parseServiceAccountKey,
   serviceAccountToken,
 } from "../../src/server/google/service-account.ts";
+import { ownTestCalendar } from "../../src/server/google/test-calendar.ts";
 import { CalDavProvider, retryRead } from "../../src/server/providers/caldav.ts";
 import { GoogleProvider } from "../../src/server/providers/google.ts";
 import type { ProviderEvent } from "../../src/server/providers/types.ts";
@@ -56,7 +57,8 @@ function oauthEnv() {
 }
 const GOOGLE_TEST_CALENDAR = "[tl-test] tempoloom-e2e";
 // Set on the test calendar when the driver creates it. The driver empties only
-// a calendar that the account owns and that carries this description.
+// a calendar that carries this description and that the account itself created
+// (src/server/google/test-calendar.ts).
 const GOOGLE_TEST_MARKER = "tempoloom-e2e: made by the E2E driver, emptied before each test";
 
 export interface AppServer {
@@ -315,18 +317,19 @@ function unsupported(reason: string): never {
 /** Google: all tests share one test calendar of the Google account. */
 async function googleDriver(): Promise<CalendarDriver> {
   let token: { value: string; exp: number } | undefined;
-  const newToken = OAUTH
-    ? () => refreshAccessToken({ ...OAUTH, redirectUri: "" }, OAUTH.refreshToken)
-    : SA_JSON
-      ? (
-          (key) => () =>
-            serviceAccountToken(key)
-        )(parseServiceAccountKey(SA_JSON))
+  const key = SA_JSON ? parseServiceAccountKey(SA_JSON) : undefined;
+  const auth = OAUTH
+    ? {
+        owner: OAUTH.accountEmail,
+        newToken: () => refreshAccessToken(OAUTH, OAUTH.refreshToken),
+      }
+    : key
+      ? { owner: key.client_email, newToken: () => serviceAccountToken(key) }
       : undefined;
-  if (!newToken) throw new Error("No Google credentials; run scripts/e2e-google.sh");
+  if (!auth) throw new Error("No Google credentials; run scripts/e2e-google.sh");
   const accessToken = async () => {
     if (!token || token.exp < Date.now()) {
-      const t = await newToken();
+      const t = await auth.newToken();
       token = { value: t.accessToken, exp: t.expiresAt };
     }
     return token.value;
@@ -335,23 +338,12 @@ async function googleDriver(): Promise<CalendarDriver> {
   // Google limits how many calendars one account may create, so all tests
   // share one test calendar and empty it first. One run per account at a time:
   // two runs on one account empty each other's calendar.
-  const marked = async () =>
-    (await api.listCalendars()).filter(
-      (c) =>
-        c.summary === GOOGLE_TEST_CALENDAR &&
-        c.accessRole === "owner" &&
-        c.description === GOOGLE_TEST_MARKER,
-    );
-  let found = await marked();
-  if (!found.length) {
-    await api.createCalendar(GOOGLE_TEST_CALENDAR, ZONE, GOOGLE_TEST_MARKER);
-    found = await marked();
-  }
-  if (found.length !== 1)
-    throw new Error(
-      `Expected one test calendar "${GOOGLE_TEST_CALENDAR}", found ${found.length}; delete the extra ones`,
-    );
-  const calendarId = (found[0] as { id: string }).id;
+  const calendarId = await ownTestCalendar(api, {
+    summary: GOOGLE_TEST_CALENDAR,
+    marker: GOOGLE_TEST_MARKER,
+    owner: auth.owner,
+    timeZone: ZONE,
+  });
   // `clear` works only on a primary calendar: delete each event (a recurring
   // series as one master) instead.
   for (const e of (await api.listEvents(calendarId, { masters: true })).events)
@@ -361,7 +353,7 @@ async function googleDriver(): Promise<CalendarDriver> {
     backend: "google",
     calendarId,
     async addEvent(e) {
-      if (e.attendees && !OAUTH) throw new Error("A service account cannot invite attendees");
+      if (e.attendees && !OAUTH) unsupported("A service account cannot invite guests.");
       const ev = await provider.insertEvent(calendarId, {
         summary: e.title,
         description: e.description ?? "",
@@ -371,7 +363,6 @@ async function googleDriver(): Promise<CalendarDriver> {
         colorId: null,
         privateProps: {},
         ...(e.location ? { location: e.location } : {}),
-        ...(e.description ? { description: e.description } : {}),
         // Google Calendar lists the organizer among the guests; the API does not add it.
         ...(e.attendees && OAUTH ? { attendees: [OAUTH.accountEmail, ...e.attendees] } : {}),
       });
@@ -620,7 +611,10 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
         execFileSync(process.execPath, ["src/server/cli.ts", ...args], {
           cwd: ROOT,
           // Only connect-google-oauth reads the refresh token; the server does not need it.
-          env: OAUTH ? { ...env, GOOGLE_REFRESH_TOKEN: OAUTH.refreshToken } : env,
+          env:
+            OAUTH && args[0] === "connect-google-oauth"
+              ? { ...env, GOOGLE_REFRESH_TOKEN: OAUTH.refreshToken }
+              : env,
           encoding: "utf8",
         }),
       query: <T>(sql: string, ...params: (string | number)[]) => {

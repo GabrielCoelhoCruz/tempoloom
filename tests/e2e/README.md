@@ -18,11 +18,14 @@ restart.
   service account. All tests share the calendar `[tl-test] tempoloom-e2e`.
   The driver creates it with a marker description and deletes its events
   before each test. It empties only a calendar with that name and marker that
-  the account owns; it stops if it finds two. Run one suite per Google account
+  the account itself created (Google's `dataOwner` is the account's email; an
+  owner role alone is not enough, because a calendar that another account
+  shares with "manage sharing" also gives it). It stops if such a calendar
+  comes from another account, or if it finds two. Run one suite per Google account
   at a time: two runs empty each other's calendar. Tests that need several
   users, extra calendars, or incoming invitations skip on this backend (the
   driver skips the test when it asks for an extra calendar or an invitation).
-  A service account cannot invite guests.
+  A service account cannot invite guests; tests that add guests skip with it.
 
 ## Other loopback servers
 
