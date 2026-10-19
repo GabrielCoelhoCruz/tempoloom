@@ -3,7 +3,7 @@
 // directly, the way another calendar app would.
 //
 // Backend: TEMPOLOOM_E2E_BACKEND=caldav (default; Radicale in Docker) or
-// google (a Google service account; see tests/e2e/README.md).
+// google (a Google user through OAuth, or a service account; see tests/e2e/README.md).
 import { type ChildProcess, execFileSync, spawn } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
 import { mkdtempSync } from "node:fs";
@@ -19,6 +19,7 @@ import {
 } from "@playwright/test";
 import { DAVClient } from "tsdav";
 import { GoogleCalendarApi } from "../../src/server/google/calendar.ts";
+import { refreshAccessToken } from "../../src/server/google/oauth.ts";
 import {
   parseServiceAccountKey,
   serviceAccountToken,
@@ -37,6 +38,16 @@ export const COLLEAGUE_EMAIL = "colleague@tempoloom.test";
 export const BACKEND: "caldav" | "google" =
   process.env.TEMPOLOOM_E2E_BACKEND === "google" ? "google" : "caldav";
 const SA_JSON = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
+// Set by scripts/google-oauth-login.ts; a Google user account wins over the service account.
+const OAUTH = process.env.GOOGLE_REFRESH_TOKEN
+  ? {
+      clientId: process.env.GOOGLE_CLIENT_ID ?? "",
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET ?? "",
+      refreshToken: process.env.GOOGLE_REFRESH_TOKEN,
+      accountEmail: process.env.GOOGLE_ACCOUNT_EMAIL ?? "",
+    }
+  : undefined;
+const GOOGLE_TEST_CALENDAR = "[tl-test] tempoloom-e2e";
 
 export interface AppServer {
   baseUrl: string;
@@ -285,32 +296,60 @@ async function caldavCalendar(
   };
 }
 
-/** Google: the service account owns one fresh test calendar per test. */
+/** Google: all tests share one test calendar of the Google account. */
 async function googleDriver(): Promise<CalendarDriver> {
-  if (!SA_JSON)
-    throw new Error("GOOGLE_SERVICE_ACCOUNT_JSON is not set; run scripts/e2e-google.sh");
-  const key = parseServiceAccountKey(SA_JSON);
   let token: { value: string; exp: number } | undefined;
-  const api = new GoogleCalendarApi({
-    getAccessToken: async () => {
-      if (!token || token.exp < Date.now()) {
-        const t = await serviceAccountToken(key);
-        token = { value: t.accessToken, exp: t.expiresAt };
-      }
-      return token.value;
-    },
-  });
-  for (const c of await api.listCalendars()) {
-    if (c.summary.startsWith("tempoloom-e2e")) await api.deleteCalendar(c.id);
+  const newToken = OAUTH
+    ? () => refreshAccessToken({ ...OAUTH, redirectUri: "" }, OAUTH.refreshToken)
+    : SA_JSON
+      ? (
+          (key) => () =>
+            serviceAccountToken(key)
+        )(parseServiceAccountKey(SA_JSON))
+      : undefined;
+  if (!newToken) throw new Error("No Google credentials; run scripts/e2e-google.sh");
+  const accessToken = async () => {
+    if (!token || token.exp < Date.now()) {
+      const t = await newToken();
+      token = { value: t.accessToken, exp: t.expiresAt };
+    }
+    return token.value;
+  };
+  const api = new GoogleCalendarApi({ getAccessToken: accessToken });
+  // Google limits how many calendars one account may create, so all tests
+  // share one test calendar and empty it first.
+  const shared = (await api.listCalendars()).find((c) => c.summary === GOOGLE_TEST_CALENDAR);
+  const calendarId = shared?.id ?? (await api.createCalendar(GOOGLE_TEST_CALENDAR, ZONE)).id;
+  // Never empty a user's own calendar: a created calendar has a group id.
+  if (!calendarId.endsWith("@group.calendar.google.com"))
+    throw new Error(`Refusing to clear calendar ${calendarId}`);
+  // `clear` works only on a primary calendar: delete each event (a recurring
+  // series as one master) instead.
+  const base = `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events`;
+  const auth = { authorization: `Bearer ${await accessToken()}` };
+  for (let pageToken = ""; ; ) {
+    const res = await fetch(`${base}?maxResults=2500${pageToken && `&pageToken=${pageToken}`}`, {
+      headers: auth,
+    });
+    if (!res.ok) throw new Error(`listing the test calendar failed: ${res.status}`);
+    const page = (await res.json()) as { items?: { id: string }[]; nextPageToken?: string };
+    for (const e of page.items ?? []) {
+      const del = await fetch(`${base}/${encodeURIComponent(e.id)}`, {
+        method: "DELETE",
+        headers: auth,
+      });
+      if (!del.ok && del.status !== 404 && del.status !== 410)
+        throw new Error(`clearing the test calendar failed: ${del.status}`);
+    }
+    if (!page.nextPageToken) break;
+    pageToken = encodeURIComponent(page.nextPageToken);
   }
-  const created = await api.createCalendar(`tempoloom-e2e-${randomUUID().slice(0, 8)}`, ZONE);
   const provider = new GoogleProvider(api, ZONE);
-  const calendarId = created.id;
   return {
     backend: "google",
     calendarId,
     async addEvent(e) {
-      if (e.attendees) throw new Error("A service account cannot invite attendees");
+      if (e.attendees && !OAUTH) throw new Error("A service account cannot invite attendees");
       const ev = await provider.insertEvent(calendarId, {
         summary: e.title,
         description: e.description ?? "",
@@ -320,6 +359,9 @@ async function googleDriver(): Promise<CalendarDriver> {
         colorId: null,
         privateProps: {},
         ...(e.location ? { location: e.location } : {}),
+        ...(e.description ? { description: e.description } : {}),
+        // Google Calendar lists the organizer among the guests; the API does not add it.
+        ...(e.attendees && OAUTH ? { attendees: [OAUTH.accountEmail, ...e.attendees] } : {}),
       });
       return ev.id;
     },
@@ -347,7 +389,12 @@ async function googleDriver(): Promise<CalendarDriver> {
     },
     addInvite: () => Promise.reject(new Error("A service account cannot receive invitations")),
     newCalendar: () => Promise.reject(new Error("Not supported for the Google backend yet")),
-    guests: () => Promise.reject(new Error("Not supported for the Google backend yet")),
+    async guests(id) {
+      const ev = await api.getEvent(calendarId, id);
+      return (ev.attendees ?? [])
+        .filter((a) => !a.organizer)
+        .map((a) => ({ email: a.email.toLowerCase(), optional: a.optional ?? false }));
+    },
   };
 }
 
@@ -518,6 +565,14 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
       SMTP_URL: mailServer.smtpUrl,
       MAIL_FROM: "Tempoloom <noreply@tempoloom.test>",
       ...(SA_JSON ? { GOOGLE_SERVICE_ACCOUNT_JSON: SA_JSON } : {}),
+      ...(OAUTH
+        ? {
+            GOOGLE_CLIENT_ID: OAUTH.clientId,
+            GOOGLE_CLIENT_SECRET: OAUTH.clientSecret,
+            GOOGLE_REFRESH_TOKEN: OAUTH.refreshToken,
+            GOOGLE_ACCOUNT_EMAIL: OAUTH.accountEmail,
+          }
+        : {}),
     };
     const start = async () => {
       proc = spawn(process.execPath, ["src/server/main.ts"], {
@@ -575,8 +630,10 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
     }
   },
 
-  colleague: async ({ radicale, browser, app }, use) => {
-    if (!radicale) throw new Error("The colleague fixture needs the CalDAV backend.");
+  colleague: async ({ radicale, browser, app }, use, info) => {
+    // Other users are extra Radicale accounts; the Google run has one account.
+    info.skip(!radicale, "Needs several CalDAV users.");
+    if (!radicale) return;
     const env = radicale.colleague;
     const cal = await caldavDriver(env, COLLEAGUE_EMAIL);
     const contexts: BrowserContext[] = [];
@@ -588,8 +645,10 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
     for (const c of contexts) await c.close();
   },
 
-  people: async ({ radicale, browser, app }, use) => {
-    if (!radicale) throw new Error("The people fixture needs the CalDAV backend.");
+  people: async ({ radicale, browser, app }, use, info) => {
+    // Other users are extra Radicale accounts; the Google run has one account.
+    info.skip(!radicale, "Needs several CalDAV users.");
+    if (!radicale) return;
     const contexts: BrowserContext[] = [];
     const made = new Map<number, Person>();
     await use(async (n, email) => {
@@ -612,11 +671,17 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
   },
 
   // Depends on `cal`, so the user's calendar is reset and exists before sign-in.
-  signIn: async ({ page, app, radicale, cal: _cal }, use) => {
+  signIn: async ({ page, app, radicale, cal }, use) => {
     await use(async () => {
       if (!radicale) {
         // Operator flow: connect the service account, then sign in with a one-time link.
-        app.cli("connect-google-service-account", "--email", EMAIL);
+        app.cli(
+          OAUTH ? "connect-google-oauth" : "connect-google-service-account",
+          "--email",
+          EMAIL,
+          "--calendar",
+          cal.calendarId,
+        );
         await page.goto(app.cli("login-link", "--email", EMAIL).trim());
         await expect(page.getByTestId("app-shell")).toBeVisible();
         // A new account's calendars are read on the next sync tick.

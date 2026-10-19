@@ -14,9 +14,12 @@ restart.
   `e2e3` may only read them (a shared team calendar); `e2egrant` reads every
   user's calendars (an organization's calendar access). Nothing to set up
   besides Docker.
-- `google`: Google Calendar through a service account that owns a fresh test
-  calendar for each test. Tests that need two calendars, invitations or a
-  second user skip themselves on this backend.
+- `google`: Google Calendar through either a Google user with OAuth or a
+  service account. All tests share the calendar `[tl-test] tempoloom-e2e`.
+  The driver creates it if needed and deletes its events before each test.
+  The driver refuses to clear a calendar without a Google group calendar ID.
+  Tests that need several users, extra calendars, or incoming invitations skip
+  on this backend. A service account cannot invite guests.
 
 ## Other loopback servers
 
@@ -47,7 +50,7 @@ scripts/e2e-run.sh tests/e2e/meetings.spec.ts   # one file
 Set `TEMPOLOOM_E2E_KEEP_CALDAV=1` to keep the Radicale container between runs.
 Stop it with `scripts/caldav-server.sh stop`.
 
-## Run on Google Calendar (one-time setup)
+## Run on Google Calendar with a service account
 
 1. Create a Google Cloud project and enable the Google Calendar API.
 2. Create a service account in that project and a JSON key for it.
@@ -59,6 +62,42 @@ Stop it with `scripts/caldav-server.sh stop`.
 
 The key exists only in the test process environment (`op run`); the
 repository holds only the reference in `tests/e2e/google.env.tpl`.
+
+## Run on Google Calendar with OAuth
+
+Use a dedicated Google test account. OAuth runs the suite as that user and
+supports guest invitations. The same test calendar is reused on each run.
+
+1. Enable the Google Calendar API in a Google Cloud project.
+2. Configure the OAuth consent screen and add the test account as a test user.
+3. Create a web OAuth client with the redirect URI
+   `http://127.0.0.1:8798/auth/google/callback`.
+4. Store the downloaded client JSON in 1Password, vault `tempoloom-e2e`, item
+   `google-oauth-client`, field `client.json`.
+5. Give the read-only 1Password service account access to that item. Save its
+   token as described in the service account setup above.
+6. Run the command below.
+7. Open the printed loopback URL in a browser that can reach the callback port.
+   Sign in as the test user and approve all requested access once for that run.
+
+```bash
+TEMPOLOOM_E2E_GOOGLE_AUTH=oauth scripts/e2e-google.sh
+```
+
+The suite starts after approval. `scripts/google-oauth-login.ts` passes the
+refresh token to the test command through `GOOGLE_REFRESH_TOKEN` in its
+process environment. The helper does not print the token or save a token file.
+The application stores connected-account credentials encrypted in its test
+database, as it does for other OAuth accounts.
+
+To change the callback port, set `GOOGLE_OAUTH_LOGIN_PORT` and register the
+matching redirect URI on the OAuth client. `TEMPOLOOM_E2E_ENV_TEMPLATE` can
+select another environment template. The default OAuth template is
+`tests/e2e/google-oauth.env.tpl`.
+
+Without either OAuth credentials or a service account key,
+`TEMPOLOOM_E2E_BACKEND=google` fails with
+`No Google credentials; run scripts/e2e-google.sh`.
 
 ## Artifacts
 

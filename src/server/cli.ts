@@ -1,9 +1,11 @@
 // Operator commands. Run with the same environment as the server.
 //   node src/server/cli.ts login-link --email you@example.com
 //   node src/server/cli.ts connect-google-service-account --email you@example.com [--calendar ID]
+//   GOOGLE_REFRESH_TOKEN=... node src/server/cli.ts connect-google-oauth --email you@example.com [--calendar ID]
 //   node src/server/cli.ts seat-limit --email admin@example.com --seats 10|none
 //   node src/server/cli.ts limit [--name max_mirrors --value 3|none]
 //   node src/server/cli.ts booking-reminders [--now 2026-10-20T08:00:00Z]
+import { randomUUID } from "node:crypto";
 import { parseArgs } from "node:util";
 import { createLoginLink, ensureUser, upsertAccount } from "./accounts.ts";
 import { sendDueReminders } from "./booking-mail.ts";
@@ -23,6 +25,7 @@ const { values } = parseArgs({
     seats: { type: "string" },
     value: { type: "string" },
     now: { type: "string" },
+    calendar: { type: "string" },
   },
 });
 const config = loadConfig();
@@ -59,6 +62,26 @@ switch (command) {
       email: key.client_email,
       credentials: {},
     });
+    // The service account's own calendar list has no meaningful primary, so the
+    // operator names the calendar to plan on; the next sync keeps it as primary.
+    if (values.calendar) pinCalendar(id, values.calendar);
+    console.log(`account ${id} for user ${user.id}`);
+    break;
+  }
+  case "connect-google-oauth": {
+    // For a server with no browser: the refresh token comes from a consent done elsewhere.
+    const refreshToken = process.env.GOOGLE_REFRESH_TOKEN;
+    if (!refreshToken) throw new Error("GOOGLE_REFRESH_TOKEN is not set");
+    const accountEmail = process.env.GOOGLE_ACCOUNT_EMAIL ?? email;
+    const user = ensureUser(db, email, values.name ?? email);
+    const id = upsertAccount(db, box, {
+      userId: user.id,
+      provider: "google",
+      externalId: `refresh-token:${accountEmail}`,
+      email: accountEmail,
+      credentials: { refreshToken },
+    });
+    if (values.calendar) pinCalendar(id, values.calendar);
     console.log(`account ${id} for user ${user.id}`);
     break;
   }
@@ -94,3 +117,23 @@ switch (command) {
     throw new Error(`Unknown command: ${command ?? "(none)"}`);
 }
 db.close();
+
+/** Makes `calendar` the account's primary calendar, the one the planner writes to. */
+function pinCalendar(accountId: string, calendar: string): void {
+  run(
+    db,
+    `INSERT INTO calendars (id, account_id, provider_id, name, is_primary, check_availability)
+     VALUES (?, ?, ?, ?, 1, 1)
+     ON CONFLICT (account_id, provider_id) DO UPDATE SET is_primary = 1, check_availability = 1`,
+    randomUUID(),
+    accountId,
+    calendar,
+    calendar,
+  );
+  run(
+    db,
+    "UPDATE calendars SET is_primary = 0 WHERE account_id = ? AND provider_id <> ?",
+    accountId,
+    calendar,
+  );
+}
