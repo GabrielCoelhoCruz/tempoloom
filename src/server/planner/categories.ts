@@ -94,6 +94,18 @@ export function externalCategory(ctx: CategoryContext, e: CachedEvent): Category
     : category;
 }
 
+const repaints = new Set<string>();
+
+/** Rule 12: the user asked to repaint every event; the next run does it once. */
+export function requestRepaint(userId: string): void {
+  repaints.add(userId);
+}
+
+/** True once after requestRepaint. */
+export function takeRepaint(userId: string): boolean {
+  return repaints.delete(userId);
+}
+
 /** The color id a category gets, or null for the calendar's own color. */
 export function colorFor(settings: Settings, category: Category): string | null {
   const c = settings.categoryColors[category];

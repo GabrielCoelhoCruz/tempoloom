@@ -6,6 +6,7 @@ import type { AppEnv } from "../app.ts";
 import { all, type Db, one, run } from "../db.ts";
 import { jsonBody, notFound } from "../http.ts";
 import { instanceLimit, limitMessage } from "../limits.ts";
+import { requestRepaint } from "../planner/categories.ts";
 import { getSettings, updateSettings } from "../settings.ts";
 import type { SyncService } from "../sync/service.ts";
 
@@ -25,6 +26,21 @@ export function settingsRoutes(db: Db, sync: SyncService, now: () => number): Ho
       windowLimit: instanceLimit(db, "max_scheduling_window_weeks"),
     }),
   );
+
+  /** Rule 12: repaint all events in one step; it repaints as much as a scope change. */
+  r.post("/settings/repaint", (c) => {
+    const user = c.get("user");
+    const recent = (scopeChanges.get(user.id) ?? []).filter((t) => now() - t < 60_000);
+    if (recent.length >= 2)
+      return c.json(
+        { error: "too_many_changes", message: "Wait a minute before you repaint again." },
+        429,
+      );
+    scopeChanges.set(user.id, [...recent, now()]);
+    requestRepaint(user.id);
+    sync.request(user.id);
+    return c.json({ ok: true });
+  });
 
   r.patch("/settings", async (c) => {
     const user = c.get("user");

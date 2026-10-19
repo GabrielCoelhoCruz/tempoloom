@@ -460,7 +460,18 @@ export function Settings() {
           <button type="submit" class="primary">
             Save colors
           </button>
-          <p class="meta wide">Outlook calendars may not show these colors.</p>
+          <button
+            type="button"
+            onClick={() =>
+              void act(() => api("POST", "/api/settings/repaint"), "Repainted all events")
+            }
+          >
+            Repaint all events
+          </button>
+          <p class="meta wide">
+            Repaint all events puts every color back to these settings, also where a color was
+            changed in the calendar. Outlook calendars may not show these colors.
+          </p>
         </form>
       </section>
 

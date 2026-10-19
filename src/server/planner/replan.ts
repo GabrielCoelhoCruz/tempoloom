@@ -32,9 +32,10 @@ import { all, type Db, one, run } from "../db.ts";
 import { fragmentationPreference } from "../policies/model.ts";
 import type { CalendarProvider } from "../providers/types.ts";
 import { getSettings, type Settings } from "../settings.ts";
+import { cacheEvent } from "../sync/pull.ts";
 import { planningZone } from "../travel.ts";
 import { afterPush } from "./after-push.ts";
-import { categoryContext, colorFor, paintExternal } from "./categories.ts";
+import { categoryContext, colorFor, paintExternal, takeRepaint } from "./categories.ts";
 import { externalEvents } from "./events.ts";
 import {
   eventTitle,
@@ -655,8 +656,18 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
       userId,
     ).map((p) => [p.id, p.color_override]),
   );
-  for (const d of desired) {
-    const row = rowByKey.get(d.key);
+  type Colored = Pick<
+    DesiredEvent,
+    | "kind"
+    | "sourceId"
+    | "title"
+    | "description"
+    | "start"
+    | "end"
+    | "attendees"
+    | "optionalAttendees"
+  >;
+  const colorOf = (d: Colored, row: ManagedRow | undefined): string | null => {
     const manual = row?.event_id
       ? (cats.manual.get(`${row.calendar_id}:${row.event_id}`) ?? null)
       : null;
@@ -680,7 +691,7 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
             },
             cats.userEmail,
           );
-    d.colorId =
+    const color =
       (d.kind === "mirror" ? mirrorColors.get(d.sourceId) : undefined) ??
       colorFor(settings, category);
     // Rule 9: an item color overrides the category color.
@@ -688,8 +699,10 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
       d.kind === "task"
         ? taskColors.get(d.sourceId)
         : eventSettings.get(`${d.kind}:${d.sourceId}`)?.color;
-    if (own && own !== "category") d.colorId = own === "calendar_default" ? null : own;
-  }
+    if (own && own !== "category") return own === "calendar_default" ? null : own;
+    return color;
+  };
+  for (const d of desired) d.colorId = colorOf(d, rowByKey.get(d.key));
 
   const push = await pushSchedule(
     {
@@ -706,6 +719,62 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
     desired,
   );
   recordMeetingChanges(db, userId, rows, now, last);
+  // Rule 8: a new color also repaints managed events that ended, up to 90 days back.
+  // Rule 12, "repaint all": every managed event gets its color again, also where
+  // the user changed the color in the calendar.
+  const repaint = takeRepaint(userId);
+  const painted = all<ManagedRow & { cached_color: string | null }>(
+    db,
+    `SELECT m.*, e.color_id AS cached_color FROM managed_events m
+       LEFT JOIN events e ON e.calendar_id = m.calendar_id AND e.event_id = m.event_id
+     WHERE m.user_id = ? AND m.event_id IS NOT NULL AND m.end_ms > ? AND m.end_ms <= ?`,
+    userId,
+    now - 90 * DAY,
+    repaint ? Number.MAX_SAFE_INTEGER : now,
+  );
+  for (const r of painted) {
+    if (!r.event_id || (r.kind === "mirror" && r.end_ms <= now)) continue;
+    // Only a meeting's category depends on its guests.
+    const attendees =
+      r.kind === "meeting"
+        ? (one<{ attendees: string }>(
+            db,
+            "SELECT attendees FROM events WHERE calendar_id = ? AND event_id = ?",
+            r.calendar_id,
+            r.event_id,
+          )?.attendees ?? "[]")
+        : "[]";
+    const color = colorOf(
+      {
+        kind: r.kind as DesiredEvent["kind"],
+        sourceId: r.source_id,
+        title: r.title,
+        description: r.description,
+        start: r.start_ms,
+        end: r.end_ms,
+        attendees: JSON.parse(attendees) as string[],
+      },
+      r,
+    );
+    const c = calendars.get(r.calendar_id);
+    const current = repaint ? (r.cached_color ?? null) : (r.color_id ?? null);
+    if (current === color || !c) continue;
+    try {
+      const ev = await ctx
+        .provider(c.account_id)
+        .setColor(c.provider_id, r.event_id, color, r.etag);
+      cacheEvent(db, r.calendar_id, ev);
+      run(
+        db,
+        "UPDATE managed_events SET color_id = ?, etag = ? WHERE id = ?",
+        color,
+        ev.etag,
+        r.id,
+      );
+    } catch {
+      // The event changed or went away since the last read: the next run tries again.
+    }
+  }
   await paintExternal(
     db,
     userId,
