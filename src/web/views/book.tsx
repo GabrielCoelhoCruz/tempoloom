@@ -295,11 +295,12 @@ function Times({
       })}
       <div class="actions">
         {from > Date.now() + 1000 && (
-          <button type="button" onClick={() => setFrom(Math.max(Date.now(), from - SPAN))}>
+          <button type="button" onClick={() => setFrom((f) => Math.max(Date.now(), f - SPAN))}>
             Earlier
           </button>
         )}
-        <button type="button" onClick={() => setFrom(from + SPAN)}>
+        {/* From the newest value: a quick second click must move two weeks more. */}
+        <button type="button" onClick={() => setFrom((f) => f + SPAN)}>
           Later
         </button>
       </div>
