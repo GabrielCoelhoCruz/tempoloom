@@ -16,8 +16,8 @@
 // - lock from the planner does not hold the time, or unlock does not free it
 //                                                          -> lock marker, start after a clash, start after unlock
 // - stats show no per-habit numbers, or count other habits  -> progress rows per habit
-import { addDays } from "../../src/shared/time.ts";
-import { day, span, week } from "./automation-helpers.ts";
+import { addDays, weekdayOf } from "../../src/shared/time.ts";
+import { day, openSettings, span, week } from "./automation-helpers.ts";
 import { edit, save } from "./automation-list-helpers.ts";
 import { at, blockUntil, eventually, expect, local, managed, test } from "./fixtures.ts";
 import { addHabit, inHours, MIN, openEvent, openWeek, titled, W } from "./helpers.ts";
@@ -64,13 +64,18 @@ test("a habit uses a named hours set or its own window, and a change of hours mo
   for (const e of titled(await week(cal), "Guitar")) expect(inHours(e.start, e.end)).toBe(true);
 });
 
-test("a custom frequency places a habit every N days or every N weeks on its days (Frequency: custom)", async ({
+test("a custom frequency places a habit every N days, every N weeks on its days, or every N months (Frequency: custom)", async ({
   page,
   cal,
   signIn,
 }) => {
   await blockUntil(cal, W);
   await signIn();
+  // Twelve weeks ahead, so that two months of occurrences are on the calendar.
+  await openSettings(page);
+  await page.getByLabel("Plan ahead (weeks)").fill("12");
+  await page.getByLabel("Plan ahead (weeks)").press("Tab");
+  await expect(page.getByTestId("settings-message")).toHaveText("Saved");
   await page.getByRole("link", { name: "Habits" }).click();
   const form = page.getByTestId("habit-form");
   await form.getByLabel("Title").fill("Plants");
@@ -92,6 +97,34 @@ test("a custom frequency places a habit every N days or every N weeks on its day
   await form.getByRole("button", { name: "Add habit" }).click();
   await expect(page.locator('[data-habit-title="Retro"]')).toContainText("every 2 weeks on Tue");
 
+  const first = day(1);
+  const dom = Number(first.slice(8, 10));
+  await form.getByLabel("Title").fill("Board pack");
+  await form.getByLabel("Ideal time").fill("10:00");
+  await form.getByLabel("Starting").fill(first);
+  await form.getByLabel("Repeat").selectOption({ label: "Monthly on a day" });
+  await form.getByLabel("Day of month").fill(String(dom));
+  await form.getByLabel("Interval").fill("2");
+  await form.getByRole("button", { name: "Add habit" }).click();
+  await expect(page.locator('[data-habit-title="Board pack"]')).toContainText(
+    `every 2 months, on day ${dom}`,
+  );
+  // The month after the first has none; the month after that has one.
+  const months = (n: number) => {
+    const y = Number(first.slice(0, 4));
+    const m = Number(first.slice(5, 7)) - 1 + n;
+    const last = new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
+    let d = new Date(Date.UTC(y, m, Math.min(dom, last))).toISOString().slice(0, 10);
+    // A date without work hours moves to the next workday of that month (rule 15).
+    while (weekdayOf(d) > 5) d = addDays(d, 1);
+    return d;
+  };
+  await eventually(
+    () => cal.events(at(W, "00:00"), at(addDays(W, 84), "00:00")),
+    (l) => expect(dates(titled(l, "Board pack"))).toEqual([first, months(2)]),
+  );
+  expect(months(1) > first && months(1) < months(2)).toBe(true);
+
   const twoWeeks = () => cal.events(at(W, "00:00"), at(addDays(W, 14), "00:00"));
   // Every 2 days from Monday: Mon, Wed, Fri; Sunday has no work hours; then Tue and Thu.
   const expected = [W, day(2), day(4), day(8), day(10)];
@@ -101,6 +134,9 @@ test("a custom frequency places a habit every N days or every N weeks on its day
   });
   await page.reload();
   await expect(page.locator('[data-habit-title="Plants"]')).toContainText("every 2 days");
+  await expect(page.locator('[data-habit-title="Board pack"]')).toContainText(
+    `every 2 months, on day ${dom}`,
+  );
   await expect(page.locator('[data-habit-title="Retro"]')).toContainText("every 2 weeks on Tue");
 
   // An edit in the shared form keeps the custom frequency.

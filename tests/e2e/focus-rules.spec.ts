@@ -25,7 +25,18 @@ import {
   save,
 } from "./automation-list-helpers.ts";
 import { at, BACKEND, blockUntil, eventually, expect, local, test } from "./fixtures.ts";
-import { addLink, addTask, claimPage, inHours, MIN, slot, titled, visitor, W } from "./helpers.ts";
+import {
+  addHabit,
+  addLink,
+  addTask,
+  claimPage,
+  inHours,
+  MIN,
+  slot,
+  titled,
+  visitor,
+  W,
+} from "./helpers.ts";
 
 const protect10 = async (page: Parameters<typeof openSettings>[0]) => {
   await openSettings(page);
@@ -38,9 +49,10 @@ test("focus blocks keep the shortest and longest length and stay in their hours 
   signIn,
 }) => {
   await blockUntil(cal, W);
-  // Monday evening leaves 30 minutes (too short), Wednesday evening one hour.
-  await cal.addEvent({ title: "Choir", start: at(W, "18:00"), end: at(W, "21:30") });
-  await cal.addEvent({ title: "Dinner", start: at(day(2), "18:00"), end: at(day(2), "21:00") });
+  // Monday evening leaves 45 minutes: enough for a 45-minute shortest block, not
+  // for the default 60. Wednesday evening leaves 30 minutes: too short.
+  await cal.addEvent({ title: "Choir", start: at(W, "18:00"), end: at(W, "21:15") });
+  await cal.addEvent({ title: "Dinner", start: at(day(2), "18:00"), end: at(day(2), "21:30") });
   await signIn();
   const form = await create(page, "Focus time");
   await form.getByLabel("Title").fill("Evening focus");
@@ -55,30 +67,35 @@ test("focus blocks keep the shortest and longest length and stay in their hours 
     () => week(cal),
     (l) =>
       expect(titled(l, "Evening focus").map(span)).toEqual([
+        `${W} 21:15-22:00`,
         `${day(1)} 18:00-19:30`,
-        `${day(2)} 21:00-22:00`,
         `${day(3)} 18:00-19:30`,
         `${day(4)} 18:00-19:30`,
+        `${day(5)} 18:00-18:45`,
       ]),
   );
   for (const e of titled(evs, "Evening focus")) expect(e.busy).toBe(true);
 
-  // A shorter longest block splits the time into more, shorter blocks.
+  // A shorter longest block (the default is 240) splits the time into more, shorter blocks.
   const again = await edit(page, "Evening focus");
   await expect(again.getByLabel("Longest block (minutes)")).toHaveValue("90");
   await again.getByLabel("Longest block (minutes)").fill("60");
   await save(again);
   const after = await eventually(
     () => week(cal),
-    (l) => {
-      const f = titled(l, "Evening focus");
-      expect(minutesOf(f)).toBe(360);
-      for (const e of f) expect((e.end - e.start) / MIN).toBe(60);
-    },
+    (l) =>
+      expect(titled(l, "Evening focus").map(span)).toEqual([
+        `${W} 21:15-22:00`,
+        `${day(1)} 18:00-19:00`,
+        `${day(1)} 19:00-20:00`,
+        `${day(3)} 18:00-19:00`,
+        `${day(3)} 19:00-20:00`,
+        `${day(4)} 18:00-19:00`,
+      ]),
   );
   for (const e of titled(after, "Evening focus")) {
     expect(inHours(e.start, e.end, "18:00", "22:00")).toBe(true);
-    expect(local(e.start).startsWith(W)).toBe(false);
+    expect((e.end - e.start) / MIN).toBeLessThanOrEqual(60);
   }
   await page.reload();
   const shown = await edit(page, "Evening focus");
@@ -203,21 +220,34 @@ test("focus time is placed after every other item, ranks in P4, and counts as P2
   await expect(v.getByTestId("times")).toBeVisible();
   await expect(slot(v, at(W, "10:00"))).toHaveCount(0);
 
-  // A P4 task takes the time first; focus keeps what is left.
-  await addTask(page, { title: "AT-Report", minutes: 120, split: false, due: "", level: 4 });
-  const evs = await eventually(
-    () => week(cal),
-    (l) => {
-      expect(titled(l, "AT-Report").map(span)).toEqual([`${W} 09:00-11:00`]);
-      expect(titled(l, "Focus time").map(span)).toEqual([`${W} 11:00-12:00`]);
-    },
-  );
+  // A P4 flexible meeting, habit and task take the time first; focus keeps what is left.
+  await page.getByRole("link", { name: "Meetings" }).click();
+  const meeting = page.getByTestId("meeting-form");
+  await meeting.getByLabel("Title").fill("Vendor sync");
+  await meeting.getByLabel("Guests (comma list)", { exact: true }).fill("ana@example.com");
+  await meeting.getByLabel("Ideal time").fill("10:30");
+  for (const d of ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"])
+    await meeting.getByLabel(d, { exact: true }).setChecked(d === "Mon");
+  await meeting.getByLabel("Priority").selectOption({ label: "P4 low" });
+  await meeting.getByRole("button", { name: "Add meeting" }).click();
+  await expect(page.locator('[data-meeting-title="Vendor sync"]')).toBeVisible();
+  await addHabit(page, { title: "Tea", ideal: "10:00", min: 30, max: 30, level: 4, days: ["Mon"] });
+  await addTask(page, { title: "AT-Report", minutes: 60, split: false, due: "", level: 4 });
+  const expected = {
+    "AT-Report": [`${W} 09:00-10:00`],
+    Tea: [`${W} 10:00-10:30`],
+    "Vendor sync": [`${W} 10:30-11:00`],
+    "Focus time": [`${W} 11:00-12:00`],
+  };
+  const check = (l: Awaited<ReturnType<typeof week>>) => {
+    for (const [title, spans] of Object.entries(expected))
+      expect(titled(l, title).map(span)).toEqual(spans);
+  };
+  const evs = await eventually(() => week(cal), check);
   expect(titled(evs, "Focus time")[0]?.busy).toBe(true);
   await page.reload();
   await page.waitForTimeout(6000);
-  const later = await week(cal);
-  expect(titled(later, "AT-Report").map(span)).toEqual([`${W} 09:00-11:00`]);
-  expect(titled(later, "Focus time").map(span)).toEqual([`${W} 11:00-12:00`]);
+  check(await week(cal));
 });
 
 test("an event with the focus tag counts toward the weekly goal (counted time; #tl_focus)", async ({

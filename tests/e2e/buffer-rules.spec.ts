@@ -29,7 +29,7 @@ import {
   rawEvent,
   save,
 } from "./automation-list-helpers.ts";
-import { at, BACKEND, blockUntil, eventually, expect, local, test } from "./fixtures.ts";
+import { at, BACKEND, blockUntil, eventually, expect, test } from "./fixtures.ts";
 import { addHabit, openEvent, openWeek, titled, W } from "./helpers.ts";
 
 const ADDRESS = "1 Oak Ave, Springfield, IL 62701";
@@ -128,21 +128,35 @@ test("a P1 buffer takes the time of a P3 habit; a P4 buffer gives way to it (rul
       expect(titled(l, "Walk").map(span)).toEqual([`${tue} 12:15-12:30`, `${wed} 12:00-12:15`]);
     },
   );
-  // At P4 the buffer ranks below the habit: a new meeting on Wednesday gets no recovery.
+  // At P4 the buffer ranks below the habit: a new meeting on Wednesday gets no
+  // recovery, while one on Thursday, where no habit sits, does.
   const low = await edit(page, "Recovery");
   await low.getByLabel("Priority").selectOption({ label: "P4 low" });
   await save(low);
-  await cal.addEvent({
-    title: "Review",
-    start: at(wed, "11:00"),
-    end: at(wed, "12:00"),
-    attendees: ["ana@example.com"],
-  });
+  for (const [date, title] of [
+    [wed, "Review"],
+    [day(3), "Retro"],
+  ] as const) {
+    await cal.addEvent({
+      title,
+      start: at(date, "11:00"),
+      end: at(date, "12:00"),
+      attendees: ["ana@example.com"],
+    });
+  }
+  const check = (l: Awaited<ReturnType<typeof week>>) => {
+    expect(titled(l, "Recovery").map(span)).toEqual([
+      `${tue} 12:00-12:15`,
+      `${day(3)} 12:00-12:15`,
+    ]);
+    expect(titled(l, "Walk").map(span)).toEqual([`${tue} 12:15-12:30`, `${wed} 12:00-12:15`]);
+  };
+  await eventually(() => week(cal), check);
   await page.reload();
-  await page.waitForTimeout(6500);
-  const after = await week(cal);
-  expect(titled(after, "Walk").map(span)).toContain(`${wed} 12:00-12:15`);
-  expect(titled(after, "Recovery").some((e) => local(e.start).startsWith(wed))).toBe(false);
+  await page.waitForTimeout(6000);
+  check(await week(cal));
+  const shown = await edit(page, "Recovery");
+  await expect(shown.getByLabel("Priority").locator("option:checked")).toHaveText("P4 low");
 });
 
 test("the conflict setting keeps a buffer with the conflict marker or removes it (rule 16)", async ({

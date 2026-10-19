@@ -46,7 +46,7 @@ export const daysOf = (f: HabitFrequency): number[] => {
   return b.period === "weekly" ? b.days : [];
 };
 
-/** The frequency the habit form holds: monthly fields first, then the chosen days, then "Repeat every". */
+/** The frequency the habit form holds: monthly fields first, then the chosen days, then the interval. */
 export function readFrequency(f: FormData): HabitFrequency {
   const repeat = String(f.get("repeat") ?? "");
   const days = f.getAll("days").map(Number);

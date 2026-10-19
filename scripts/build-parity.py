@@ -783,7 +783,7 @@ for n in [664, 665, 666, 667, 668]:
 # --- U04: habits, focus time and buffers (first half of the partial rows) ---
 T.update({
     "u4_hours": "a habit uses a named hours set or its own window, and a change of hours moves its events",
-    "u4_custom": "a custom frequency places a habit every N days or every N weeks on its days",
+    "u4_custom": "a custom frequency places a habit every N days, every N weeks on its days, or every N months",
     "u4_move_day": "a weekly occurrence with no room on its day moves to the nearest other day of that week",
     "u4_adaptive": "an adaptive habit is free while it has room and turns busy when the calendar fills",
     "u4_lock": "lock and unlock one habit occurrence from the planner",
@@ -809,11 +809,11 @@ E2E.update({
     238: ["u4_travel_len"], 242: ["u4_flight"], 243: ["u4_travel_keep"], 244: ["u4_travel_len"],
 })
 E2E_NOTES.update({
-    156: "Custom is every N days, weeks or months from the start date (or the day the habit was made), set with Interval in the habit form; the E2E covers every 2 days and every 2 weeks, and every N months uses the same count",
+    156: "Custom is every N days, weeks or months from the start date (or the day the habit was made), set with Interval in the habit form",
     193: "Each habit shows its events in the range, how many have ended, and their hours; work and personal habit hours are in the time breakdown",
     206: "On the booking side a placed focus event counts as P2: a P1 link offers its time and a P2 link does not",
     238: "The travel length is the before and after minutes in the travel buffer's form (30 by default)",
-    243: "A changed length is kept for that event and the buffer does not lock; a move that keeps the length locks it like other managed events",
+    243: "A changed length is kept for that event and the buffer does not lock",
 })
 BLOCKED.update({
     208: "Needs a Google Workspace account: native focus-time events exist only in Google Calendar. Their event type is counted in code, and on CalDAV the focus tag gives the same result (row 209)",
