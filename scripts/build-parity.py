@@ -370,6 +370,30 @@ GOOGLE_ROWS = {
     518: "All calendar scopes are asked at sign-in; incremental consent not implemented. Google E2E pending.",
 }
 
+# Round 3 rows. Each block adds rows with T.update, E2E.update, E2E_NOTES.update,
+# PARTIAL.update and BLOCKED.update. E2E wins over PARTIAL, UNIT and BLOCKED (see status()).
+
+# --- s1: automations and event settings ---
+# --- end s1 ---
+
+# --- s2: habit actions, focus and buffers ---
+# --- end s2 ---
+
+# --- s3: tasks, planner, time zones and tools ---
+# --- end s3 ---
+
+# --- s4: mirroring, accounts and instance limits ---
+# --- end s4 ---
+
+# --- s5: meeting rescheduling and meeting checks ---
+# --- end s5 ---
+
+# --- s6: booking links ---
+# --- end s6 ---
+
+# --- s7: preview mode, MCP, stats and support ---
+# --- end s7 ---
+
 GOOGLE_PENDING = "Google E2E pending: the service-account key is not available yet (1Password token missing)."
 
 def status(row_id, spec_file, notes):

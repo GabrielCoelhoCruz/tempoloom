@@ -785,4 +785,12 @@ export const MIGRATIONS: readonly string[] = [
   );
   CREATE INDEX webhook_endpoints_team ON webhook_endpoints(team_id);
   `,
+  // Round 3: each stream adds at most one migration, right below its own line.
+  // round 3 s1
+  // round 3 s2
+  // round 3 s3
+  // round 3 s4
+  // round 3 s5
+  // round 3 s6
+  // round 3 s7
 ];
