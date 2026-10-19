@@ -332,9 +332,11 @@ export function calendarItems(db: Db, userId: string, from: number, to: number):
     self_response: ExternalEvent["selfResponse"];
     organizer_self: number;
     private_props: string;
+    main: number;
   }>(
     db,
-    `SELECT e.* FROM events e JOIN calendars c ON c.id = e.calendar_id JOIN accounts a ON a.id = c.account_id
+    `SELECT e.*, (a.is_main = 1 AND c.is_primary = 1) AS main
+     FROM events e JOIN calendars c ON c.id = e.calendar_id JOIN accounts a ON a.id = c.account_id
      WHERE a.user_id = ? AND a.status = 'ok' AND c.check_availability = 1 AND e.end_ms > ? AND e.start_ms < ?`,
     userId,
     from,
@@ -358,10 +360,12 @@ export function calendarItems(db: Db, userId: string, from: number, to: number):
     } else {
       // Other busy events block, including unanswered invitations: a booking is final.
       // A level the user lowered lets higher-priority links offer the time (external priority rule 5).
+      // Only events of the main calendar can have a lowered level (rule 4).
       const level =
-        lowered.get(`${e.calendar_id}:${e.event_id}`) ??
-        (e.recurring_id ? lowered.get(`${e.calendar_id}:${e.recurring_id}`) : undefined) ??
-        1;
+        (e.main === 1
+          ? (lowered.get(`${e.calendar_id}:${e.event_id}`) ??
+            (e.recurring_id ? lowered.get(`${e.calendar_id}:${e.recurring_id}`) : undefined))
+          : undefined) ?? 1;
       items.push(level > 1 ? { ...span, cls: "prioritized", level } : { ...span, cls: "fixed" });
     }
   }

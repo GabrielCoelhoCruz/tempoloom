@@ -291,7 +291,7 @@ export function Planner() {
               ))}
             </select>
           </label>
-          {selected.kind === "external" && selected.levelEditable && (
+          {selected.kind === "external" && !selected.levelFixed && (
             <form
               class="form"
               data-testid="external-priority"
@@ -337,7 +337,7 @@ export function Planner() {
               </p>
             </form>
           )}
-          {selected.kind === "external" && !selected.levelEditable && (
+          {selected.kind === "external" && selected.levelFixed && (
             <div class="form" data-testid="external-priority-fixed">
               <label>
                 Priority for booking links
