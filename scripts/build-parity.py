@@ -799,6 +799,7 @@ T.update({
     "u4_travel_len": "the user sets the travel length; travel time is skipped where a busy event blocks it",
     "u4_flight": "an event set to the flight category by hand gets airport time instead of travel time",
     "u4_travel_keep": "travel buffers follow their event and keep a length the user changed",
+    "u4_buffer_lock": "a buffer moved and resized in the calendar locks there and stops following its event",
 })
 E2E.update({
     154: ["u4_hours", "s3_item_hours"], 156: ["habit", "h_weekly", "s2_monthly", "u4_custom"],
@@ -806,14 +807,14 @@ E2E.update({
     196: ["u4_focus_len"], 197: ["u4_focus_len"], 202: ["u4_focus_accept"], 203: ["u4_focus_lock"],
     206: ["u4_focus_order"], 209: ["u4_focus_tag"], 219: ["u4_buffers", "u4_buffer_conflict"],
     225: ["u4_buffer_prio"], 226: ["u4_buffer_conflict"], 228: ["u4_buffers"],
-    238: ["u4_travel_len"], 242: ["u4_flight"], 243: ["u4_travel_keep"], 244: ["u4_travel_len"],
+    238: ["u4_travel_len"], 242: ["u4_flight"], 243: ["u4_travel_keep", "u4_buffer_lock"], 244: ["u4_travel_len"],
 })
 E2E_NOTES.update({
-    156: "Custom is every N days, weeks or months from the start date (or the day the habit was made), set with Interval in the habit form",
+    156: "Custom is every N days, weeks or months, set with Interval in the habit form and counted from the start date (or the save date) when the interval is first saved; a later start date keeps the cadence",
     193: "Each habit shows its events in the range, how many have ended, and their hours; work and personal habit hours are in the time breakdown",
     206: "On the booking side a placed focus event counts as P2: a P1 link offers its time and a P2 link does not",
-    238: "The travel length is the before and after minutes in the travel buffer's form (30 by default)",
-    243: "A changed length is kept for that event and the buffer does not lock",
+    238: "One travel length in the travel buffer's form sets both sides: 5 to 240 minutes, step 5, 30 by default",
+    243: "A length changed at the buffer's free edge is kept for that event while the event exists, and the buffer does not lock; a buffer moved off its event locks",
 })
 BLOCKED.update({
     208: "Needs a Google Workspace account: native focus-time events exist only in Google Calendar. Their event type is counted in code, and on CalDAV the focus tag gives the same result (row 209)",

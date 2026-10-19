@@ -201,6 +201,8 @@ function BufferRules({
   const [side, setSide] = useState(String(row?.side ?? preset?.side ?? "after"));
   const before = row ? Number(row.minutes_before) : (preset?.minutesBefore ?? 15);
   const after = row ? Number(row.minutes_after) : (preset?.minutesAfter ?? 15);
+  // buffers-travel.md: one travel length for both sides (travel_minutes).
+  const travelLength = choice === "travel" || (choice === "keep" && Boolean(kept.travel));
   return (
     <>
       <LevelSelect value={row ? Number(row.level) : (preset?.level ?? 3)} />
@@ -215,31 +217,47 @@ function BufferRules({
           ["both", "Before and after"],
         ]}
       />
-      {side !== "after" && (
+      {travelLength ? (
         <label>
-          Before the event (minutes)
+          Travel length (minutes)
           <input
-            name="minutesBefore"
+            name="travelMinutes"
             type="number"
             min={5}
             max={240}
             step={5}
-            defaultValue={String(before || 15)}
+            defaultValue={String(before || after || 30)}
           />
         </label>
-      )}
-      {side !== "before" && (
-        <label>
-          After the event (minutes)
-          <input
-            name="minutesAfter"
-            type="number"
-            min={5}
-            max={240}
-            step={5}
-            defaultValue={String(after || 15)}
-          />
-        </label>
+      ) : (
+        <>
+          {side !== "after" && (
+            <label>
+              Before the event (minutes)
+              <input
+                name="minutesBefore"
+                type="number"
+                min={5}
+                max={240}
+                step={5}
+                defaultValue={String(before || 15)}
+              />
+            </label>
+          )}
+          {side !== "before" && (
+            <label>
+              After the event (minutes)
+              <input
+                name="minutesAfter"
+                type="number"
+                min={5}
+                max={240}
+                step={5}
+                defaultValue={String(after || 15)}
+              />
+            </label>
+          )}
+        </>
       )}
       <Select
         id="filterChoice"
@@ -374,11 +392,12 @@ function rulesBody(kind: SettingsKind, f: FormData, kept: Filter): Record<string
           ? { text: { values: words, fields: ["title"] } }
           : FILTERS.find((x) => x.id === choice)?.filter;
     const side = text("side");
+    const travel = f.has("travelMinutes") ? num("travelMinutes") : null;
     return {
       level: num("level"),
       side,
-      minutesBefore: side === "after" ? 0 : num("minutesBefore"),
-      minutesAfter: side === "before" ? 0 : num("minutesAfter"),
+      minutesBefore: side === "after" ? 0 : (travel ?? num("minutesBefore")),
+      minutesAfter: side === "before" ? 0 : (travel ?? num("minutesAfter")),
       busy: text("busy") === "busy",
       filter,
       onConflict: text("onConflict"),

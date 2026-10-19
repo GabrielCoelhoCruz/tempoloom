@@ -11,7 +11,7 @@
 //                                                          -> habit and buffer spans per day
 // - "Keep and mark the conflict" removes the buffer, or "Remove" keeps it
 //                                                          -> conflict marker; buffer gone
-// - the travel length is fixed at 30 minutes               -> 45-minute buffers
+// - the travel length is fixed at 30 minutes, or set per side -> one field; 45-minute buffers
 // - travel time is placed over a busy event                -> no buffer before the second meeting
 // - a flight category set by hand gives travel time, not airport time
 //                                                          -> buffer spans after the change and a reload
@@ -248,8 +248,9 @@ test("the user sets the travel length; travel time is skipped where a busy event
     .getByLabel("Which events")
     .selectOption({ label: "Events at an address (travel time)" });
   await travel.getByLabel("Side").selectOption({ label: "Before and after" });
-  await travel.getByLabel("Before the event (minutes)").fill("45");
-  await travel.getByLabel("After the event (minutes)").fill("45");
+  // One travel length for both sides (travel_minutes).
+  await expect(travel.getByLabel("Before the event (minutes)")).toHaveCount(0);
+  await travel.getByLabel("Travel length (minutes)").fill("45");
   await save(travel);
   const evs = await eventually(
     () => week(cal),
@@ -272,7 +273,7 @@ test("the user sets the travel length; travel time is skipped where a busy event
     `${wed} 13:00-13:45`,
   ]);
   const again = await edit(page, "Travel");
-  await expect(again.getByLabel("Before the event (minutes)")).toHaveValue("45");
+  await expect(again.getByLabel("Travel length (minutes)")).toHaveValue("45");
 });
 
 test("an event set to the flight category by hand gets airport time instead of travel time (travel rules 4-6)", async ({
@@ -368,8 +369,7 @@ test("travel buffers follow their event and keep a length the user changed (trav
 
   // A new length in the form: the kept buffer keeps 45 minutes, the other takes 40.
   const longer = await edit(page, "Travel");
-  await longer.getByLabel("Before the event (minutes)").fill("40");
-  await longer.getByLabel("After the event (minutes)").fill("40");
+  await longer.getByLabel("Travel length (minutes)").fill("40");
   await save(longer);
   await eventually(
     () => week(cal),
@@ -386,7 +386,7 @@ test("travel buffers follow their event and keep a length the user changed (trav
   );
   const both = await edit(page, "Travel");
   await both.getByLabel("Side").selectOption({ label: "Before and after" });
-  await both.getByLabel("Before the event (minutes)").fill("40");
+  await expect(both.getByLabel("Travel length (minutes)")).toHaveValue("40");
   await save(both);
   await eventually(
     () => week(cal),
