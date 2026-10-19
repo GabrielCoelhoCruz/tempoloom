@@ -168,9 +168,10 @@ test("focus time carries one task search: every focus event lists the same tasks
   await addTask(page, { title: "Email vendor", minutes: 30, split: false, due: "", level: 4 });
   await openSettings(page);
   await page.getByRole("button", { name: "Protect 10 hours of focus time per week" }).click();
+  // The two 30-minute work tasks are counted time, so focus fills 9 of the 10 hours.
   const before = await eventually(
     () => week(cal),
-    (l) => expect(minutesOf(titled(l, "Focus time"))).toBe(600),
+    (l) => expect(minutesOf(titled(l, "Focus time"))).toBe(540),
   );
   const options = page.getByTestId("focus-options");
   await newTaskSearch(options, "Reports", "report");

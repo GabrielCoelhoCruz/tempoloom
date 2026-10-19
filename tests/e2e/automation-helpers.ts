@@ -128,8 +128,11 @@ export async function newTaskSearch(
   keyword: string,
 ): Promise<void> {
   const box = scope.getByTestId("new-task-search");
+  if (!(await box.evaluate((d) => (d as HTMLDetailsElement).open))) {
+    await box.locator("summary").click();
+  }
   await box.getByLabel("Search name").fill(name);
-  await box.getByLabel("Title contains").fill(keyword);
+  await box.getByLabel("Keyword").fill(keyword);
   await box.getByRole("button", { name: "Save search" }).click();
-  await expect(scope.getByLabel("Task search")).toHaveValue(/.+/);
+  await expect(scope.getByLabel("Task search").locator("option:checked")).toHaveText(name);
 }

@@ -100,7 +100,7 @@ test("the executive prep entry needs people; a plain-language description fills 
 
   await describe(page, "meetings with ceo@corp.example longer than 30 minutes");
   await expect(editor.getByLabel("With people")).toHaveValue("ceo@corp.example");
-  await expect(editor.getByLabel("Length")).toHaveValue(">");
+  await expect(editor.getByLabel("Length is")).toHaveValue(">");
   await expect(editor.getByLabel("Length (minutes)")).toHaveValue("30");
   await expect(matchTitles(page)).toHaveText(["Board review"]);
   // A manual change updates the list at once.
@@ -129,24 +129,27 @@ test("calendar scope: a buffer for one calendar skips meetings on other calendar
 }) => {
   await blockUntil(cal, W);
   await signIn();
-  const side = await cal.newCalendar("Side");
+  const extra = await cal.newCalendar("Extra");
   await cal.addEvent({
     title: "Main meeting",
     start: at(day(1), "10:00"),
     end: at(day(1), "11:00"),
     attendees: ["ana@example.com"],
   });
-  await side.addEvent({
-    title: "Side meeting",
+  await extra.addEvent({
+    title: "Extra meeting",
     start: at(day(2), "10:00"),
     end: at(day(2), "11:00"),
     attendees: ["ana@example.com"],
   });
   await openSettings(page);
   await page.getByRole("button", { name: "Refresh calendar list" }).click();
-  const sideRow = page.getByTestId("calendar-list").locator("label", { hasText: "Side" });
-  await sideRow.getByRole("checkbox").check();
+  await expect(page.getByTestId("settings-message")).toHaveText("Calendar list updated");
+  const extraRow = page.getByTestId("calendar-list").locator("label", { hasText: "Extra" });
+  // The box shows the saved state once the change is saved.
+  await extraRow.getByRole("checkbox").click();
   await expect(page.getByTestId("settings-message")).toHaveText("Saved");
+  await expect(extraRow.getByRole("checkbox")).toBeChecked();
 
   const editor = editorOf(page);
   const add = async (title: string, calendars: string, titles: string[]) => {
@@ -160,7 +163,7 @@ test("calendar scope: a buffer for one calendar skips meetings on other calendar
     await expect(page.locator(`[data-buffer-title="${title}"]`)).toBeVisible();
   };
   await add("Work recovery", "Work", ["Main meeting"]);
-  await add("Any recovery", "All calendars", ["Main meeting", "Side meeting"]);
+  await add("Any recovery", "All calendars", ["Main meeting", "Extra meeting"]);
   // Both want 11:00 on Tuesday; the first one keeps it (same priority, earlier rank).
   await eventually(
     () => week(cal),

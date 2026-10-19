@@ -242,7 +242,8 @@ test("an ended habit occurrence gets the done marker; future ones keep their sta
     expect(managed(l).find((e) => e.id === monday.id)?.summary).toBe("✅ Lunch"),
   );
   // Monday of week W gets no second lunch, and the other days keep the free marker.
-  expect(titled(done, "Lunch").map((e) => e.summary)).toEqual([
+  const inW = titled(done, "Lunch").filter((e) => e.id === monday.id || local(e.start) >= W);
+  expect(inW.map((e) => e.summary)).toEqual([
     "✅ Lunch",
     "○ Lunch",
     "○ Lunch",
@@ -288,7 +289,7 @@ test("a monthly habit is placed once a month, on a day of the month or on the nt
   await form.getByLabel("Longest (minutes)").fill("60");
   await form.getByLabel("Repeat").selectOption({ label: "Monthly on a weekday" });
   await form.getByLabel("Week of month").selectOption(String(nth));
-  await form.getByLabel("Weekday").selectOption({ label: "Thursday" });
+  await form.getByLabel("Day of the week").selectOption({ label: "Thursday" });
   await form.getByRole("button", { name: "Add habit" }).click();
   await expect(page.locator('[data-habit-title="Customer feedback review"]')).toBeVisible();
 
