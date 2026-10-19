@@ -30,6 +30,12 @@ chose that. Travel buffers and break buffers have their own specs:
 | `rank` | int | end of its priority group | E-0043. |
 | `filter` | event filter | from template | Which events get the buffer. See below. |
 | `calendar_scope` | one calendar id or `all` | `all` | E-0051. |
+
+Tempoloom decision: `name` and `title` are one field, Title. A new buffer has
+no reminders and the calendar's default visibility; a travel or airport
+buffer is public and uses the calendar default reminders (`buffers-travel.md`
+outputs, `planning-notifications.md` table). The user can change both in the
+buffer's form.
 | `on_conflict` | `remove` or `keep_as_conflict` | `remove` | E-0051. |
 
 ### Event filter

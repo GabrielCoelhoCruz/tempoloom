@@ -10,11 +10,15 @@ import type {
   HabitItem,
   Level,
   OverloadItem,
-  Placement,
   ReportEntry,
   Snapshot,
 } from "../../scheduler/model.ts";
 import { plan } from "../../scheduler/plan.ts";
+import {
+  defaultEventSettings,
+  type EventSettings,
+  readEventSettings,
+} from "../../shared/event-settings.ts";
 import {
   addDays,
   DAY,
@@ -31,6 +35,14 @@ import { getSettings, type Settings } from "../settings.ts";
 import { afterPush } from "./after-push.ts";
 import { categoryContext, colorFor, paintExternal } from "./categories.ts";
 import { externalEvents } from "./events.ts";
+import {
+  eventTitle,
+  markEnded,
+  markFlights,
+  PERSONAL_COPY_MARKER,
+  placementState,
+  TRAVEL_MARKER,
+} from "./markers.ts";
 import { recordMeetingChanges } from "./meeting-log.ts";
 import { attendeeOccurrences, attendeesOf, meetingItems } from "./meetings.ts";
 import { mirrorCopies } from "./mirror.ts";
@@ -90,6 +102,8 @@ export function loadSnapshot(
   rows: ManagedRow[];
   notes: Map<string, string>;
   titles: Map<string, string>;
+  /** Event settings of each automation, by `kind:id` (src/shared/event-settings.ts). */
+  eventSettings: Map<string, EventSettings>;
 } {
   const windowEnd = localToUtc(
     zone,
@@ -164,6 +178,8 @@ export function loadSnapshot(
   )) {
     rescheduled.set(r.habit_id, { ...rescheduled.get(r.habit_id), [r.date]: r.minute });
   }
+  const eventSettings = new Map<string, EventSettings>();
+  const hoursKind = new Map(hoursRows.map((h) => [h.id, h.kind]));
 
   const consumed = new Map<string, number>();
   for (const r of rows) {
@@ -224,11 +240,19 @@ export function loadSnapshot(
     defense: HabitItem["defense"];
     when_unplaceable: HabitItem["whenUnplaceable"];
     reserved_words: string;
+    event_settings: string;
     created_at: number;
     rules_changed_at: number;
   }>(db, "SELECT * FROM habits WHERE user_id = ? AND enabled = 1", userId).map((h): HabitItem => {
     notes.set(`habit:${h.id}`, h.notes);
     titles.set(`habit:${h.id}`, h.title);
+    const es = readEventSettings(
+      h.event_settings,
+      defaultEventSettings("habit", { personal: hoursKind.get(h.hours_set_id) === "personal" }),
+    );
+    eventSettings.set(`habit:${h.id}`, es);
+    // A category chosen in the form decides focus counting; older habits count by their hours.
+    const chosen = (JSON.parse(h.event_settings) as { category?: string }).category !== undefined;
     const skipPrefix = `habit:${h.id}:`;
     return {
       id: h.id,
@@ -251,6 +275,7 @@ export function loadSnapshot(
       exclusions: exclusions.get(`habit:${h.id}`) ?? [],
       changed: h.rules_changed_at > lastPlannedAt,
       ...(rescheduled.has(h.id) ? { rescheduled: rescheduled.get(h.id) ?? {} } : {}),
+      ...(chosen ? { work: es.category === "work" } : {}),
     };
   });
 
@@ -266,10 +291,19 @@ export function loadSnapshot(
     filter: string;
     on_conflict: "remove" | "keep_as_conflict";
     calendar_scope: string | null;
+    event_settings: string;
     created_at: number;
     rules_changed_at: number;
   }>(db, "SELECT * FROM buffers WHERE user_id = ? AND enabled = 1", userId).map((b) => {
     titles.set(`buffer:${b.id}`, b.title);
+    const filter = JSON.parse(b.filter) as BufferFilter;
+    eventSettings.set(
+      `buffer:${b.id}`,
+      readEventSettings(
+        b.event_settings,
+        defaultEventSettings("buffer", { travel: Boolean(filter.travel || filter.flight) }),
+      ),
+    );
     return {
       id: b.id,
       title: b.title,
@@ -280,7 +314,7 @@ export function loadSnapshot(
       minutesBefore: b.minutes_before,
       minutesAfter: b.minutes_after,
       busy: b.busy === 1,
-      filter: JSON.parse(b.filter) as BufferFilter,
+      filter,
       onConflict: b.on_conflict,
       changed: b.rules_changed_at > lastPlannedAt,
       calendarScope: b.calendar_scope,
@@ -298,14 +332,19 @@ export function loadSnapshot(
     max_block_minutes: number;
     busy: number;
     mode: "proactive" | "reactive";
+    rank: number;
+    event_settings: string;
     created_at: number;
     rules_changed_at: number;
   }>(db, "SELECT * FROM focus_goals WHERE user_id = ? AND enabled = 1", userId).map((f) => {
     titles.set(`focus:${f.id}`, f.title);
+    const es = readEventSettings(f.event_settings, defaultEventSettings("focus_time"));
+    eventSettings.set(`focus:${f.id}`, es);
+    notes.set(`focus:${f.id}`, es.description);
     return {
       id: f.id,
       title: f.title,
-      rank: 0,
+      rank: f.rank,
       createdAt: f.created_at,
       hours: f.hours_set_id,
       weeklyGoalMinutes: f.weekly_goal_minutes,
@@ -366,7 +405,7 @@ export function loadSnapshot(
     ...(buffers.length > 0 ? { mirrorCopies: copyAnchors(db, userId, now) } : {}),
     ...(fragmentation ? { fragmentation } : {}),
   };
-  return { snapshot, rows, notes, titles };
+  return { snapshot, rows, notes, titles, eventSettings };
 }
 
 /** Tempoloom's own mirror copies as their calendars show them (buffers-travel.md rule 13). */
@@ -410,10 +449,19 @@ export function copyAnchors(db: Db, userId: string, now: number): ExternalEvent[
   }));
 }
 
-export function titleFor(settings: Settings, base: string, p: Placement): string {
-  const m = settings.markers;
-  const marker = p.conflict ? m.conflict : p.locked ? m.locked : p.busy ? m.busy : m.free;
-  return marker ? `${marker} ${base}` : base;
+/** Calendar reminders and visibility of a managed event (planning-notifications.md table). */
+function reminderFields(
+  kind: string,
+  es: EventSettings | undefined,
+): Pick<DesiredEvent, "reminders" | "visibility"> {
+  if (!es) return kind === "task" || kind === "meeting" ? { reminders: { useDefault: true } } : {};
+  return {
+    reminders:
+      es.reminders === "default"
+        ? { useDefault: true }
+        : { minutes: es.reminders === "none" ? [] : es.reminders },
+    visibility: es.visibility === "calendar_default" ? "default" : es.visibility,
+  };
 }
 
 export async function replanUser(ctx: ReplanContext, userId: string): Promise<ReplanResult | null> {
@@ -431,7 +479,7 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
   const last =
     one<{ planned_at: number }>(db, "SELECT planned_at FROM plan_reports WHERE user_id = ?", userId)
       ?.planned_at ?? 0;
-  const { snapshot, rows, notes, titles } = loadSnapshot(
+  const { snapshot, rows, notes, titles, eventSettings } = loadSnapshot(
     db,
     userId,
     user.time_zone,
@@ -469,15 +517,32 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
       ];
     }),
   );
+  const calendars = new Map(
+    all<CalendarInfo>(
+      db,
+      `SELECT c.id, c.account_id, c.provider_id, c.is_primary, c.writable, c.check_availability
+       FROM calendars c JOIN accounts a ON a.id = c.account_id WHERE a.user_id = ?`,
+      userId,
+    ).map((c) => [c.id, c]),
+  );
+  // The calendar chosen in an automation's event settings, while it can take events.
+  const chosenCalendar = (es: EventSettings | undefined) =>
+    es?.calendarId && calendars.get(es.calendarId)?.writable === 1 ? es.calendarId : undefined;
+  const travelBuffers = new Set(
+    snapshot.buffers.filter((b) => b.filter.travel || b.filter.flight).map((b) => b.id),
+  );
   const desired: DesiredEvent[] = result.placements.map((p) => {
     const row = rowByKey.get(p.key);
     const itemKey = `${p.kind}:${p.itemId}`;
+    const es = eventSettings.get(itemKey);
     const calendarId =
       row?.calendar_id ??
       (p.kind === "task" ? taskCalendar.get(taskHours.get(p.itemId) ?? "") : undefined) ??
+      chosenCalendar(es) ??
       target.id;
     const keepUserTitle = row?.user_edited === 1;
     const itemNotes = notes.get(itemKey) ?? "";
+    const travel = p.kind === "buffer" && travelBuffers.has(p.itemId);
     return {
       key: p.key,
       kind: p.kind,
@@ -486,11 +551,20 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
       start: p.start,
       end: p.end,
       title:
-        keepUserTitle && row ? row.title : titleFor(settings, titles.get(itemKey) ?? p.kind, p),
+        keepUserTitle && row
+          ? row.title
+          : eventTitle(settings.markers, {
+              ...(travel ? { typeMarker: TRAVEL_MARKER } : {}),
+              state: placementState(p.kind, p),
+              ...(es?.emoji ? { emoji: es.emoji } : {}),
+              title: titles.get(itemKey) ?? p.kind,
+            }),
       description:
         keepUserTitle && row ? row.description : itemNotes ? `${itemNotes}\n\n${FOOTER}` : FOOTER,
       busy: p.busy || p.locked,
       colorId: null,
+      ...(p.kind === "habit" && es?.location ? { location: es.location } : {}),
+      ...reminderFields(p.kind, es),
       ...(p.kind === "meeting" ? guests.get(p.itemId) : {}),
     };
   });
@@ -511,25 +585,37 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
     ),
   );
 
+  const policies = all<{ id: string; calendar_type: string; visibility: string }>(
+    db,
+    "SELECT id, calendar_type, visibility FROM mirror_policies WHERE user_id = ?",
+    userId,
+  );
+  const mirrorTypes = new Map(policies.map((p) => [p.id, p.calendar_type]));
+  // Marker table: a copy with the personal commitment label gets the house marker.
+  const personalLabels = new Set(
+    policies
+      .filter((p) => p.visibility === "label_only" && p.calendar_type === "personal")
+      .map((p) => p.id),
+  );
+  for (const d of desired) {
+    if (d.kind === "mirror" && personalLabels.has(d.sourceId)) {
+      d.title = `${PERSONAL_COPY_MARKER} ${d.title}`;
+    }
+  }
+
   // Each managed event gets the color of its category (events-categories-and-colors.md rule 6).
   const cats = categoryContext(db, userId);
+  const taskColors = new Map(
+    all<{ id: string; color: string }>(
+      db,
+      "SELECT id, color FROM tasks WHERE user_id = ? AND color <> 'category'",
+      userId,
+    ).map((t) => [t.id, t.color]),
+  );
   const personalHabits = new Set(
-    all<{ id: string }>(
-      db,
-      `SELECT h.id FROM habits h JOIN hours_sets s ON s.id = h.hours_set_id
-       WHERE h.user_id = ? AND s.kind = 'personal'`,
-      userId,
-    ).map((h) => h.id),
-  );
-  const travelBuffers = new Set(
-    snapshot.buffers.filter((b) => b.filter.travel || b.filter.flight).map((b) => b.id),
-  );
-  const mirrorTypes = new Map(
-    all<{ id: string; calendar_type: string }>(
-      db,
-      "SELECT id, calendar_type FROM mirror_policies WHERE user_id = ?",
-      userId,
-    ).map((p) => [p.id, p.calendar_type]),
+    snapshot.habits
+      .filter((h) => eventSettings.get(`habit:${h.id}`)?.category === "personal")
+      .map((h) => h.id),
   );
   for (const d of desired) {
     const row = rowByKey.get(d.key);
@@ -557,16 +643,14 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
             cats.userEmail,
           );
     d.colorId = colorFor(settings, category);
+    // Rule 9: an item color overrides the category color.
+    const own =
+      d.kind === "task"
+        ? taskColors.get(d.sourceId)
+        : eventSettings.get(`${d.kind}:${d.sourceId}`)?.color;
+    if (own && own !== "category") d.colorId = own === "calendar_default" ? null : own;
   }
 
-  const calendars = new Map(
-    all<CalendarInfo>(
-      db,
-      `SELECT c.id, c.account_id, c.provider_id, c.is_primary, c.writable, c.check_availability
-       FROM calendars c JOIN accounts a ON a.id = c.account_id WHERE a.user_id = ?`,
-      userId,
-    ).map((c) => [c.id, c]),
-  );
   const push = await pushSchedule(
     {
       db,
@@ -589,7 +673,9 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
     now,
     snapshot.windowEnd,
   );
-  await afterPush(db, userId, settings, (accountId) => ctx.provider(accountId), now);
+  await markEnded(db, userId, settings.markers, (accountId) => ctx.provider(accountId), now);
+  await markFlights(db, userId, (accountId) => ctx.provider(accountId), now, snapshot.windowEnd);
+  await afterPush(db, userId, (accountId) => ctx.provider(accountId), now);
   run(
     db,
     `INSERT INTO plan_reports (user_id, report, planned_at) VALUES (?, ?, ?)

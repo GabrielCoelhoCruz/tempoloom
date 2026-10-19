@@ -48,7 +48,9 @@ export const settingsSchema = z.object({
       busy: z.string().max(8).default("●"),
       locked: z.string().max(8).default("🔒"),
       conflict: z.string().max(8).default("⚠️"),
+      // events-title-emoji.md marker table: events that ended.
       done: z.string().max(8).default("✅"),
+      partial: z.string().max(8).default("👍"),
     })
     .prefault({}),
   // events-categories-and-colors.md: color settings with the proposed defaults.

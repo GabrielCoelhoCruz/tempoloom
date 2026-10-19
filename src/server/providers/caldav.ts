@@ -28,6 +28,11 @@ export interface CalDavCredentials {
 }
 
 const PROPS_PROPERTY = "x-tempoloom-props";
+/**
+ * CalDAV servers keep no default reminders, so "the calendar default" is one
+ * alert this many minutes before the start: Google's own default (NTF-10).
+ */
+export const DEFAULT_REMINDER_MINUTES = 10;
 const MAX_OCCURRENCES = 5000;
 
 function davName(c: DAVCalendar): string {
@@ -266,6 +271,21 @@ export function objectFromWrite(uid: string, w: EventWrite, now: number): string
   if (w.location) ev.addPropertyWithValue("location", w.location);
   ev.addPropertyWithValue("transp", w.busy ? "OPAQUE" : "TRANSPARENT");
   if (w.colorId && COLOR_NAMES[w.colorId]) ev.addPropertyWithValue("color", COLOR_NAMES[w.colorId]);
+  if (w.visibility === "public" || w.visibility === "private") {
+    ev.addPropertyWithValue("class", w.visibility.toUpperCase());
+  }
+  const alerts = !w.reminders
+    ? []
+    : "useDefault" in w.reminders
+      ? [DEFAULT_REMINDER_MINUTES]
+      : w.reminders.minutes;
+  for (const minutes of alerts) {
+    const alarm = new ICAL.Component("valarm");
+    alarm.addPropertyWithValue("action", "DISPLAY");
+    alarm.addPropertyWithValue("description", w.summary);
+    alarm.addPropertyWithValue("trigger", ICAL.Duration.fromSeconds(-minutes * 60));
+    ev.addSubcomponent(alarm);
+  }
   if (w.organizer) ev.addPropertyWithValue("organizer", `mailto:${w.organizer}`);
   for (const email of w.attendees ?? []) ev.addPropertyWithValue("attendee", `mailto:${email}`);
   for (const email of w.optionalAttendees ?? []) {
@@ -578,6 +598,10 @@ export class CalDavProvider implements CalendarProvider {
     const root = new ICAL.Component(ICAL.parse(obj.data));
     const ev = root.getAllSubcomponents("vevent").find((v) => !v.hasProperty("recurrence-id"));
     if (!ev) throw new ProviderError("not_found", 404, "Event not found");
+    if (change.summary !== undefined) {
+      ev.removeAllProperties("summary");
+      ev.addPropertyWithValue("summary", change.summary);
+    }
     if (change.description !== undefined) {
       ev.removeAllProperties("description");
       if (change.description) ev.addPropertyWithValue("description", change.description);

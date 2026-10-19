@@ -374,6 +374,63 @@ GOOGLE_ROWS = {
 # PARTIAL.update and BLOCKED.update. E2E wins over PARTIAL, UNIT and BLOCKED (see status()).
 
 # --- s1: automations and event settings ---
+T.update({
+    "s1_list": "the automation list shows habits, flexible meetings, buffers and focus time in P1 to P4 groups in the scheduler's order, filters by type after a reload, opens the shared form from the create button, and keeps focus time in P4 while it ranks inside P4",
+    "s1_drag": "a drag inside a priority group gives the contested slot to the automation now ranked first, and a drop on another group changes its priority; both persist after reload",
+    "s1_off": "turning a buffer off in the list deletes its future events and on brings them back with the same settings; remove asks first, then deletes it and its future events",
+    "s1_added": "a library entry opens the shared form with its preset; Added follows the template through a rename and not a hand-made automation with the entry's name",
+    "s1_habit_es": "a habit writes its emoji after the marker, its category color or its own color, private or public visibility, location and custom, no or default reminders onto the calendar chosen at creation; an edit rewrites its future events",
+    "s1_focus_es": "a focus automation writes its title, emoji, description, private visibility, reminder and chosen calendar, and a rename renames its events",
+    "s1_kinds": "task chunks, habits and flexible meetings get the calendar default reminder, recovery buffers and focus time none, travel buffers are public with a reminder, and a buffer's reminders and visibility change in its form",
+    "s1_task_color": "a task color overrides the category color of its chunks in every plan run",
+    "s1_category": "a personal habit in work hours counts as personal in stats and not toward focus time; as a work habit it counts for both",
+    "s1_done": "an ended habit event gets the done marker and an ended task chunk the partly done marker until its task is done",
+    "s1_types": "travel and airport buffers get the travel marker, the user's own flight gets the flight marker once, an invitation is not renamed, and personal-label copies get the house marker and no reminders",
+    "s1_emoji": "a template's emoji can be removed in the form, and the user's emoji stays after the free, busy and lock markers of habits and on buffers",
+    "lib_other": "buffer and focus entries open the shared form with their preset and saving adds them; prompts offer no action",
+})
+E2E.update({
+    65: ["s1_list", "s1_drag"],
+    133: ["s1_kinds", "s1_types"],
+    134: ["s1_habit_es", "s1_focus_es", "s1_kinds"],
+    141: ["s1_habit_es", "s1_kinds"],
+    150: ["s1_habit_es", "s1_emoji"],
+    152: ["s1_drag"],
+    153: ["s1_habit_es", "s1_category"],
+    163: ["s1_habit_es"],
+    166: ["s1_habit_es"],
+    171: ["s1_habit_es"],
+    172: ["s1_habit_es"],
+    199: ["s1_focus_es"],
+    214: ["s1_focus_es"],
+    227: ["s1_kinds"],
+    287: ["s1_done"],
+    289: ["s1_types"],
+    290: ["s1_emoji", "s1_habit_es"],
+    291: ["s1_emoji"],
+    300: ["s1_added", "s1_focus_es", "s1_kinds", "s1_habit_es"],
+    302: ["s1_added"],
+    304: ["s1_list"],
+    305: ["s1_drag"],
+    306: ["s1_list"],
+    307: ["s1_off"],
+    308: ["s1_list"],
+})
+E2E_NOTES.update({
+    65: "The list is its own Automations page in the main navigation, not a planner sidebar, so the planner page loads nothing more",
+    133: "CalDAV keeps no default reminders, so the calendar default is one alert 10 minutes before the start; travel buffers start with it and the user may change it (NTF-14)",
+    141: "Each automation has Calendar default, Public or Private; on CalDAV they write no CLASS, CLASS:PUBLIC or CLASS:PRIVATE",
+    300: "One Title field is the name and the event title; flexible meetings keep their own form",
+    304: "The list is its own Automations page; types without a priority show in a Meeting quality section, empty until meeting checks exist",
+})
+PARTIAL.update({
+    299: "Habit, focus time, buffer and flexible meeting automations share the list, its groups and its type filter (E2E: \u201cthe automation list shows habits, flexible meetings\u2026\u201d); the meeting overload and meeting check types come from their own streams and join the list's type table",
+    301: "From the library and from the top-bar create menu (E2E: \u201ca library entry opens the shared form\u2026\u201d, \u201cthe automation list shows habits\u2026\u201d); asking the assistant chat needs the chat, which is not implemented",
+    282: "Habit, focus time, buffer and task colors override the category color (E2E: \u201ca habit writes its emoji\u2026\u201d, \u201ca task color overrides the category color\u2026\u201d); a mirroring policy color is not built on this branch",
+    245: "Travel and airport buffers start public, with the travel marker (E2E: \u201ctask chunks, habits and flexible meetings get the calendar default reminder\u2026\u201d); mirroring skips every managed event, while mirroring rule 15 skips only copies, so no copy of a travel buffer exists to follow a policy",
+})
+for n in [1, 7, 10, 19, 23, 28, 29, 30]:
+    PARTIAL[718 + n] = "The library opens the shared automation form with the preset; not under E2E"
 # --- end s1 ---
 
 # --- s2: habit actions, focus and buffers ---

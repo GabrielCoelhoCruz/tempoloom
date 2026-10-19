@@ -12,6 +12,8 @@ import { planNow } from "../lib/state.ts";
 
 const FORM_PAGE: Partial<Record<LibraryEntry["kind"], string>> = {
   habit: "/habits",
+  buffer: "/automations/new/buffer",
+  focus_time: "/automations/new/focus_time",
   flexible_meeting: "/meetings",
   booking_link: "/links",
   calendar_mirroring: "/settings",
@@ -20,19 +22,29 @@ const FORM_PAGE: Partial<Record<LibraryEntry["kind"], string>> = {
   no_meeting_day: "/settings",
 };
 
-/** Names of the user's automations; an entry with the same name shows "Added" (rule 4). */
-async function automationNames(): Promise<string[]> {
-  const [h, b, f, m, l, o] = await Promise.all([
-    api<{ habits: { title: string }[] }>("GET", "/api/habits"),
-    api<{ buffers: { title: string }[] }>("GET", "/api/buffers"),
-    api<{ focus: { title: string }[] }>("GET", "/api/focus"),
-    api<{ meetings: { title: string }[] }>("GET", "/api/meetings"),
+/** Kinds whose automations remember the entry they came from (rule 4). */
+const BY_TEMPLATE = new Set<LibraryEntry["kind"]>(["habit", "buffer", "focus_time"]);
+
+/**
+ * Names of the user's automations, booking links and meeting overloads, and
+ * the entries their automations came from. A habit, buffer or focus entry
+ * shows "Added" when an automation came from it; other kinds when one has the
+ * entry's name (rule 4).
+ */
+async function automationNames(): Promise<{ names: string[]; templates: string[] }> {
+  const [a, l, o] = await Promise.all([
+    api<{ automations: { name: string; templateId: string | null }[] }>("GET", "/api/automations"),
     api<{ links: { title: string }[] }>("GET", "/api/booking/links").catch(() => ({ links: [] })),
     api<{ overloads: { title: string }[] }>("GET", "/api/meeting-overloads"),
   ]);
-  return [...h.habits, ...b.buffers, ...f.focus, ...m.meetings, ...l.links, ...o.overloads].map(
-    (x) => x.title,
-  );
+  return {
+    names: [
+      ...a.automations.map((x) => x.name),
+      ...l.links.map((x) => x.title),
+      ...o.overloads.map((x) => x.title),
+    ],
+    templates: a.automations.flatMap((x) => (x.templateId ? [x.templateId] : [])),
+  };
 }
 
 /** Meeting check entries and the no-meeting day are added when their settings are on. */
@@ -55,13 +67,16 @@ async function meetingEntries(): Promise<string[]> {
 
 export function Library() {
   const [tab, setTab] = useState<LibraryGroup | "all">("all");
-  const [names, setNames] = useState<string[]>([]);
+  const [known, setKnown] = useState<{ names: string[]; templates: string[] }>({
+    names: [],
+    templates: [],
+  });
   const [slugs, setSlugs] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    const [n, s] = await Promise.all([automationNames(), meetingEntries()]);
-    setNames(n);
+    const [k, s] = await Promise.all([automationNames(), meetingEntries()]);
+    setKnown(k);
     setSlugs(s);
   }, []);
   useEffect(() => void load(), [load]);
@@ -69,20 +84,23 @@ export function Library() {
   const added = (e: LibraryEntry) =>
     e.kind === "meeting_check" || e.kind === "no_meeting_day"
       ? slugs.includes(e.slug)
-      : names.some((n) => n.toLowerCase() === e.name.toLowerCase());
+      : BY_TEMPLATE.has(e.kind)
+        ? known.templates.includes(e.slug)
+        : known.names.some((n) => n.toLowerCase() === e.name.toLowerCase());
 
-  /** Buffers and focus time have no form of their own yet: the entry adds them as they are. */
+  /** "Add" saves a buffer or focus entry as it is; "Use" opens its form first. */
   const addNow = async (e: LibraryEntry) => {
     setError(null);
-    const title = freeName(e.name, names);
+    const title = freeName(e.name, known.names);
+    const base = { title, templateId: e.slug };
     try {
-      if (e.kind === "buffer") await api("POST", "/api/buffers", { title, ...e.preset });
-      else if (e.kind === "focus_time") await api("POST", "/api/focus", { title, ...e.preset });
+      if (e.kind === "buffer") await api("POST", "/api/buffers", { ...base, ...e.preset });
+      else if (e.kind === "focus_time") await api("POST", "/api/focus", { ...base, ...e.preset });
       await planNow();
       await load();
     } catch (err) {
-      const body = (err as { body?: { issues?: { message: string }[] } }).body;
-      setError(body?.issues?.[0]?.message ?? String(err));
+      const issues = (err as { body?: { issues?: { message: string }[] } }).body;
+      setError(issues?.issues?.[0]?.message ?? String(err));
     }
   };
 

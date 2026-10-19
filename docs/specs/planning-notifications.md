@@ -62,6 +62,9 @@ E-0051).
   the calendar's default reminders. The user changes those defaults in Google
   Calendar settings for that calendar (E-0125). Google's own default is
   10 minutes before.
+  Tempoloom decision: CalDAV servers keep no default reminders, so on a
+  CalDAV calendar "calendar default" is one display alert 10 minutes before
+  the start.
 - **NTF-11.** "Always off" means Tempoloom creates the event with no
   reminders. "Always on" means Tempoloom creates the event with the
   calendar's default reminders and does not allow a per-item override.
@@ -75,6 +78,12 @@ E-0051).
 - **NTF-14.** Current reference: in each automation's event settings, the
   user sets reminders: calendar default, custom minutes, or none (E-0043,
   E-0051). Proposed default: the per-kind table above is the initial value.
+  Tempoloom decision: habits and travel and airport buffers start with the
+  calendar default; recovery, prep and other buffers and focus time start with
+  none (open question 2). The user can change the value of any automation,
+  travel buffers included: NTF-14 wins over the "always" of NTF-11 for
+  automations. Task chunks and flexible meeting events use the calendar
+  default; mirroring copies have none.
 - **NTF-15.** Tempoloom never deletes the user's reminders on external
   events. Proposed default.
 

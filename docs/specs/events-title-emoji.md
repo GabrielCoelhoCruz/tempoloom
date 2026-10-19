@@ -42,12 +42,17 @@ and user emoji. If the two disagree, fix one of them in the same change.
 
 1. A managed event title is built as `<marker> <user title>` when `marker_position=start`, and `<user title> <marker>` when `end`. One space separates them (E-0085).
 2. An event shows at most one state marker. Proposed priority, highest first: `⚠️`, `🔒`, `✅`, `👍`, `🛡️`, `🆓`. Travel `🚌` and flight `✈️` are type markers and come before the state marker. Proposed.
+   Tempoloom decision: once an event has ended, `✅` or `👍` replaces every other state marker, the lock included: free, busy and lock say how a future event may move. The free and busy markers go only on the kinds in the table (habits, task chunks, flexible meetings); buffers and focus events show only the lock and conflict markers. Airport buffers are travel buffers and get `🚌`.
 3. Users may put their own emoji in the title of habits, tasks, flexible meetings and buffers, for example "🍱 Lunch". Tempoloom keeps it after the marker: `🛡️ 🍱 Lunch` (E-0085, E-0043).
+   Tempoloom decision: habits, focus time and buffers have an Emoji field next to the title; an emoji typed into the title works the same.
 4. Library templates may come with an emoji in the title. The user can remove it in the form with a clear control (E-0085).
+   Tempoloom decision: the control is a "Remove emoji" button next to the Emoji field.
 5. When an event changes state, Tempoloom rewrites only the marker part of the title in the same scheduler run.
+   Tempoloom decision: done markers go on habit, flexible meeting and task chunk events that ended in the last 7 days; older titles stay. A chunk gets `✅` when its task has no work left (done, or all its time used) and `👍` while work is left. Events whose title the user changed keep it.
 6. When the user lock is set from any client, the `🔒` marker appears within 30 seconds (E-0181).
 7. When the user edits a managed event title in Google Calendar, Tempoloom strips any leading or trailing known marker from the new text and stores the rest as the user title. Proposed. Whether a title edit also locks the event is defined in `planning-scheduler.md`.
 8. Tempoloom never adds markers to external events, except `✈️` on flight events it is allowed to edit. Proposed.
+   Tempoloom decision: Tempoloom may edit a flight when the user organizes it, it is on a writable calendar, it is not one occurrence of a series, and the calendar did not generate it from mail. The marker is added once. `🏠` goes on mirroring copies that show the "Personal commitment" label.
 9. When the chat app status integration is on, the status emoji comes from the event's own emoji if it has one, else from the integration default (E-0085). Details are in `integrations-slack.md`.
 
 ### Scheduler interaction

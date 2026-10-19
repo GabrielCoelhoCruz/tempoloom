@@ -1049,12 +1049,12 @@ function countedMinutes(ctx: Ctx, f: FocusItem, dayRange: Interval): number {
   const window = hoursSet(ctx, f.hours).clip(dayRange.start, dayRange.end);
   const work = new Set(s.workHours);
   const taskHours = new Map(s.tasks.map((t) => [t.id, t.hours]));
-  const habitHours = new Map(s.habits.map((h) => [h.id, h.hours]));
+  const habitWork = new Map(s.habits.map((h) => [h.id, h.work ?? work.has(h.hours)]));
   const counts = (p: { key: string; itemId: string }) => {
     const kind = kindOf(p.key);
     if (kind === "focus") return true;
     if (kind === "task") return work.has(taskHours.get(p.itemId) ?? "");
-    if (kind === "habit") return work.has(habitHours.get(p.itemId) ?? "");
+    if (kind === "habit") return habitWork.get(p.itemId) ?? false;
     return false;
   };
   const ranges: Interval[] = [

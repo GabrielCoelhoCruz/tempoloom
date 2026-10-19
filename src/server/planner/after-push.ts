@@ -1,15 +1,11 @@
-// Steps after the plan is on the calendars: the done marker on ended habit
-// occurrences (habits-automation.md Outputs) and auto-decline of invitations
-// that overlap protected focus time (focus-time.md rule 23).
-import { DAY } from "../../shared/time.ts";
+// Steps after the plan is on the calendars: auto-decline of invitations that
+// overlap protected focus time (focus-time.md rule 23). The done marker on
+// ended occurrences is markEnded in markers.ts.
 import { all, type Db, run } from "../db.ts";
 import { type CalendarProvider, ProviderError } from "../providers/types.ts";
-import type { Settings } from "../settings.ts";
 import { cacheEvent } from "../sync/pull.ts";
-import { KEY_PROP, MANAGED_PROP, type ManagedRow } from "./push.ts";
+import { MANAGED_PROP } from "./push.ts";
 
-/** Ended occurrences older than this keep their title. */
-const DONE_LOOKBACK = 7 * DAY;
 export const DEFAULT_DECLINE_MESSAGE = "Declined automatically: this time is protected for focus.";
 
 type Provider = (accountId: string) => CalendarProvider;
@@ -17,67 +13,10 @@ type Provider = (accountId: string) => CalendarProvider;
 export async function afterPush(
   db: Db,
   userId: string,
-  settings: Settings,
   provider: Provider,
   now: number,
 ): Promise<void> {
-  await markDone(db, userId, settings, provider, now);
   await autoDecline(db, userId, provider, now);
-}
-
-/**
- * Tempoloom decision (start when placed, rule 33): an occurrence is done when
- * its end passes. Its title then carries the done marker in place of the state
- * marker; lock and conflict end with the occurrence.
- */
-async function markDone(
-  db: Db,
-  userId: string,
-  settings: Settings,
-  provider: Provider,
-  now: number,
-): Promise<void> {
-  const done = settings.markers.done;
-  if (!done) return;
-  const markers = [...new Set(Object.values(settings.markers).filter(Boolean))];
-  const rows = all<
-    ManagedRow & { account_id: string; provider_id: string; cached_etag: string | null }
-  >(
-    db,
-    `SELECT m.*, c.account_id, c.provider_id, e.etag AS cached_etag FROM managed_events m
-       JOIN calendars c ON c.id = m.calendar_id
-       LEFT JOIN events e ON e.calendar_id = m.calendar_id AND e.event_id = m.event_id
-     WHERE m.user_id = ? AND m.kind = 'habit' AND m.event_id IS NOT NULL AND m.end_ms <= ? AND m.end_ms > ?`,
-    userId,
-    now,
-    now - DONE_LOOKBACK,
-  );
-  for (const row of rows) {
-    let base = row.title;
-    for (const m of markers) if (base.startsWith(`${m} `)) base = base.slice(m.length + 1);
-    const title = `${done} ${base}`;
-    if (row.title === title || !row.event_id) continue;
-    try {
-      const ev = await provider(row.account_id).updateEvent(
-        row.provider_id,
-        row.event_id,
-        {
-          summary: title,
-          description: row.description,
-          start: row.start_ms,
-          end: row.end_ms,
-          busy: row.busy === 1,
-          colorId: row.color_id,
-          privateProps: { [MANAGED_PROP]: "1", [KEY_PROP]: row.key, tl_user: userId },
-        },
-        row.cached_etag ?? row.etag,
-      );
-      cacheEvent(db, row.calendar_id, ev);
-      run(db, "UPDATE managed_events SET title = ?, etag = ? WHERE id = ?", title, ev.etag, row.id);
-    } catch {
-      // A changed or deleted event: the next pull reads it, and the next run tries again.
-    }
-  }
 }
 
 /**

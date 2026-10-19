@@ -70,6 +70,7 @@ Tags used here (full rules in `events-tags.md`):
 
 - Travel buffer events: title `🚌 <title>` (E-0085), opaque, category travel and logistics (E-0087).
 - Visibility: public on the primary calendar, so others see a travel event (E-0052). On a mirrored calendar, the visibility follows that mirroring policy (E-0052).
+  Tempoloom decision: travel and airport buffers start public, with the 🚌 marker before the title; the user can change the visibility in the buffer's form.
 - Flight events: the planner shows the flight category, and Tempoloom adds the flight marker "✈️" to the flight event title when it may edit that event (E-0085). It does not edit events it may not change (see `events-categories-and-colors.md` edge cases).
 
 ## Edge cases

@@ -75,6 +75,9 @@ Marker settings (marker choice and position) are in `events-title-emoji.md`.
   "Busy" with no details (E-0195).
 - **CNT-24.** Tempoloom maps `private` to Google event visibility "private"
   and `calendar-default` to "default". Proposed default.
+  Tempoloom decision: `public` maps to Google visibility "public". On CalDAV,
+  `public` writes `CLASS:PUBLIC`, `private` writes `CLASS:PRIVATE`, and the
+  calendar default writes no `CLASS`.
 - **CNT-25.** In the reference, these visibility choices for habits, mirroring
   copies and recovery buffers need a paid plan; free users get fixed defaults
   (E-0195). Tempoloom has no plans.

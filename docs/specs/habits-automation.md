@@ -43,6 +43,14 @@ the routine is at risk.
 | `task_filter` | task filter or none | none | Tasks to show while the habit runs (E-0081). |
 | `dependencies` | list | empty | Order rules relative to other habits and flexible meetings (legacy evidence, E-0082). |
 
+Tempoloom decisions for the event fields:
+
+- `title` and emoji: the emoji is a field of its own; Tempoloom writes `<marker> <emoji> <title>`.
+- `category`: a new habit is personal when it uses personal hours, else work, unless the user picks one in the form. A personal habit gets the personal event category and color and does not count toward focus time; a work habit gets solo work and counts. Habits saved before the field existed count by their hours set, as before.
+- `color`: "Category color" follows the color rule; "Calendar color" or one of the 11 colors overrides it.
+- `target_calendar`: the form offers the main calendar and every writable calendar. If the chosen calendar is gone or read-only, new events go to the main calendar.
+- `reminders`: the form offers the calendar default, none, or one custom alert ("Remind me (minutes)").
+
 Defense modes (E-0196, E-0081):
 
 | `defense_mode` | Legacy label | Current form | Status | Length versus time trade-off |

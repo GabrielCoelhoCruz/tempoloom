@@ -6,7 +6,8 @@ import { logChange } from "../change-log.ts";
 import { all, type Db, one, run } from "../db.ts";
 import { jsonBody, notFound } from "../http.ts";
 import { type CachedEvent, categoryContext, externalCategory } from "../planner/categories.ts";
-import { MANAGED_PROP, type ManagedRow } from "../planner/push.ts";
+import { withState } from "../planner/markers.ts";
+import { MANAGED_PROP, type ManagedRow, rowWrite } from "../planner/push.ts";
 import { getSettings } from "../settings.ts";
 import { cacheEvent } from "../sync/pull.ts";
 import type { SyncService } from "../sync/service.ts";
@@ -276,22 +277,15 @@ export function plannerRoutes(db: Db, sync: SyncService, now: () => number): Hon
       if (!row?.event_id) return null;
       if (row.start_ms <= now()) return "started" as const;
       const end = start + (row.end_ms - row.start_ms);
-      const base = row.title.replace(/^\S+\s/, "");
-      const title = row.user_edited ? row.title : `${markers.locked} ${base}`;
-      const ev = await pool.get(row.account_id).updateEvent(
-        row.provider_id,
-        row.event_id,
-        {
-          summary: title,
-          description: row.description,
-          start,
-          end,
-          busy: true,
-          colorId: row.color_id,
-          privateProps: { [MANAGED_PROP]: "1", tl_key: row.key, tl_user: user.id },
-        },
-        row.etag,
-      );
+      const title = row.user_edited ? row.title : withState(markers, row.title, "locked");
+      const ev = await pool
+        .get(row.account_id)
+        .updateEvent(
+          row.provider_id,
+          row.event_id,
+          rowWrite(user.id, row, { start, end, title, busy: true }),
+          row.etag,
+        );
       cacheEvent(db, row.calendar_id, ev);
       logChange(
         db,

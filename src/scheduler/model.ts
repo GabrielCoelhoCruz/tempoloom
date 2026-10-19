@@ -86,6 +86,8 @@ export interface HabitItem {
   changed: boolean;
   /** Occurrence date -> the time of day the user chose for it (habits rule 30). */
   rescheduled?: Partial<Record<LocalDate, number>>;
+  /** Category work or personal (habits concepts); missing: it counts as work when its hours are work hours. */
+  work?: boolean;
 }
 
 /** habits-automation.md "Frequency"; weekday 1 is Monday. */

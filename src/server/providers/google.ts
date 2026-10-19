@@ -78,7 +78,15 @@ function toGoogleEvent(w: EventWrite): GoogleEventInput {
           ],
         }
       : {}),
-    reminders: { useDefault: false },
+    reminders: !w.reminders
+      ? { useDefault: false }
+      : "useDefault" in w.reminders
+        ? { useDefault: true }
+        : {
+            useDefault: false,
+            overrides: w.reminders.minutes.map((minutes) => ({ method: "popup", minutes })),
+          },
+    ...(w.visibility ? { visibility: w.visibility } : {}),
     extendedProperties: { private: w.privateProps },
     ...(w.recurrence ? { recurrence: [`RRULE:${w.recurrence}`] } : {}),
   };
@@ -178,6 +186,7 @@ export class GoogleProvider implements CalendarProvider {
     etag: string | null,
   ): Promise<ProviderEvent> {
     const patch: Partial<GoogleEventInput> = {};
+    if (change.summary !== undefined) patch.summary = change.summary;
     if (change.description !== undefined) patch.description = change.description;
     if (change.end !== undefined) patch.end = { dateTime: new Date(change.end).toISOString() };
     if (change.start !== undefined)

@@ -56,6 +56,12 @@ const PoliciesPage = lazyComponent(() =>
 const MeetingChecks = lazyComponent(() =>
   import("./views/meeting-checks.tsx").then((m) => m.MeetingChecks),
 );
+const Automations = lazyComponent(() =>
+  import("./views/automations.tsx").then((m) => m.Automations),
+);
+const AutomationForm = lazyComponent(() =>
+  import("./views/automation-form.tsx").then((m) => m.AutomationForm),
+);
 
 const NAV: { href: string; label: string }[] = [
   { href: "/", label: "Planner" },
@@ -63,6 +69,7 @@ const NAV: { href: string; label: string }[] = [
   { href: "/habits", label: "Habits" },
   { href: "/meetings", label: "Meetings" },
   { href: "/meeting-checks", label: "Meeting checks" },
+  { href: "/automations", label: "Automations" },
   { href: "/library", label: "Library" },
   { href: "/links", label: "Booking links" },
   { href: "/stats", label: "Stats" },
@@ -78,6 +85,35 @@ function Link({ href, children }: { href: string; children: ComponentChildren })
     <a href={href} onClick={onLinkClick} aria-current={path.value === href ? "page" : undefined}>
       {children}
     </a>
+  );
+}
+
+/** The top-bar create button (automations-overview.md rule 1). */
+function CreateMenu() {
+  const items = [
+    { href: "/habits", label: "Habit" },
+    { href: "/automations/new/focus_time", label: "Focus time" },
+    { href: "/automations/new/buffer", label: "Buffer" },
+    { href: "/meetings", label: "Flexible meeting" },
+  ];
+  return (
+    <details class="create-menu" data-testid="create-menu">
+      <summary>Create</summary>
+      {items.map((i) => (
+        <a
+          key={i.href}
+          href={i.href}
+          onClick={(e) => {
+            (e.currentTarget.closest("details") as HTMLDetailsElement | null)?.removeAttribute(
+              "open",
+            );
+            onLinkClick(e);
+          }}
+        >
+          {i.label}
+        </a>
+      ))}
+    </details>
   );
 }
 
@@ -213,9 +249,12 @@ function Page() {
       return <AccountPage />;
     case "/meeting-checks":
       return <MeetingChecks />;
+    case "/automations":
+      return <Automations />;
     default:
       if (path.value.startsWith("/join/")) return <JoinPage token={path.value.slice(6)} />;
       if (path.value === "/help" || path.value.startsWith("/help/")) return <HelpPage />;
+      if (path.value.startsWith("/automations/")) return <AutomationForm key={path.value} />;
       return <Planner />;
   }
 }
@@ -236,6 +275,7 @@ function App() {
     <div class="shell" data-testid="app-shell">
       <nav class="nav">
         <div class="brand">Tempoloom</div>
+        <CreateMenu />
         {NAV.map((n) => (
           <Link href={n.href} key={n.href}>
             {n.label}
