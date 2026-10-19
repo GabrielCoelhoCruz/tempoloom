@@ -86,8 +86,8 @@ export function TaskForm({
         nextUp: f.get("nextUp") === "on",
         color: text("taskColor"),
       });
-      // Clear the title only while it still holds the saved one: the list can
-      // show the new task before this point, and the user may type the next.
+      // Clear the title before the plan runs, and only if it still holds this
+      // task: the user may have typed the next title already.
       const title = formEl.elements.namedItem("title") as HTMLInputElement | null;
       if (title && title.value === text("title")) title.value = "";
       await planNow();

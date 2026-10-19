@@ -10,7 +10,7 @@ import type { Settings } from "../../server/settings.ts";
 import { ApiError, api } from "../lib/api.ts";
 import { planNow } from "../lib/state.ts";
 
-type Act = (fn: () => Promise<unknown>, done?: string) => Promise<void>;
+type Act = (fn: () => Promise<unknown>, done?: string) => Promise<unknown>;
 
 export function PlacementSetting({ settings, act }: { settings: Settings; act: Act }) {
   return (

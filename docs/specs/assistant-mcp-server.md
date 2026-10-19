@@ -69,6 +69,55 @@ its start only; the move locks the event, as a drag in the planner does.
 A tool's input that does not match its schema gives a tool result with
 `isError`, so the model can correct it.
 
+Tempoloom decision: the tools as built. `tools/list` gives each tool an
+`inputSchema`, an `outputSchema` (JSON Schema 2020-12, objects without other
+keys) and annotations. Every successful result has `structuredContent` that
+matches the `outputSchema` and the same JSON as text; a result that would not
+match is a tool error ("The tool failed on the server"), never a result.
+A stage or apply tool can fail on the server after its change was staged or
+applied. Its tool error says so and tells the client to call
+`list_staged_changes` (and, after `apply_staged_changes`, `list_events`)
+before it tries again, so a retry does not stage the change twice.
+
+| Tool | Annotations | Input | Output (`structuredContent`) |
+|---|---|---|---|
+| `list_events` | read | `start`, `end` (at most 31 days) | `time_zone`; `events`: `id`, `title`, `start`, `end`, `managed`, `kind`, `busy`, `attendees`, `location`, `organizer_self`, `video_link` |
+| `find_free_time` | read | `duration_minutes` (15 to 480); optional `start` (default now), `end` (default 7 days after start), `attendees` (at most 20) | `slots` (`start`, `end`; at most 20); `unknown_attendees` |
+| `get_week_summary` | read | `week_start` (`YYYY-MM-DD`) | `week_start`, `time_zone`; `days`: `date`, `meetings`, `meeting_hours`, `focus_hours`, `task_hours`, `habit_hours`, `other_hours`; `totals` of the hours |
+| `get_meeting_context` | read | `event_id` | `event`; `past_meetings` (at most 10); `related_tasks` |
+| `get_stats` | read | `start_date`, `end_date` (at most 120 days) | `from`, `to`; `days` (`date`, `minutes` per category); `totals`; `highlights` |
+| `list_tasks` | read | optional `status` (`open` default, or `done`), `limit`, `cursor` | `tasks`: `id`, `title`, `priority`, `minutes`, `due`, `status`; `next_cursor` |
+| `list_automations` | read | optional `limit`, `cursor` | `automations`: `type`, `id`, `title`, `level` (null for meeting checks), `enabled`; `next_cursor` |
+| `list_staged_changes` | read | optional `limit`, `cursor` | `changes`: `id`, `source`, `summary`, `reason`, `state` (`pending` or `accepted`), `created_at`; `next_cursor` |
+| `propose_create_event` | stage | `title`, `start`, `end` (at most 24 hours); optional `attendees` (at most 50), `description`, `location`, `reason` | `id`, `state`, `summary`, `review_url`, `message` |
+| `propose_update_event` | stage | `event_id`; optional `start`, `end`, `title`, `reason` | as `propose_create_event` |
+| `propose_delete_event` | stage | `event_id`; optional `reason` | as `propose_create_event` |
+| `apply_staged_changes` | apply | `ids` (1 to 100) | `results`: `id` and `result` `applied`, `stale` (with `reason`), `failed` (with `error`) or `refused` (with `reason`: not a pending change of an AI tool) |
+
+Annotations: a read tool has `readOnlyHint` and `idempotentHint` true. A
+stage tool has both false and `destructiveHint` false: it writes nothing to
+the calendar. `apply_staged_changes` has `destructiveHint` true, because it
+runs staged deletes. All tools have `openWorldHint` false.
+
+`list_automations` lists flexible meetings, buffers, habits, meeting
+overloads (always P4), focus time goals (always P4) and meeting checks, in
+the order of the automation list (`automations-overview.md`): priority,
+rank, type, age; the meeting checks, without priority, last: the built-in
+checks, then the company checks, oldest first.
+
+Pages: the three list tools return one page per call, in this order:
+tasks by due date (none last), then age; automations as above; staged
+changes oldest first and, at the same time, in the order they were staged:
+the order of the preview panel. `limit` is 50 by default and at most 100. When more
+rows exist, the result has `next_cursor`; the client passes it as `cursor`
+for the next page. The cursor is the sort key of the last row, so a row
+added between two calls is not repeated and does not shift the others. A
+cursor works only for the same tool and the same `status`; another cursor,
+or a `limit` above 100, gives a tool error. A task page seeks in an index on
+the due key; tasks with the same due key before the cursor, such as many
+done tasks without a due date, are still read and skipped. An automation
+page reads the whole automation list of the user, which is small.
+
 ## Behavior
 
 1. A user connects an MCP client by giving it the server URL and completing
