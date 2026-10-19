@@ -152,7 +152,11 @@ const orderInput = z.object({
     .max(500),
 });
 
-export function automationRoutes(db: Db, sync: SyncService): Hono<AppEnv> {
+export function automationRoutes(
+  db: Db,
+  sync: SyncService,
+  now: () => number = Date.now,
+): Hono<AppEnv> {
   const r = new Hono<AppEnv>();
 
   r.get("/automations", (c) => c.json({ automations: listAutomations(db, c.get("user").id) }));
@@ -189,7 +193,7 @@ export function automationRoutes(db: Db, sync: SyncService): Hono<AppEnv> {
           run(
             db,
             `UPDATE meetings SET rules_changed_at = ? WHERE id = ? AND (level <> ? OR rank <> ?)`,
-            Date.now(),
+            now(),
             id,
             body.level,
             rank,

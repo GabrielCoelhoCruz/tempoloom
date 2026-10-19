@@ -6,7 +6,7 @@ import { plan } from "../../scheduler/plan.ts";
 import { defaultEventSettings, readEventSettings } from "../../shared/event-settings.ts";
 import { addDays, type LocalDate, weekdayOf } from "../../shared/time.ts";
 import type { AppEnv } from "../app.ts";
-import { all, type Db, one, run } from "../db.ts";
+import { all, type Db, one, run, tx } from "../db.ts";
 import { editedEventSettings, eventSettingsInput, newEventSettings } from "../event-settings.ts";
 import { jsonBody, notFound } from "../http.ts";
 import { createItemHours, dropItemHours, itemHoursSchema, saveItemHours } from "../item-hours.ts";
@@ -21,7 +21,7 @@ import {
   meetingPeers,
 } from "../planner/meetings.ts";
 import { KEY_PROP, MANAGED_PROP, type ManagedRow } from "../planner/push.ts";
-import { loadSnapshot } from "../planner/replan.ts";
+import { loadSnapshot, meetingGuests } from "../planner/replan.ts";
 import type { ProviderPool } from "../providers/index.ts";
 import { getSettings } from "../settings.ts";
 import { cacheEvent } from "../sync/pull.ts";
@@ -132,7 +132,9 @@ function rowFrom(
       auto_reschedule: b.autoReschedule,
       series_calendar_id: b.series?.calendarId ?? null,
       series_event_id: b.series?.seriesId ?? null,
-      event_settings: JSON.stringify(newEventSettings(db, userId, "meeting", b.eventSettings)),
+      // Set by POST (with the calendar check) and PUT (calendar kept).
+      event_settings: "{}",
+      attendee_hours: "",
     },
   };
 }
@@ -190,15 +192,62 @@ function save(db: Db, row: MeetingRow, attendees: Attendee[], insert: boolean): 
   }
 }
 
-/** The guests, organizer and location written on each occurrence (rules 35, 41). */
-export function guestsOf(db: Db, m: MeetingRow, organizer: string) {
-  const people = attendeesOf(db, m.id).filter((a) => a.email !== organizer);
-  return {
-    organizer,
-    attendees: people.filter((a) => a.required).map((a) => a.email),
-    optionalAttendees: people.filter((a) => !a.required).map((a) => a.email),
-    ...(m.location ? { location: m.location } : {}),
-  };
+/** The ranges of a meeting's item-specific hours, as stored, or null. */
+const itemWeekly = (db: Db, setId: string) =>
+  one<{ weekly: string }>(
+    db,
+    "SELECT weekly FROM hours_sets WHERE id = ? AND item_specific = 1",
+    setId,
+  )?.weekly ?? null;
+
+/** What places a meeting; an edit of anything else (title, notes, guests' view) keeps its times. */
+function placementKey(row: MeetingRow, attendees: Attendee[], itemHours: string | null): string {
+  return JSON.stringify([
+    row.frequency,
+    row.ideal_minute,
+    row.duration_minutes,
+    row.shortest_minutes,
+    row.hours_mode,
+    itemHours ?? row.hours_set_id,
+    row.starting,
+    row.level,
+    row.when_unplaceable,
+    row.lead_minutes,
+    [...attendees].sort((a, b) => (a.email < b.email ? -1 : 1)).map((a) => [a.email, a.required]),
+  ]);
+}
+
+/**
+ * MEET-02 rule 4: a rule change places the future occurrences again, so only an
+ * edit of what places the meeting marks it changed; other edits keep the times.
+ */
+function rulesChangedAt(
+  db: Db,
+  old: MeetingRow,
+  row: MeetingRow,
+  attendees: Attendee[],
+  b: MeetingInput,
+  t: number,
+): number {
+  const before = placementKey(old, attendeesOf(db, old.id), itemWeekly(db, old.hours_set_id));
+  const after = placementKey(
+    row,
+    attendees,
+    b.hoursMode === "itemSpecific" ? JSON.stringify(b.itemHours) : null,
+  );
+  return before === after ? old.rules_changed_at : t;
+}
+
+/** The guests, organizer and location of an occurrence on a calendar of `accountId` (rules 35, 41). */
+function guestsOf(db: Db, m: MeetingRow, accountId: string, userEmail: string) {
+  const organizer =
+    one<{ email: string }>(db, "SELECT email FROM accounts WHERE id = ?", accountId)?.email ??
+    userEmail;
+  return meetingGuests(
+    { location: m.location, people: attendeesOf(db, m.id) },
+    organizer.toLowerCase(),
+    userEmail,
+  );
 }
 
 function weekStartOf(db: Db, userId: string, date: LocalDate): LocalDate {
@@ -274,12 +323,7 @@ export function meetingRoutes(db: Db, sync: SyncService, now: () => number): Hon
     ).map((m) => ({
       ...m,
       frequency: JSON.parse(m.frequency) as unknown,
-      item_hours:
-        one<{ weekly: string }>(
-          db,
-          "SELECT weekly FROM hours_sets WHERE id = ? AND item_specific = 1",
-          m.hours_set_id,
-        )?.weekly ?? null,
+      item_hours: itemWeekly(db, m.hours_set_id),
       event_settings: readEventSettings(m.event_settings, defaultEventSettings("meeting")),
       attendees: attendeesOf(db, m.id).map((a) => ({ ...a, ...person(db, a.email) })),
       occurrences: all<{
@@ -335,7 +379,17 @@ export function meetingRoutes(db: Db, sync: SyncService, now: () => number): Hon
     const user = c.get("user");
     const body = await jsonBody(c, meetingInput);
     const t = now();
-    const { row, attendees } = rowFrom(db, user.id, "preview", body, t, 0);
+    // While editing (?id=): the meeting with the new rules replaces the saved one.
+    const editId = c.req.query("id");
+    const old = editId ? own(editId, user.id) : null;
+    const id = old?.id ?? "preview";
+    const { row, attendees } = rowFrom(db, user.id, id, body, t, old?.rank ?? 0);
+    if (old) {
+      row.created_at = old.created_at;
+      row.rules_changed_at = rulesChangedAt(db, old, row, attendees, body, t);
+      row.series_event_id = old.series_event_id;
+      row.series_calendar_id = old.series_calendar_id;
+    }
     const zone =
       one<{ time_zone: string }>(db, "SELECT time_zone FROM users WHERE id = ?", user.id)
         ?.time_zone ?? "UTC";
@@ -351,18 +405,24 @@ export function meetingRoutes(db: Db, sync: SyncService, now: () => number): Hon
       snapshot.hours = { ...snapshot.hours, [row.hours_set_id]: body.itemHours };
     }
     const item = meetingItem(db, user.id, row, attendees, t, snapshot.windowEnd, last, new Map());
-    const result = plan({ ...snapshot, meetings: [...snapshot.meetings, item] });
+    const result = plan({
+      ...snapshot,
+      meetings: [...snapshot.meetings.filter((m) => m.id !== id), item],
+    });
     const before = new Map(snapshot.current.map((p) => [p.key, p]));
     const moved = result.placements.filter((p) => {
       const b = before.get(p.key);
-      return p.itemId !== "preview" && b && (b.start !== p.start || b.end !== p.end);
+      return p.itemId !== id && b && (b.start !== p.start || b.end !== p.end);
     }).length;
     return c.json({
       occurrences: result.placements
-        .filter((p) => p.itemId === "preview")
+        .filter((p) => p.kind === "meeting" && p.itemId === id)
+        .sort((a, b) => a.start - b.start)
         .slice(0, 4)
         .map((p) => ({ start: p.start, end: p.end, conflict: p.conflict })),
-      problems: result.report.filter((e) => e.itemId === "preview").slice(0, 4),
+      problems: result.report
+        .filter((e) => e.itemKind === "meeting" && e.itemId === id)
+        .slice(0, 4),
       moved,
     });
   });
@@ -385,18 +445,28 @@ export function meetingRoutes(db: Db, sync: SyncService, now: () => number): Hon
       now(),
       nextRank(db, "meetings", user.id, body.level),
     );
-    if (body.hoursMode === "itemSpecific" && body.itemHours)
-      row.hours_set_id = createItemHours(db, user.id, row.title, body.itemHours);
+    row.event_settings = JSON.stringify(
+      newEventSettings(db, user.id, "meeting", body.eventSettings),
+    );
+    const create = () => {
+      if (body.hoursMode === "itemSpecific" && body.itemHours)
+        row.hours_set_id = createItemHours(db, user.id, row.title, body.itemHours);
+      save(db, row, attendees, true);
+    };
     if (series) {
       // An adopted series keeps its id; its instances are placed from the next sync on.
-      const everyWeeks = body.frequency.period === "weekly" ? body.frequency.everyWeeks : 1;
-      if (everyWeeks > 1) row.starting = weekStartOf(db, user.id, series.firstDate);
+      // Its periods count from its first instance, as the series repeats (rule 10).
+      const f = body.frequency;
+      if (f.period === "monthly" || (f.period === "daily" && (f.everyDays ?? 1) > 1))
+        badRequest("frequency", "A recurring meeting can repeat every day or every N weeks");
+      row.starting =
+        f.period === "weekly" ? weekStartOf(db, user.id, series.firstDate) : series.firstDate;
       await sync.exclusive(user.id, async (pool) => {
         await markSeries(db, pool, row, user.id);
-        save(db, row, attendees, true);
+        tx(db, create);
       });
     } else {
-      save(db, row, attendees, true);
+      tx(db, create);
     }
     changed(user.id);
     return c.json({ id }, 201);
@@ -406,28 +476,33 @@ export function meetingRoutes(db: Db, sync: SyncService, now: () => number): Hon
     const user = c.get("user");
     const old = own(c.req.param("id"), user.id);
     const body = await jsonBody(c, meetingInput);
-    const { row, attendees } = rowFrom(db, user.id, old.id, body, now(), old.rank);
-    if (body.hoursMode === "itemSpecific" && body.itemHours)
-      row.hours_set_id = saveItemHours(db, user.id, old.hours_set_id, row.title, body.itemHours);
-    save(
-      db,
-      {
-        ...row,
-        created_at: old.created_at,
-        series_calendar_id: old.series_calendar_id,
-        series_event_id: old.series_event_id,
-        // The calendar is set at creation only (`targetCalendar`).
-        event_settings: JSON.stringify(
-          editedEventSettings(
-            readEventSettings(old.event_settings, defaultEventSettings("meeting")),
-            body.eventSettings,
+    const t = now();
+    const { row, attendees } = rowFrom(db, user.id, old.id, body, t, old.rank);
+    const rulesChanged = rulesChangedAt(db, old, row, attendees, body, t);
+    tx(db, () => {
+      if (body.hoursMode === "itemSpecific" && body.itemHours)
+        row.hours_set_id = saveItemHours(db, user.id, old.hours_set_id, row.title, body.itemHours);
+      save(
+        db,
+        {
+          ...row,
+          rules_changed_at: rulesChanged,
+          created_at: old.created_at,
+          series_calendar_id: old.series_calendar_id,
+          series_event_id: old.series_event_id,
+          // The calendar is set at creation only (`targetCalendar`).
+          event_settings: JSON.stringify(
+            editedEventSettings(
+              readEventSettings(old.event_settings, defaultEventSettings("meeting")),
+              body.eventSettings,
+            ),
           ),
-        ),
-      },
-      attendees,
-      false,
-    );
-    if (row.hours_set_id !== old.hours_set_id) dropItemHours(db, old.hours_set_id);
+        },
+        attendees,
+        false,
+      );
+      if (row.hours_set_id !== old.hours_set_id) dropItemHours(db, old.hours_set_id);
+    });
     changed(user.id);
     return c.json({ ok: true });
   });
@@ -490,7 +565,7 @@ export function meetingRoutes(db: Db, sync: SyncService, now: () => number): Hon
           busy: true,
           colorId: row.color_id,
           privateProps: { [MANAGED_PROP]: "1", [KEY_PROP]: row.key, tl_user: user.id },
-          ...guestsOf(db, m, user.email),
+          ...guestsOf(db, m, row.account_id, user.email),
         },
         row.etag,
       );

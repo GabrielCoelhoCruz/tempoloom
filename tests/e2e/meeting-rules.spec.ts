@@ -35,6 +35,7 @@ import {
   BACKEND,
   blockUntil,
   type CalendarDriver,
+  EMAIL,
   eventually,
   expect,
   local,
@@ -51,6 +52,7 @@ import {
   visitor,
   W,
 } from "./helpers.ts";
+import { putMeeting } from "./meeting-helpers.ts";
 
 test.skip(BACKEND === "google", "Meeting rule E2E uses CalDAV users and event data.");
 
@@ -581,6 +583,13 @@ test("event settings, description and start date reach every occurrence, on the 
       const ics = await rawEvent(e.id);
       expect(eventProp(ics, "CLASS")).toBe("PRIVATE");
       expect(alarms(ics)).toEqual(["-PT15M"]);
+      // The account that owns the calendar organizes; the guest is the only attendee.
+      const mails = (name: string) =>
+        [...ics.matchAll(new RegExp(`^${name}[^:\\r\\n]*:mailto:(.+)$`, "gim"))].map((m) =>
+          (m[1] ?? "").trim().toLowerCase(),
+        );
+      expect(mails("ORGANIZER")).toEqual([second.email.toLowerCase()]);
+      expect(mails("ATTENDEE")).toEqual(["dana@example.com"]);
     }
   };
   await expect
@@ -672,6 +681,72 @@ test("adaptive defense writes busy within 12 hours and free later; always busy a
   await page.reload();
   await expect(row(page, "Open")).toContainText("Always free");
   check(await read());
+});
+
+test("a series every 3 weeks fills the form as custom every 3 weeks, keeps its instances when saved, and cannot take a monthly frequency (rules 1, 10)", async ({
+  page,
+  cal,
+  signIn,
+}) => {
+  await blockUntil(cal, W);
+  const series = await putMeeting(cal.calendarId, {
+    title: "Triweekly",
+    start: at(day(1), "10:00"),
+    end: at(day(1), "10:30"),
+    organizer: EMAIL,
+    attendees: [{ email: "dana@example.com", answer: "ACCEPTED" }],
+    rrule: "FREQ=WEEKLY;INTERVAL=3;COUNT=4",
+  });
+  await signIn();
+  await page.getByRole("link", { name: "Meetings" }).click();
+  const form = page.getByTestId("meeting-form");
+  const pick = form.getByLabel("From an existing meeting");
+  await expect(pick.locator("option", { hasText: "Triweekly" })).toHaveCount(1, {
+    timeout: 60_000,
+  });
+  await pick.selectOption({ label: "Triweekly" });
+  await expect(form.getByLabel("How often")).toHaveValue("custom");
+  await expect(form.getByLabel("Repeat every")).toHaveValue("3");
+  await expect(form.getByLabel("Unit")).toHaveValue("weeks");
+  await expect(form.getByLabel("Tue", { exact: true })).toBeChecked();
+
+  // A series repeats daily or every N weeks: the API refuses a monthly frequency for it.
+  const refused = await page.evaluate(async (title) => {
+    const list = (await (await fetch("/api/meetings/series")).json()) as {
+      series: { title: string; calendarId: string; seriesId: string }[];
+    };
+    const s = list.series.find((x) => x.title === title);
+    const res = await fetch("/api/meetings", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        title,
+        attendees: [{ email: "dana@example.com" }],
+        frequency: { period: "monthly", dayOfMonth: 1 },
+        idealTime: "10:00",
+        durationMinutes: 30,
+        series: { calendarId: s?.calendarId, seriesId: s?.seriesId },
+      }),
+    });
+    return res.status;
+  }, "Triweekly");
+  expect(refused).toBe(400);
+
+  await form.getByRole("button", { name: "Add meeting" }).click();
+  await expect(row(page, "Triweekly")).toContainText("every 3 weeks, ideally Tue");
+  // The instances keep their time and stay instances of the series: each one
+  // falls in a period of the meeting, counted from the series' first instance.
+  await eventually(
+    () => range(cal, 28),
+    (l) => {
+      const mine = titled(l, "Triweekly");
+      expect(mine.map((e) => local(e.start))).toEqual([`${day(1)} 10:00`, `${day(22)} 10:00`]);
+      expect(mine.every((e) => e.recurringId === series)).toBe(true);
+      expect(mine.every((e) => (e.privateProps.tl_meeting ?? "") !== "")).toBe(true);
+    },
+  );
+  await page.reload();
+  await expect(row(page, "Triweekly")).toContainText("every 3 weeks, ideally Tue");
 });
 
 test("no limit on meetings per organizer, and stats count flexible meetings as one-to-one or group time next to booked meetings (rule 36; analytics summary)", async ({

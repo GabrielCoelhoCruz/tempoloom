@@ -6,6 +6,7 @@ import type { AppEnv } from "../app.ts";
 import { all, type Db, one, run } from "../db.ts";
 import { jsonBody, notFound } from "../http.ts";
 import { instanceLimit, limitMessage } from "../limits.ts";
+import { wakeOrganizers } from "../planner/meetings.ts";
 import { getSettings, updateSettings } from "../settings.ts";
 import type { SyncService } from "../sync/service.ts";
 
@@ -94,6 +95,7 @@ export function settingsRoutes(db: Db, sync: SyncService, now: () => number): Ho
       JSON.stringify(body.weekly),
       now(),
     );
+    wakeOrganizers(db, sync, user.id);
     return c.json({ id }, 201);
   });
 
@@ -131,20 +133,7 @@ export function settingsRoutes(db: Db, sync: SyncService, now: () => number): Ho
         id,
       );
     }
-    // MEET-02 rule 5: an attendee's meeting hours limit other people's meetings too.
-    const organizers = all<{ id: string; user_id: string }>(
-      db,
-      `SELECT m.id, m.user_id FROM meetings m JOIN meeting_attendees a ON a.meeting_id = m.id
-       WHERE a.email = ? AND a.required = 1 AND m.hours_mode = 'everyone' AND m.user_id <> ?
-         AND EXISTS (SELECT 1 FROM hours_sets h WHERE h.id = ? AND h.kind IN ('meeting', 'work'))`,
-      user.email,
-      user.id,
-      id,
-    );
-    for (const m of organizers) {
-      run(db, "UPDATE meetings SET rules_changed_at = ? WHERE id = ?", t, m.id);
-      sync.request(m.user_id);
-    }
+    wakeOrganizers(db, sync, user.id);
     sync.request(user.id);
     return c.json({ ok: true });
   });

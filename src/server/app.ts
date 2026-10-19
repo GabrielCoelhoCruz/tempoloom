@@ -72,6 +72,7 @@ import { jsonBody } from "./http.ts";
 import { createLiveHub } from "./live.ts";
 import type { Mailer } from "./mail.ts";
 import { mcpRoutes } from "./mcp.ts";
+import { wakeOrganizers } from "./planner/meetings.ts";
 import { createPreview } from "./preview.ts";
 import { CalDavProvider } from "./providers/caldav.ts";
 import { ProviderError } from "./providers/types.ts";
@@ -394,6 +395,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
     );
     run(db, "UPDATE users SET time_zone = ? WHERE id = ?", body.timeZone, user.id);
     sync.request(user.id);
+    wakeOrganizers(db, sync, user.id);
     return c.json({ ok: true });
   });
 
@@ -451,7 +453,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   app.route("/api", focusExtraRoutes(db, sync, now));
   app.route("/api", bufferFilterRoutes(db, now));
   app.route("/api", meetingCheckRoutes(db, sync, now));
-  app.route("/api", automationRoutes(db, sync));
+  app.route("/api", automationRoutes(db, sync, now));
 
   // Round 3 s4: connected calendars, holiday feeds and mirroring policies.
   app.route(

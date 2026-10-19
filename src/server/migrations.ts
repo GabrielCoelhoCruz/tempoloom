@@ -1147,5 +1147,7 @@ export const MIGRATIONS: readonly string[] = [
   // reminders, targetCalendar).
   `
   ALTER TABLE meetings ADD COLUMN event_settings TEXT NOT NULL DEFAULT '{}';
+  -- The attendees' meeting hours and time zones the last plan used (rule 11).
+  ALTER TABLE meetings ADD COLUMN attendee_hours TEXT NOT NULL DEFAULT '';
   `,
 ];

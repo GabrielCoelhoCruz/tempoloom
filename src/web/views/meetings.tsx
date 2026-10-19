@@ -102,6 +102,12 @@ function everyOf(f: Frequency): { every: string; unit: string; n: number } {
     : { every: "custom", unit: "weeks", n };
 }
 
+/** An adopted series repeats daily or every N weeks on its day (rule 1). */
+const seedFrequency = (x: Series): Frequency =>
+  x.everyWeeks === "daily"
+    ? { period: "daily" }
+    : { period: "weekly", everyWeeks: x.everyWeeks, idealDays: [x.idealDay] };
+
 const VISIBILITY: Record<string, string> = {
   calendar_default: "calendar default visibility",
   public: "public",
@@ -271,14 +277,16 @@ export function Meetings() {
   const everyInit = ed
     ? everyOf(ed.frequency).every
     : seed
-      ? String(seed.everyWeeks)
+      ? everyOf(seedFrequency(seed)).every
       : preset?.everyWeeks === 2
         ? "2"
         : "1";
-  const fq = ed?.frequency;
+  const fq = ed?.frequency ?? (seed ? seedFrequency(seed) : undefined);
   const pick = (x: Series | null) => {
+    const init = x ? everyOf(seedFrequency(x)) : { every: "1", unit: "weeks" };
     setSeed(x);
-    setEvery("1");
+    setEvery(init.every);
+    setUnit(init.unit);
     setPreview(null);
     if (x) void lookup(x.attendees.join(", "));
     else setPeople([]);
@@ -707,7 +715,11 @@ export function Meetings() {
               const form = (e.currentTarget as HTMLButtonElement).form;
               if (!form?.reportValidity()) return;
               setError(null);
-              api<Preview>("POST", "/api/meetings/preview", body(form)).then(setPreview, fail);
+              api<Preview>(
+                "POST",
+                `/api/meetings/preview${ed ? `?id=${encodeURIComponent(ed.id)}` : ""}`,
+                body(form),
+              ).then(setPreview, fail);
             }}
           >
             Preview

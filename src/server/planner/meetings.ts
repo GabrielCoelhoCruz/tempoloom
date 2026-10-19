@@ -6,7 +6,7 @@ import { hoursToTimeSet, type WeeklyHours } from "../../scheduler/hours.ts";
 import type { ExternalEvent, Level, MeetingItem } from "../../scheduler/model.ts";
 import type { Interval, TimeSet } from "../../scheduler/timeset.ts";
 import type { LocalDate } from "../../shared/time.ts";
-import { all, type Db, one } from "../db.ts";
+import { all, type Db, one, run } from "../db.ts";
 import { getPrefs } from "../meeting-prefs.ts";
 import { externalEvents } from "./events.ts";
 
@@ -36,6 +36,8 @@ export interface MeetingRow {
   series_event_id: string | null;
   /** JSON event settings: visibility, reminders, calendar (src/shared/event-settings.ts). */
   event_settings: string;
+  /** The attendees' hours the last plan used (attendeeHoursKey); '' before the first plan. */
+  attendee_hours: string;
 }
 
 /** MEET-02 rule 9: automatic moves per rolling 24 hours. */
@@ -128,14 +130,31 @@ function attendeeBusy(
   ];
 }
 
-function meetingHours(db: Db, userId: string): WeeklyHours {
-  const row = one<{ weekly: string }>(
-    db,
-    `SELECT weekly FROM hours_sets WHERE user_id = ?
-     ORDER BY CASE kind WHEN 'meeting' THEN 0 WHEN 'work' THEN 1 ELSE 2 END, created_at LIMIT 1`,
-    userId,
+/** The hours set that limits other people's meetings with this user: meeting hours, else work hours. */
+function meetingHoursJson(db: Db, userId: string): string {
+  return (
+    one<{ weekly: string }>(
+      db,
+      `SELECT weekly FROM hours_sets WHERE user_id = ? AND item_specific = 0
+       ORDER BY CASE kind WHEN 'meeting' THEN 0 WHEN 'work' THEN 1 ELSE 2 END, created_at LIMIT 1`,
+      userId,
+    )?.weekly ?? "{}"
   );
-  return row ? (JSON.parse(row.weekly) as WeeklyHours) : {};
+}
+
+/**
+ * Rule 11: the hours and time zones of the required attendees that limit a
+ * meeting in mode `everyone`. A change of any of them places it again.
+ */
+function attendeeHoursKey(db: Db, userId: string, m: MeetingRow, attendees: Attendee[]): string {
+  if (m.hours_mode !== "everyone") return "-";
+  const parts: string[] = [];
+  for (const a of attendees) {
+    const user = a.required ? instanceUser(db, a.email) : undefined;
+    if (user && user.id !== userId)
+      parts.push(`${user.id} ${user.time_zone} ${meetingHoursJson(db, user.id)}`);
+  }
+  return parts.join("\n") || "-";
 }
 
 /** One meeting as a scheduler item, with its attendees' hours and busy time. */
@@ -161,7 +180,8 @@ export function meetingItem(
     if (!user || user.id === userId) continue;
     busy.push(...attendeeBusy(db, user, a.email, m.id, now, windowEnd));
     if (m.hours_mode === "everyone") {
-      const own = hoursToTimeSet(meetingHours(db, user.id), user.time_zone, now, windowEnd);
+      const hours = JSON.parse(meetingHoursJson(db, user.id)) as WeeklyHours;
+      const own = hoursToTimeSet(hours, user.time_zone, now, windowEnd);
       window = window ? window.intersect(own) : own;
     }
   }
@@ -216,9 +236,22 @@ export function meetingItems(
     "SELECT * FROM meetings WHERE user_id = ? AND enabled = 1",
     userId,
   );
-  const items = rows.map((m) =>
-    meetingItem(db, userId, m, attendeesOf(db, m.id), now, windowEnd, lastPlannedAt, exclusions),
-  );
+  const items = rows.map((m) => {
+    const attendees = attendeesOf(db, m.id);
+    const key = attendeeHoursKey(db, userId, m, attendees);
+    if (key !== m.attendee_hours) {
+      // Not on the first plan of a meeting: nothing was placed with older hours.
+      if (m.attendee_hours !== "") m.rules_changed_at = now;
+      run(
+        db,
+        "UPDATE meetings SET attendee_hours = ?, rules_changed_at = ? WHERE id = ?",
+        key,
+        m.rules_changed_at,
+        m.id,
+      );
+    }
+    return meetingItem(db, userId, m, attendees, now, windowEnd, lastPlannedAt, exclusions);
+  });
   return { items, rows };
 }
 
@@ -280,4 +313,17 @@ export function meetingPeers(
     userId,
   ).map((r) => r.id);
   return { organizers, attendees };
+}
+
+/**
+ * Rule 11: this user's meeting hours or time zone may have changed. The
+ * organizers of meetings this user joins plan again; each run compares the
+ * hours it uses with the last ones (attendeeHoursKey) and places again on a change.
+ */
+export function wakeOrganizers(
+  db: Db,
+  sync: { request(userId: string): void },
+  userId: string,
+): void {
+  for (const id of meetingPeers(db, userId).organizers) sync.request(id);
 }
