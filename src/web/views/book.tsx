@@ -19,6 +19,8 @@ interface PublicLink {
   durations: number[];
   defaultDuration: number | null;
   location: string;
+  /** Location options; the first is the default. */
+  locations: { kind: "address" | "phone" | "custom"; value: string }[];
   questions: Question[];
   redirectUrl: string | null;
   /** One-off links: the invitee the form starts with (sharing rule 9). */
@@ -257,6 +259,11 @@ function Times({
   return (
     <div data-testid="times">
       {byDay.length === 0 && <p>No free times in these two weeks.</p>}
+      {times.some((t) => t.preferred) && (
+        <p class="status" data-testid="preferred-legend">
+          <span class="dot" aria-hidden="true" /> Preferred: the organizer has nothing else then.
+        </p>
+      )}
       {byDay.map(([date, day]) => {
         const first = day[0]?.start ?? 0;
         const events = mine.filter(
@@ -284,8 +291,11 @@ function Times({
                   data-start={t.start}
                   data-mine={overlay && busyForMe(t) ? "busy" : undefined}
                   class={t.preferred ? "preferred" : ""}
+                  data-preferred={t.preferred ? "1" : undefined}
+                  title={t.preferred ? "Preferred" : undefined}
                   onClick={() => onPick(t)}
                 >
+                  {t.preferred && <span class="dot" aria-hidden="true" />}
                   {timeText(view, t.start)}
                 </button>
               ))}
@@ -315,8 +325,11 @@ interface LinkInfo {
   oneOff: { expiresAt: number; expired: boolean } | null;
 }
 
+const LOCATION_KINDS = { address: "Address", phone: "Phone", custom: "Other" } as const;
+
 interface Booked {
   token: string;
+  location?: string;
   start: number;
   end: number;
   organizers: string[];
@@ -362,7 +375,11 @@ function Confirmation({ info, done, view }: { info: LinkInfo; done: Booked; view
         {info.link.title} {withWhom(done.organizers)}, {dayText(view, done.start)},{" "}
         {timeText(view, done.start)} to {timeText(view, done.end)} ({view.zone}).
       </p>
-      {info.link.location && <p class="status">Location: {info.link.location}</p>}
+      {(done.location ?? info.link.location) && (
+        <p class="status" data-testid="booked-location">
+          Location: {done.location ?? info.link.location}
+        </p>
+      )}
       {done.assignee && (
         <p data-testid="booked-host">
           Your meeting is with {done.assignee.name} ({done.assignee.email}).
@@ -426,15 +443,29 @@ function DetailsForm({
           email: f.get("email"),
           message: f.get("message") || undefined,
           answers,
+          cc: String(f.get("cc") ?? "")
+            .split(/[,\s]+/)
+            .map((x) => x.trim())
+            .filter(Boolean),
+          ...(info.link.locations.length > 1 ? { location: Number(f.get("location")) } : {}),
           timeZone: view.zone,
           params: [...new URLSearchParams(location.search)].filter(([k]) => k.startsWith("data-")),
         })
           .then(onDone)
           .catch((err) => {
-            if (err instanceof ApiError && err.status === 409) {
+            if (
+              err instanceof ApiError &&
+              (err.body as { error?: string } | null)?.error === "no_travel_time"
+            ) {
+              setError(
+                "This time leaves no travel time for that location. Pick another location or time.",
+              );
+            } else if (err instanceof ApiError && err.status === 409) {
               onTaken();
             } else if (err instanceof ApiError && err.status === 400) {
-              setError("Answer the required questions, and pick from the choices given.");
+              setError(
+                "Answer the required questions, pick from the choices given, and check the CC addresses.",
+              );
             } else setError("The booking failed. Please try again.");
           });
       }}
@@ -454,6 +485,22 @@ function DetailsForm({
         Your email
         <input name="email" type="email" required defaultValue={info.link.prefill?.email ?? ""} />
       </label>
+      <label class="wide">
+        CC (optional, comma list, up to 10)
+        <input name="cc" placeholder="ana@example.com, ben@example.com" />
+      </label>
+      {info.link.locations.length > 1 && (
+        <label class="wide">
+          Location
+          <select name="location">
+            {info.link.locations.map((l, i) => (
+              <option value={i} key={`${i}-${l.value}`}>
+                {LOCATION_KINDS[l.kind]}: {l.value}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
       <label class="wide">
         Message (optional)
         <textarea name="message" rows={3} />

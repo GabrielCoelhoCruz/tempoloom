@@ -17,6 +17,10 @@
 //     cancelled booking, to the organizer, or without the message.
 //  7. A booking that existed when the reminder was turned on never gets one;
 //     the setting is lost on reload.
+//  8. An email or the reminder names the link's default location instead of
+//     the one the booker chose; CC guests get no email, or an organizer in CC
+//     gets a second copy.
+import type { Page } from "@playwright/test";
 import { addDays, HOUR, MINUTE, utcToLocal } from "../../src/shared/time.ts";
 import {
   at,
@@ -239,4 +243,103 @@ test("the reminder email reaches the booker once at its time with the message; a
   expect(await mail.count("cid@example.com")).toBe(2);
   // The organizer got three "New booking" emails and one "Cancelled", no reminder.
   expect(await mail.count(EMAIL)).toBe(4);
+});
+
+/** A link "Tour" with two locations, Room A (default) and Room B, and a reminder 24 hours before. */
+async function tourLink(page: Page, pageName: string) {
+  await claimPage(page, pageName);
+  await addLink(page, { title: "Tour", durations: "30" });
+  const ed = await editLink(page, "Tour");
+  await ed.getByLabel("Location 1").fill("Room A");
+  await ed.getByRole("button", { name: "+ Add location" }).click();
+  await ed
+    .getByTestId("location-2")
+    .getByLabel("Kind")
+    .selectOption({ label: "Other (text or URL)" });
+  await ed.getByLabel("Location 2").fill("Room B");
+  await ed.getByLabel("Send a reminder email").check();
+  await ed.getByLabel("Hours before").fill("24");
+  await ed.getByLabel("Reminder message").fill("See you there.");
+  await saveLink(page);
+}
+
+/** Books Room B at `t` as Dee, with the given CC list. */
+async function bookRoomB(v: Page, t: number, cc: string) {
+  await slot(v, t).click();
+  const form = v.getByTestId("book-form");
+  await form.getByLabel("Location").selectOption({ label: "Other: Room B" });
+  if (cc) await form.getByLabel(/^CC/).fill(cc);
+  await form.getByLabel("Your name").fill("Dee");
+  await form.getByLabel("Your email").fill("dee@example.com");
+  await form.getByRole("button", { name: "Book" }).click();
+  await expect(v.getByTestId("booked-location")).toHaveText("Location: Room B");
+}
+
+test("the reminder names the location the booker chose, not the link's default (rule 21; page details form)", async ({
+  page,
+  browser,
+  cal,
+  signIn,
+  mail,
+  app,
+}) => {
+  await blockUntil(cal, W);
+  await signIn();
+  await tourLink(page, "cora");
+  const v = await visitor(browser);
+  await v.goto("/book/cora/tour");
+  const t1 = at(day(1), "10:00");
+  await bookRoomB(v, t1, "");
+  const booked = await mail.message("dee@example.com", /^Booked: Tour/);
+  expect(booked.text).toContain("Location: Room B");
+  const remind = () =>
+    app.cli("booking-reminders", "--now", new Date(t1 - 24 * HOUR + MINUTE).toISOString()).trim();
+  expect(remind()).toBe("sent 1 reminder");
+  const reminder = await mail.message("dee@example.com", /^Reminder: Tour/);
+  expect(reminder.text).toContain("See you there.");
+  expect(reminder.text).toContain("Location: Room B");
+  expect(reminder.text).not.toContain("Room A");
+  expect(remind()).toBe("sent 0 reminders");
+});
+
+test("CC guests get the booked, rescheduled and cancelled emails with the chosen location and without the booker's links; an organizer in CC gets no second copy (rule 14; page details form)", async ({
+  page,
+  browser,
+  cal,
+  signIn,
+  mail,
+}) => {
+  await blockUntil(cal, W);
+  await signIn();
+  await tourLink(page, "cyd");
+  const v = await visitor(browser);
+  await v.goto("/book/cyd/tour");
+  const t1 = at(day(1), "10:00");
+  await bookRoomB(v, t1, `Cy@Example.com, ${EMAIL.toUpperCase()}`);
+
+  const ccBooked = await mail.message("cy@example.com", /^Booked: Tour/);
+  expect(ccBooked.text).toContain("Location: Room B");
+  expect(ccBooked.text).toContain(`${hm(ZONE, t1)} to ${hm(ZONE, t1 + 30 * MINUTE)} (${ZONE})`);
+  expect(ccBooked.text).not.toContain("/book/manage/");
+  const told = await mail.message(EMAIL, /^New booking: Tour with Dee/);
+  expect(told.text).toContain("Location: Room B");
+
+  await v.getByTestId("manage-link").click();
+  await v.getByRole("button", { name: "Reschedule" }).click();
+  await slot(v, at(day(2), "11:00")).click();
+  await expect(v.getByText("Your booking has a new time.")).toBeVisible();
+  const moved = await mail.message("cy@example.com", /^Rescheduled: Tour/);
+  expect(moved.text).toContain("Location: Room B");
+  expect(moved.text).not.toContain("/book/manage/");
+  await v.reload();
+  await v.getByRole("button", { name: "Cancel booking" }).click();
+  await expect(v.getByTestId("booking-status")).toHaveText("Cancelled");
+  await mail.message("cy@example.com", /^Cancelled: Tour/);
+  await mail.message(EMAIL, /^Cancelled: Tour with Dee/);
+  await v.reload();
+  await expect(v.getByTestId("booking-status")).toHaveText("Cancelled");
+  expect(await mail.count("cy@example.com")).toBe(3);
+  expect(await mail.count("dee@example.com")).toBe(3);
+  // The organizer in CC gets the organizer's emails only.
+  expect(await mail.count(EMAIL)).toBe(3);
 });

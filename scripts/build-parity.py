@@ -7,12 +7,36 @@ Status rules:
   partial       = implemented in part, or proven by unit tests only (PARTIAL, UNIT,
                   GOOGLE_ROWS); the reason says what is missing.
   blocked       = not implemented yet, or a non-goal; the reason says which.
+
+Each row id goes into exactly one status map (E2E, PARTIAL, GOOGLE_ROWS, UNIT or
+BLOCKED). The maps record every write, and the build fails when a row was ever
+written to two of them, even if a later pop removed it from one.
 """
 import re, sys, glob, os
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 STAGING = os.path.join(ROOT, "docs/parity-src")
 OUT = os.path.join(ROOT, "docs/parity.md")
+
+# Row id -> every status map that was ever given that row. A pop does not erase it.
+WRITES = {}
+
+class StatusMap(dict):
+    """A status map that records each row it gets in WRITES."""
+    def __init__(self, name, rows):
+        super().__init__()
+        self.name = name
+        self.update(rows)
+    def __setitem__(self, row_id, value):
+        WRITES.setdefault(row_id, set()).add(self.name)
+        super().__setitem__(row_id, value)
+    def update(self, rows):
+        for row_id, value in rows.items():
+            self[row_id] = value
+    def setdefault(self, row_id, value):
+        if row_id not in self:
+            self[row_id] = value
+        return self[row_id]
 
 T = {
     "split": "places a split task in work hours and keeps it after reload and restart",
@@ -137,7 +161,7 @@ T = {
 }
 
 # Row id -> E2E test keys that prove it on CalDAV.
-E2E = {
+E2E = StatusMap("E2E", {
     1: ["t_title"], 4: ["split"], 7: ["split", "t_title"], 8: ["split"], 10: ["t_title", "t_prio"], 11: ["t_title"],
     12: ["t_start"], 13: ["t_late"], 15: ["t_notes"], 20: ["t_more"], 21: ["t_huge", "t_late"], 22: ["done", "t_more"],
     23: ["t_more"], 24: ["done"], 41: ["t_next"], 44: ["t_next"], 52: ["t_prio"], 53: ["t_prio"], 57: ["t_prio"],
@@ -209,7 +233,7 @@ E2E = {
     435: ["tl_rr", "tl_pref"], 434: ["tl_pref"], 432: ["tl_rr_org"], 767: ["bp_starter"],
     766: ["bp_dir", "dg_switch"], 423: ["bp_brand"], 570: ["bp_brand"], 571: ["wh_team"],
     930: ["wh_team", "w_flow"],
-}
+})
 
 # Row id -> how Tempoloom meets the row, when that differs from the reference's wording.
 E2E_NOTES = {
@@ -240,9 +264,7 @@ E2E_NOTES = {
 }
 
 # Row id -> reason, for rows implemented in part (some behavior has E2E, some does not).
-PARTIAL = {
-    930: "Endpoints are per user, on the Booking links page, with E2E on CalDAV (\u201cbooking, reschedule and cancel send signed requests\u201d); teams and the admin role are not implemented",
-    571: "A per-user webhooks section on the Booking links page; no team settings page yet",
+PARTIAL = StatusMap("PARTIAL", {
     934: "http on a public host is rejected in E2E; the localhost and IP-literal checks are in code but not under E2E, because the E2E server allows private receivers (WEBHOOK_ALLOW_PRIVATE)",
     936: "success on 200 and failure on 500 are E2E-proven; the 10-second timeout is not under test",
     938: "the delivery worker suspends the endpoint and the page offers Resume; not under test (needs 24 hours of failures)",
@@ -264,21 +286,12 @@ PARTIAL = {
     349: "The list is grouped by priority; no drag to reorder",
     350: "No limit in code; not under test",
     356: "Changed rules or hours place future occurrences again (engine change flag); unit tests only",
-    357: "A move keeps the notice set on the meeting (default 12 hours); unit tests only",
-    359: "A conflict is marked and listed with its reason on the meeting; no suggested times",
-    360: "Remove, or keep and mark the conflict (default); unit tests only",
-    364: "A resize in the calendar locks like a move; not under E2E for meetings",
-    367: "The planner drawer locks and unlocks any managed event (E2E for task chunks); not under E2E for meetings",
-    368: "A time edit in the calendar is kept and locks (E2E); free/busy is written back by the general drift rule, not under E2E for meetings",
-    372: "Delete removes future occurrences and the rules; no choice about guest notices",
-    374: "Unplaced and conflicting occurrences show their reason on the meeting; no shared attention list",
     764: "E2E adds Lunch at 12:00 on each workday from the library; the 11:30 to 14:00 window is not set",
     759: "E2E checks the prefilled form (personal hours, three days); the habit is not saved in that test",
     278: "The category is computed again from the cached attendees on each run; not under E2E",
     283: "Future managed events and external events from 90 days back are repainted; past managed events are not",
     284: "An event that cannot change color is skipped and painting never stops a run; not under E2E (Google)",
     285: "At most 2 scope changes a minute (E2E); no repaint-all button",
-    221: "Text, count, length, exact title, tag and category filters; category is E2E-proven; no filter by person",
     261: "Google out-of-office events are busy, so they block like any busy event; Google E2E pending",
     262: "Away time over 8 hours is vacation, shorter is personal commitment (unit tests); stats do not split it yet",
     263: "#tl_free opens a busy event to tasks and habits (E2E for a timed event); not under E2E for out of office",
@@ -290,8 +303,7 @@ PARTIAL = {
     255: "#tl_flight gives airport time and the flight category; E2E covers flight numbers in the title, not the tag",
     256: "#tl_trip gives the travel category (unit tests); no buffer is added",
     257: "#tl_focus counts an event as focus in stats; not under test",
-    385: "Booked events go to the main calendar; no choice of calendar",
-}
+})
 
 # Library entries (automations-library.md): row = 718 + entry number.
 LIB_FORM = [11, 32, 34, 35, 36, 37, 38, 39, 40, 42, 43, 44, 45]
@@ -302,7 +314,7 @@ for n in LIB_DIRECT:
     PARTIAL.setdefault(718 + n, "The library adds it with the preset (no form of its own yet); not under E2E")
 
 # Row id -> reason, for rows that cannot work yet because a feature they build on is missing.
-BLOCKED = {
+BLOCKED = StatusMap("BLOCKED", {
     718: "Needs the assistant chat, which is not implemented",
     627: "Needs the assistant chat, which is not implemented",
     630: "Not needed for parity: the reference lists these reports as coming soon (analytics-organization.md rule 16)",
@@ -316,62 +328,49 @@ BLOCKED = {
     594: "No benchmark data: the evidence gives no targets per role (teams-policies.md open question 3)",
     436: "Needs video conferencing integrations, which need vendor apps and test accounts",
     673: "The evidence names it only on the pricing page and gives no behavior to build (plans-feature-inventory.md open questions); org-chart data exists through SCIM managers",
-    768: "Needs a monthly habit frequency (habits-automation.md), which is not implemented, for the monthly reviews; the other executive routines exist as library entries (E2E: \u201ca habit entry fills the habit form\u2026\u201d) and as team habit templates (E2E: \u201cteam habit templates show at the top of every member's habits page\u2026\u201d)",
     928: "Needs the vendor's Zapier app and a Zapier account",
     929: "Needs the vendor's Zapier app and a Zapier account",
     591: "Needs the Slack app (a vendor developer app and a test workspace)",
     592: "Needs the Slack app (a vendor developer app and a test workspace)",
     688: "Needs the assistant chat, which is not implemented",
-}
+})
 for n in [5, 6, 12, 14, 15, 16, 17, 18, 20, 21, 22, 24, 31]:
     BLOCKED[718 + n] = "A prompt entry: needs the assistant chat, which is not implemented"
-for n in [4, 9]:
-    BLOCKED[718 + n] = "Needs meeting checks, which are not implemented"
-for n in [8, 26]:
-    BLOCKED[718 + n] = "Needs a meeting load cap, which is not implemented"
-BLOCKED[718 + 2] = "Needs a buffer filter by person, which is not implemented"
-BLOCKED[718 + 27] = "Needs a buffer after a run of meetings, which is not implemented"
-BLOCKED[718 + 33] = "Needs no-meeting days for meetings and booking links, which are not implemented"
 
 # Row id -> limits, for rows implemented with unit or property tests only.
-UNIT = {
+UNIT = StatusMap("UNIT", {
     9: "cooldown options are in the engine and settings, not in the UI", 27: "API only; no UI yet",
     55: "engine only; no drag UI yet", 58: "", 59: "booking-link side not implemented", 70: "",
     73: "several ranges per day; no copy-to-all", 90: "meetings, then buffers, then habits inside one level; unit tests only",
-    100: "", 109: "", 152: "engine only", 154: "", 156: "daily and weekly; monthly and custom not implemented",
+    100: "", 109: "", 154: "", 156: "daily and weekly; monthly and custom not implemented",
     161: "", 165: "", 178: "", 196: "", 197: "", 202: "", 203: "", 206: "", 208: "", 209: "", 219: "",
     225: "", 226: "API only",
-    228: "", 249: "tasks and habits honor it; meetings and booking links not implemented",
+    228: "",
     259: "title and description; not the RSVP note", 292: "settings field; no UI yet", 506: "API only",
     517: "status is stored; no reconnect UI yet",
-    383: "set through the API; the form derives the slug from the title", 384: "several durations work; the default is the first",
-    388: "", 389: "rolling days only; no fixed end date", 390: "before and after buffers; no travel or recovery buffer checks",
-    392: "a free-text location only; no Meet, Zoom or Gong", 398: "busy event with the booker as guest and manage link; no conference link",
-    408: "", 411: "", 412: "the page marks preferred times; no legend yet", 415: "",
-    420: "name, email and message; no CC, questions or location choice",
-    450: "calendars of one account; several accounts not tested", 455: "toggle works; no throttle warning",
-    456: "", 457: "deletes at once; no confirmation dialog", 467: "", 468: "API only; no UI switch",
+    456: "", 467: "", 468: "API only; no UI switch",
     470: "", 471: "stored per policy; no UI", 472: "", 473: "the skip half is E2E-proven; free copies in details mode are not",
-    475: "", 476: "copies the details; the provider visibility is not set to private", 480: "", 490: "",
+    475: "", 476: "copies the details; the provider visibility is not set to private", 480: "",
     193: "work and personal habit hours in stats; no per-habit progress", 353: "one-to-one, group and booked meeting hours",
-    596: "personal stats only; no team tab", 604: "meetings outside work hours and personal habit hours",
-    606: "one-to-one and group split; no heaviest or lightest weekday", 607: "meetings, focus and booking counts; no breaks or travel",
+    604: "meetings outside work hours and personal habit hours",
+    607: "meetings, focus and booking counts; no breaks or travel",
     704: "phase tabs E2E-proven; reset not covered by E2E", 708: "sound on or off; one alarm sound", 712: "today's summary only",
     60: "this event or the whole series; E2E covers a single event", 61: "only main-calendar events can change", 297: "",
     298: "only main-calendar events can change", 238: "a fixed 30 minutes; no setting yet",
     243: "travel buffers follow their event; a manual length is not kept", 244: "",
-}
+})
 
-GOOGLE_ROWS = {
+GOOGLE_ROWS = StatusMap("GOOGLE_ROWS", {
     638: "Google sign-in is implemented and follows the team's SSO rules; Google E2E pending (needs a Google OAuth client and account). Microsoft sign-in is not implemented: it needs an app registration and a Microsoft Graph provider.",
     510: "Google sign-in (OAuth with PKCE) and Google Calendar sync are implemented; Google E2E pending: needs a service-account key, and the consent screen needs a one-time check by a person. Microsoft is not implemented.",
     513: "Google and CalDAV accounts can be connected; a second CalDAV account is added in the UI with CalDAV E2E (\u201ca user adds a second CalDAV account and removes it after a confirmation\u201d); Microsoft is not implemented. Google E2E pending.",
     147: "Google sign-in asks for calendar scopes up front; incremental consent not implemented. Google E2E pending.",
     518: "All calendar scopes are asked at sign-in; incremental consent not implemented. Google E2E pending.",
-}
+})
 
 # Round 3 rows. Each block adds rows with T.update, E2E.update, E2E_NOTES.update,
-# PARTIAL.update and BLOCKED.update. E2E wins over PARTIAL, UNIT and BLOCKED (see status()).
+# PARTIAL.update and BLOCKED.update. A row goes into one status map only; to move a row,
+# delete it from the map where it was (a pop is not enough: check_one_map_per_row fails).
 
 # --- s1: automations and event settings ---
 T.update({
@@ -424,9 +423,7 @@ E2E_NOTES.update({
     304: "The list is its own Automations page; types without a priority show in a Meeting quality section, empty until meeting checks exist",
 })
 PARTIAL.update({
-    299: "Habit, focus time, buffer and flexible meeting automations share the list, its groups and its type filter (E2E: \u201cthe automation list shows habits, flexible meetings\u2026\u201d); the meeting overload and meeting check types come from their own streams and join the list's type table",
     301: "From the library and from the top-bar create menu (E2E: \u201ca library entry opens the shared form\u2026\u201d, \u201cthe automation list shows habits\u2026\u201d); asking the assistant chat needs the chat, which is not implemented",
-    282: "Habit, focus time, buffer and task colors override the category color (E2E: \u201ca habit writes its emoji\u2026\u201d, \u201ca task color overrides the category color\u2026\u201d); a mirroring policy color is not built on this branch",
     245: "Travel and airport buffers start public, with the travel marker (E2E: \u201ctask chunks, habits and flexible meetings get the calendar default reminder\u2026\u201d); mirroring skips every managed event, while mirroring rule 15 skips only copies, so no copy of a travel buffer exists to follow a policy",
 })
 for n in [1, 7, 10, 19, 23, 28, 29, 30]:
@@ -680,9 +677,6 @@ E2E_NOTES.update({
     440: "The lifetime is an instance setting (ONEOFF_LINK_DAYS, default 30); the test checks the 30-day date, then restarts the server with 0 days to show the expired page",
     443: "LinkedIn, X and Facebook through their public share URLs; no vendor API",
 })
-PARTIAL.update({
-    420: "Name, email, message and screening questions are E2E-proven on CalDAV (\u201cscreening questions keep their order\u2026\u201d); no CC list or location choice",
-})
 # --- end s6 ---
 
 # --- s7: preview mode, MCP, stats and support ---
@@ -748,7 +742,6 @@ E2E_NOTES.update({
     299: "Meeting overload ranks in P4 with focus time; one Meeting quality entry per built-in check (turn off or on, no remove) and per company check (admins only)",
     304: "The list is its own Automations page; the meeting checks, which have no priority, show in a Meeting quality section below the groups",
 })
-PARTIAL.pop(299, None)
 # --- end s8 ---
 
 # --- merge: rows that need the work of more than one stream ---
@@ -780,29 +773,100 @@ for n in [664, 665, 666, 667, 668]:
     BLOCKED[n] = "The pricing page names it and gives no behavior to build (plans-feature-inventory.md open questions); it also needs meeting notes, transcripts or a room provider"
 # --- end merge ---
 
+# --- U07: flexible meeting limits and actions, booking link settings ---
+T.update({
+    "u7_notice": "the move notice: an automatic move never starts sooner than the notice after the move, and a meeting with notice 0 takes the nearest time",
+    "u7_notime": "with no time in a period, 'remove' leaves the period empty and 'keep' keeps the occurrence at its time as a marked conflict; both say why in the meeting and in the attention list, and the next period is placed",
+    "u7_manual": "manual actions: lock and unlock from the planner hold and free an occurrence; a resize in the calendar is kept and locks; a title edit is kept, a free/busy edit is written back",
+    "u7_delete": "delete asks first: with email the guests get the cancelled times, without email they get nothing; both remove every future occurrence and the rules",
+    "u7_url": "URL names: a title in use gets -2; the owner renames the URL, the old one stops working and a name in use is refused; up to 3 durations with a default that the page preselects",
+    "u7_range": "notice and range: no time inside the notice; the last day is a fixed date or today plus the rolling days; both survive a reload",
+    "u7_buffers": "buffers: times that leave no buffer before or after a busy event are not offered; at an address the travel time stays free while the link keeps it, and not after it is turned off",
+    "u7_locations": "locations, CC and calendar: the booker chooses one of the link's locations and adds CC guests; the busy event goes to the chosen calendar with the location, guests and manage links, and keeps them on reschedule",
+    "u7_focus": "placed focus time is offered by a P1 link only",
+    "u7_preferred": "preferred times: a time with nothing else on the calendar has a green dot and the legend explains it; a time over a free event is offered without the dot",
+    "u7_travel_kind": "travel time follows the kind of the chosen location: an address keeps it free with or without commas, other text with commas does not, and a booker who picks the address is held to it",
+    "u7_calendar_kept": "the calendar for booked events is kept when the editor saves while the calendar list cannot load",
+    "u7_reminder_loc": "the reminder names the location the booker chose, not the link's default",
+    "u7_cc_mail": "CC guests get the booked, rescheduled and cancelled emails with the chosen location and without the booker's links; an organizer in CC gets no second copy",
+    "u7_delete_series": "delete on rules attached to an existing series offers no cancel email: the series stays on the calendar and the guests get nothing",
+})
+E2E.update({
+    357: ["u7_notice"],
+    359: ["s5_limit"],
+    360: ["u7_notime", "s5_daily"],
+    367: ["u7_manual"],
+    372: ["u7_delete", "u7_delete_series"],
+    374: ["u7_notime"],
+    383: ["u7_url"],
+    384: ["u7_url"],
+    385: ["u7_locations", "u7_calendar_kept"],
+    388: ["u7_range"],
+    389: ["u7_range"],
+    390: ["u7_buffers", "u7_travel_kind", "tl_recovery"],
+    408: ["u7_focus"],
+    412: ["u7_preferred"],
+    420: ["u7_locations", "u7_travel_kind", "u7_cc_mail", "u7_reminder_loc", "s6_questions", "s6_emails"],
+})
+E2E_NOTES.update({
+    359: "The flag shows on the meeting in the Meetings page with up to 3 suggested times",
+    372: "Tempoloom sends the cancel email itself, because it writes calendars without the provider's guest emails; it needs SMTP_URL, and without it the page offers no email. Rules attached to an existing series leave the series on the calendar, so that delete offers no cancel email",
+    374: "The attention list is at the top of the Meetings page",
+    389: "The date replaces the rolling days; it is not limited to 100 days",
+    390: "Recovery buffers: \u201ca team link keeps the longest recovery buffer among its organizers free\u201d; travel time uses the person's travel buffer automations and applies when the chosen or default location option is of kind address",
+    420: "CC guests are invited to the event and get the booked, rescheduled and cancelled emails (they need SMTP_URL); the location choice shows when the link has several",
+})
+PARTIAL.update({
+    364: "A resize of one occurrence in the calendar is kept and locks it, with full UI E2E on CalDAV (\u201c" + T["u7_manual"] + "\u201d); a resize of the following or all occurrences of a series does not change the meeting's duration yet",
+    368: "Title and time edits in the calendar are kept and free/busy is written back, with full UI E2E on CalDAV (\u201c" + T["u7_manual"] + "\u201d); privacy is not written back, because meetings have no visibility setting yet (row 342)",
+})
+BLOCKED.update({
+    392: "Meet, Zoom and Gong options need the vendors' developer apps and test accounts (integrations-video-conferencing.md). The other options have full UI E2E on CalDAV: address, phone and other (text or URL), with a default and the booker's choice (\u201c" + T["u7_locations"] + "\u201d)",
+    398: "A conference link needs Meet or Zoom, which need the vendors' developer apps and test accounts. The rest has full UI E2E on CalDAV: a busy event with the booker and CC guests invited, the chosen location and the manage links (\u201c" + T["u7_locations"] + "\u201d; \u201c" + T["b_book"] + "\u201d)",
+})
+# --- end U07 ---
+
 GOOGLE_PENDING = "Google E2E pending: the service-account key is not available yet (1Password token missing)."
 
+def e2e_status(row_id, tests):
+    tests = "; ".join(f"\u201c{T[k]}\u201d" for k in tests)
+    note = f" {E2E_NOTES[row_id]}." if row_id in E2E_NOTES else ""
+    return "done (CalDAV)", f"Full UI E2E passes on CalDAV (Radicale): {tests}.{note} Google Calendar run pending (service-account key)."
+
+def unit_status(row_id, extra):
+    return "partial", "Implemented; unit or property tests only, no E2E yet." + (f" Limits: {extra}." if extra else "")
+
+# The status maps and how each one writes its row. status() and check_one_map_per_row()
+# both use this list, so a new map is checked as soon as it gives a status.
+STATUS_MAPS = [
+    (E2E, e2e_status),
+    (PARTIAL, lambda row_id, reason: ("partial", f"{reason}.")),
+    (GOOGLE_ROWS, lambda row_id, reason: ("partial", reason)),
+    (UNIT, unit_status),
+    (BLOCKED, lambda row_id, reason: ("blocked", f"{reason}.")),
+]
+
 def status(row_id, spec_file, notes):
-    if row_id in E2E:
-        tests = "; ".join(f"\u201c{T[k]}\u201d" for k in E2E[row_id])
-        note = f" {E2E_NOTES[row_id]}." if row_id in E2E_NOTES else ""
-        return "done (CalDAV)", f"Full UI E2E passes on CalDAV (Radicale): {tests}.{note} Google Calendar run pending (service-account key)."
-    if row_id in PARTIAL:
-        return "partial", f"{PARTIAL[row_id]}."
-    if row_id in GOOGLE_ROWS:
-        return "partial", GOOGLE_ROWS[row_id]
-    if row_id in UNIT:
-        extra = UNIT[row_id]
-        return "partial", "Implemented; unit or property tests only, no E2E yet." + (f" Limits: {extra}." if extra else "")
-    if row_id in BLOCKED:
-        return "blocked", f"{BLOCKED[row_id]}."
+    for m, row_status in STATUS_MAPS:
+        if row_id in m:
+            return row_status(row_id, m[row_id])
     if "non-goal" in notes.lower():
         return "blocked", "Non-goal by decision (billing, payments or mobile apps)."
     if spec_file.startswith("integrations-"):
         return "blocked", "Not implemented yet; needs the vendor's developer app and a test account."
     return "blocked", "Not implemented yet."
 
+def check_one_map_per_row():
+    order = [m.name for m, _ in STATUS_MAPS]
+    assert set().union(*WRITES.values()) <= set(order), "a StatusMap is missing from STATUS_MAPS"
+    dups = {r: [n for n in order if n in names] for r, names in WRITES.items() if len(names) > 1}
+    if dups:
+        for r in sorted(dups):
+            print(f"row {r} is in more than one status map: {', '.join(dups[r])}", file=sys.stderr)
+        sys.exit(f"{len(dups)} rows are in more than one status map; keep each row in one map")
+
 def main():
+    check_one_map_per_row()
     files = sorted(glob.glob(f"{STAGING}/parity-[A-F]-*.md"))
     rows, n = [], 0
     for f in files:

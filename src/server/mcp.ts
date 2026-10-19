@@ -39,7 +39,7 @@ const NO_DUE = 9e15;
 
 /**
  * One page of list_tasks: due first, tasks without a due date last, after the
- * key (due key, created_at, id). The index tasks_due_page (migration 27) has
+ * key (due key, created_at, id). The index tasks_due_page (migration 28) has
  * this due key expression; the first bound seeks in it, the row value breaks ties.
  */
 export const TASKS_PAGE = `SELECT id, title, level, total_minutes, due_at, status, created_at FROM tasks

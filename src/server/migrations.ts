@@ -1143,7 +1143,22 @@ export const MIGRATIONS: readonly string[] = [
   `
   ALTER TABLE meeting_overloads ADD COLUMN rank INTEGER NOT NULL DEFAULT 0;
   `,
-  // 27: the MCP list_tasks pages (assistant-mcp-server.md): due first, no due date
+  // 27: booking link end date, target calendar, travel buffer and location
+  // options; a booking's CC list and chosen location (booking-links.md).
+  // An old location text becomes one custom option, so it needs no travel
+  // time; travel time stays on by default (the spec default) and applies once
+  // the owner marks an option as an address.
+  `
+  ALTER TABLE booking_links ADD COLUMN range_end_date TEXT;
+  ALTER TABLE booking_links ADD COLUMN calendar_id TEXT;
+  ALTER TABLE booking_links ADD COLUMN use_travel_buffer INTEGER NOT NULL DEFAULT 1;
+  ALTER TABLE booking_links ADD COLUMN locations TEXT NOT NULL DEFAULT '[]';
+  ALTER TABLE bookings ADD COLUMN cc TEXT NOT NULL DEFAULT '[]';
+  ALTER TABLE bookings ADD COLUMN location TEXT;
+  UPDATE booking_links SET locations = json_array(json_object('kind', 'custom', 'value', location))
+    WHERE location <> '';
+  `,
+  // 28: the MCP list_tasks pages (assistant-mcp-server.md): due first, no due date
   // last. The expression must stay the one in TASKS_PAGE (src/server/mcp.ts).
   `
   CREATE INDEX tasks_due_page ON tasks(user_id, status, COALESCE(due_at, 9000000000000000), created_at, id);

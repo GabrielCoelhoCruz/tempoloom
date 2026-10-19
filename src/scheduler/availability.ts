@@ -16,6 +16,8 @@ export interface TeamRules {
   noticeMinutes: number;
   /** Last bookable day: today plus this many days. */
   rangeEndDays: number;
+  /** A fixed last bookable date (YYYY-MM-DD) instead of the rolling days. */
+  rangeEndDate?: string | null;
   bufferBeforeMinutes: number;
   bufferAfterMinutes: number;
   maxPerDay: number | null;
@@ -36,6 +38,9 @@ export interface Person {
   items: CalendarItem[];
   /** Minutes after a booked meeting that this person's recovery buffer needs (0: none or off). */
   recoveryMinutes: number;
+  /** Travel time this person needs before and after a meeting at an address (rule 10). */
+  travelBeforeMinutes?: number;
+  travelAfterMinutes?: number;
   /** Minutes of the hour this person's meetings may start at, in `zone` (meetings-start-intervals.md rule 3). */
   startMinutes?: number[];
 }
@@ -85,6 +90,8 @@ interface Checked {
   blocking: Interval[];
   all: Interval[];
   recovery: number;
+  travelBefore: number;
+  travelAfter: number;
   /** True when a start's local minute of the hour is allowed. */
   startOk: (t: number) => boolean;
 }
@@ -115,7 +122,13 @@ export function teamOffers(
   if (required.length === 0 && pool.length === 0) return [];
   const len = rules.durationMinutes * MINUTE;
   const today = utcToLocal(rules.zone, now).date;
-  const rangeEnd = localToUtc(rules.zone, addDays(today, rules.rangeEndDays + 1), 0);
+  const rangeEnd = localToUtc(
+    rules.zone,
+    rules.rangeEndDate
+      ? addDays(rules.rangeEndDate as typeof today, 1)
+      : addDays(today, rules.rangeEndDays + 1),
+    0,
+  );
   const earliest = Math.max(from, now + rules.noticeMinutes * MINUTE);
   const latest = Math.min(to, rangeEnd);
   if (latest <= earliest) return [];
@@ -131,6 +144,8 @@ export function teamOffers(
       blocking: relevant.filter(blocks),
       all: relevant,
       recovery: p.recoveryMinutes,
+      travelBefore: p.travelBeforeMinutes ?? 0,
+      travelAfter: p.travelAfterMinutes ?? 0,
       startOk: startCheck(p),
     };
   };
@@ -164,12 +179,16 @@ export function teamOffers(
     const e = s + len;
     if (rules.maxPerDay !== null && (perDay.get(dayKey(s)) ?? 0) >= rules.maxPerDay) continue;
     if (rules.maxPerWeek !== null && (perWeek.get(weekKey(s)) ?? 0) >= rules.maxPerWeek) continue;
-    const before = s - rules.bufferBeforeMinutes * MINUTE;
-    // The recovery buffer after the slot uses the longest one among the people (rule 10).
+    // The recovery buffer after the slot uses the longest one among the people;
+    // travel time is each person's own (rule 10).
     const passes = (p: Checked, recovery: number) =>
       p.startOk(s) &&
       p.hours.contains({ start: s, end: e }) &&
-      !overlaps(p.blocking, before, e + Math.max(rules.bufferAfterMinutes, recovery) * MINUTE);
+      !overlaps(
+        p.blocking,
+        s - Math.max(rules.bufferBeforeMinutes, p.travelBefore) * MINUTE,
+        e + Math.max(rules.bufferAfterMinutes, recovery, p.travelAfter) * MINUTE,
+      );
     const clear = (p: Checked) => !overlaps(p.all, s, e);
     if (members.length === 0) {
       if (!req.every((p) => passes(p, requiredRecovery))) continue;
