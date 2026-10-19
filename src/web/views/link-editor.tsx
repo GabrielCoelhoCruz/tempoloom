@@ -448,7 +448,10 @@ export function LinkEditor({
   const [pool, setPool] = useState<PoolMember[]>(link.pool);
   const [questions, setQuestions] = useState<QuestionDraft[]>(() => toDrafts(link.questions));
   const [pageChoice, setPageChoice] = useState(link.page);
-  const [locations, setLocations] = useState<LocationOption[]>(link.locations);
+  // One empty row to start with, so a link without locations shows the field.
+  const [locations, setLocations] = useState<LocationOption[]>(
+    link.locations.length > 0 ? link.locations : [{ kind: "custom", value: "" }],
+  );
   const [calendars, setCalendars] = useState<{ id: string; name: string; email: string }[]>([]);
   useEffect(() => {
     void api<{ calendars: { id: string; name: string; email: string; writable: number }[] }>(
