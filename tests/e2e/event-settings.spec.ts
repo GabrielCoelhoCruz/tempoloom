@@ -336,3 +336,57 @@ test("a task color overrides the category color of its chunks, in every plan run
   await planNow(page);
   expect(colors(await week(cal))).toEqual({ red: ["11"], plain: ["2"] });
 });
+
+test("a habit's category decides its stats group and whether it counts toward focus time (habits concepts: category)", async ({
+  page,
+  cal,
+  signIn,
+}) => {
+  await blockUntil(cal, W);
+  await signIn();
+  // A personal habit inside work hours.
+  await page.getByRole("link", { name: "Habits" }).click();
+  const form = page.getByTestId("habit-form");
+  await form.getByLabel("Title").fill("Gym");
+  await form.getByLabel("Ideal time").fill("10:00");
+  await form.getByLabel("Shortest (minutes)").fill("60");
+  await form.getByLabel("Longest (minutes)").fill("60");
+  await fillEventSettings(form, { category: "Personal" });
+  await form.getByRole("button", { name: "Add habit" }).click();
+  await expect(page.locator('[data-habit-title="Gym"]')).toBeVisible();
+  const focus = await create(page, "Focus time");
+  await focus.getByLabel("Title").fill("Focus");
+  await focus.getByLabel("Weekly goal (hours)").fill("5");
+  await focus.getByLabel("Daily maximum (hours)").fill("1");
+  await focus.getByLabel("Shortest block (minutes)").fill("60");
+  await focus.getByLabel("Longest block (minutes)").fill("60");
+  await save(focus);
+  const focusMinutes = (l: Evs) => minutes(titled(l, "Focus"));
+  // The personal habit does not count: each day gets its hour of focus.
+  await eventually(
+    () => week(cal),
+    (l) => {
+      expect(titled(l, "Gym")).toHaveLength(5);
+      expect(focusMinutes(l)).toBe(300);
+    },
+  );
+  const stats = async (group: "personalHabits" | "workHabits") => {
+    await page.getByRole("link", { name: "Stats" }).click();
+    await page.getByLabel("From").fill(W);
+    await page.getByLabel("To").fill(addDays(W, 6));
+    await expect(page.getByTestId(`stat-${group}`)).toHaveText("5 h");
+  };
+  await stats("personalHabits");
+
+  // As a work habit it fills the daily focus maximum itself.
+  const gym = await edit(page, "Gym");
+  await fillEventSettings(gym, { category: "Work" });
+  await save(gym);
+  await eventually(
+    () => week(cal),
+    (l) => expect(focusMinutes(l)).toBe(0),
+  );
+  await stats("workHabits");
+  await page.reload();
+  await expect(page.getByTestId("stat-workHabits")).toHaveText("5 h");
+});
