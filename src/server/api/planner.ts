@@ -7,7 +7,7 @@ import { all, type Db, one, run } from "../db.ts";
 import { jsonBody, notFound } from "../http.ts";
 import { type CachedEvent, categoryContext, externalCategory } from "../planner/categories.ts";
 import { withState } from "../planner/markers.ts";
-import { MANAGED_PROP, type ManagedRow, rowWrite } from "../planner/push.ts";
+import { KEY_PROP, MANAGED_PROP, type ManagedRow, rowWrite } from "../planner/push.ts";
 import { getSettings } from "../settings.ts";
 import { cacheEvent } from "../sync/pull.ts";
 import type { SyncService } from "../sync/service.ts";
@@ -18,15 +18,14 @@ export interface PlannerEvent {
   category?: Category;
   /** The category the user chose for this event, if any (rule 4). */
   manualCategory: Category | null;
-  /** External events: the stored priority (1 when never lowered) and whether it can change. */
+  /** External events: the stored priority (1 when never lowered). */
   level?: number;
-  levelEditable?: boolean;
+  /** Why the priority of an external event cannot change; absent when it can. */
+  levelFixed?: "booking-link" | "mirror-copy" | "other-calendar";
   recurring?: boolean;
   /** External events: the calendar name and the calendars that hold its mirror copies (mirroring rule 33). */
   calendar?: string;
   copies?: string[];
-  /** External events: on the main calendar; others stay P1 (mirroring rule 34). */
-  mainCalendar?: boolean;
   start: number;
   end: number;
   title: string;
@@ -55,12 +54,12 @@ export function plannerEvents(db: Db, userId: string, from: number, to: number):
       busy: number;
       all_day: number;
       private_props: string;
-      is_primary: number;
+      main: number;
       calendar_name: string;
     }
   >(
     db,
-    `SELECT e.*, c.is_primary, c.name AS calendar_name
+    `SELECT e.*, (a.is_main = 1 AND c.is_primary = 1) AS main, c.name AS calendar_name
      FROM events e JOIN calendars c ON c.id = e.calendar_id JOIN accounts a ON a.id = c.account_id
      WHERE a.user_id = ? AND c.check_availability = 1 AND e.end_ms > ? AND e.start_ms < ?
      ORDER BY e.start_ms`,
@@ -113,7 +112,8 @@ export function plannerEvents(db: Db, userId: string, from: number, to: number):
   }
   for (const e of external) {
     if (e.all_day) continue;
-    if ((JSON.parse(e.private_props) as Record<string, string>)[MANAGED_PROP] === "1") continue;
+    const props = JSON.parse(e.private_props) as Record<string, string>;
+    if (props[MANAGED_PROP] === "1") continue;
     out.push({
       id: `ext:${e.calendar_id}:${e.event_id}`,
       category: externalCategory(cats, e),
@@ -131,16 +131,24 @@ export function plannerEvents(db: Db, userId: string, from: number, to: number):
         levels.get(`${e.calendar_id}:${e.event_id}`) ??
         (e.recurring_id ? levels.get(`${e.calendar_id}:${e.recurring_id}`) : undefined) ??
         1,
-      levelEditable:
-        e.is_primary === 1 &&
-        (JSON.parse(e.private_props) as Record<string, string>).tl_booking !== "1",
+      ...levelRule(e.main === 1, props),
       recurring: e.recurring_id !== null,
       calendar: e.calendar_name,
-      mainCalendar: e.is_primary === 1,
       copies: copiedTo.get(`${e.calendar_id}:${e.event_id}`) ?? [],
     });
   }
   return out.sort((a, b) => a.start - b.start || a.id.localeCompare(b.id));
+}
+
+/**
+ * External priority rule 4, booking rule 11 and mirroring rule 34: why the level
+ * of an external event cannot change.
+ */
+function levelRule(main: boolean, props: Record<string, string>): Pick<PlannerEvent, "levelFixed"> {
+  if (props.tl_booking === "1") return { levelFixed: "booking-link" };
+  if (props[KEY_PROP]?.startsWith("mirror:")) return { levelFixed: "mirror-copy" };
+  if (!main) return { levelFixed: "other-calendar" };
+  return {};
 }
 
 export function plannerRoutes(db: Db, sync: SyncService, now: () => number): Hono<AppEnv> {
@@ -254,19 +262,20 @@ export function plannerRoutes(db: Db, sync: SyncService, now: () => number): Hon
       c,
       z.object({ level: z.number().int().min(1).max(4), series: z.boolean().default(false) }),
     );
-    const ev = one<{ recurring_id: string | null; is_primary: number; private_props: string }>(
+    const ev = one<{ recurring_id: string | null; main: number; private_props: string }>(
       db,
-      `SELECT e.recurring_id, e.private_props, c.is_primary FROM events e JOIN calendars c ON c.id = e.calendar_id
+      `SELECT e.recurring_id, e.private_props, (a.is_main = 1 AND c.is_primary = 1) AS main FROM events e JOIN calendars c ON c.id = e.calendar_id
        JOIN accounts a ON a.id = c.account_id WHERE a.user_id = ? AND e.calendar_id = ? AND e.event_id = ?`,
       user.id,
       c.req.param("calendarId"),
       c.req.param("eventId"),
     );
     if (!ev) notFound("event");
-    if (!ev.is_primary) return c.json({ error: "not_main_calendar" }, 400);
-    // Mirroring rule 34: a copy stays P1.
-    if ((JSON.parse(ev.private_props) as Record<string, string>)[MANAGED_PROP] === "1")
-      return c.json({ error: "managed_event" }, 400);
+    const fixed = levelRule(
+      ev.main === 1,
+      JSON.parse(ev.private_props) as Record<string, string>,
+    ).levelFixed;
+    if (fixed) return c.json({ error: "level_fixed", reason: fixed }, 400);
     const target = series && ev.recurring_id ? ev.recurring_id : c.req.param("eventId");
     run(
       db,

@@ -9,6 +9,7 @@ import {
   allEvents,
   book,
   claimPage,
+  openWeek,
   slot,
   titled,
   visitor,
@@ -67,6 +68,12 @@ test("a visitor books a time without signing in; the event lands on the calendar
   await expect(slot(v, at(W, "09:00"))).toHaveCount(0);
   await page.reload();
   await expect(page.getByTestId("booking-list")).toContainText("Bea Booker");
+  // The booked meeting stays P1, and the planner says why.
+  await openWeek(page);
+  await page.locator(".ev-external", { hasText: "Intro call with Bea Booker" }).click();
+  const fixed = page.getByTestId("external-priority-fixed");
+  await expect(fixed.getByLabel("Priority for booking links")).toBeDisabled();
+  await expect(fixed).toContainText("Meetings booked through a booking link stay P1");
 });
 
 test("link priority decides which managed time it offers (availability rule 12)", async ({

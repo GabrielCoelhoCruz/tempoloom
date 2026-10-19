@@ -296,7 +296,6 @@ PARTIAL = StatusMap("PARTIAL", {
     262: "Away time over 8 hours is vacation, shorter is personal commitment (unit tests); stats do not split it yet",
     263: "#tl_free opens a busy event to tasks and habits (E2E for a timed event); not under E2E for out of office",
     265: "Any connected calendar that counts for availability blocks its busy events (E2E); no holiday calendar of its own",
-    56: "Inside one level and rank: meetings, then buffers, then habits, then tasks; unit tests only",
     242: "The planner can set any event's category to flight (E2E for the control); airport time still follows the title or #tl_flight",
     253: "#tl_busy makes any free event block tasks and habits (E2E); no quick-block action",
     254: "#tl_travel makes the travel buffer wrap an event without an address; not under E2E",
@@ -339,10 +338,7 @@ for n in [5, 6, 12, 14, 15, 16, 17, 18, 20, 21, 22, 24, 31]:
 
 # Row id -> limits, for rows implemented with unit or property tests only.
 UNIT = StatusMap("UNIT", {
-    9: "cooldown options are in the engine and settings, not in the UI", 27: "API only; no UI yet",
-    55: "engine only; no drag UI yet", 58: "", 59: "booking-link side not implemented", 70: "",
-    73: "several ranges per day; no copy-to-all", 90: "meetings, then buffers, then habits inside one level; unit tests only",
-    100: "", 109: "", 154: "", 156: "daily and weekly; monthly and custom not implemented",
+    154: "", 156: "daily and weekly; monthly and custom not implemented",
     161: "", 165: "", 178: "", 196: "", 197: "", 202: "", 203: "", 206: "", 208: "", 209: "", 219: "",
     225: "", 226: "API only",
     228: "",
@@ -355,7 +351,7 @@ UNIT = StatusMap("UNIT", {
     604: "meetings outside work hours and personal habit hours",
     607: "meetings, focus and booking counts; no breaks or travel",
     704: "phase tabs E2E-proven; reset not covered by E2E", 708: "sound on or off; one alarm sound", 712: "today's summary only",
-    60: "this event or the whole series; E2E covers a single event", 61: "only main-calendar events can change", 297: "",
+    297: "",
     298: "only main-calendar events can change", 238: "a fixed 30 minutes; no setting yet",
     243: "travel buffers follow their event; a manual length is not kept", 244: "",
 })
@@ -364,7 +360,6 @@ GOOGLE_ROWS = StatusMap("GOOGLE_ROWS", {
     638: "Google sign-in is implemented and follows the team's SSO rules; Google E2E pending (needs a Google OAuth client and account). Microsoft sign-in is not implemented: it needs an app registration and a Microsoft Graph provider.",
     510: "Google sign-in (OAuth with PKCE) and Google Calendar sync are implemented; Google E2E pending: needs a service-account key, and the consent screen needs a one-time check by a person. Microsoft is not implemented.",
     513: "Google and CalDAV accounts can be connected; a second CalDAV account is added in the UI with CalDAV E2E (\u201ca user adds a second CalDAV account and removes it after a confirmation\u201d); Microsoft is not implemented. Google E2E pending.",
-    147: "Google sign-in asks for calendar scopes up front; incremental consent not implemented. Google E2E pending.",
     518: "All calendar scopes are asked at sign-in; incremental consent not implemented. Google E2E pending.",
 })
 
@@ -518,7 +513,6 @@ E2E_NOTES.update({
 })
 PARTIAL.update({
     76: "Habits have item-specific hours (E2E on CalDAV: \u201ca habit with item-specific hours is placed in them\u2026\u201d); focus time, flexible meetings and booking links do not offer them yet",
-    78: "The hours page shows the zone that hours apply in, and an active trip (E2E on CalDAV: \u201ca browser that reports UTC gets a warning\u2026\u201d); reading the zone from the Google Calendar setting needs a Google account",
 })
 # --- end s3 ---
 
@@ -709,8 +703,8 @@ E2E_NOTES.update({
     175: "Staged while preview mode is on; with preview mode off a habit save applies at once",
     303: "Staged while preview mode is on; the impact is the difference between the plan now and the plan with the change",
     693: "CalDAV servers need not deliver invitations, so Tempoloom sends each guest one email at apply",
-    697: "Streamable HTTP at /mcp; a personal API key is the bearer token, not OAuth",
-    698: "The E2E calls list_events, find_free_time, get_week_summary and get_meeting_context; list_tasks, list_automations and get_stats exist but are not under E2E",
+    697: "Streamable HTTP at /mcp; a personal API key is the bearer token, not OAuth. Per-tool hints (apply_staged_changes is destructive), output schemas and cursor pages are unit-tested (tests/unit/mcp.test.ts), not under E2E",
+    698: "The E2E calls list_events, find_free_time, get_week_summary and get_meeting_context; list_tasks, list_automations, list_staged_changes and get_stats have unit tests only (tests/unit/mcp.test.ts)",
     663: "An instance setting (MCP_WRITE_ENABLED); Tempoloom has no tiers",
     539: "CalDAV event links; a Google edit link is read too but not under E2E",
     541: "Tempoloom's own change log, shown in the event lookup; the Google Workspace audit log is outside Tempoloom",
@@ -718,6 +712,7 @@ E2E_NOTES.update({
     606: "Totals per meeting category over the range, with the busiest and lightest weekday",
 })
 PARTIAL.update({
+    700: "The account page gives the server URL and the API key steps for any MCP client (E2E: \u201can MCP client with an API key reads\u2026\u201d checks the URL); no guide per product (ChatGPT, Claude, Cursor), which integrations-ai-tools.md owns",
     610: "Planned time (the calendar when each day began, from Tempoloom's change log) and actual time (what stayed) show on the stats page; unit tests only, because an E2E run cannot pass a day boundary; logged time is not added",
     634: "The facts (busiest meeting day, longest focus session, booked meetings, breaks, people met) show on the stats page for any range (E2E: \u201cstats split deep and shallow work\u2026\u201d); the weekly report email itself is not built",
 })
@@ -768,10 +763,52 @@ for n in [446, 447]:
 for n in [268, 293]:
     BLOCKED[n] = "Needs the Slack app (a vendor developer app and a test workspace)"
 BLOCKED[344] = "Needs the vendor apps of third-party agenda tools (Docs notes, Lattice, Fellow)"
-BLOCKED[700] = "Setup guides for vendor AI apps belong to integrations-ai-tools.md; the MCP server they connect to is built (rows 697 to 699)"
 for n in [664, 665, 666, 667, 668]:
     BLOCKED[n] = "The pricing page names it and gives no behavior to build (plans-feature-inventory.md open questions); it also needs meeting notes, transcripts or a room provider"
 # --- end merge ---
+
+# --- U03: core planning ---
+T.update({
+    "u03_spacing": "the time between chunks of a task is a setting: once a day puts each chunk on its own day, 2 hours keeps a 2-hour gap",
+    "u03_calendar": "each hours set has a calendar for task chunks; chunks of tasks in that set go there",
+    "u03_calendar_keep": "a new calendar for task chunks moves placed chunks there at the same times and saves no hours; a calendar that is not the user's is refused",
+    "u03_order": "inside one level meetings go first, then habits, then tasks; a higher level goes before all of them",
+    "u03_urgency": "the urgency setting decides whether a low task that is short of time goes first",
+    "u03_urgency_48": "with the 48-hour urgency mode a low task due within 48 hours goes up one level, a task due later does not",
+    "u03_focus": "focus time goes after a P4 task, keeps the free/busy status set on it, and counts as P2 for booking links",
+    "u03_focus_near": "free focus time stays free inside the 12 hours before it starts",
+    "u03_series": "the level of a recurring external event applies to this event or to the whole series",
+    "u03_other": "events of another connected calendar stay P1: the control is disabled with a note, and links never offer their time",
+    "u03_meeting_hours": "flexible meetings use meeting hours: a change there moves the meeting, and tasks keep work hours",
+    "u03_ranges": "a day can have several ranges and copy to all copies them to every day that is on; chunks never span the gap",
+    "u03_moved": "a chunk moved in the calendar leaves its old time closed to that task only",
+})
+E2E.update({
+    9: ["u03_spacing"],
+    27: ["u03_calendar", "u03_calendar_keep"],
+    55: ["s1_drag"],
+    56: ["u03_order"],
+    58: ["u03_urgency", "u03_urgency_48"],
+    59: ["u03_focus"],
+    60: ["u03_series"],
+    61: ["u03_other"],
+    70: ["u03_meeting_hours"],
+    73: ["u03_ranges"],
+    100: ["u03_focus", "u03_focus_near"],
+    109: ["u03_moved"],
+})
+E2E_NOTES.update({
+    9: "The choice is a user task default on the Settings page; existing chunks keep their place while they stay valid",
+    27: "A new choice moves placed unlocked chunks to that calendar at the same times (HRS-7) and applies to new chunks",
+    73: "Copy to all takes Monday's ranges and saves at once",
+})
+BLOCKED[78] = "Needs a Google account: the zone comes from the Google Calendar setting. The hours page shows the zone that hours apply in and an active trip (E2E on CalDAV: \u201ca browser that reports UTC gets a warning\u2026\u201d)"
+BLOCKED[147] = "Needs a Google OAuth client and a Google test account to prove it: incremental consent happens only in Google sign-in. Today Google sign-in asks for calendar scopes up front"
+# Row 90 stays partial: E2E does not cover buffers inside a level.
+PARTIAL[90] = "E2E on CalDAV covers flexible meetings, habits, tasks, next-up tasks and focus time in the order (\u201cinside one level meetings go first, then habits, then tasks\u2026\u201d, \u201ca next-up task goes before other tasks of any level\u201d, \u201cfocus time goes after a P4 task\u2026\u201d); buffers inside a level have unit tests only"
+# Row 76 stays partial: planning-hours.md says focus time, flexible meetings and
+# booking links do not offer item-specific hours "yet", so only habits are built.
+# --- end U03 ---
 
 # --- U07: flexible meeting limits and actions, booking link settings ---
 T.update({

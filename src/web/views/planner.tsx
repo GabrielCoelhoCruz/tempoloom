@@ -35,6 +35,14 @@ const REASONS: Record<string, string> = {
   "after-due": "part of the work ends after the due date",
 };
 
+/** One note per reason the level of an external event stays P1. */
+const LEVEL_FIXED_NOTES: Record<NonNullable<PlannerEvent["levelFixed"]>, string> = {
+  "booking-link": "Meetings booked through a booking link stay P1: they are fixed.",
+  "mirror-copy": "Mirrored copies stay P1: they follow their source event.",
+  "other-calendar":
+    "Events from other calendars stay P1: only events on your main calendar can change.",
+};
+
 const PreviewPanel = lazyComponent<{ onApplied: () => void }>(() =>
   import("./preview.tsx").then((m) => m.PreviewPanel),
 );
@@ -301,7 +309,7 @@ export function Planner() {
               ))}
             </select>
           </label>
-          {selected.kind === "external" && selected.levelEditable && (
+          {selected.kind === "external" && !selected.levelFixed && (
             <form
               class="form"
               data-testid="external-priority"
@@ -347,16 +355,16 @@ export function Planner() {
               </p>
             </form>
           )}
-          {selected.kind === "external" && selected.mainCalendar === false && (
-            <div class="form" data-testid="external-priority">
+          {selected.kind === "external" && selected.levelFixed && (
+            <div class="form" data-testid="external-priority-fixed">
               <label>
                 Priority for booking links
-                <select disabled>
+                <select disabled value="1">
                   <option value="1">P1</option>
                 </select>
               </label>
               <p class="status wide">
-                Events on other connected calendars and mirrored copies stay P1.
+                {LEVEL_FIXED_NOTES[selected.levelFixed]}
               </p>
             </div>
           )}
