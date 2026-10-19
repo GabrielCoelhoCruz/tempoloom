@@ -37,6 +37,16 @@ import {
 /** The sort key of a task without a due date: after every due date. */
 const NO_DUE = 9e15;
 
+/**
+ * One page of list_tasks: due first, tasks without a due date last, after the
+ * key (due key, created_at, id). The index tasks_due_page (migration 27) has
+ * this due key expression; the first bound seeks in it, the row value breaks ties.
+ */
+export const TASKS_PAGE = `SELECT id, title, level, total_minutes, due_at, status, created_at FROM tasks
+  WHERE user_id = ? AND status = ? AND COALESCE(due_at, ${NO_DUE}) >= ?
+    AND (COALESCE(due_at, ${NO_DUE}), created_at, id) > (?, ?, ?)
+  ORDER BY COALESCE(due_at, ${NO_DUE}), created_at, id LIMIT ?`;
+
 export interface McpDeps {
   db: Db;
   preview: Preview;
@@ -254,11 +264,10 @@ export function mcpRoutes(deps: McpDeps): Hono {
           created_at: number;
         }>(
           db,
-          `SELECT id, title, level, total_minutes, due_at, status, created_at FROM tasks
-           WHERE user_id = ? AND status = ? AND (COALESCE(due_at, ${NO_DUE}), created_at, id) > (?, ?, ?)
-           ORDER BY COALESCE(due_at, ${NO_DUE}), created_at, id LIMIT ?`,
+          TASKS_PAGE,
           user.id,
           status,
+          after?.[0] ?? -1,
           ...(after ?? [-1, -1, ""]),
           limit + 1,
         );

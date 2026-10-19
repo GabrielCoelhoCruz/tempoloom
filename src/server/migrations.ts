@@ -1143,4 +1143,9 @@ export const MIGRATIONS: readonly string[] = [
   `
   ALTER TABLE meeting_overloads ADD COLUMN rank INTEGER NOT NULL DEFAULT 0;
   `,
+  // 27: the MCP list_tasks pages (assistant-mcp-server.md): due first, no due date
+  // last. The expression must stay the one in TASKS_PAGE (src/server/mcp.ts).
+  `
+  CREATE INDEX tasks_due_page ON tasks(user_id, status, COALESCE(due_at, 9000000000000000), created_at, id);
+  `,
 ];

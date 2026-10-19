@@ -29,7 +29,7 @@ import * as stats from "../../src/server/api/stats.ts";
 import { createApiKey } from "../../src/server/api-keys.ts";
 import type { AppEnv } from "../../src/server/app.ts";
 import { all, one, openDb, run } from "../../src/server/db.ts";
-import { mcpRoutes } from "../../src/server/mcp.ts";
+import { mcpRoutes, TASKS_PAGE } from "../../src/server/mcp.ts";
 import { CHECK_IDS } from "../../src/server/meeting-prefs.ts";
 import { createPreview, openChanges, type PreviewDeps } from "../../src/server/preview.ts";
 
@@ -538,6 +538,24 @@ describe("MCP list pages", () => {
       "SELECT id FROM tasks WHERE status = 'done' ORDER BY due_at IS NULL, due_at, created_at, id",
     ).map((r) => r.id);
     expect(got.flat()).toEqual(expected);
+  });
+
+  it("list_tasks seeks a page in the tasks_due_page index, without a sort of every task", () => {
+    const s = setup();
+    const plan = all<{ detail: string }>(
+      s.db,
+      `EXPLAIN QUERY PLAN ${TASKS_PAGE}`,
+      s.user.id,
+      "done",
+      T0,
+      T0,
+      T0,
+      "t",
+      51,
+    ).map((r) => r.detail);
+    expect(plan).toEqual([
+      "SEARCH tasks USING INDEX tasks_due_page (user_id=? AND status=? AND <expr>>?)",
+    ]);
   });
 
   it("list_automations lists the meeting overload at P4 and the meeting checks last, without priority", async () => {
