@@ -3,6 +3,7 @@
 // and a preview of the chosen ranges with a link to the hours page.
 import "./parts.css";
 import { useState } from "preact/hooks";
+import type { ItemRange } from "../../shared/item-hours.ts";
 import { hhmm } from "../lib/format.ts";
 import { onLinkClick } from "../lib/router.ts";
 
@@ -38,22 +39,6 @@ export function itemHoursFrom(f: FormData): Record<string, [number, number][]> {
     .map(Number) as [number, number];
   const range: [number, number] = [fh * 60 + fm, th * 60 + tm || 1440];
   return Object.fromEntries(f.getAll("itemDays").map((d) => [String(d), [range]]));
-}
-
-/** Item-specific hours as the form shows them: the checked days and one range. */
-export interface ItemRange {
-  days: number[];
-  from: string;
-  to: string;
-}
-
-/** The form's view of stored item-specific hours: its days and its first range. */
-export function itemRangeOf(weekly: Record<string, [number, number][]>): ItemRange {
-  const days = Object.keys(weekly)
-    .filter((d) => (weekly[d]?.length ?? 0) > 0)
-    .map(Number);
-  const [s, e] = weekly[String(days[0])]?.[0] ?? [540, 1020];
-  return { days, from: hhmm(s), to: hhmm(e % 1440) };
 }
 
 export function HoursField({

@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useState } from "preact/hooks";
+import { itemHoursOf } from "../../shared/item-hours.ts";
 import { api } from "../lib/api.ts";
 import {
   freeName,
   GROUP_NAMES,
-  itemHoursOf,
   LIBRARY,
   type LibraryEntry,
   type LibraryGroup,

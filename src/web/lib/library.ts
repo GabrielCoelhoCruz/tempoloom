@@ -1,4 +1,5 @@
 import type { Category } from "../../scheduler/categories.ts";
+import type { ItemRange } from "../../shared/item-hours.ts";
 
 // The automation library (docs/specs/automations-library.md): ready-made
 // starting points. All presets are Tempoloom's own proposals (spec, "Entries").
@@ -30,26 +31,12 @@ export interface HabitPreset {
   level: 1 | 2 | 3 | 4;
   hours: "work" | "personal";
   /** Item-specific hours on these days instead of a named set. */
-  window?: ItemWindow;
+  window?: ItemRange;
   /** The ideal time is the last `minutes` of work hours, read from the user's work hours. */
   idealAtEnd?: boolean;
 }
 
-/** A one-off window: one range on the given ISO weekdays. */
-export interface ItemWindow {
-  days: number[];
-  from: string;
-  to: string;
-}
-
 const WORKDAYS = [1, 2, 3, 4, 5];
-const minuteOf = (t: string) => {
-  const [h, m] = t.split(":").map(Number) as [number, number];
-  return h * 60 + m;
-};
-/** The window as item-specific hours for the API. */
-export const itemHoursOf = (w: ItemWindow): Record<string, [number, number][]> =>
-  Object.fromEntries(w.days.map((d) => [String(d), [[minuteOf(w.from), minuteOf(w.to)]]]));
 
 export interface BufferPreset {
   side: "before" | "after" | "both";
@@ -79,7 +66,7 @@ export interface FocusPreset {
   weeklyGoalMinutes: number;
   minBlockMinutes?: number;
   /** The ideal window, as item-specific hours (focus-time.md `hours`: a one-off window). */
-  window?: ItemWindow;
+  window?: ItemRange;
 }
 
 export interface MeetingPreset {

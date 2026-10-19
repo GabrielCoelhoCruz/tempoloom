@@ -286,6 +286,13 @@ test("library buffer entries 1, 10, 19 add buffers after large meetings, around 
     attendees: people(2),
   });
   await cal.addEvent({ title: "Solo deep", start: at(day(2), "14:00"), end: at(day(2), "15:00") });
+  // The boundary of entry 19: exactly 60 minutes with exactly one other person.
+  await cal.addEvent({
+    title: "Pair review",
+    start: at(day(3), "10:00"),
+    end: at(day(3), "11:00"),
+    attendees: people(1),
+  });
   await cal.addEvent({
     title: "Quick chat",
     start: at(day(2), "16:00"),
@@ -323,7 +330,10 @@ test("library buffer entries 1, 10, 19 add buffers after large meetings, around 
         `${day(1)} 11:00-13:00`,
         `${day(1)} 15:00-16:00`,
       ]);
-      expect(spans(l, "Break after long meetings")).toEqual([`${day(2)} 11:00-11:10`]);
+      expect(spans(l, "Break after long meetings")).toEqual([
+        `${day(2)} 11:00-11:10`,
+        `${day(3)} 11:00-11:10`,
+      ]);
     },
   );
   expect(titled(placed, "Recovery after large meetings")[0]?.busy).toBe(true);
@@ -476,6 +486,49 @@ test("library focus entries 7 and 23 place their weekly goal inside the 09:00 to
     },
   );
   await expectAdded(page, ["Executive weekly focus", "Peak-energy focus"]);
+});
+
+test("focus time keeps item-specific hours of several ranges when the form saves other fields", async ({
+  page,
+  cal,
+  signIn,
+}) => {
+  await blockUntil(cal, W);
+  await signIn();
+  // Two ranges on Monday and another on Wednesday: more than the form's one range shows.
+  const hours = {
+    "1": [
+      [540, 600],
+      [780, 840],
+    ],
+    "3": [[600, 720]],
+  };
+  await page.evaluate(
+    (itemHours) =>
+      fetch("/api/focus", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ title: "Split focus", weeklyGoalMinutes: 120, itemHours }),
+      }).then((r) => r.json()),
+    hours,
+  );
+  await page.getByRole("link", { name: "Automations" }).click();
+  await automation(page, "Split focus").getByRole("link", { name: "Edit" }).click();
+  const form = page.getByTestId("automation-form");
+  await expect(form.getByTestId("item-hours-note")).toContainText("more than one range");
+  await form.getByLabel("Weekly goal (hours)").fill("3");
+  await saveShared(page);
+  const stored = () =>
+    page.evaluate(() =>
+      fetch("/api/focus")
+        .then((r) => r.json())
+        .then(
+          (b: { focus: { title: string; weekly_goal_minutes: number; item_hours: string }[] }) =>
+            b.focus.find((f) => f.title === "Split focus"),
+        ),
+    );
+  await expect.poll(async () => (await stored())?.weekly_goal_minutes).toBe(180);
+  expect(JSON.parse((await stored())?.item_hours ?? "null")).toEqual(hours);
 });
 
 test("library entries 32, 34 and 37: flexible meetings repeat at their period with the guests, and the priority link offers time over P3 and P4 habits", async ({
