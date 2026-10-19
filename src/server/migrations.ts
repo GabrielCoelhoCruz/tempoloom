@@ -1179,4 +1179,13 @@ export const MIGRATIONS: readonly string[] = [
   -- A "repaint all" request (events-categories-and-colors.md rule 12), cleared when done.
   ALTER TABLE users ADD COLUMN repaint_requested_at INTEGER;
   `,
+  // 32: when an admin last resumed a webhook endpoint (integrations-webhooks.md
+  // rule 15): the period of failures that suspends it counts from then. The
+  // Google account that a sign-in reconnects (accounts-login-emails-permissions.md rule 15).
+  // The no-reply choice is an account setting (noReplyCopies), not one per policy.
+  `
+  ALTER TABLE webhook_endpoints ADD COLUMN resumed_at INTEGER;
+  ALTER TABLE oauth_states ADD COLUMN reconnect_account_id TEXT;
+  ALTER TABLE mirror_policies DROP COLUMN no_reply_busy;
+  `,
 ];

@@ -5,6 +5,7 @@ import { logManaged, pruneChangeLog } from "../change-log.ts";
 import { all, type Db, one, run } from "../db.ts";
 import { type CalendarProvider, type EventWrite, ProviderError } from "../providers/types.ts";
 import { cacheEvent } from "../sync/pull.ts";
+import { ACTIVE } from "./mirror.ts";
 
 export interface DesiredEvent {
   key: string;
@@ -23,6 +24,7 @@ export interface DesiredEvent {
   organizer?: string;
   reminders?: EventWrite["reminders"];
   visibility?: EventWrite["visibility"];
+  allDayDates?: EventWrite["allDayDates"];
 }
 
 export interface ManagedRow {
@@ -49,7 +51,7 @@ export interface ManagedRow {
 
 /** Guests, location, reminders and visibility as stored in `managed_events.extra`. */
 const extraOf = (d: DesiredEvent) =>
-  d.attendees || d.optionalAttendees || d.location || d.reminders || d.visibility
+  d.attendees || d.optionalAttendees || d.location || d.reminders || d.visibility || d.allDayDates
     ? JSON.stringify({
         location: d.location ?? "",
         attendees: d.attendees ?? [],
@@ -57,6 +59,7 @@ const extraOf = (d: DesiredEvent) =>
         ...(d.organizer ? { organizer: d.organizer } : {}),
         ...(d.reminders ? { reminders: d.reminders } : {}),
         ...(d.visibility ? { visibility: d.visibility } : {}),
+        ...(d.allDayDates ? { allDayDates: d.allDayDates } : {}),
       })
     : "";
 
@@ -76,6 +79,7 @@ export function rowWrite(
     organizer?: string;
     reminders?: DesiredEvent["reminders"];
     visibility?: DesiredEvent["visibility"];
+    allDayDates?: DesiredEvent["allDayDates"];
   };
   return write(userId, {
     key: row.key,
@@ -91,6 +95,7 @@ export function rowWrite(
     ...(x.organizer ? { organizer: x.organizer } : {}),
     ...(x.reminders ? { reminders: x.reminders } : {}),
     ...(x.visibility ? { visibility: x.visibility } : {}),
+    ...(x.allDayDates ? { allDayDates: x.allDayDates } : {}),
   });
 }
 
@@ -130,6 +135,7 @@ function write(userId: string, d: DesiredEvent): EventWrite {
     ...(d.organizer ? { organizer: d.organizer } : {}),
     ...(d.reminders ? { reminders: d.reminders } : {}),
     ...(d.visibility ? { visibility: d.visibility } : {}),
+    ...(d.allDayDates ? { allDayDates: d.allDayDates } : {}),
   };
 }
 
@@ -188,17 +194,39 @@ function differs(
  * have started are never changed. Locked events are never moved or deleted.
  * Writes run in the order deletes, updates, creates.
  */
-export async function pushSchedule(ctx: PushContext, desired: DesiredEvent[]): Promise<PushResult> {
+export async function pushSchedule(
+  ctx: PushContext,
+  allDesired: DesiredEvent[],
+): Promise<PushResult> {
   const { db, userId, now } = ctx;
   const result: PushResult = { created: 0, updated: 0, deleted: 0, conflicts: 0 };
+  // Calendars of a disconnected account are neither read nor written
+  // (accounts-login-emails-permissions.md rule 16): their events stay as they are.
+  const frozen = new Set(
+    all<{ id: string }>(
+      db,
+      `SELECT c.id FROM calendars c JOIN accounts a ON a.id = c.account_id
+       WHERE a.user_id = ? AND a.status <> 'ok'`,
+      userId,
+    ).map((c) => c.id),
+  );
+  // Copies of a paused mirroring policy stay as they are too.
+  const paused = new Set(
+    all<{ id: string }>(
+      db,
+      `SELECT p.id FROM mirror_policies p WHERE p.user_id = ? AND NOT ${ACTIVE}`,
+      userId,
+    ).map((p) => p.id),
+  );
   const rows = all<ManagedRow>(
     db,
     "SELECT * FROM managed_events WHERE user_id = ? AND end_ms > ?",
     userId,
     now,
-  );
+  ).filter((r) => !frozen.has(r.calendar_id) && !(r.kind === "mirror" && paused.has(r.source_id)));
   const byKey = new Map(rows.map((r) => [r.key, r]));
-  const wanted = new Set(desired.map((d) => d.key));
+  const wanted = new Set(allDesired.map((d) => d.key));
+  const desired = allDesired.filter((d) => !frozen.has(d.calendarId));
 
   for (const row of rows) {
     if (wanted.has(row.key) || row.locked || row.start_ms <= now) continue;

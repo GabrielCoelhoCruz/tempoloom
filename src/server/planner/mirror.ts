@@ -3,6 +3,7 @@
 import { hasTag, tagText } from "../../scheduler/blocking.ts";
 import { type Category, categoryOf } from "../../scheduler/categories.ts";
 import { hoursToTimeSet, type WeeklyHours } from "../../scheduler/hours.ts";
+import { utcToLocal } from "../../shared/time.ts";
 import { all, type Db } from "../db.ts";
 import { MIRROR_WINDOW } from "../sync/pull.ts";
 import { categoryContext } from "./categories.ts";
@@ -40,7 +41,6 @@ interface Policy {
   visibility: "label_only" | "busy_only" | "details_private" | "details_default";
   all_day_mode: "none" | "busy_only" | "all";
   copy_outside_work_hours: number;
-  no_reply_busy: number;
   /** The destination's calendar id and, for a primary calendar, its account email. */
   dest_provider_id: string;
   dest_email: string | null;
@@ -64,6 +64,22 @@ interface SourceEvent {
   calendar_id: string;
   rsvp_note: string;
 }
+
+/**
+ * A policy is active while the accounts of its source and destination are
+ * connected (accounts-login-emails-permissions.md rule 16). A paused policy
+ * makes no copies and keeps the copies it has. Needs the policy as `p`.
+ */
+export const ACTIVE = `NOT EXISTS (SELECT 1 FROM calendars c JOIN accounts x ON x.id = c.account_id
+  WHERE c.id IN (p.source_calendar_id, p.dest_calendar_id) AND x.status <> 'ok')`;
+
+/** Provider visibility of a copy by the policy's privacy option (rule 26). */
+const VISIBILITY = {
+  label_only: "public",
+  busy_only: undefined,
+  details_private: "private",
+  details_default: undefined,
+} as const;
 
 /** A travel or airport buffer of this run as a source event; its key stands for the event id. */
 function bufferSource(d: DesiredEvent): SourceEvent {
@@ -92,6 +108,8 @@ function bufferSource(d: DesiredEvent): SourceEvent {
  * Managed events are never copied (no chaining), except the travel and airport
  * buffers of this run (buffers-travel.md outputs): their copies follow the
  * policy's visibility, and come with the buffers in the same run.
+ * `noReplyBusy` is the account setting for events the owner has not answered
+ * (the account-level setting `no_reply_copies`, default free).
  */
 export function mirrorCopies(
   db: Db,
@@ -99,6 +117,7 @@ export function mirrorCopies(
   zone: string,
   now: number,
   workHours: WeeklyHours | null,
+  noReplyBusy = false,
   travelBuffers: DesiredEvent[] = [],
 ): DesiredEvent[] {
   const out: DesiredEvent[] = [];
@@ -108,7 +127,7 @@ export function mirrorCopies(
        CASE WHEN d.is_primary = 1 THEN a.email END AS dest_email
      FROM mirror_policies p JOIN calendars d ON d.id = p.dest_calendar_id
        JOIN accounts a ON a.id = d.account_id
-     WHERE p.user_id = ? AND p.enabled = 1`,
+     WHERE p.user_id = ? AND p.enabled = 1 AND ${ACTIVE}`,
     userId,
   );
   let cats: ReturnType<typeof categoryContext> | undefined;
@@ -154,7 +173,7 @@ export function mirrorCopies(
       // Rule 21.2 applies to meetings the owner organizes without being an attendee.
       else if (e.attendee_count > 0 && e.organizer_self && e.self_response === null) busy = true;
       else if (e.self_response === "accepted" || e.self_response === "tentative") busy = true;
-      else if (e.self_response === "needsAction") busy = p.no_reply_busy === 1;
+      else if (e.self_response === "needsAction") busy = noReplyBusy;
       else {
         busy = e.busy === 1;
         fromSource = true;
@@ -196,6 +215,17 @@ export function mirrorCopies(
         description: details && e.description ? `${e.description}\n\n${COPY_NOTE}` : COPY_NOTE,
         busy,
         colorId: null,
+        ...(details && e.location ? { location: e.location } : {}),
+        ...(VISIBILITY[p.visibility] ? { visibility: VISIBILITY[p.visibility] } : {}),
+        // Rule 24: a copy of an all-day event is an all-day event.
+        ...(e.all_day
+          ? {
+              allDayDates: {
+                start: utcToLocal(zone, e.start_ms).date,
+                end: utcToLocal(zone, e.end_ms).date,
+              },
+            }
+          : {}),
       });
     }
   }

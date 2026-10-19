@@ -23,6 +23,8 @@ const schema = z
     WEBHOOK_ALLOW_PRIVATE: z.stringbool().default(false),
     /** First retry delay for failed webhook deliveries; it doubles up to one hour. */
     WEBHOOK_RETRY_BASE_MS: z.coerce.number().int().min(10).default(30_000),
+    /** Seconds of failed deliveries after which an endpoint is suspended (24 hours). */
+    WEBHOOK_SUSPEND_AFTER_SECONDS: z.coerce.number().int().min(1).default(86_400),
     /** SMTP server for outgoing email, for example smtps://user:pass@mail.example.com:465. */
     SMTP_URL: z.string().min(1).optional(),
     MAIL_FROM: z.string().default("Tempoloom <noreply@localhost>"),

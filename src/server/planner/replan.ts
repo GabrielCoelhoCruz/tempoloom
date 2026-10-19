@@ -663,6 +663,7 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
       user.time_zone,
       now,
       work ? (JSON.parse(work.weekly) as WeeklyHours) : null,
+      settings.noReplyCopies === "busy",
       desired.filter((d) => d.kind === "buffer" && travelBuffers.has(d.sourceId)),
     ),
   );
