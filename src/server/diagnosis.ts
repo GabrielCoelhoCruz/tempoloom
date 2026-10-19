@@ -241,14 +241,23 @@ export function lookupEvent(db: Db, userId: string, q: string, now: number) {
       userId,
     );
     const sourceId = managed.key.slice(`mirror:${managed.source_id}:`.length);
-    const source = policy
-      ? one<{ summary: string }>(
-          db,
-          "SELECT summary FROM events WHERE calendar_id = ? AND event_id = ?",
-          policy.source_calendar_id,
-          sourceId,
-        )
-      : undefined;
+    // A copy of a travel buffer keeps the buffer's key in place of an event id.
+    const source = !policy
+      ? undefined
+      : sourceId.startsWith("buffer:")
+        ? one<{ summary: string }>(
+            db,
+            "SELECT title AS summary FROM managed_events WHERE user_id = ? AND calendar_id = ? AND key = ?",
+            userId,
+            policy.source_calendar_id,
+            sourceId,
+          )
+        : one<{ summary: string }>(
+            db,
+            "SELECT summary FROM events WHERE calendar_id = ? AND event_id = ?",
+            policy.source_calendar_id,
+            sourceId,
+          );
     copy = {
       policy: policy ? policyName(policy) : "a mirroring that was deleted",
       source:

@@ -6,9 +6,12 @@
 //    copy only one run later, after the next read of the calendar.
 // 2. Other managed events (here: a buffer that is not a travel buffer) are
 //    copied too.
+// 3. The event lookup of a copy finds no source, because the copy keeps the
+//    buffer's key in place of an event id.
 import { describe, expect, it } from "vitest";
 import { ensureUser } from "../../src/server/accounts.ts";
-import { openDb, run } from "../../src/server/db.ts";
+import { one, openDb, run } from "../../src/server/db.ts";
+import { lookupEvent } from "../../src/server/diagnosis.ts";
 import { replanUser } from "../../src/server/planner/replan.ts";
 import type {
   CalendarProvider,
@@ -143,5 +146,23 @@ describe("copies of travel buffers", () => {
     expect(on("labels")).toEqual(
       ["Meeting 10:00", "Meeting 14:00", "Travel 13:30", "Travel 15:00"].sort(),
     );
+  });
+
+  it("show the travel buffer as the source in the event lookup", async () => {
+    const { db, userId } = setup();
+    const cal = fakeCalendar();
+    await replanUser(
+      { db, provider: () => cal.provider, now: NOW, baseUrl: "http://localhost" },
+      userId,
+    );
+    const copy = one<{ event_id: string }>(
+      db,
+      "SELECT event_id FROM managed_events WHERE kind = 'mirror' AND key LIKE 'mirror:p:buffer:%' LIMIT 1",
+    );
+    expect(copy).toBeDefined();
+    const result = lookupEvent(db, userId, copy?.event_id ?? "", NOW) as {
+      copy?: { source: { title: string; calendar: string } | null };
+    };
+    expect(result.copy?.source).toEqual({ title: "🚌 Travel", calendar: "work" });
   });
 });
