@@ -1,10 +1,18 @@
 import { useCallback, useEffect, useState } from "preact/hooks";
 import { api } from "../lib/api.ts";
 import { formatWhen } from "../lib/format.ts";
+import { lazyComponent } from "../lib/lazy.ts";
 import { freeName, templateFromUrl } from "../lib/library.ts";
 import { LEVEL_NAMES, me, zone } from "../lib/state.ts";
 import { type EditableLink, LinkEditor, type PersonOption } from "./link-editor.tsx";
 import { type Group, GroupDelete, GroupEditor, GroupForm } from "./link-groups.tsx";
+
+// Personalize (one-off links and shared times) loads on first use.
+const Personalize = lazyComponent<{
+  link: EditableLink;
+  people: PersonOption[];
+  onClose: () => void;
+}>(() => import("./link-personalize.tsx").then((m) => m.Personalize));
 
 interface Endpoint {
   id: string;
@@ -112,6 +120,7 @@ export function Links() {
   const [endpoints, setEndpoints] = useState<Endpoint[]>([]);
   const [editing, setEditing] = useState<string | null>(null);
   const [groups, setGroups] = useState<Group[]>([]);
+  const [personalizing, setPersonalizing] = useState<string | null>(null);
   const [groupForm, setGroupForm] = useState(false);
   const [groupAction, setGroupAction] = useState<{ id: string; kind: "edit" | "delete" } | null>(
     null,
@@ -163,11 +172,23 @@ export function Links() {
   if (page === undefined) return null;
   const edited = [...links, ...teamLinks].find((l) => l.id === editing);
   const myId = me.value?.user.id;
+  const personalizeButton = (l: EditableLink) => (
+    <button
+      type="button"
+      onClick={() => {
+        setEditing(null);
+        setPersonalizing(l.id);
+      }}
+    >
+      Personalize
+    </button>
+  );
   const editButton = (l: EditableLink) => (
     <button
       type="button"
       onClick={() => {
         setSaved(null);
+        setPersonalizing(null);
         setEditing(l.id);
       }}
     >
@@ -246,6 +267,7 @@ export function Links() {
             Copy link
           </button>
           {editButton(l)}
+          {personalizeButton(l)}
           <button
             type="button"
             class="danger"
@@ -535,6 +557,14 @@ export function Links() {
               }}
             />
           )}
+          {personalizing && [...links, ...teamLinks].some((l) => l.id === personalizing) && (
+            <Personalize
+              key={personalizing}
+              link={[...links, ...teamLinks].find((l) => l.id === personalizing) as EditableLink}
+              people={people}
+              onClose={() => setPersonalizing(null)}
+            />
+          )}
           {saved !== null && (
             <p class="status" data-testid="link-saved">
               Saved {saved}.
@@ -577,6 +607,7 @@ export function Links() {
                         </button>
                       )}
                       {editButton(l)}
+                      {personalizeButton(l)}
                     </div>
                   </div>
                 ))}

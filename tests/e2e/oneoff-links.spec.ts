@@ -119,9 +119,11 @@ test("a one-off link has its own settings and prefilled invitee, stays unlisted,
   await expect(v.getByTestId("book-form")).toContainText("10:00 to 10:30");
   await v.goto(`/book/omar/chat?day=${W}`);
   await expect(v.getByTestId("times")).toBeVisible();
-  const monday = await v
-    .locator('[data-testid="times"] button[data-start]')
-    .evaluateAll((els) => els.map((e) => local(Number(e.getAttribute("data-start")))));
+  const monday = (
+    await v
+      .locator('[data-testid="times"] button[data-start]')
+      .evaluateAll((els) => els.map((e) => Number(e.getAttribute("data-start"))))
+  ).map(local);
   expect(monday.filter((s) => s.startsWith(W))).toEqual([]);
 
   // The creator opens the URL signed in and edits it: other hours and 60 minutes.

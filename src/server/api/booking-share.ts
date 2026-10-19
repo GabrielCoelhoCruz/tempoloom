@@ -1,5 +1,6 @@
-// Link groups: booking pages of their own that list chosen links
-// (docs/specs/booking-links-sharing.md rules 1-7).
+// Sharing booking links (docs/specs/booking-links-sharing.md): link groups,
+// booking pages of their own that list chosen links (rules 1-7), and each
+// user's last shared-times template and embed redirect mode (rules 20, 25).
 import { randomUUID } from "node:crypto";
 import { Hono } from "hono";
 import { z } from "zod";
@@ -24,7 +25,7 @@ const groupInput = z.object({
   linkIds: z.array(z.string()).max(200),
 });
 
-export function bookingGroupRoutes(db: Db, now: () => number): Hono<AppEnv> {
+export function bookingShareRoutes(db: Db, now: () => number): Hono<AppEnv> {
   const r = new Hono<AppEnv>();
   const own = (id: string, userId: string) => {
     const g = one<GroupRow>(
@@ -132,6 +133,45 @@ export function bookingGroupRoutes(db: Db, now: () => number): Hono<AppEnv> {
       run(db, "DELETE FROM booking_groups WHERE id = ?", g.id);
     });
     return c.body(null, 204);
+  });
+
+  r.get("/share-prefs", (c) => {
+    const row = one<{ times_template: string | null; embed_redirect: string }>(
+      db,
+      "SELECT times_template, embed_redirect FROM booking_share_prefs WHERE user_id = ?",
+      c.get("user").id,
+    );
+    return c.json({
+      timesTemplate: row?.times_template ?? null,
+      embedRedirect: row?.embed_redirect ?? "disabled",
+    });
+  });
+
+  r.put("/share-prefs", async (c) => {
+    const b = await jsonBody(
+      c,
+      z.object({
+        timesTemplate: z.string().max(4000).optional(),
+        embedRedirect: z.enum(["disabled", "topPage", "frame"]).optional(),
+      }),
+    );
+    const id = c.get("user").id;
+    run(db, "INSERT OR IGNORE INTO booking_share_prefs (user_id) VALUES (?)", id);
+    if (b.timesTemplate !== undefined)
+      run(
+        db,
+        "UPDATE booking_share_prefs SET times_template = ? WHERE user_id = ?",
+        b.timesTemplate,
+        id,
+      );
+    if (b.embedRedirect !== undefined)
+      run(
+        db,
+        "UPDATE booking_share_prefs SET embed_redirect = ? WHERE user_id = ?",
+        b.embedRedirect,
+        id,
+      );
+    return c.json({ ok: true });
   });
 
   r.get("/groups", (c) =>

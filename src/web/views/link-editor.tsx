@@ -61,6 +61,12 @@ export interface EditableLink {
   redirect_url: string | null;
   /** "main", "hidden" or a link group id. */
   page: string;
+  title_template: string;
+  default_duration: number | null;
+  invitee_name: string;
+  invitee_email: string;
+  /** One-off links: when the link stops working. */
+  expiresAt: number | null;
   owner: { id: string; name: string; email: string };
   pageSlug: string | null;
   organizers: Organizer[];
@@ -229,6 +235,115 @@ function HoursPicker({
   );
 }
 
+/**
+ * The organizers of a link, each with their hours, required flag and host
+ * (booking-links-team.md rules 1-3). Used by the link editor and one-off links.
+ */
+export function OrganizersEditor({
+  organizers,
+  people,
+  free,
+  onChange,
+}: {
+  organizers: Organizer[];
+  people: PersonOption[];
+  /** Team members who can still be added. */
+  free: PersonOption[];
+  onChange: (o: Organizer[]) => void;
+}) {
+  const setOrganizers = onChange;
+  const setOrganizer = (userId: string, change: Partial<Organizer>) =>
+    setOrganizers(organizers.map((o) => (o.userId === userId ? { ...o, ...change } : o)));
+  const person = (userId: string): Person => {
+    const p = people.find((x) => x.userId === userId);
+    return { userId, name: p?.name ?? "", email: p?.email ?? "", hoursSetId: null };
+  };
+  return (
+    <section class="wide" data-testid="organizers">
+      <h3>Organizers</h3>
+      <p class="status">
+        Required organizers must be free. Optional organizers are invited but not checked. The host
+        holds the event in their calendar.
+      </p>
+      <div class="list">
+        {organizers.map((o) => (
+          <div class="row" key={o.userId} data-organizer={o.email}>
+            <div class="actions">
+              <span>
+                {o.name} ({o.email})
+              </span>
+              <HoursPicker
+                person={o}
+                people={people}
+                onChange={(id) => setOrganizer(o.userId, { hoursSetId: id })}
+              />
+              <label class="inline">
+                <input
+                  type="checkbox"
+                  checked={o.required}
+                  onChange={(e) => setOrganizer(o.userId, { required: e.currentTarget.checked })}
+                />
+                Required
+              </label>
+              <label class="inline">
+                <input
+                  type="radio"
+                  name="host"
+                  checked={o.isHost}
+                  onChange={() =>
+                    setOrganizers(
+                      organizers.map((x) => ({
+                        ...x,
+                        isHost: x.userId === o.userId,
+                        required: x.userId === o.userId ? true : x.required,
+                      })),
+                    )
+                  }
+                />
+                Host
+              </label>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                const rest = organizers.filter((x) => x.userId !== o.userId);
+                if (o.isHost && rest[0]) rest[0] = { ...rest[0], isHost: true, required: true };
+                setOrganizers(rest);
+              }}
+            >
+              Remove
+            </button>
+          </div>
+        ))}
+      </div>
+      <div class="actions">
+        <label>
+          Add organizer
+          <select
+            value=""
+            onChange={(e) => {
+              const id = e.currentTarget.value;
+              if (!id) return;
+              setOrganizers([
+                ...organizers,
+                { ...person(id), required: true, isHost: organizers.length === 0 },
+              ]);
+            }}
+          >
+            <option value="">Choose a team member</option>
+            {free.map((p) => (
+              <option value={p.userId} key={p.userId}>
+                {p.email}
+              </option>
+            ))}
+          </select>
+        </label>
+        <a href="/team">Invite someone to the team</a>
+      </div>
+    </section>
+  );
+}
+
 export function LinkEditor({
   link,
   groups,
@@ -257,8 +372,6 @@ export function LinkEditor({
     const p = people.find((x) => x.userId === userId);
     return { userId, name: p?.name ?? "", email: p?.email ?? "", hoursSetId: null };
   };
-  const setOrganizer = (userId: string, change: Partial<Organizer>) =>
-    setOrganizers(organizers.map((o) => (o.userId === userId ? { ...o, ...change } : o)));
   const setMember = (userId: string, change: Partial<PoolMember>) =>
     setPool(pool.map((m) => (m.userId === userId ? { ...m, ...change } : m)));
   const several = organizers.length + (pool.length > 0 ? 1 : 0) > 1;
@@ -498,88 +611,12 @@ export function LinkEditor({
         </p>
       </section>
 
-      <section class="wide" data-testid="organizers">
-        <h3>Organizers</h3>
-        <p class="status">
-          Required organizers must be free. Optional organizers are invited but not checked. The
-          host holds the event in their calendar.
-        </p>
-        <div class="list">
-          {organizers.map((o) => (
-            <div class="row" key={o.userId} data-organizer={o.email}>
-              <div class="actions">
-                <span>
-                  {o.name} ({o.email})
-                </span>
-                <HoursPicker
-                  person={o}
-                  people={people}
-                  onChange={(id) => setOrganizer(o.userId, { hoursSetId: id })}
-                />
-                <label class="inline">
-                  <input
-                    type="checkbox"
-                    checked={o.required}
-                    onChange={(e) => setOrganizer(o.userId, { required: e.currentTarget.checked })}
-                  />
-                  Required
-                </label>
-                <label class="inline">
-                  <input
-                    type="radio"
-                    name="host"
-                    checked={o.isHost}
-                    onChange={() =>
-                      setOrganizers(
-                        organizers.map((x) => ({
-                          ...x,
-                          isHost: x.userId === o.userId,
-                          required: x.userId === o.userId ? true : x.required,
-                        })),
-                      )
-                    }
-                  />
-                  Host
-                </label>
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  const rest = organizers.filter((x) => x.userId !== o.userId);
-                  if (o.isHost && rest[0]) rest[0] = { ...rest[0], isHost: true, required: true };
-                  setOrganizers(rest);
-                }}
-              >
-                Remove
-              </button>
-            </div>
-          ))}
-        </div>
-        <div class="actions">
-          <label>
-            Add organizer
-            <select
-              value=""
-              onChange={(e) => {
-                const id = e.currentTarget.value;
-                if (!id) return;
-                setOrganizers([
-                  ...organizers,
-                  { ...person(id), required: true, isHost: organizers.length === 0 },
-                ]);
-              }}
-            >
-              <option value="">Choose a team member</option>
-              {free.map((p) => (
-                <option value={p.userId} key={p.userId}>
-                  {p.email}
-                </option>
-              ))}
-            </select>
-          </label>
-          <a href="/team">Invite someone to the team</a>
-        </div>
-      </section>
+      <OrganizersEditor
+        organizers={organizers}
+        people={people}
+        free={free}
+        onChange={setOrganizers}
+      />
 
       <section class="wide" data-testid="pool">
         <h3>Round-robin pool</h3>

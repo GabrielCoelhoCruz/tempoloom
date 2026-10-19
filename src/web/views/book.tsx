@@ -21,6 +21,8 @@ interface PublicLink {
   location: string;
   questions: Question[];
   redirectUrl: string | null;
+  /** One-off links: the invitee the form starts with (sharing rule 9). */
+  prefill: { name: string; email: string } | null;
 }
 interface Offered {
   start: number;
@@ -78,6 +80,11 @@ function Brand({ b }: { b: Branding }) {
     </header>
   );
 }
+
+// Only the creator edits a one-off link from its page (sharing rule 13).
+const OneOffEditor = lazyComponent<{ linkId: string; onSaved: () => void }>(() =>
+  import("./link-personalize.tsx").then((m) => m.OneOffEditor),
+);
 
 // Only organizers use the inspector (availability rule 18): load it on demand.
 const Inspector = lazyComponent<{
@@ -304,6 +311,7 @@ interface LinkInfo {
   link: PublicLink;
   organizers: string[];
   branding: Branding;
+  oneOff: { expiresAt: number; expired: boolean } | null;
 }
 
 interface Booked {
@@ -418,11 +426,11 @@ function DetailsForm({
       </p>
       <label>
         Your name
-        <input name="name" required maxLength={200} />
+        <input name="name" required maxLength={200} defaultValue={info.link.prefill?.name ?? ""} />
       </label>
       <label>
         Your email
-        <input name="email" type="email" required />
+        <input name="email" type="email" required defaultValue={info.link.prefill?.email ?? ""} />
       </label>
       <label class="wide">
         Message (optional)
@@ -482,6 +490,7 @@ function BookingPage({ page, link }: { page: string; link: string }) {
   const [notice, setNotice] = useState<string | null>(null);
   const [overlay, setOverlay] = useState(() => localStorage.getItem(OVERLAY_KEY) === "1");
   const [inspect, setInspect] = useState(params.inspect);
+  const [editing, setEditing] = useState(false);
   const preselectDone = useRef(false);
   useEffect(() => {
     api<LinkInfo>("GET", `/pub/pages/${page}/${link}`)
@@ -503,6 +512,29 @@ function BookingPage({ page, link }: { page: string; link: string }) {
   if (missing) return <p>This booking link does not exist.</p>;
   if (!info || duration === null) return null;
   if (done) return <Confirmation info={info} done={done} view={view} />;
+  const editOneOff = viewer?.organizer && info.oneOff && viewer.linkId && (
+    <div class="actions">
+      {editing ? (
+        <OneOffEditor linkId={viewer.linkId} onSaved={() => location.reload()} />
+      ) : (
+        <button type="button" onClick={() => setEditing(true)}>
+          Edit this link
+        </button>
+      )}
+    </div>
+  );
+  if (info.oneOff?.expired) {
+    return (
+      <div data-testid="booking-page">
+        <Brand b={info.branding} />
+        <h1>{info.link.title}</h1>
+        <p data-testid="expired">
+          This link has expired. Ask {info.organizers.join(", ") || "the organizer"} for a new one.
+        </p>
+        {editOneOff}
+      </div>
+    );
+  }
   const preselect =
     params.day && params.time
       ? {
@@ -521,6 +553,7 @@ function BookingPage({ page, link }: { page: string; link: string }) {
       {info.organizers.length > 0 && <p class="status">{withWhom(info.organizers)}</p>}
       {info.link.description && <p>{info.link.description}</p>}
       {info.link.location && <p class="status">Location: {info.link.location}</p>}
+      {editOneOff}
       {info.link.durations.length > 1 && (
         <div class="actions" data-testid="durations">
           {info.link.durations.map((d) => (

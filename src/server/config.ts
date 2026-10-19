@@ -33,6 +33,8 @@ const schema = z.object({
   PROVISION_PER_MINUTE: z.coerce.number().int().min(1).max(6000).default(60),
   /** Directory with the built web client. */
   WEB_DIST: z.string().default("./dist/web"),
+  /** Days a one-off booking link works after it is made (booking-links-sharing.md rule 14). */
+  ONEOFF_LINK_DAYS: z.coerce.number().int().min(0).max(365).default(30),
 });
 
 export type Config = z.infer<typeof schema> & { dbPath: string };

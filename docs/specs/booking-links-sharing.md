@@ -113,10 +113,18 @@ Template variables (names are Proposed; E-0138 lists their meaning):
     (E-0138).
 12. Changes to a one-off link never change the source link (E-0138).
 13. The creator, logged in, can open the one-off URL and edit it (E-0138).
+    Tempoloom decision: the creator owns the one-off link; its page shows
+    "Edit this link" to the creator and its organizers, with the same form.
 14. A one-off link expires 30 days after creation. After that, its URL shows
     an "expired" page and offers no times (E-0138, E-0163, E-0217).
+    Tempoloom decision: the operator can change the lifetime with
+    `ONEOFF_LINK_DAYS` (default 30); it applies to existing one-off links
+    too. Bookings made through an expired link can still be rescheduled and
+    cancelled.
 15. Proposed URL: `<BASE_URL>/book/o/<slug>`, where the default slug is a
     random token of 16 lowercase letters and digits.
+    Tempoloom decision: as proposed; a custom slug must be unique among all
+    one-off links on the instance.
 16. Bookings through a one-off link count against the source link's
     `maxPerDay` and `maxPerWeek` (Proposed) and fire the source link's
     webhooks (Proposed).
@@ -125,6 +133,10 @@ Template variables (names are Proposed; E-0138 lists their meaning):
 
 17. From the personalize action of any link or one-off link, the user picks
     up to 5 dates, then selects offered times under each date (E-0138).
+    Tempoloom decision: the dates are the next 14 days in the chosen zone
+    (default: the user's calendar zone); the times are those the link offers
+    for its default duration. Shared times start from the source link's
+    personalize action; a one-off link's own page offers only "Edit".
 18. Preview shows the result in the chosen `format` (E-0138):
     - `buttons`: one HTML button per time; each button opens the booking
       page with that time selected. Mail clients without HTML buttons show
@@ -137,6 +149,9 @@ Template variables (names are Proposed; E-0138 lists their meaning):
     to 11:00 become 10:00 to 11:00.
 20. The user can edit the template. Tempoloom saves the last edited template
     per user and uses it next time (E-0138).
+    Tempoloom decision: the template is saved on the server when the field
+    loses focus and when the user copies the times. Buttons are links styled
+    as buttons; their plain text fallback is "10:00 (URL)".
 21. Copy times puts the result on the clipboard as HTML and as plain text
     (E-0138).
 22. Time links use the booking page URL parameters `day`, `time`,

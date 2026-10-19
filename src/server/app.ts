@@ -21,7 +21,7 @@ import {
 import { accountRoutes } from "./api/account.ts";
 import { analyticsRoutes } from "./api/analytics.ts";
 import { bookingRoutes, publicBookingRoutes } from "./api/booking.ts";
-import { bookingGroupRoutes } from "./api/booking-groups.ts";
+import { bookingShareRoutes } from "./api/booking-share.ts";
 import { bookingViewerRoutes } from "./api/booking-viewer.ts";
 import { brandingRoutes, publicBrandingRoutes } from "./api/branding.ts";
 import { delegationGuard, delegationRoutes } from "./api/delegation.ts";
@@ -264,6 +264,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
         deps.webhooks.kick();
       },
       deps.mailer,
+      config.ONEOFF_LINK_DAYS,
     ),
   );
 
@@ -329,7 +330,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   app.route("/api", itemRoutes(db, sync, now));
   app.route("/api", meetingRoutes(db, sync, now));
   app.route("/api/planner", plannerRoutes(db, sync, now));
-  app.route("/api/booking", bookingRoutes(db, now));
+  app.route("/api/booking", bookingRoutes(db, now, config.ONEOFF_LINK_DAYS));
   app.route("/api", webhookRoutes(db, box, config.WEBHOOK_ALLOW_PRIVATE, now));
   app.route("/api", statsRoutes(db));
   app.route("/api", analyticsRoutes(db, now));
@@ -354,7 +355,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   app.route("/api", teamDefaultRoutes(db, now));
   app.route("/api", oooRoutes(db, sync, now));
   app.route("/api/booking", bookingViewerRoutes(db, now));
-  app.route("/api/booking", bookingGroupRoutes(db, now));
+  app.route("/api/booking", bookingShareRoutes(db, now));
 
   // Static client with a single-page fallback. Text files are compressed once
   // per encoding and kept in memory; the build output does not change at run time.
