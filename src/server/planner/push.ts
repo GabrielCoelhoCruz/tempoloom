@@ -5,6 +5,7 @@ import { logManaged, pruneChangeLog } from "../change-log.ts";
 import { all, type Db, one, run } from "../db.ts";
 import { type CalendarProvider, type EventWrite, ProviderError } from "../providers/types.ts";
 import { cacheEvent } from "../sync/pull.ts";
+import { ACTIVE } from "./mirror.ts";
 
 export interface DesiredEvent {
   key: string;
@@ -207,12 +208,20 @@ export async function pushSchedule(
       userId,
     ).map((c) => c.id),
   );
+  // Copies of a paused mirroring policy stay as they are too.
+  const paused = new Set(
+    all<{ id: string }>(
+      db,
+      `SELECT p.id FROM mirror_policies p WHERE p.user_id = ? AND NOT ${ACTIVE}`,
+      userId,
+    ).map((p) => p.id),
+  );
   const rows = all<ManagedRow>(
     db,
     "SELECT * FROM managed_events WHERE user_id = ? AND end_ms > ?",
     userId,
     now,
-  ).filter((r) => !frozen.has(r.calendar_id));
+  ).filter((r) => !frozen.has(r.calendar_id) && !(r.kind === "mirror" && paused.has(r.source_id)));
   const byKey = new Map(rows.map((r) => [r.key, r]));
   const wanted = new Set(allDesired.map((d) => d.key));
   const desired = allDesired.filter((d) => !frozen.has(d.calendarId));

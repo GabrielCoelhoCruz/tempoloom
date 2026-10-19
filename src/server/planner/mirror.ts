@@ -64,6 +64,14 @@ interface SourceEvent {
   calendar_id: string;
 }
 
+/**
+ * A policy is active while the accounts of its source and destination are
+ * connected (accounts-login-emails-permissions.md rule 16). A paused policy
+ * makes no copies and keeps the copies it has. Needs the policy as `p`.
+ */
+export const ACTIVE = `NOT EXISTS (SELECT 1 FROM calendars c JOIN accounts x ON x.id = c.account_id
+  WHERE c.id IN (p.source_calendar_id, p.dest_calendar_id) AND x.status <> 'ok')`;
+
 /** Provider visibility of a copy by the policy's privacy option (rule 26). */
 const VISIBILITY = {
   label_only: "public",
@@ -92,7 +100,7 @@ export function mirrorCopies(
        CASE WHEN d.is_primary = 1 THEN a.email END AS dest_email
      FROM mirror_policies p JOIN calendars d ON d.id = p.dest_calendar_id
        JOIN accounts a ON a.id = d.account_id
-     WHERE p.user_id = ? AND p.enabled = 1`,
+     WHERE p.user_id = ? AND p.enabled = 1 AND ${ACTIVE}`,
     userId,
   );
   let cats: ReturnType<typeof categoryContext> | undefined;
