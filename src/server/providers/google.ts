@@ -7,6 +7,7 @@ import {
   type GoogleEventTime,
   SyncTokenExpiredError,
 } from "../google/calendar.ts";
+import { OAuthError } from "../google/oauth.ts";
 import {
   type CalendarProvider,
   type EventChanges,
@@ -114,6 +115,10 @@ function mapError(err: unknown): never {
             : "other";
     throw new ProviderError(kind, err.status, err.message);
   }
+  // A revoked refresh token or an account that needs a new login is a
+  // rejected login of this account only (accounts-login-emails-permissions.md rule 16).
+  if (err instanceof OAuthError && (err.code === "invalid_grant" || err.code === "reauth_required"))
+    throw new ProviderError("auth", 401, err.message);
   throw err;
 }
 

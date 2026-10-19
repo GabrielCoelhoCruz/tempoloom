@@ -48,11 +48,12 @@ export function providerFor(deps: ProviderDeps, accountId: string, zone: string)
     );
   }
   const api = new GoogleCalendarApi({
-    getAccessToken: () =>
+    getAccessToken: (fresh) =>
       googleAccessToken(deps.db, deps.box, accountId, {
         oauth: deps.oauth,
         serviceKey: deps.serviceKey,
         now: deps.now(),
+        fresh: fresh === true,
       }),
   });
   return new GoogleProvider(api, zone);
