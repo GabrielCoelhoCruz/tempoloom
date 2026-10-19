@@ -785,9 +785,7 @@ export const MIGRATIONS: readonly string[] = [
   );
   CREATE INDEX webhook_endpoints_team ON webhook_endpoints(team_id);
   `,
-  // Round 3: each stream adds at most one migration, right below its own line.
-  // round 3 s1
-  // r3 s1: event settings of each automation (JSON, src/shared/event-settings.ts),
+  // 19: event settings of each automation (JSON, src/shared/event-settings.ts),
   // the library template it came from, the rank of focus time inside P4, and
   // the color of a task.
   `
@@ -800,9 +798,8 @@ export const MIGRATIONS: readonly string[] = [
   ALTER TABLE focus_goals ADD COLUMN rank INTEGER NOT NULL DEFAULT 0;
   ALTER TABLE tasks ADD COLUMN color TEXT NOT NULL DEFAULT 'category';
   `,
-  // round 3 s2
+  // 20: habit actions, focus options, meeting overload, task searches, buffer scope
   `
-  -- r3 s2: habit actions, focus options, meeting overload, task searches, buffer scope
   -- Saved task searches (planning-next-up.md NXT-40 to NXT-45), assigned to automations.
   CREATE TABLE task_searches (
     id TEXT PRIMARY KEY,
@@ -862,8 +859,7 @@ export const MIGRATIONS: readonly string[] = [
     PRIMARY KEY (user_id, calendar_id, event_id)
   ) STRICT;
   `,
-  // round 3 s3
-  // r3 s3: item-specific hours, travel time zones and item timers.
+  // 21: item-specific hours, travel time zones and item timers.
   `
   -- planning-hours.md: a habit's own ranges; no other item may use the set.
   ALTER TABLE hours_sets ADD COLUMN item_specific INTEGER NOT NULL DEFAULT 0;
@@ -887,8 +883,7 @@ export const MIGRATIONS: readonly string[] = [
     started_at INTEGER NOT NULL
   ) STRICT;
   `,
-  // round 3 s4
-  // r3 s4: one calendar account in several Tempoloom accounts and the main
+  // 22: one calendar account in several Tempoloom accounts and the main
   // email, holiday feeds, shared calendars, calendar categories, mirroring
   // colors, copy alerts, the full mirroring reconcile and instance limits.
   `
@@ -955,10 +950,9 @@ export const MIGRATIONS: readonly string[] = [
     value TEXT NOT NULL
   ) STRICT;
   `,
-  // round 3 s5
+  // 23: meeting checks, meeting change log and emails, start-time intervals,
+  // adopted series and the weekly no-meeting day.
   `
-  -- r3 s5: meeting checks, meeting change log and emails, start-time intervals,
-  -- adopted series and the weekly no-meeting day.
   -- Per-user meeting preferences (JSON, defaults in src/server/meeting-prefs.ts).
   CREATE TABLE meeting_prefs (
     user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
@@ -1042,8 +1036,7 @@ export const MIGRATIONS: readonly string[] = [
   ALTER TABLE events ADD COLUMN responses TEXT NOT NULL DEFAULT '{}';
   ALTER TABLE events ADD COLUMN conference TEXT NOT NULL DEFAULT '';
   `,
-  // round 3 s6
-  // r3 s6: booking link questions, reminder and redirect; link groups; one-off links; sharing choices
+  // 24: booking link questions, reminder and redirect; link groups; one-off links; sharing choices
   `
   CREATE TABLE booking_groups (
     id TEXT PRIMARY KEY,
@@ -1085,9 +1078,8 @@ export const MIGRATIONS: readonly string[] = [
     embed_redirect TEXT NOT NULL DEFAULT 'disabled'
   ) STRICT;
   `,
-  // round 3 s7
+  // 25: preview mode (staged changes), the event change log, dismissed hints
   `
-  -- r3 s7: preview mode (staged changes), the event change log, dismissed hints
   CREATE TABLE staged_changes (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -1147,7 +1139,7 @@ export const MIGRATIONS: readonly string[] = [
     PRIMARY KEY (user_id, hint)
   ) STRICT;
   `,
-  // r3 s8: the rank of a meeting overload inside P4 (automations-overview.md rule 8).
+  // 26: the rank of a meeting overload inside P4 (automations-overview.md rule 8).
   `
   ALTER TABLE meeting_overloads ADD COLUMN rank INTEGER NOT NULL DEFAULT 0;
   `,
