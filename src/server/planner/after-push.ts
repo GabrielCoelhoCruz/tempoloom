@@ -2,6 +2,7 @@
 // overlap protected focus time (focus-time.md rule 23) and the #tl_busy quick
 // block (events-tags.md rule 14). The done marker on
 // ended occurrences is markEnded in markers.ts.
+import { TAG_BUSY } from "../../scheduler/blocking.ts";
 import { all, type Db, run } from "../db.ts";
 import { type CalendarProvider, ProviderError } from "../providers/types.ts";
 import { cacheEvent } from "../sync/pull.ts";
@@ -39,9 +40,10 @@ async function quickBlock(db: Db, userId: string, provider: Provider, now: numbe
     `SELECT e.calendar_id, e.event_id, e.etag, e.private_props, c.account_id, c.provider_id
      FROM events e JOIN calendars c ON c.id = e.calendar_id JOIN accounts a ON a.id = c.account_id
      WHERE a.user_id = ? AND a.status = 'ok' AND c.writable = 1 AND e.busy = 1 AND e.end_ms > ?
-       AND e.organizer_self = 1 AND e.recurring_id IS NULL AND lower(trim(e.summary)) = '#tl_busy'`,
+       AND e.organizer_self = 1 AND e.recurring_id IS NULL AND lower(trim(e.summary)) = ?`,
     userId,
     now,
+    TAG_BUSY,
   );
   for (const e of rows) {
     if ((JSON.parse(e.private_props) as Record<string, string>)[MANAGED_PROP] === "1") continue;

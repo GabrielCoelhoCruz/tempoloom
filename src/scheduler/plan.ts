@@ -950,17 +950,21 @@ export function hasAddress(e: ExternalEvent): boolean {
   return !/^https?:\/\//i.test(loc) && (loc.match(/,/g)?.length ?? 0) >= 2;
 }
 
+/**
+ * A travel buffer goes around an event with an address or #tl_travel, but not
+ * around a flight (it gets airport time) or a #tl_trip event without
+ * #tl_travel, which is travel itself (events-tags.md rule 18).
+ */
+function wantsTravelBuffer(e: ExternalEvent): boolean {
+  if (isFlight(e)) return false;
+  if (hasTag(e, "#tl_travel")) return true;
+  return hasAddress(e) && !hasTag(e, "#tl_trip");
+}
+
 export function matchesFilter(f: BufferFilter, e: ExternalEvent): boolean {
   if (f.categories && !(e.category && f.categories.includes(e.category))) return false;
   if (f.flight && !isFlight(e)) return false;
-  // events-tags.md rule 18: #tl_trip makes the event travel itself, with no buffer.
-  if (
-    f.travel &&
-    (isFlight(e) ||
-      !(hasAddress(e) || hasTag(e, "#tl_travel")) ||
-      (hasTag(e, "#tl_trip") && !hasTag(e, "#tl_travel")))
-  )
-    return false;
+  if (f.travel && !wantsTravelBuffer(e)) return false;
   if (f.text) {
     const fields = f.text.fields.length > 0 ? f.text.fields : (["title"] as const);
     const hay = fields.map((k) => e[k].toLowerCase());
