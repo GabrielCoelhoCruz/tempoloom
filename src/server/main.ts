@@ -11,8 +11,16 @@ import { createMailer } from "./mail.ts";
 import { ProvisionWorker } from "./provisioning.ts";
 import { SyncService } from "./sync/service.ts";
 import { WebhookWorker } from "./webhooks.ts";
+import { sendDueWeeklyReports } from "./weekly-report.ts";
 
 const config = loadConfig();
+// Tests only: the server clock starts at TEST_CLOCK_START and runs on from there
+// (the acceptance tests of analytics-weekly-reports.md set the server clock).
+if (config.TEST_CLOCK_START) {
+  const offset = Date.parse(config.TEST_CLOCK_START) - Date.now();
+  const real = Date.now;
+  Date.now = () => real() + offset;
+}
 const db = openDb(config.dbPath);
 const box = new SecretBox(config.SECRET_KEY);
 const oauth: OAuthClient | undefined =
@@ -70,11 +78,17 @@ sync.start();
 webhooks.start();
 provisioning.start();
 dailyMail.start();
-// Booking reminders (booking-links.md rule 21): checked every minute.
+// Booking reminders (booking-links.md rule 21) and weekly reports: checked every minute.
 const reminders = setInterval(() => {
   sendDueReminders(db, mailer, config.BASE_URL, Date.now()).catch((err) =>
     console.error("booking reminders failed", err),
   );
+  // The weekly report email (analytics-weekly-reports.md rule 3), off with WEEKLY_REPORTS=off.
+  if (config.WEEKLY_REPORTS === "on") {
+    sendDueWeeklyReports(db, mailer, config.BASE_URL, Date.now()).catch((err) =>
+      console.error("weekly reports failed", err),
+    );
+  }
 }, 60_000);
 
 // Stop taking requests, let queued calendar writes finish, then exit.

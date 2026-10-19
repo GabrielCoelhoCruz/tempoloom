@@ -760,6 +760,8 @@ T.update({
     "u9_lib_meetings": "library entries 32, 34 and 37: flexible meetings repeat at their period with the guests, and the priority link offers time over P3 and P4 habits",
     "u9_lib_mirror": "library mirroring entries 38 and 39 copy busy time only between job calendars, both ways, never copying a copy",
     "u9_timer": "the pomodoro timer plays the chosen alarm, resets a running session without counting it, and shows the stats view with streak, completion rate and a chart",
+    "u9_planned": "planned time is the calendar when the day began and actual time is what stayed; only ended days count",
+    "u9_weekly": "the weekly report goes out once in the first work hour of the last workday, with the week's totals and the calendar facts of the stats page; the user can turn it off",
     "u9_balance": "stats show work-life balance (personal habits, meetings outside work hours, time away) and highlights (focus held, link bookings, breaks, travel) for a chosen range",
 })
 E2E.update({
@@ -774,6 +776,7 @@ E2E.update({
     756: ["u9_lib_mirror"], 757: ["u9_lib_mirror"],
     604: ["u9_balance"], 607: ["u9_balance", "s7_stats"],
     704: ["u9_timer", "x_timer"], 708: ["u9_timer"], 712: ["u9_timer"],
+    610: ["u9_planned"], 634: ["u9_weekly", "s7_stats"],
 })
 E2E_NOTES.update({
     725: "Mornings are a one-off window (item-specific hours) of 09:00 to 12:00 on workdays, which the user can change in the form",
@@ -786,6 +789,8 @@ E2E_NOTES.update({
     756: "The entry fills the mirroring form with busy-only copies; the user adds one policy in each direction",
     757: "The entry fills the mirroring form with busy-only copies; the user adds one policy for each pair of calendars",
     604: "Time away is the work hours that out-of-office time covers",
+    610: "The test sets the server clock (TEST_CLOCK_START) so that a day begins and ends; time logged with the task timer is a past event of its task (rule 15), so it counts in actual time",
+    634: "Up to 4 facts that apply, in the stats page's order, as colored blocks under the totals; the operator command weekly-reports --now runs the same check the server runs each minute",
     704: "The timer page changes no calendar event, so the test checks that the calendar stays empty",
     708: "Three alarm sounds made in the browser (Bell, Chime, Digital); the choice stays in this browser",
     712: "The stats come from the session log in this browser; the chart groups by day, week or month",
@@ -796,6 +801,8 @@ for n in [719, 725, 728, 729, 737, 741, 746, 747, 748, 750, 752, 753, 754, 755, 
     PARTIAL.pop(n, None)
 for n in [604, 607, 704, 708, 712]:
     UNIT.pop(n, None)
+for n in [610, 634]:
+    PARTIAL.pop(n, None)
 GOOGLE_ROWS.pop(638, None)
 BLOCKED[638] = (
     "Needs a Google OAuth client and a Google test account for the E2E of Google sign-in, which is "

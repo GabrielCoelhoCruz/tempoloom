@@ -4,6 +4,7 @@
 //   node src/server/cli.ts seat-limit --email admin@example.com --seats 10|none
 //   node src/server/cli.ts limit [--name max_mirrors --value 3|none]
 //   node src/server/cli.ts booking-reminders [--now 2026-10-20T08:00:00Z]
+//   node src/server/cli.ts weekly-reports [--now 2026-10-23T08:30:00Z]
 import { parseArgs } from "node:util";
 import { createLoginLink, ensureUser, upsertAccount } from "./accounts.ts";
 import { sendDueReminders } from "./booking-mail.ts";
@@ -13,6 +14,7 @@ import { one, openDb, run } from "./db.ts";
 import { parseServiceAccountKey } from "./google/service-account.ts";
 import { instanceLimit, LIMITS, type LimitName, setInstanceLimit } from "./limits.ts";
 import { createMailer } from "./mail.ts";
+import { sendDueWeeklyReports } from "./weekly-report.ts";
 
 const [command, ...rest] = process.argv.slice(2);
 const { values } = parseArgs({
@@ -35,6 +37,16 @@ if (command === "booking-reminders") {
   const mailer = createMailer(config.SMTP_URL, config.MAIL_FROM);
   const n = await sendDueReminders(db, mailer, config.BASE_URL, at);
   console.log(`sent ${n} reminder${n === 1 ? "" : "s"}`);
+  db.close();
+  process.exit(0);
+}
+if (command === "weekly-reports") {
+  // Sends the weekly reports due at --now (default: the current time), as the server does each minute.
+  const at = values.now ? Date.parse(values.now) : Date.now();
+  if (Number.isNaN(at)) throw new Error("--now must be an ISO date and time");
+  const mailer = createMailer(config.SMTP_URL, config.MAIL_FROM);
+  const n = await sendDueWeeklyReports(db, mailer, config.BASE_URL, at);
+  console.log(`sent ${n} report${n === 1 ? "" : "s"}`);
   db.close();
   process.exit(0);
 }

@@ -515,6 +515,8 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
       // Webhook tests use a receiver on loopback and short retry delays.
       WEBHOOK_ALLOW_PRIVATE: "1",
       WEBHOOK_RETRY_BASE_MS: "500",
+      // Weekly reports go out only when a test runs the operator command (weekly-report.spec.ts).
+      WEEKLY_REPORTS: "off",
       SMTP_URL: mailServer.smtpUrl,
       MAIL_FROM: "Tempoloom <noreply@tempoloom.test>",
       ...(SA_JSON ? { GOOGLE_SERVICE_ACCOUNT_JSON: SA_JSON } : {}),

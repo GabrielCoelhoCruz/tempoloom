@@ -1147,4 +1147,10 @@ export const MIGRATIONS: readonly string[] = [
   `
   ALTER TABLE mirror_policies ADD COLUMN template_id TEXT;
   `,
+  // 28: the weekly report email (analytics-weekly-reports.md rules 1-3): on for every
+  // user, and the Monday of the last week it went out.
+  `
+  ALTER TABLE users ADD COLUMN weekly_report_enabled INTEGER NOT NULL DEFAULT 1;
+  ALTER TABLE users ADD COLUMN weekly_report_sent TEXT;
+  `,
 ];

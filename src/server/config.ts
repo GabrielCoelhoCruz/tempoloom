@@ -25,6 +25,10 @@ const schema = z.object({
   /** SMTP server for outgoing email, for example smtps://user:pass@mail.example.com:465. */
   SMTP_URL: z.string().min(1).optional(),
   MAIL_FROM: z.string().default("Tempoloom <noreply@localhost>"),
+  /** The weekly report email (analytics-weekly-reports.md); "off" stops the server sending it. */
+  WEEKLY_REPORTS: z.enum(["on", "off"]).default("on"),
+  /** Tests only: the server clock starts at this ISO instant and runs on from there. */
+  TEST_CLOCK_START: z.iso.datetime().optional(),
   /** Default most members per team; the operator can set it per team with the CLI. */
   TEAM_SEAT_LIMIT: z.coerce.number().int().min(1).optional(),
   /** Seconds between reads of calendars attached through a grant, before first sign-in. */
