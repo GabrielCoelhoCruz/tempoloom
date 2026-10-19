@@ -1,4 +1,5 @@
 // Range controls and helpers shared by the lazy team and organization views.
+import { useRef } from "preact/hooks";
 import { addDays, utcToLocal, weekdayOf } from "../../shared/time.ts";
 import { duration } from "../lib/format.ts";
 
@@ -46,6 +47,11 @@ export function RangeControls(props: {
   onRange: (r: Range) => void;
 }) {
   const { picks, range, onRange } = props;
+  // Read both fields from the page: a quick second edit can come before the
+  // re-render that carries the first one, so `range` may still be the old one.
+  const from = useRef<HTMLInputElement>(null);
+  const to = useRef<HTMLInputElement>(null);
+  const both = (): Range => [from.current?.value ?? range[0], to.current?.value ?? range[1]];
   return (
     <>
       {Object.entries(picks).map(([label, r]) => (
@@ -63,8 +69,9 @@ export function RangeControls(props: {
         <input
           type="date"
           aria-label="From"
+          ref={from}
           value={range[0]}
-          onChange={(e) => onRange([e.currentTarget.value, range[1]])}
+          onChange={() => onRange(both())}
         />
       </label>
       <label class="inline">
@@ -72,8 +79,9 @@ export function RangeControls(props: {
         <input
           type="date"
           aria-label="To"
+          ref={to}
           value={range[1]}
-          onChange={(e) => onRange([range[0], e.currentTarget.value])}
+          onChange={() => onRange(both())}
         />
       </label>
     </>

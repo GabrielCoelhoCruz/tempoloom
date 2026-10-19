@@ -234,8 +234,11 @@ export function OrgAnalytics() {
   // The address changes at once, so a reload keeps the choice; a refused range puts the last good one back.
   const latest = useRef(0);
   const good = useRef(query());
+  // The newest choice; handlers read it, not the last rendered state.
+  const current = useRef(controls);
   const load = async (c: Controls) => {
     const n = ++latest.current;
+    current.current = c;
     setControls(c);
     saveQuery(params(c));
     try {
@@ -280,14 +283,14 @@ export function OrgAnalytics() {
         <RangeControls
           picks={picks}
           range={controls.range}
-          onRange={(range) => void load({ ...controls, range })}
+          onRange={(range) => void load({ ...current.current, range })}
         />
         <label class="inline">
           Group by
           <select
             aria-label="Group by"
             value={controls.groupBy}
-            onChange={(e) => void load({ ...controls, groupBy: e.currentTarget.value })}
+            onChange={(e) => void load({ ...current.current, groupBy: e.currentTarget.value })}
           >
             {[...LEVELS, ...others.map((a): [string, string] => [a.key, a.key])].map(
               ([value, label]) => (
@@ -314,8 +317,8 @@ export function OrgAnalytics() {
                 value={controls.filters[a.key] ?? ""}
                 onChange={(e) =>
                   void load({
-                    ...controls,
-                    filters: { ...controls.filters, [a.key]: e.currentTarget.value },
+                    ...current.current,
+                    filters: { ...current.current.filters, [a.key]: e.currentTarget.value },
                   })
                 }
               >

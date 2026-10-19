@@ -106,8 +106,11 @@ export function TeamStats() {
   // The address changes at once, so a reload keeps the choice; a refused range puts the last good one back.
   const latest = useRef(0);
   const good = useRef(query());
+  // The newest choice; handlers read it, not the last rendered state.
+  const current = useRef<{ range: Range; grouping: Grouping }>({ range, grouping });
   const load = async (r: Range, g: Grouping) => {
     const n = ++latest.current;
+    current.current = { range: r, grouping: g };
     const resolved = g === "auto" ? (diffDays(r[0], r[1]) < 14 ? "day" : "week") : g;
     const q = new URLSearchParams({ from: r[0], to: r[1], grouping: g });
     setRange(r);
@@ -140,13 +143,17 @@ export function TeamStats() {
       <h1>Stats</h1>
       <StatsTabs />
       <div class="actions">
-        <RangeControls picks={picks} range={range} onRange={(r) => void load(r, grouping)} />
+        <RangeControls
+          picks={picks}
+          range={range}
+          onRange={(r) => void load(r, current.current.grouping)}
+        />
         <label class="inline">
           Group by
           <select
             aria-label="Group by"
             value={grouping}
-            onChange={(e) => void load(range, e.currentTarget.value as Grouping)}
+            onChange={(e) => void load(current.current.range, e.currentTarget.value as Grouping)}
           >
             <option value="auto">Auto</option>
             <option value="day">By day</option>
