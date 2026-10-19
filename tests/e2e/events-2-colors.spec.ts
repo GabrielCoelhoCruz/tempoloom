@@ -165,9 +165,21 @@ test("a new category color repaints events that ended too; Repaint all events pu
   await expect(page.getByTestId("color-form").getByLabel("Solo work", { exact: true })).toHaveValue(
     "11",
   );
-  await page.getByTestId("color-form").getByRole("button", { name: "Repaint all events" }).click();
-  await expect(page.getByTestId("settings-message")).toHaveText("Repainted all events");
-  await page.getByTestId("color-form").getByRole("button", { name: "Repaint all events" }).click();
+  // At most 2 a minute (the exact window has a unit test with a set clock,
+  // tests/unit/slot-limiter.test.ts): quick clicks are refused by the third.
+  // The first repaint above may or may not still be in the window.
+  const repaint = async () => {
+    const answer = page.waitForResponse((r) => r.url().endsWith("/api/settings/repaint"));
+    await page
+      .getByTestId("color-form")
+      .getByRole("button", { name: "Repaint all events" })
+      .click();
+    return (await answer).status();
+  };
+  const statuses = [await repaint(), await repaint()];
+  if (statuses[1] === 200) statuses.push(await repaint());
+  expect(statuses.at(-1)).toBe(429);
+  expect(statuses.slice(0, -1)).toEqual(statuses.length === 3 ? [200, 200] : [200]);
   await expect(page.getByTestId("settings-message")).toHaveText(
     "Wait a minute before you repaint again.",
   );

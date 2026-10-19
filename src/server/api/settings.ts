@@ -15,8 +15,24 @@ const range = z
   .refine(([s, e]) => e > s, "A range must end after it starts");
 const weekly = z.partialRecord(z.enum(["1", "2", "3", "4", "5", "6", "7"]), z.array(range).max(12));
 
+/**
+ * At most `max` uses per key in any `windowMs` (events-categories-and-colors.md
+ * rule 11). takeSlot returns false, and uses nothing, when the key is at the limit.
+ */
+export function slotLimiter(now: () => number, max: number, windowMs: number) {
+  const uses = new Map<string, number[]>();
+  return function takeSlot(key: string): boolean {
+    const t = now();
+    const recent = (uses.get(key) ?? []).filter((u) => t - u < windowMs);
+    if (recent.length >= max) return false;
+    uses.set(key, [...recent, t]);
+    return true;
+  };
+}
+
 export function settingsRoutes(db: Db, sync: SyncService, now: () => number): Hono<AppEnv> {
-  const scopeChanges = new Map<string, number[]>();
+  // Scope changes and "repaint all" share one limit of 2 a minute (rules 11, 12).
+  const takeSlot = slotLimiter(now, 2, 60_000);
   const r = new Hono<AppEnv>();
 
   r.get("/settings", (c) =>
@@ -30,13 +46,11 @@ export function settingsRoutes(db: Db, sync: SyncService, now: () => number): Ho
   /** Rule 12: repaint all events in one step; it repaints as much as a scope change. */
   r.post("/settings/repaint", (c) => {
     const user = c.get("user");
-    const recent = (scopeChanges.get(user.id) ?? []).filter((t) => now() - t < 60_000);
-    if (recent.length >= 2)
+    if (!takeSlot(user.id))
       return c.json(
         { error: "too_many_changes", message: "Wait a minute before you repaint again." },
         429,
       );
-    scopeChanges.set(user.id, [...recent, now()]);
     requestRepaint(db, user.id, now());
     sync.request(user.id);
     return c.json({ ok: true });
@@ -47,18 +61,15 @@ export function settingsRoutes(db: Db, sync: SyncService, now: () => number): Ho
     const body = await jsonBody(c, z.record(z.string(), z.unknown()));
     // Rule 11 of events-categories-and-colors.md: a scope change repaints many
     // events, so at most 2 changes per minute.
-    if ("colorScope" in body && body.colorScope !== getSettings(db, user.id).colorScope) {
-      const recent = (scopeChanges.get(user.id) ?? []).filter((t) => now() - t < 60_000);
-      if (recent.length >= 2)
-        return c.json(
-          {
-            error: "too_many_changes",
-            message: "Wait a minute before you change the scope again.",
-          },
-          429,
-        );
-      scopeChanges.set(user.id, [...recent, now()]);
-    }
+    if (
+      "colorScope" in body &&
+      body.colorScope !== getSettings(db, user.id).colorScope &&
+      !takeSlot(user.id)
+    )
+      return c.json(
+        { error: "too_many_changes", message: "Wait a minute before you change the scope again." },
+        429,
+      );
     const windowLimit = instanceLimit(db, "max_scheduling_window_weeks");
     if (
       windowLimit !== null &&
