@@ -452,7 +452,7 @@ export function createPreview(deps: PreviewDeps) {
       if (res.status >= 400) return { ...res, impact: [] };
       return { ...res, impact: diffPlans(db, userId, before, plannedNow(dry.db, userId, t)) };
     } finally {
-      dry.db.exec("ROLLBACK");
+      if (dry.db.isTransaction) dry.db.exec("ROLLBACK");
     }
   }
 

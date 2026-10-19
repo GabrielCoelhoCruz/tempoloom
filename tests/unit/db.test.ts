@@ -3,8 +3,10 @@
 // 2. When the body's error already ended the transaction (SQLite does this on
 //    SQLITE_FULL, SQLITE_IOERR and similar), the ROLLBACK must not hide the
 //    body's error with "cannot rollback - no transaction is active".
+// 3. When the ROLLBACK itself fails, both errors must surface and the failure
+//    must be logged: the connection may be left in a transaction.
 import { DatabaseSync } from "node:sqlite";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { tx } from "../../src/server/db.ts";
 
 function memDb(): DatabaseSync {
@@ -36,6 +38,31 @@ describe("tx", () => {
       }),
     ).toThrow("disk full");
     expect(db.isTransaction).toBe(false);
+  });
+
+  it("surfaces both errors and logs when the ROLLBACK fails", () => {
+    const db = memDb();
+    const exec = db.exec.bind(db);
+    vi.spyOn(db, "exec").mockImplementation((sql) => {
+      if (sql === "ROLLBACK") throw new Error("disk I/O error");
+      exec(sql);
+    });
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    let thrown: unknown;
+    try {
+      tx(db, () => {
+        throw new Error("body failed");
+      });
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(AggregateError);
+    const messages = (thrown as AggregateError).errors.map((e: Error) => e.message);
+    expect(messages).toEqual(["body failed", "disk I/O error"]);
+    expect(log).toHaveBeenCalledWith(expect.stringMatching(/left in a transaction/), thrown);
+    log.mockRestore();
+    vi.mocked(db.exec).mockRestore();
+    exec("ROLLBACK");
   });
 
   it("commits when the body returns", () => {
