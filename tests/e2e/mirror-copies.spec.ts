@@ -8,13 +8,15 @@
 // - the no-reply setting is missing, is per policy, or does not repaint the
 //   copies; its choice is lost on reload                                    -> answers
 // - details mode skips free events, or label mode copies them              -> answers
+// - details copies miss the location; label copies are not public          -> answers
 // - all-day events are copied in the wrong mode, or as timed events        -> all-day
 // - "outside work hours" is ignored, cuts an overlapping event, or the
 //   checkbox is not saved                                                  -> work hours
 // - busy-only copies leak the title or the description; private details
 //   copies are not private, or miss the description and location           -> privacy
 // - the calendar type does not change the label and the category color     -> type
-// - turning a policy off and on leaves a drifted or stale copy             -> resync
+// - turning a policy off and on leaves a drifted or stale copy, or runs no
+//   full check                                                             -> resync
 // Every test reads the calendars again and reloads the page.
 import type { Page } from "@playwright/test";
 import { addDays } from "../../src/shared/time.ts";
@@ -49,6 +51,7 @@ function meeting(
     start: number;
     end: number;
     free?: boolean;
+    location?: string;
     organizer?: string;
     guests?: [string, string][];
   },
@@ -58,6 +61,7 @@ function meeting(
     `DTEND:${utc(e.end)}`,
     `SUMMARY:${e.title}`,
     `TRANSP:${e.free ? "TRANSPARENT" : "OPAQUE"}`,
+    ...(e.location ? [`LOCATION:${e.location}`] : []),
     ...(e.organizer ? [`ORGANIZER:mailto:${e.organizer}`] : []),
     ...(e.guests ?? []).map(([email, answer]) => `ATTENDEE;PARTSTAT=${answer}:mailto:${email}`),
   ]);
@@ -92,6 +96,7 @@ test("the owner's answer and role decide a copy's free/busy; the no-reply settin
   // own email would already be on the destination (rule 17).
   const extra = await people(6);
   await signIn();
+  const side = await cal.newCalendar("Side");
   await addCalDavAccount(page, { ...six, email: extra.email });
   const priv = extra.cal;
   const OWNER = extra.email;
@@ -104,6 +109,7 @@ test("the owner's answer and role decide a copy's free/busy; the no-reply settin
     start: at(W, "09:00"),
     end: at(W, "10:00"),
     free: true,
+    location: "Room 7",
     organizer: boss,
     guests: [
       [boss, "ACCEPTED"],
@@ -152,7 +158,7 @@ test("the owner's answer and role decide a copy's free/busy; the no-reply settin
   });
 
   await addPolicy(page, { from, to, show: "Details" });
-  await eventually(
+  const detailed = await eventually(
     () => week(cal),
     (l) =>
       expect(facts(l)).toEqual([
@@ -163,6 +169,16 @@ test("the owner's answer and role decide a copy's free/busy; the no-reply settin
         ["Optional reading", false],
         ["Deep work", true],
       ]),
+  );
+  expect(copies(detailed)[0]?.location).toBe("Room 7");
+  // A second policy, to show that the no-reply setting applies to every policy.
+  const sideTo = "Side";
+  await addPolicy(page, { from, to: sideTo, show: "Details" });
+  const unanswered = (l: Awaited<ReturnType<typeof week>>) =>
+    facts(l).filter(([title]) => title === "Unanswered talk");
+  await eventually(
+    () => week(side),
+    (l) => expect(unanswered(l)).toEqual([["Unanswered talk", false]]),
   );
 
   // The account-level setting turns copies of unanswered events busy.
@@ -185,6 +201,10 @@ test("the owner's answer and role decide a copy's free/busy; the no-reply settin
         ["Deep work", true],
       ]),
   );
+  await eventually(
+    () => week(side),
+    (l) => expect(unanswered(l)).toEqual([["Unanswered talk", true]]),
+  );
   await page.reload();
   await expect(page.getByLabel("Copies of events you have not answered")).toHaveValue("busy");
 
@@ -192,7 +212,7 @@ test("the owner's answer and role decide a copy's free/busy; the no-reply settin
   await editPolicy(page, `${from} → ${to}`, (f) =>
     f.getByLabel("Copies show").selectOption({ label: "A label only" }),
   );
-  await eventually(
+  const labelled = await eventually(
     () => week(cal),
     (l) =>
       expect(copies(l).map((e) => local(e.start))).toEqual([
@@ -203,6 +223,12 @@ test("the owner's answer and role decide a copy's free/busy; the no-reply settin
         `${W} 16:00`,
       ]),
   );
+  // A label copy has no details and is public (rule 26).
+  const label = copies(labelled)[0];
+  expect(label?.location ?? "").toBe("");
+  const labelRaw = await rawEvent(radicale, label?.id ?? "");
+  expect(labelRaw).toContain("CLASS:PUBLIC");
+  expect(labelRaw).not.toContain("Room 7");
   await page.reload();
   await expect(page.getByLabel("Copies of events you have not answered")).toHaveValue("busy");
   await expect(policyRow(page, `${from} → ${to}`)).toContainText("label only");
@@ -445,6 +471,11 @@ test("turning a policy off and on runs a full re-sync: a drifted copy and change
   await planNow(page);
   expect(copies(await week(cal))[0]?.colorId).not.toBe("3");
 
+  const reconciled = async () =>
+    ((await (await page.request.get("/api/mirrors")).json()) as { reconciledAt: number | null })
+      .reconciledAt;
+  const before = await reconciled();
+  expect(before).not.toBeNull();
   await openSettings(page);
   await policyRow(page, "Private → Work").getByRole("button", { name: "Turn off" }).click();
   await expect(policyRow(page, "Private → Work")).toContainText("· off");
@@ -468,6 +499,8 @@ test("turning a policy off and on runs a full re-sync: a drifted copy and change
         [`${day(3)} 12:00`, "3"],
       ]),
   );
+  // Turning it on ran a new full check.
+  await expect.poll(reconciled).toBeGreaterThan(before ?? 0);
   await page.reload();
   await expect(policyRow(page, "Private → Work")).not.toContainText("· off");
   await expect(page.getByTestId("mirror-reconciled")).toHaveText(
