@@ -265,9 +265,6 @@ E2E_NOTES = {
 
 # Row id -> reason, for rows implemented in part (some behavior has E2E, some does not).
 PARTIAL = StatusMap("PARTIAL", {
-    934: "http on a public host is rejected in E2E; the localhost and IP-literal checks are in code but not under E2E, because the E2E server allows private receivers (WEBHOOK_ALLOW_PRIVATE)",
-    936: "success on 200 and failure on 500 are E2E-proven; the 10-second timeout is not under test",
-    938: "the delivery worker suspends the endpoint and the page offers Resume; not under test (needs 24 hours of failures)",
     320: "A meeting is created from a form, with E2E on CalDAV; each occurrence is its own event, not an instance of one recurring series",
     322: "Availability of attendees who are users here is E2E-proven on CalDAV; the Google free/busy query for other emails is not implemented",
     324: "Optional guests are written with the optional role and never limit the time (E2E); the E2E optional guest is not a user here",
@@ -355,15 +352,11 @@ UNIT = StatusMap("UNIT", {
     161: "", 165: "", 178: "", 196: "", 197: "", 202: "", 203: "", 206: "", 208: "", 209: "", 219: "",
     225: "", 226: "API only",
     228: "",
-    259: "title and description; not the RSVP note", 292: "settings field; no UI yet", 506: "API only",
-    517: "status is stored; no reconnect UI yet",
+    259: "title and description; not the RSVP note", 292: "settings field; no UI yet",
     383: "set through the API; the form derives the slug from the title", 384: "several durations work; the default is the first",
     388: "", 389: "rolling days only; no fixed end date", 390: "before and after buffers; no travel or recovery buffer checks",
     392: "a free-text location only; no Meet, Zoom or Gong", 398: "busy event with the booker as guest and manage link; no conference link",
     408: "", 412: "the page marks preferred times; no legend yet",
-    456: "", 467: "", 468: "API only; no UI switch",
-    470: "", 471: "stored per policy; no UI", 472: "", 473: "the skip half is E2E-proven; free copies in details mode are not",
-    475: "", 476: "copies the details; the provider visibility is not set to private", 480: "",
     193: "work and personal habit hours in stats; no per-habit progress", 353: "one-to-one, group and booked meeting hours",
     604: "meetings outside work hours and personal habit hours",
     607: "meetings, focus and booking counts; no breaks or travel",
@@ -375,10 +368,7 @@ UNIT = StatusMap("UNIT", {
 
 GOOGLE_ROWS = StatusMap("GOOGLE_ROWS", {
     638: "Google sign-in is implemented and follows the team's SSO rules; Google E2E pending (needs a Google OAuth client and account). Microsoft sign-in is not implemented: it needs an app registration and a Microsoft Graph provider.",
-    510: "Google sign-in (OAuth with PKCE) and Google Calendar sync are implemented; Google E2E pending: needs a service-account key, and the consent screen needs a one-time check by a person. Microsoft is not implemented.",
-    513: "Google and CalDAV accounts can be connected; a second CalDAV account is added in the UI with CalDAV E2E (\u201ca user adds a second CalDAV account and removes it after a confirmation\u201d); Microsoft is not implemented. Google E2E pending.",
     147: "Google sign-in asks for calendar scopes up front; incremental consent not implemented. Google E2E pending.",
-    518: "All calendar scopes are asked at sign-in; incremental consent not implemented. Google E2E pending.",
 })
 
 # Round 3 rows. Each block adds rows with T.update, E2E.update, E2E_NOTES.update,
@@ -818,12 +808,6 @@ E2E_NOTES.update({
     934: "The E2E server runs with private receivers off for this test (WEBHOOK_ALLOW_PRIVATE)",
     938: "The 24-hour period is a setting (WEBHOOK_SUSPEND_AFTER_SECONDS), 4 seconds in the test",
 })
-for n in [456, 467, 468, 470, 471, 472, 473, 475, 476, 480, 506, 517]:
-    UNIT.pop(n, None)
-for n in [934, 936, 938]:
-    PARTIAL.pop(n, None)
-for n in [510, 513, 518]:
-    GOOGLE_ROWS.pop(n, None)
 BLOCKED[510] = ("Needs a Microsoft 365 account and a Microsoft Graph provider, which is not built; "
                 "Google sign-in (OAuth with PKCE) and Google Calendar sync are built, and their E2E needs a Google service-account key")
 BLOCKED[513] = ("Needs a Microsoft 365 account and a Microsoft Graph provider, which is not built; a second CalDAV account "
