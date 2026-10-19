@@ -23,8 +23,10 @@ import { analyticsRoutes } from "./api/analytics.ts";
 import { bookingRoutes, publicBookingRoutes } from "./api/booking.ts";
 import { brandingRoutes, publicBrandingRoutes } from "./api/branding.ts";
 import { delegationGuard, delegationRoutes } from "./api/delegation.ts";
+import { hoursExtraRoutes } from "./api/hours-extra.ts";
 import { itemRoutes } from "./api/items.ts";
 import { meetingRoutes } from "./api/meetings.ts";
+import { nowRoutes } from "./api/now.ts";
 import { oooRoutes } from "./api/ooo.ts";
 import { plannerRoutes } from "./api/planner.ts";
 import { policyRoutes } from "./api/policies.ts";
@@ -33,8 +35,10 @@ import { scimRoutes } from "./api/scim.ts";
 import { settingsRoutes } from "./api/settings.ts";
 import { ssoAdminRoutes, ssoAuthRoutes } from "./api/sso.ts";
 import { statsRoutes } from "./api/stats.ts";
+import { taskTimeRoutes } from "./api/task-time.ts";
 import { publicInviteRoutes, teamRoutes } from "./api/team.ts";
 import { teamDefaultRoutes } from "./api/team-defaults.ts";
+import { travelRoutes } from "./api/travel.ts";
 import { webhookRoutes } from "./api/webhooks.ts";
 import { apiKeyUser } from "./api-keys.ts";
 import type { Config } from "./config.ts";
@@ -344,6 +348,11 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
 
   app.route("/api", teamDefaultRoutes(db, now));
   app.route("/api", oooRoutes(db, sync, now));
+  // r3 s3: planner now line, task time, travel time zones, hours deletion.
+  app.route("/api", nowRoutes(db, now));
+  app.route("/api", taskTimeRoutes(db, sync, config.BASE_URL, now));
+  app.route("/api", travelRoutes(db, sync, now));
+  app.route("/api", hoursExtraRoutes(db, sync, now));
 
   // Static client with a single-page fallback. Text files are compressed once
   // per encoding and kept in memory; the build output does not change at run time.

@@ -26,6 +26,7 @@ import { all, type Db, one, run } from "../db.ts";
 import { fragmentationPreference } from "../policies/model.ts";
 import type { CalendarProvider } from "../providers/types.ts";
 import { getSettings, type Settings } from "../settings.ts";
+import { planningZone } from "../travel.ts";
 import { categoryContext, colorFor, paintExternal } from "./categories.ts";
 import { externalEvents } from "./events.ts";
 import { attendeeOccurrences, attendeesOf, meetingItems } from "./meetings.ts";
@@ -166,7 +167,11 @@ export function loadSnapshot(
       id: t.id,
       title: t.title,
       level: t.level,
-      remainingMinutes: Math.max(0, t.total_minutes - t.logged_minutes - (consumed.get(t.id) ?? 0)),
+      // TSK-70: in suggestions mode a task places nothing; its locked work blocks stay.
+      remainingMinutes:
+        settings.taskPlacement === "suggestions"
+          ? 0
+          : Math.max(0, t.total_minutes - t.logged_minutes - (consumed.get(t.id) ?? 0)),
       minChunkMinutes: t.min_chunk_minutes,
       maxChunkMinutes: t.max_chunk_minutes,
       startAfter: t.start_after,
@@ -266,8 +271,10 @@ export function loadSnapshot(
     busy: number;
     created_at: number;
     rules_changed_at: number;
+    notes: string;
   }>(db, "SELECT * FROM focus_goals WHERE user_id = ? AND enabled = 1", userId).map((f) => {
     titles.set(`focus:${f.id}`, f.title);
+    notes.set(`focus:${f.id}`, f.notes);
     return {
       id: f.id,
       title: f.title,
@@ -317,6 +324,23 @@ export function loadSnapshot(
   return { snapshot, rows, notes, titles };
 }
 
+/**
+ * CNT-10: the notes, a link that opens the item in the planner, and the
+ * footer. Meetings get no link: their events go to guests.
+ */
+export function eventDescription(
+  notes: string,
+  baseUrl: string,
+  kind: string,
+  itemId: string,
+): string {
+  const link =
+    kind === "task" || kind === "habit" || kind === "focus"
+      ? `Open in Tempoloom: ${baseUrl}/?item=${kind}:${itemId}`
+      : "";
+  return [notes, link, FOOTER].filter(Boolean).join("\n\n");
+}
+
 export function titleFor(settings: Settings, base: string, p: Placement): string {
   const m = settings.markers;
   const marker = p.conflict ? m.conflict : p.locked ? m.locked : p.busy ? m.busy : m.free;
@@ -341,7 +365,7 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
   const { snapshot, rows, notes, titles } = loadSnapshot(
     db,
     userId,
-    user.time_zone,
+    planningZone(db, userId, user.time_zone),
     settings,
     now,
     last,
@@ -395,7 +419,9 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
       title:
         keepUserTitle && row ? row.title : titleFor(settings, titles.get(itemKey) ?? p.kind, p),
       description:
-        keepUserTitle && row ? row.description : itemNotes ? `${itemNotes}\n\n${FOOTER}` : FOOTER,
+        keepUserTitle && row
+          ? row.description
+          : eventDescription(itemNotes, ctx.baseUrl, p.kind, p.itemId),
       busy: p.busy || p.locked,
       colorId: null,
       ...(p.kind === "meeting" ? guests.get(p.itemId) : {}),

@@ -18,6 +18,7 @@ const eventColor = z.enum([
   "calendar_default",
 ]);
 
+import { COMPANY_SIZES, USE_CASES } from "../shared/profile.ts";
 import { type Db, one, run } from "./db.ts";
 
 export const settingsSchema = z.object({
@@ -62,6 +63,20 @@ export const settingsSchema = z.object({
     .partial()
     .transform((m) => ({ ...DEFAULT_COLORS, ...m }))
     .prefault({}),
+  // r3 s3: task placement (planning-tasks.md TSK-70), in-app alerts
+  // (planning-notifications.md), first-run hours review (HRS-15), profile fields.
+  taskPlacement: z.enum(["chunks", "suggestions"]).default("chunks"),
+  tabAlert: z.boolean().default(true),
+  startChime: z.boolean().default(false),
+  hoursReviewed: z.boolean().default(false),
+  profile: z
+    .object({
+      jobTitle: z.string().trim().max(100).default(""),
+      company: z.string().trim().max(100).default(""),
+      companySize: z.enum(["", ...COMPANY_SIZES]).default(""),
+      useCase: z.enum(["", ...USE_CASES]).default(""),
+    })
+    .prefault({}),
 });
 
 const DEFAULT_COLORS: Record<(typeof CATEGORIES)[number], z.infer<typeof eventColor>> = {
@@ -99,6 +114,7 @@ export function updateSettings(db: Db, userId: string, patch: unknown): Settings
       ...current.categoryColors,
       ...((patch as { categoryColors?: object }).categoryColors ?? {}),
     },
+    profile: { ...current.profile, ...((patch as { profile?: object }).profile ?? {}) },
   });
   run(db, "UPDATE users SET settings = ? WHERE id = ?", JSON.stringify(merged), userId);
   return merged;

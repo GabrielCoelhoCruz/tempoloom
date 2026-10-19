@@ -31,6 +31,7 @@ import { MANAGED_PROP } from "../planner/push.ts";
 import { getSettings } from "../settings.ts";
 import type { SyncService } from "../sync/service.ts";
 import { membership, sameTeam } from "../teams.ts";
+import { planningZone } from "../travel.ts";
 import { type CustomData, customData, type WebhookType } from "../webhooks.ts";
 import { type Branding, brandingFor } from "./branding.ts";
 
@@ -252,7 +253,7 @@ function rulesFor(db: Db, link: LinkRow, duration: number): TeamRules {
   return {
     durationMinutes: duration,
     level: link.level,
-    zone: zoneOf(db, link.user_id),
+    zone: planningZone(db, link.user_id),
     weekStart: getSettings(db, link.user_id).weekStart,
     noticeMinutes: link.notice_minutes,
     rangeEndDays: link.range_end_days,
@@ -318,7 +319,8 @@ export function linkTimes(
   const person = (p: LinkPerson): Person => ({
     id: p.userId,
     hours: hoursOf(db, p.userId, p.hoursSetId),
-    zone: zoneOf(db, p.userId),
+    // Hours follow a travel time zone on its dates (timezones-home-and-travel.md rule 3).
+    zone: planningZone(db, p.userId),
     items: calendarItems(db, p.userId, from - pad, to + pad),
     recoveryMinutes: link.use_recovery_buffer ? recoveryMinutes(db, p.userId, meeting) : 0,
   });

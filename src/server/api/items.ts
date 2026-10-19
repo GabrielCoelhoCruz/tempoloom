@@ -8,6 +8,7 @@ import type { WeeklyHours } from "../../scheduler/hours.ts";
 import type { AppEnv } from "../app.ts";
 import { all, type Db, one, run, tx } from "../db.ts";
 import { jsonBody, notFound } from "../http.ts";
+import { createItemHours, dropItemHours, itemHoursSchema, saveItemHours } from "../item-hours.ts";
 import { getSettings } from "../settings.ts";
 import type { SyncService } from "../sync/service.ts";
 
@@ -56,6 +57,8 @@ const habitInput = z.object({
   defense: z.enum(["adaptive", "always-free", "always-busy"]).optional(),
   whenUnplaceable: z.enum(["remove", "keep_as_conflict"]).optional(),
   reservedWords: z.array(z.string().max(100)).max(20).optional(),
+  /** Item-specific hours instead of a named set (planning-hours.md). */
+  itemHours: itemHoursSchema.optional(),
 });
 
 const bufferInput = z.object({
@@ -125,7 +128,15 @@ export function hoursSetId(
       userId,
       kind,
     )?.id;
-  if (!id || !one(db, "SELECT 1 FROM hours_sets WHERE id = ? AND user_id = ?", id, userId)) {
+  if (
+    !id ||
+    !one(
+      db,
+      "SELECT 1 FROM hours_sets WHERE id = ? AND user_id = ? AND item_specific = 0",
+      id,
+      userId,
+    )
+  ) {
     badRequest("hoursSetId", "Unknown hours set");
   }
   return id;
@@ -422,7 +433,9 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
     c.json({
       habits: all(
         db,
-        "SELECT * FROM habits WHERE user_id = ? ORDER BY level, rank, created_at",
+        `SELECT h.*, CASE WHEN s.item_specific = 1 THEN s.weekly END AS item_hours
+         FROM habits h JOIN hours_sets s ON s.id = h.hours_set_id
+         WHERE h.user_id = ? ORDER BY h.level, h.rank, h.created_at`,
         c.get("user").id,
       ),
     }),
@@ -431,8 +444,16 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
   r.post("/habits", async (c) => {
     const user = c.get("user");
     const body = await jsonBody(c, habitInput);
-    const hours = hoursSetId(db, user.id, body.hoursSetId, "work");
-    const ideal = checkHabit(user.id, body, hours);
+    const hours = body.itemHours
+      ? createItemHours(db, user.id, body.title, body.itemHours)
+      : hoursSetId(db, user.id, body.hoursSetId, "work");
+    let ideal: number;
+    try {
+      ideal = checkHabit(user.id, body, hours);
+    } catch (err) {
+      if (body.itemHours) dropItemHours(db, hours);
+      throw err;
+    }
     const lvl = body.level ?? 3;
     const id = randomUUID();
     const t = now();
@@ -484,9 +505,11 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
     }>(db, "SELECT * FROM habits WHERE id = ? AND user_id = ?", id, user.id);
     if (!cur) notFound("habit");
     const body = await jsonBody(c, habitInput.partial());
-    const hours = body.hoursSetId
-      ? hoursSetId(db, user.id, body.hoursSetId, "work")
-      : cur.hours_set_id;
+    const hours = body.itemHours
+      ? saveItemHours(db, user.id, cur.hours_set_id, body.title ?? cur.title, body.itemHours)
+      : body.hoursSetId
+        ? hoursSetId(db, user.id, body.hoursSetId, "work")
+        : cur.hours_set_id;
     const idealTime =
       body.idealTime ??
       `${String(Math.floor(cur.ideal_minute / 60)).padStart(2, "0")}:${String(cur.ideal_minute % 60).padStart(2, "0")}`;
@@ -520,6 +543,7 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
       now(),
       id,
     );
+    if (hours !== cur.hours_set_id) dropItemHours(db, cur.hours_set_id);
     changed(user.id);
     return c.json({ habit: habitRow(id) });
   });
@@ -543,8 +567,13 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
   r.delete("/habits/:id", (c) => {
     const user = c.get("user");
     const id = c.req.param("id");
-    if (!one(db, "SELECT 1 FROM habits WHERE id = ? AND user_id = ?", id, user.id))
-      notFound("habit");
+    const own = one<{ hours_set_id: string }>(
+      db,
+      "SELECT hours_set_id FROM habits WHERE id = ? AND user_id = ?",
+      id,
+      user.id,
+    );
+    if (!own) notFound("habit");
     // Future events go with the next plan; past events stay (habit spec rule 36).
     tx(db, () => {
       run(
@@ -554,6 +583,7 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
         id,
       );
       run(db, "DELETE FROM habits WHERE id = ?", id);
+      dropItemHours(db, own.hours_set_id);
     });
     changed(user.id);
     return c.body(null, 204);

@@ -55,6 +55,51 @@ const OFFSET_BUCKET = 15 * MINUTE;
 const CACHE_LIMIT = 200_000;
 const offsets = new Map<string, Map<number, number>>();
 
+// A travel zone (timezones-home-and-travel.md) is a composite zone: the home
+// zone plus legs "Zone@start-end" (epoch ms, end exclusive), joined by "|".
+// Every wall-clock rule then follows the zone of the leg that holds the
+// instant, the way it follows a daylight-saving change. Legs start and end on
+// quarter hours, like every real transition.
+interface Leg {
+  zone: string;
+  start: number;
+  end: number;
+}
+const composites = new Map<string, { home: string; legs: Leg[]; zones: string[] }>();
+
+function compositeOf(zone: string) {
+  let c = composites.get(zone);
+  if (!c) {
+    const [home = "UTC", ...rest] = zone.split("|");
+    const legs = rest.map((part) => {
+      const at = part.lastIndexOf("@");
+      const [start, end] = part
+        .slice(at + 1)
+        .split("-")
+        .map(Number) as [number, number];
+      return { zone: part.slice(0, at), start, end };
+    });
+    c = { home, legs, zones: [...new Set([home, ...legs.map((l) => l.zone)])] };
+    if (composites.size >= 1000) composites.clear();
+    composites.set(zone, c);
+  }
+  return c;
+}
+
+/** A composite zone: `home` with travel legs on instant ranges. */
+export function travelZone(home: string, legs: readonly Leg[]): string {
+  return legs.length === 0
+    ? home
+    : [home, ...legs.map((l) => `${l.zone}@${l.start}-${l.end}`)].join("|");
+}
+
+/** The real zone that a (possibly composite) zone uses at an instant. */
+export function zoneAt(zone: string, epochMs: number): string {
+  if (!zone.includes("|")) return zone;
+  const c = compositeOf(zone);
+  return c.legs.find((l) => epochMs >= l.start && epochMs < l.end)?.zone ?? c.home;
+}
+
 /** Zone offset from UTC at an instant, in milliseconds. */
 export function zoneOffset(zone: string, epochMs: number): number {
   const bucket = Math.floor(epochMs / OFFSET_BUCKET);
@@ -66,7 +111,7 @@ export function zoneOffset(zone: string, epochMs: number): number {
   let offset = byBucket.get(bucket);
   if (offset === undefined) {
     const at = bucket * OFFSET_BUCKET;
-    offset = wallClockAsUtc(zone, at) - at;
+    offset = wallClockAsUtc(zoneAt(zone, at), at) - at;
     if (byBucket.size >= CACHE_LIMIT) byBucket.clear();
     byBucket.set(bucket, offset);
   }
@@ -102,8 +147,15 @@ export function localToUtc(zone: string, date: LocalDate, minuteOfDay: number): 
   const wall = Date.UTC(y, mo - 1, d) + minuteOfDay * MINUTE;
   const before = zoneOffset(zone, wall - DAY);
   const after = zoneOffset(zone, wall + DAY);
+  // A composite zone can change twice within two days (a one-day trip): try
+  // the offsets of all its zones.
+  const candidates = zone.includes("|")
+    ? compositeOf(zone).zones.flatMap((z) => [zoneOffset(z, wall - DAY), zoneOffset(z, wall + DAY)])
+    : before === after
+      ? [before]
+      : [before, after];
   let best: number | undefined;
-  for (const offset of before === after ? [before] : [before, after]) {
+  for (const offset of candidates) {
     const t = wall - offset;
     if (t + zoneOffset(zone, t) === wall && (best === undefined || t < best)) best = t;
   }

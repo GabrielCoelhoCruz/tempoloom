@@ -789,6 +789,32 @@ export const MIGRATIONS: readonly string[] = [
   // round 3 s1
   // round 3 s2
   // round 3 s3
+  // r3 s3: item-specific hours, focus notes, travel time zones and item timers.
+  `
+  -- planning-hours.md: a habit's own ranges; no other item may use the set.
+  ALTER TABLE hours_sets ADD COLUMN item_specific INTEGER NOT NULL DEFAULT 0;
+  -- The description of focus time events (tools-pomodoro-timer.md rule 19).
+  ALTER TABLE focus_goals ADD COLUMN notes TEXT NOT NULL DEFAULT '';
+
+  -- timezones-home-and-travel.md: inclusive local dates in the travel zone.
+  CREATE TABLE travel_zones (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    tz TEXT NOT NULL,
+    start_date TEXT NOT NULL,
+    end_date TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  ) STRICT;
+  CREATE INDEX travel_zones_user ON travel_zones(user_id, start_date);
+
+  -- planning-task-progress.md PRG-30: one running timer per user, on a task or a habit.
+  CREATE TABLE item_timers (
+    user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL CHECK (kind IN ('task', 'habit')),
+    item_id TEXT NOT NULL,
+    started_at INTEGER NOT NULL
+  ) STRICT;
+  `,
   // round 3 s4
   // round 3 s5
   // round 3 s6
