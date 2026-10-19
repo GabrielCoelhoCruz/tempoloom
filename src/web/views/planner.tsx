@@ -6,7 +6,7 @@ import { addDays, localToUtc, utcToLocal, weekdayOf } from "../../shared/time.ts
 import { api } from "../lib/api.ts";
 import { CATEGORY_LABELS } from "../lib/categories.ts";
 import { formatWhen } from "../lib/format.ts";
-import { lazyComponent } from "../lib/lazy.ts";
+import { lazyComponent, settle, settled } from "../lib/lazy.ts";
 import { useLive } from "../lib/live.ts";
 import { blockPreview, conflictIds, extraZone, plannerReload } from "../lib/planner-signals.ts";
 import { overlay, withPreview } from "../lib/preview.ts";
@@ -88,6 +88,7 @@ export function Planner() {
     ]);
     setEvents(ev.events);
     setReport(rep.report);
+    settle();
     const want = openItem.current;
     if (want?.startsWith("event:")) {
       openItem.current = null;
@@ -211,13 +212,19 @@ export function Planner() {
         </button>
       </div>
       <div class="now-bar" data-testid="now-bar">
-        <NowBar from={localToUtc(z, weekStart, 0)} to={localToUtc(z, addDays(weekStart, 7), 0)} />
+        {settled.value && (
+          <NowBar from={localToUtc(z, weekStart, 0)} to={localToUtc(z, addDays(weekStart, 7), 0)} />
+        )}
       </div>
-      <TravelPrompt />
-      <PlannerHints />
-      <PreviewPanel onApplied={() => void load()} />
-      <FocusProgress week={weekStart} />
-      <CurrentTasks />
+      {settled.value && (
+        <>
+          <TravelPrompt />
+          <PlannerHints />
+          <PreviewPanel onApplied={() => void load()} />
+          <FocusProgress week={weekStart} />
+          <CurrentTasks />
+        </>
+      )}
       <WeekView
         days={days}
         zone={z}
@@ -228,7 +235,7 @@ export function Planner() {
         flagged={conflictIds.value}
         extraZone={extraZone.value}
       />
-      <IssuesPanel />
+      {settled.value && <IssuesPanel />}
       {report.length > 0 && (
         <details class="issues" data-testid="issues">
           <summary>{report.length} items need attention</summary>
