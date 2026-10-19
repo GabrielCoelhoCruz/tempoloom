@@ -632,6 +632,8 @@ function BookingPage({ page, link }: { page: string; link: string }) {
 function PageLinks({ page }: { page: string }) {
   const [data, setData] = useState<{
     name: string;
+    /** A link group's title; null for a main booking page. */
+    title: string | null;
     links: PublicLink[];
     branding: Branding;
   } | null>(null);
@@ -646,7 +648,8 @@ function PageLinks({ page }: { page: string }) {
   return (
     <div data-testid="public-page">
       <Brand b={data.branding} />
-      <h1>Book time with {data.name}</h1>
+      <h1>{data.title ?? `Book time with ${data.name}`}</h1>
+      {data.links.length === 0 && <p>This page has no links yet.</p>}
       <div class="list">
         {data.links.map((l) => (
           <a class="row" href={`/book/${page}/${l.slug}`} key={l.slug} data-testid="public-link">

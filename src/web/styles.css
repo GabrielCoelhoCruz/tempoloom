@@ -736,3 +736,18 @@ button.not-offered {
 .inspect-details a {
   margin-left: 6px;
 }
+/* Links page: one section per booking page (booking-links.md rule 5) */
+.link-section {
+  margin: 16px 0;
+}
+.link-section h2 {
+  font-size: 16px;
+  margin: 0 8px 8px 0;
+}
+fieldset {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}

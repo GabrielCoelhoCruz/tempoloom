@@ -59,6 +59,8 @@ export interface EditableLink {
   reminder_hours: number;
   reminder_message: string;
   redirect_url: string | null;
+  /** "main", "hidden" or a link group id. */
+  page: string;
   owner: { id: string; name: string; email: string };
   pageSlug: string | null;
   organizers: Organizer[];
@@ -229,12 +231,14 @@ function HoursPicker({
 
 export function LinkEditor({
   link,
+  groups,
   people,
   isOwner,
   onSaved,
   onClose,
 }: {
   link: EditableLink;
+  groups: { id: string; title: string }[];
   people: PersonOption[];
   isOwner: boolean;
   onSaved: (title: string) => void;
@@ -243,6 +247,9 @@ export function LinkEditor({
   const [organizers, setOrganizers] = useState<Organizer[]>(link.organizers);
   const [pool, setPool] = useState<PoolMember[]>(link.pool);
   const [questions, setQuestions] = useState<QuestionDraft[]>(() => toDrafts(link.questions));
+  const [pageChoice, setPageChoice] = useState(link.page);
+  // Main and hidden links share the main page URL; a group has its own (sharing rule 5).
+  const urlPage = (p: string) => (p === "main" || p === "hidden" ? "" : p);
   const [error, setError] = useState<string | null>(null);
   const taken = new Set([...organizers, ...pool].map((p) => p.userId));
   const free = people.filter((p) => !taken.has(p.userId));
@@ -288,7 +295,7 @@ export function LinkEditor({
             message: String(f.get("reminderMessage") ?? ""),
           },
           redirectUrl: String(f.get("redirectUrl") ?? ""),
-          ...(isOwner ? { slug: String(f.get("slug")), hidden: f.get("hidden") === "on" } : {}),
+          ...(isOwner ? { slug: String(f.get("slug")), page: pageChoice } : {}),
           organizers: organizers.map(({ userId, hoursSetId, required, isHost }) => ({
             userId,
             hoursSetId,
@@ -412,10 +419,28 @@ export function LinkEditor({
               defaultValue={link.slug}
             />
           </label>
-          <label class="inline">
-            <input name="hidden" type="checkbox" defaultChecked={link.hidden === 1} />
-            Hide from my page (direct link only)
-          </label>
+          <div class="field">
+            <label for={`page-${link.id}`}>Page</label>
+            <select
+              id={`page-${link.id}`}
+              value={pageChoice}
+              onChange={(e) => setPageChoice(e.currentTarget.value)}
+            >
+              <option value="main">Main page</option>
+              <option value="hidden">Hidden (direct link only)</option>
+              {groups.map((g) => (
+                <option value={g.id} key={g.id}>
+                  {g.title}
+                </option>
+              ))}
+            </select>
+          </div>
+          {urlPage(pageChoice) !== urlPage(link.page) && (
+            <p class="error wide" data-testid="page-warning">
+              Moving the link to another page changes its URL. The URL you shared before will stop
+              working.
+            </p>
+          )}
         </>
       )}
       <div class="wide">

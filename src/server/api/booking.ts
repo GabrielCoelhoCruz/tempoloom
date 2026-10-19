@@ -123,11 +123,62 @@ const question = z
   })
   .refine((q) => q.type !== "choice" || q.options.length > 0, "A choice question needs choices.");
 
+/** Page slugs with another meaning in /book/... URLs. */
+const RESERVED = new Set(["o", "manage", "embed"]);
+
+/**
+ * True when a page slug is in use: by another user's booking page, another link
+ * group, or the URL scheme. Page and group slugs are unique on the instance
+ * (booking-links-sharing.md edge case 4).
+ */
+export function pageSlugTaken(
+  db: Db,
+  slug: string,
+  mine: { userId?: string; groupId?: string },
+): boolean {
+  if (RESERVED.has(slug)) return true;
+  const page = one<{ user_id: string }>(
+    db,
+    "SELECT user_id FROM booking_pages WHERE slug = ?",
+    slug,
+  );
+  if (page && page.user_id !== mine.userId) return true;
+  const group = one<{ id: string }>(db, "SELECT id FROM booking_groups WHERE slug = ?", slug);
+  return group !== undefined && group.id !== mine.groupId;
+}
+
+/** The page columns of a link: main page, hidden, or a link group of the owner. */
+function pageColumns(
+  db: Db,
+  ownerId: string,
+  b: { page?: string | undefined; hidden?: boolean | undefined },
+): { hidden: number; group_id: string | null } | undefined {
+  if (b.page === undefined) {
+    return b.hidden === undefined ? undefined : { hidden: b.hidden ? 1 : 0, group_id: null };
+  }
+  if (b.page === "main") return { hidden: 0, group_id: null };
+  if (b.page === "hidden") return { hidden: 1, group_id: null };
+  if (!one(db, "SELECT 1 FROM booking_groups WHERE id = ? AND user_id = ?", b.page, ownerId))
+    invalid("unknown_page");
+  return { hidden: 0, group_id: b.page };
+}
+
+/** The slug of the page a link is on: its group's, or the owner's main page. */
+export function linkPageSlug(db: Db, link: { user_id: string; group_id: string | null }) {
+  return link.group_id
+    ? (one<{ slug: string }>(db, "SELECT slug FROM booking_groups WHERE id = ?", link.group_id)
+        ?.slug ?? null)
+    : (one<{ slug: string }>(db, "SELECT slug FROM booking_pages WHERE user_id = ?", link.user_id)
+        ?.slug ?? null);
+}
+
 const linkInput = z.object({
   title: z.string().trim().min(1).max(120),
   description: z.string().max(4000).optional(),
   slug: z.string().regex(slugRe).optional(),
   hidden: z.boolean().optional(),
+  /** "main", "hidden" or the id of one of the owner's link groups (sharing rule 2). */
+  page: z.string().max(64).optional(),
   durations: z.array(z.number().int().min(5).max(480).multipleOf(5)).min(1).max(3),
   level: z.number().int().min(1).max(4).optional(),
   hoursSetId: z.string().nullable().optional(),
@@ -521,9 +572,8 @@ function linkView(db: Db, link: LinkRow) {
     durations: JSON.parse(link.durations) as number[],
     questions: JSON.parse(link.questions) as Question[],
     owner: { id: link.user_id, ...user(link.user_id) },
-    pageSlug:
-      one<{ slug: string }>(db, "SELECT slug FROM booking_pages WHERE user_id = ?", link.user_id)
-        ?.slug ?? null,
+    page: link.group_id ?? (link.hidden ? "hidden" : "main"),
+    pageSlug: linkPageSlug(db, link),
     organizers: people
       .filter((p) => p.kind === "organizer")
       .map((p) => ({ ...view(p), required: p.required, isHost: p.isHost })),
@@ -576,12 +626,7 @@ export function bookingRoutes(db: Db, now: () => number): Hono<AppEnv> {
   r.post("/page", async (c) => {
     const user = c.get("user");
     const { slug } = await jsonBody(c, z.object({ slug: z.string().regex(slugRe) }));
-    const taken = one<{ user_id: string }>(
-      db,
-      "SELECT user_id FROM booking_pages WHERE slug = ?",
-      slug,
-    );
-    if (taken && taken.user_id !== user.id) return c.json({ error: "slug_taken" }, 409);
+    if (pageSlugTaken(db, slug, { userId: user.id })) return c.json({ error: "slug_taken" }, 409);
     // A new page copies the team's branding default (booking page rule 28).
     const teamDefault =
       one<{ mode: string }>(
@@ -640,7 +685,7 @@ export function bookingRoutes(db: Db, now: () => number): Hono<AppEnv> {
       id,
       userId,
       slug,
-      b.hidden ? 1 : 0,
+      pageColumns(db, userId, b)?.hidden ?? 0,
       b.title,
       b.description ?? "",
       "{title} with {attendee}",
@@ -656,7 +701,13 @@ export function bookingRoutes(db: Db, now: () => number): Hono<AppEnv> {
       b.location ?? "",
       now(),
     );
-    const options = optionColumns(b, undefined, now()).filter(([, v]) => v !== undefined);
+    const options = [
+      ["group_id", pageColumns(db, userId, b)?.group_id ?? undefined] as [
+        string,
+        string | undefined,
+      ],
+      ...optionColumns(b, undefined, now()),
+    ].filter(([, v]) => v !== undefined);
     if (options.length > 0) {
       run(
         db,
@@ -732,6 +783,11 @@ export function bookingRoutes(db: Db, now: () => number): Hono<AppEnv> {
     );
     return c.json({
       links: links.map((l) => linkView(db, l)),
+      groups: all<{ id: string; slug: string; title: string; branding: string }>(
+        db,
+        "SELECT id, slug, title, branding FROM booking_groups WHERE user_id = ? ORDER BY created_at",
+        user.id,
+      ),
       teamLinks: teamLinks.map((l) => linkView(db, l)),
       people: members.map((m) => ({
         ...m,
@@ -762,7 +818,9 @@ export function bookingRoutes(db: Db, now: () => number): Hono<AppEnv> {
     const user = c.get("user");
     const { link, owner } = editable(c.req.param("id"), user.id);
     const b = await jsonBody(c, linkChanges);
-    if (!owner && (b.slug !== undefined || b.hidden !== undefined)) forbidden();
+    if (!owner && (b.slug !== undefined || b.hidden !== undefined || b.page !== undefined))
+      forbidden();
+    const page = pageColumns(db, link.user_id, b);
     if (
       b.slug &&
       b.slug !== link.slug &&
@@ -785,7 +843,8 @@ export function bookingRoutes(db: Db, now: () => number): Hono<AppEnv> {
       ["title", b.title],
       ["description", b.description],
       ["slug", b.slug],
-      ["hidden", b.hidden === undefined ? undefined : b.hidden ? 1 : 0],
+      ["hidden", page?.hidden],
+      ["group_id", page?.group_id],
       ["durations", b.durations && JSON.stringify(b.durations)],
       ["level", b.level],
       ["notice_minutes", b.noticeMinutes],
@@ -884,7 +943,7 @@ export function bookingRoutes(db: Db, now: () => number): Hono<AppEnv> {
         links: m.slug
           ? all<{ title: string; slug: string; durations: string }>(
               db,
-              "SELECT title, slug, durations FROM booking_links WHERE user_id = ? AND hidden = 0 ORDER BY level, created_at",
+              "SELECT title, slug, durations FROM booking_links WHERE user_id = ? AND hidden = 0 AND group_id IS NULL ORDER BY level, created_at",
               m.id,
             ).map((l) => ({ ...l, durations: JSON.parse(l.durations) as number[] }))
           : [],
@@ -1000,13 +1059,26 @@ const contact = (db: Db, id: string | null) =>
 
 const zoneInput = z.string().max(64).refine(isValidTimeZone).optional();
 
-/** The link at a booking page URL: /book/<page slug>/<link slug>. */
+/**
+ * The link at a booking page URL: /book/<page slug>/<link slug>. The page is
+ * the owner's main page (main and hidden links) or a link group (its links).
+ */
 export function resolveLink(db: Db, page: string, link: string): LinkRow | undefined {
-  return one<LinkRow>(
-    db,
-    `SELECT l.* FROM booking_links l JOIN booking_pages p ON p.user_id = l.user_id WHERE p.slug = ? AND l.slug = ?`,
-    page,
-    link,
+  return (
+    one<LinkRow>(
+      db,
+      `SELECT l.* FROM booking_links l JOIN booking_pages p ON p.user_id = l.user_id
+       WHERE p.slug = ? AND l.slug = ? AND l.group_id IS NULL`,
+      page,
+      link,
+    ) ??
+    one<LinkRow>(
+      db,
+      `SELECT l.* FROM booking_links l JOIN booking_groups g ON g.id = l.group_id
+       WHERE g.slug = ? AND l.slug = ?`,
+      page,
+      link,
+    )
   );
 }
 
@@ -1022,21 +1094,38 @@ export function publicBookingRoutes(
   const r = new Hono();
   const findLink = (page: string, link: string) => resolveLink(db, page, link);
 
+  /** A main booking page or a link group page, with the links it lists (sharing rules 1, 3). */
   r.get("/pages/:page", (c) => {
-    const page = one<{ user_id: string; slug: string; branding: Branding }>(
+    const slug = c.req.param("page");
+    const main = one<{ user_id: string; slug: string; branding: Branding }>(
       db,
       "SELECT user_id, slug, branding FROM booking_pages WHERE slug = ?",
-      c.req.param("page"),
+      slug,
     );
+    const group = main
+      ? undefined
+      : one<{ id: string; user_id: string; slug: string; title: string; branding: Branding }>(
+          db,
+          "SELECT id, user_id, slug, title, branding FROM booking_groups WHERE slug = ?",
+          slug,
+        );
+    const page = main ?? group;
     if (!page) notFound("page");
     const owner = one<{ name: string }>(db, "SELECT name FROM users WHERE id = ?", page.user_id);
-    const links = all<LinkRow>(
-      db,
-      "SELECT * FROM booking_links WHERE user_id = ? AND hidden = 0 ORDER BY level, created_at",
-      page.user_id,
-    );
+    const links = group
+      ? all<LinkRow>(
+          db,
+          "SELECT * FROM booking_links WHERE group_id = ? ORDER BY level, created_at",
+          group.id,
+        )
+      : all<LinkRow>(
+          db,
+          "SELECT * FROM booking_links WHERE user_id = ? AND hidden = 0 AND group_id IS NULL ORDER BY level, created_at",
+          page.user_id,
+        );
     return c.json({
       name: owner?.name ?? "",
+      title: group?.title ?? null,
       slug: page.slug,
       links: links.map(publicLink),
       branding: brandingFor(db, page.user_id, page.branding),
@@ -1297,11 +1386,6 @@ export function publicBookingRoutes(
     const link = b.link_id
       ? one<LinkRow>(db, "SELECT * FROM booking_links WHERE id = ?", b.link_id)
       : undefined;
-    const page = one<{ slug: string }>(
-      db,
-      "SELECT slug FROM booking_pages WHERE user_id = ?",
-      b.user_id,
-    );
     return c.json({
       booking: {
         start: b.start_ms,
@@ -1311,7 +1395,7 @@ export function publicBookingRoutes(
         timeZone: b.time_zone,
       },
       link: link ? publicLink(link) : null,
-      page: page?.slug ?? null,
+      page: link ? linkPageSlug(db, link) : null,
       assignee: contact(db, b.assignee_id),
     });
   });

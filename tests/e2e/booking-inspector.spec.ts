@@ -14,26 +14,18 @@
 //  7. The switch is lost on reload.
 import type { Page } from "@playwright/test";
 import { addDays, diffDays, utcToLocal } from "../../src/shared/time.ts";
-import { at, blockUntil, eventually, expect, test, ZONE } from "./fixtures.ts";
-import {
-  addHabit,
-  addLink,
-  allEvents,
-  book,
-  claimPage,
-  slot,
-  titled,
-  visitor,
-  W,
-} from "./helpers.ts";
+import { at, blockUntil, eventually, expect, local, test, ZONE } from "./fixtures.ts";
+import { addHabit, addLink, book, claimPage, slot, titled, visitor, W } from "./helpers.ts";
 import { addOrganizer, editLink, saveLink, teamOf } from "./link-helpers.ts";
 
 const day = (n: number) => addDays(W, n);
 const time = (p: Page, t: number) => p.locator(`[data-testid="inspector"] [data-start="${t}"]`);
-const dots = (p: Page, t: number) =>
-  time(p, t)
+const dots = async (p: Page, t: number) => {
+  await expect(time(p, t)).toBeVisible();
+  return time(p, t)
     .locator("[data-reason]")
     .evaluateAll((els) => els.map((e) => e.getAttribute("data-reason")).sort());
+};
 
 test("the availability inspector shows organizers every time with a dot per failed check, explains each and links its setting; others never see it (availability rules 18-22)", async ({
   page,
@@ -62,9 +54,10 @@ test("the availability inspector shows organizers every time with a dot per fail
     days: ["Mon"],
     defense: "Always busy",
   });
+  // Only week W: before it the blocker leaves no room and the habit is kept as a conflict.
   await eventually(
-    () => allEvents(cal),
-    (l) => expect(utcToLocal(ZONE, titled(l, "Deep prep")[0]?.start ?? 0).minuteOfDay).toBe(900),
+    () => cal.events(at(W, "00:00"), at(day(1), "00:00")),
+    (l) => expect(local(titled(l, "Deep prep")[0]?.start ?? 0)).toBe(`${W} 15:00`),
   );
   await claimPage(page, "ivo");
   await addLink(page, { title: "Inspect me", durations: "30", level: 3, maxPerDay: 1 });

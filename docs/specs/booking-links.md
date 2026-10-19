@@ -129,6 +129,9 @@ one line and its answer below it.
    the title, durations and priority, and has actions: edit, copy URL,
    change priority, open booking page, personalize (SPEC-LINK-05) and share
    (SPEC-LINK-05) (E-0173, E-0165).
+   Tempoloom decision: the page sections are Main page, one per link group,
+   Hidden, and Team links. The card has a priority select that saves at
+   once; open booking page opens a new tab; the card also has delete.
 6. A link on the `hidden` page is listed on no booking page. Its direct URL
    works (E-0063, E-0163, E-0205).
 7. Tempoloom sets no limit on the number of links. The reference limits

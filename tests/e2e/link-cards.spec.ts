@@ -9,8 +9,9 @@
 //  4. The priority select on the card does not save, or the booking page keeps
 //     offering the old times.                                                 (rule 9)
 //  5. The card shows the new priority but a reload shows the old one.
+import { addDays } from "../../src/shared/time.ts";
 import { at, BASE_URL, blockUntil, eventually, expect, local, test } from "./fixtures.ts";
-import { addHabit, addLink, allEvents, claimPage, slot, titled, visitor, W } from "./helpers.ts";
+import { addHabit, addLink, claimPage, slot, titled, visitor, W } from "./helpers.ts";
 
 test("link cards show title, durations and priority with their actions, grouped by page; the priority changes from the card and the booking page follows (rules 5, 6, 9)", async ({
   page,
@@ -30,8 +31,9 @@ test("link cards show title, durations and priority with their actions, grouped 
     days: ["Mon"],
     defense: "Always busy",
   });
+  // Only week W: before it the blocker leaves no room and the habit is kept as a conflict.
   await eventually(
-    () => allEvents(cal),
+    () => cal.events(at(W, "00:00"), at(addDays(W, 1), "00:00")),
     (l) => expect(local(titled(l, "Morning prep")[0]?.start ?? 0)).toBe(`${W} 09:00`),
   );
   await claimPage(page, "kai");

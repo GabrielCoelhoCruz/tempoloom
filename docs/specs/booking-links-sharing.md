@@ -77,6 +77,10 @@ Template variables (names are Proposed; E-0138 lists their meaning):
 1. The user creates a group from the links page: title, slug (defaults
    from the title), and the links to include. Saving publishes the group
    page (E-0205).
+   Tempoloom decision: the URL name fills in from the title until the user
+   edits it; a URL name in use by any booking page or group, or one of
+   `o`, `manage` and `embed` (used by other URLs), is refused. A new group
+   copies the team's branding default, as a new booking page does.
 2. The link form has a page field to put a link in a group, in the main
    page, or in hidden (E-0063, E-0205, E-0163).
 3. A group page lists its links. The booker picks one and gets that link's
@@ -85,10 +89,17 @@ Template variables (names are Proposed; E-0138 lists their meaning):
 5. A change of a group's slug, or a move of a link to another page, breaks
    all URLs shared before for that group or link. The form warns before it
    saves (E-0205).
+   Tempoloom decision: the group form warns as soon as its URL name or its
+   links change; the link form warns as soon as the page change moves the
+   link to another URL. Main and hidden links share the main page URL, so
+   a move between them keeps the URL and needs no warning. A link taken out
+   of a group goes back to the main page.
 6. Delete group: the user chooses one option (E-0205):
    - keep the links by moving them to another page, then remove the
      group; or
    - remove the group together with every link in it.
+   Tempoloom decision: "move" offers the main page, hidden, or another
+   group. Deleting links keeps their booked events (SPEC-LINK-01 rule 20).
 7. The links page shows a copy-URL action for each group (E-0205).
 
 ### One-off links
