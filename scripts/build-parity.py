@@ -776,7 +776,6 @@ for n in [446, 447]:
 for n in [268, 293]:
     BLOCKED[n] = "Needs the Slack app (a vendor developer app and a test workspace)"
 BLOCKED[344] = "Needs the vendor apps of third-party agenda tools (Docs notes, Lattice, Fellow)"
-BLOCKED[700] = "Setup guides for vendor AI apps belong to integrations-ai-tools.md; the MCP server they connect to is built (rows 697 to 699)"
 for n in [664, 665, 666, 667, 668]:
     BLOCKED[n] = "The pricing page names it and gives no behavior to build (plans-feature-inventory.md open questions); it also needs meeting notes, transcripts or a room provider"
 # --- end merge ---
