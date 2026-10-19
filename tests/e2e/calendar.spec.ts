@@ -11,7 +11,7 @@ test("unanswered and declined invitations do not block; accepted ones do (SCH-20
   cal,
   signIn,
 }) => {
-  test.skip(BACKEND === "google", "A service account cannot receive invitations.");
+  test.skip(BACKEND === "google", "Needs an invitation from another person (CalDAV only).");
   await blockUntil(cal, W);
   await cal.addInvite({
     title: "Maybe later",
