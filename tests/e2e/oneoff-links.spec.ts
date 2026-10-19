@@ -167,13 +167,18 @@ test("a one-off link expires 30 days after creation: its URL then shows an expir
   signIn,
   app,
 }) => {
+  // The 30 days count in the user's zone. At 22:30 UTC Berlin is already on the
+  // next day, and summer time ends within the 30 days: 30 x 24 h ends a day early.
+  const created = Date.parse("2026-10-19T22:30:00Z");
+  app.env.TEST_CLOCK_START = new Date(created).toISOString();
+  await app.restart();
   await signIn();
   await claimPage(page, "pam");
   await personalize(page, "Meeting");
   await page.getByTestId("oneoff-form").getByRole("button", { name: "Copy link" }).click();
   const url = (await page.getByTestId("oneoff-url").textContent()) ?? "";
-  const expires = addDays(utcToLocal(ZONE, Date.now()).date, 30);
-  await expect(page.getByTestId("oneoff-expiry")).toHaveAttribute("data-date", expires);
+  expect(utcToLocal(ZONE, created).date).toBe("2026-10-20");
+  await expect(page.getByTestId("oneoff-expiry")).toHaveAttribute("data-date", "2026-11-19");
   const v = await visitor(browser);
   await v.goto(new URL(url).pathname);
   await expect(v.getByTestId("times")).toBeVisible();
@@ -181,6 +186,7 @@ test("a one-off link expires 30 days after creation: its URL then shows an expir
 
   // The operator shortens the lifetime: the link created above is now past it.
   app.env.ONEOFF_LINK_DAYS = "0";
+  app.env.TEST_CLOCK_START = new Date(created + 3_600_000).toISOString();
   await app.restart();
   await v.reload();
   await expect(v.getByTestId("expired")).toContainText("expired");
