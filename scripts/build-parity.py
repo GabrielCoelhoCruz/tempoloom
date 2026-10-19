@@ -383,6 +383,60 @@ GOOGLE_ROWS = {
 # --- end s3 ---
 
 # --- s4: mirroring, accounts and instance limits ---
+T.update({
+    "s4_tabs": "the policy list filters by account; an edit rewrites and moves the copies; details warn about admins; delete asks first",
+    "s4_mesh": "three calendars that block each other take six policies; each event gets one copy on every other calendar, copies never chain, and a repeated pair is refused",
+    "s4_main_dest": "a destination that is another Tempoloom account's main calendar is refused; that calendar can still be a source",
+    "s4_labels": "labels follow the event category and the calendar type; an event that invites the destination gets no copy; a color override paints one policy's copies",
+    "s4_alerts": "an alert added to a copy is removed; the full reconcile puts back a changed color and shows its time",
+    "s4_family": "guidance covers family calendars and duplicate views; a declined or tagged family event loses its copy for good",
+    "s4_window": "mirroring keeps copies 12 months ahead while planning stops at its own window",
+    "s4_shared": "a calendar shared with full access can be added, connected, blocks time and feeds a mirroring policy; a read-only share is refused",
+    "s4_twice": "a calendar that two added accounts can see is listed once, under the account added first",
+    "s4_category": "each connected calendar has a category that colors its events; the page explains connected calendars versus mirroring",
+    "s4_secondary": "a secondary email signs in to the same account; removing it removes its policy, copies and calendars",
+    "s4_main": "use as main moves the main badge, the locked main calendar and new events; the old email still signs in",
+    "s4_taken": "an email that is main in another account cannot become main; after that account is deleted the retry works",
+    "s4_several": "an email that two accounts hold as secondary opens neither and offers a new account",
+    "s4_win_limit": "an operator window limit caps planning but never booking links",
+    "s4_cal_limit": "an operator limit on connected calendars refuses one more, and a lower limit turns the extras off",
+    "s4_counts": "operator limits on mirroring policies, booking links and automations refuse one more with a message; existing ones keep working",
+    "s4_feed": "a holiday feed blocks its days; a change in the feed moves work; removing it removes its calendar",
+})
+E2E.update({
+    82: ["s4_window"], 266: ["s4_feed"], 452: ["s4_main_dest"], 453: ["s4_tabs"], 454: ["s4_tabs"],
+    460: ["s4_mesh"], 461: ["s4_counts"], 465: ["s4_labels"], 478: ["s4_tabs"], 479: ["s4_labels"],
+    481: ["s4_labels"], 482: ["s4_alerts"], 489: ["s4_alerts"], 494: ["s4_family"], 495: ["s4_family"],
+    499: ["s4_shared"], 500: ["s4_twice"], 501: ["s4_category"], 502: ["s4_cal_limit"],
+    508: ["s4_category"], 509: ["s4_shared"], 511: ["s4_secondary"], 512: ["s4_several"],
+    514: ["s4_secondary"], 515: ["s4_main"], 516: ["s4_taken"], 656: ["s4_win_limit"],
+    657: ["s4_cal_limit"], 658: ["s4_counts"], 659: ["s4_counts"], 660: ["s4_counts"],
+    # Partial rows of the mirroring spec that these tests now prove in full.
+    450: ["s4_tabs", "s4_shared"], 455: ["s4_tabs", "m_follow"], 457: ["s4_tabs"],
+    490: ["s4_tabs", "s4_labels"],
+})
+E2E_NOTES.update({
+    82: "Copies 150 and 350 days ahead exist while the planning window is 1 week; an event 372 days ahead gets none",
+    266: "The test serves the feed on loopback; feed days block time also when the feed marks them free",
+    452: "The colleague's main email is added as a secondary email; its main calendar is refused as a destination",
+    461: "Tempoloom has no plans: the operator sets max_mirrors with the CLI (off by default)",
+    465: "On CalDAV the destination's account email is the invited address; a Google calendar id as guest is unit-tested",
+    482: "CalDAV copies carry no VALARM and an alarm added to a copy is removed on the next sync; Google copies are written with reminders.useDefault=false",
+    489: "The interval is MIRROR_RECONCILE_SECONDS (default 12 hours); the test sets 10 seconds",
+    499: "On CalDAV the server's privileges decide and a read-only share is refused; Google holiday, birthday and group calendars are left out by calendar id (unit test)",
+    500: "The same calendar URL reached through two CalDAV accounts",
+    502: "Tempoloom has no plans: lowering the operator limit max_connected_calendars turns the extra calendars off",
+    509: "On CalDAV the user adds a shared calendar by its URL",
+    511: "On CalDAV, logging in with an email means signing in with that calendar account",
+    656: "Tempoloom has no plans: the operator sets max_scheduling_window_weeks with the CLI (off by default)",
+    657: "Tempoloom has no plans: the operator sets max_connected_calendars with the CLI (off by default)",
+    658: "The operator sets max_mirrors with the CLI (off by default)",
+    659: "The operator sets max_booking_links with the CLI (off by default)",
+    660: "The operator sets max_automations_per_user with the CLI (off by default); habits, focus time and buffers count",
+})
+PARTIAL.update({
+    469: "Copies of events that Gmail made from an email (Google event type fromGmail) are busy, proven by a unit test; CalDAV has no such events, and the Google E2E needs a Google account",
+})
 # --- end s4 ---
 
 # --- s5: meeting rescheduling and meeting checks ---
