@@ -11,6 +11,7 @@ import { all, type Db, one } from "../db.ts";
 import { getSettings } from "../settings.ts";
 import { planningZone } from "../travel.ts";
 import { externalEvents } from "./events.ts";
+import { stripMarker } from "./markers.ts";
 
 export interface OpenTask {
   id: string;
@@ -180,11 +181,8 @@ export function nextMeeting(db: Db, userId: string, now: number) {
 /** NTF-1: starts of events in the next hours, external and managed, for the open page. */
 export function upcomingStarts(db: Db, userId: string, now: number, hours = 6) {
   const to = now + hours * HOUR;
-  const markers = Object.values(getSettings(db, userId).markers).filter(Boolean);
-  const plain = (t: string) => {
-    for (const m of markers) if (t.startsWith(`${m} `)) return t.slice(m.length + 1);
-    return t;
-  };
+  const markers = getSettings(db, userId).markers;
+  const plain = (t: string) => stripMarker(markers, t);
   const external = externalEvents(db, userId, now, to)
     .filter((e) => timed(e) && e.start >= now)
     .map((e) => ({ title: e.title || "(busy)", start: e.start }));

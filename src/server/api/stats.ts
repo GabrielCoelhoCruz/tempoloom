@@ -2,7 +2,7 @@
 // date range went, by category and day. Read-only (rule 11).
 import { Hono } from "hono";
 import { z } from "zod";
-import { attends, hasTag, TAG_FOCUS } from "../../scheduler/blocking.ts";
+import { attends, hasTag, TAG_FOCUS, tagText } from "../../scheduler/blocking.ts";
 import { hoursToTimeSet, type WeeklyHours } from "../../scheduler/hours.ts";
 import { TimeSet } from "../../scheduler/timeset.ts";
 import { defaultEventSettings, readEventSettings } from "../../shared/event-settings.ts";
@@ -48,6 +48,7 @@ export function computeStats(db: Db, userId: string, from: string, to: string, n
     organizer_self: number;
     attendee_count: number;
     private_props: string;
+    rsvp_note: string;
   }>(
     db,
     `SELECT e.* FROM events e JOIN calendars c ON c.id = e.calendar_id JOIN accounts a ON a.id = c.account_id
@@ -59,8 +60,7 @@ export function computeStats(db: Db, userId: string, from: string, to: string, n
     const props = JSON.parse(e.private_props) as Record<string, string>;
     if (props[MANAGED_PROP] === "1" || e.all_day || !e.busy) continue;
     const ev = {
-      title: e.summary,
-      description: e.description,
+      ...tagText(e),
       selfResponse: e.self_response,
       organizerSelf: e.organizer_self === 1,
     } as Parameters<typeof attends>[0];

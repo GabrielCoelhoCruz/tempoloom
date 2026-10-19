@@ -14,7 +14,7 @@ export const PERSONAL_COPY_MARKER = "🏠";
 const TYPE_MARKERS = [TRAVEL_MARKER, PERSONAL_COPY_MARKER];
 
 type Markers = Settings["markers"];
-export type MarkerState = keyof Markers | null;
+export type MarkerState = Exclude<keyof Markers, "position"> | null;
 
 /** Kinds that show the free and busy markers (marker table). */
 const FREE_BUSY = new Set(["habit", "task", "meeting"]);
@@ -30,14 +30,34 @@ export function placementState(
   return p.busy ? "busy" : "free";
 }
 
-/** Rules 1-3: `<type marker> <state marker> <emoji> <title>`, one space apart. */
+/** The state markers the user chose, empty ones left out. */
+function stateMarkers(m: Markers): string[] {
+  return Object.entries(m)
+    .filter(([k, v]) => k !== "position" && v)
+    .map(([, v]) => v);
+}
+
+/**
+ * Rules 1-3: `<type marker> <state marker> <emoji> <title>`, one space apart;
+ * with the position "end", `<type marker> <emoji> <title> <state marker>`.
+ */
 export function eventTitle(
   m: Markers,
   parts: { typeMarker?: string; state: MarkerState; emoji?: string; title: string },
 ): string {
-  return [parts.typeMarker, parts.state ? m[parts.state] : "", parts.emoji, parts.title]
-    .filter(Boolean)
-    .join(" ");
+  const state = parts.state ? m[parts.state] : "";
+  const front = m.position === "end" ? "" : state;
+  const back = m.position === "end" ? state : "";
+  return [parts.typeMarker, front, parts.emoji, parts.title, back].filter(Boolean).join(" ");
+}
+
+/** Rule 7: a title without a leading or trailing state marker. */
+export function stripMarker(m: Markers, title: string): string {
+  for (const s of stateMarkers(m)) {
+    if (title.startsWith(`${s} `)) return title.slice(s.length + 1);
+    if (title.endsWith(` ${s}`)) return title.slice(0, -(s.length + 1));
+  }
+  return title;
 }
 
 /** Rule 5: the same title with another state marker; type marker, emoji and title stay. */
@@ -45,8 +65,7 @@ export function withState(m: Markers, title: string, state: MarkerState): string
   let rest = title;
   const typeMarker = TYPE_MARKERS.find((t) => rest.startsWith(`${t} `));
   if (typeMarker) rest = rest.slice(typeMarker.length + 1);
-  const old = Object.values(m).find((s) => s && rest.startsWith(`${s} `));
-  if (old) rest = rest.slice(old.length + 1);
+  rest = stripMarker(m, rest);
   return eventTitle(m, { ...(typeMarker ? { typeMarker } : {}), state, title: rest });
 }
 

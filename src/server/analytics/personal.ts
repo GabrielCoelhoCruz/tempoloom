@@ -74,6 +74,7 @@ export function personalInsights(
     attendees: string;
     recurring_id: string | null;
     private_props: string;
+    rsvp_note: string;
   }>(
     db,
     `SELECT e.* FROM events e JOIN calendars c ON c.id = e.calendar_id JOIN accounts a ON a.id = c.account_id
@@ -160,10 +161,9 @@ export function personalInsights(
     w.n++;
     w.solo += d.minutes.deepWork + d.minutes.shallowWork;
     w.meetings += meetingsOf(d);
-    w.busy += BUCKETS.filter((b) => b !== "free" && b !== "vacation").reduce(
-      (a, b) => a + d.minutes[b],
-      0,
-    );
+    w.busy += BUCKETS.filter(
+      (b) => b !== "free" && b !== "vacation" && b !== "personalCommitment",
+    ).reduce((a, b) => a + d.minutes[b], 0);
     w.work += d.work;
   }
   const weekdays = perWeekday.flatMap((w, i) =>
@@ -235,6 +235,7 @@ export function personalInsights(
       travel: sum("travel"),
       breaks,
       vacation: sum("vacation"),
+      personal_commitment: sum("personalCommitment"),
       free: sum("free"),
     },
     weekdays,

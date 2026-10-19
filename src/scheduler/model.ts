@@ -19,6 +19,8 @@ export interface ExternalEvent {
   busy: boolean;
   title: string;
   description: string;
+  /** The user's own note with the answer to an invitation (events-tags.md "Where Tempoloom looks"). */
+  rsvpNote?: string;
   /** null: no attendee list (the user's own event). */
   selfResponse: "needsAction" | "declined" | "tentative" | "accepted" | null;
   organizerSelf: boolean;
@@ -271,7 +273,7 @@ export type ReasonCode =
   | "no-hours"
   | "no-hours-overlap"
   | "too-long-for-hours"
-  | "all-day-block"
+  | "away"
   | "reserved-word"
   | "no-space-fixed"
   | "no-space-priority"

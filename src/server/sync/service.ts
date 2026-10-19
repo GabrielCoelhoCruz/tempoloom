@@ -4,10 +4,12 @@ import { enforceCalendarLimit } from "../limits.ts";
 import { oooOwnersOf, syncOutOfOffice } from "../ooo.ts";
 import { observeMeetings } from "../planner/meeting-log.ts";
 import { meetingPeers } from "../planner/meetings.ts";
+import { finishPaint, type PaintJob, writePaint } from "../planner/repaint.ts";
 import { replanUser } from "../planner/replan.ts";
 import { enforceAgendas } from "../policies/agendas.ts";
 import { applyPolicies } from "../policies/apply.ts";
 import { type ProviderDeps, ProviderPool } from "../providers/index.ts";
+import { ProviderError } from "../providers/types.ts";
 import { applyCalendarEdits } from "./edits.ts";
 import { MIRROR_READ_AHEAD, pullEvents, syncCalendarList } from "./pull.ts";
 
@@ -22,6 +24,8 @@ export interface SyncServiceDeps extends ProviderDeps {
 }
 
 const DEBOUNCE_MS = 300;
+/** Color writes per step of a repaint job; runs asked for meanwhile go between steps. */
+const PAINT_STEP = 20;
 const CALENDAR_LIST_EVERY_MS = 10 * 60_000;
 const REFRESH_MS = 86_400_000;
 const MIRROR_RECONCILE_MS = 12 * 3_600_000;
@@ -31,6 +35,8 @@ export class SyncService {
   readonly #tail = new Map<string, Promise<void>>();
   readonly #queued = new Map<string, Promise<void>>();
   readonly #timers = new Map<string, NodeJS.Timeout>();
+  /** The newest repaint job per user; an older job stops when a newer one starts. */
+  readonly #paintJobs = new Map<string, PaintJob>();
   #interval: NodeJS.Timeout | undefined;
   #stopped = false;
   readonly #listeners = new Set<(userId: string) => void>();
@@ -46,6 +52,27 @@ export class SyncService {
   /** Calls fn after each run that read or wrote changes of the user's calendars. */
   onChange(fn: (userId: string) => void): void {
     this.#listeners.add(fn);
+  }
+
+  /**
+   * Marks an account disconnected when its server rejects the stored login
+   * (accounts-login-emails-permissions.md rules 14, 16): Tempoloom then stops
+   * reading and writing its calendars until the user reconnects it. Returns
+   * true for a rejected login; other errors are the caller's. Only the login
+   * that the provider used is marked: a reconnect saved while the request was
+   * open stays connected.
+   */
+  #disconnected(pool: ProviderPool, accountId: string, err: unknown): boolean {
+    if (!(err instanceof ProviderError && err.kind === "auth")) return false;
+    const { changes } = this.#deps.db
+      .prepare("UPDATE accounts SET status = 'reauth_required' WHERE id = ? AND credentials IS ?")
+      .run(accountId, pool.credentialsOf(accountId) ?? null);
+    this.#log(
+      changes > 0
+        ? `account ${accountId} is disconnected: the server rejected its login`
+        : `account ${accountId}: an old login was rejected; the new login is kept`,
+    );
+    return true;
   }
 
   pool(userId: string): ProviderPool {
@@ -181,6 +208,38 @@ export class SyncService {
     }
   }
 
+  /**
+   * Writes the colors a run listed (events-categories-and-colors.md rule 16):
+   * a background job, queued after the run in steps, so a run asked for while
+   * it paints goes before the next step and is never delayed by a whole repaint.
+   */
+  #paint(userId: string, job: PaintJob): void {
+    // A newer run always ends an older job, also when it has nothing to paint.
+    if (job.paints.length === 0 && job.requestedAt === null) {
+      this.#paintJobs.delete(userId);
+      return;
+    }
+    this.#paintJobs.set(userId, job);
+    const pool = this.#pool(userId);
+    const ctx = { db: this.#deps.db, provider: (id: string) => pool.get(id) };
+    let done = true;
+    const step = (from: number) =>
+      void this.#enqueue(userId, async () => {
+        if (this.#stopped || this.#paintJobs.get(userId) !== job) return;
+        try {
+          for (const p of job.paints.slice(from, from + PAINT_STEP))
+            if (!(await writePaint(ctx, p))) done = false;
+        } catch (err) {
+          done = false;
+          this.#log(`repaint failed for user ${userId}`, err);
+        }
+        if (from + PAINT_STEP < job.paints.length) return step(from + PAINT_STEP);
+        this.#paintJobs.delete(userId);
+        finishPaint(this.#deps.db, userId, job, done);
+      });
+    step(0);
+  }
+
   async #run(userId: string): Promise<void> {
     const { db } = this.#deps;
     try {
@@ -215,7 +274,12 @@ export class SyncService {
         userId,
         now0 - CALENDAR_LIST_EVERY_MS,
       )) {
-        await syncCalendarList(db, pool.get(a.id), a.id, userId);
+        try {
+          await syncCalendarList(db, pool.get(a.id), a.id, userId);
+        } catch (err) {
+          if (this.#disconnected(pool, a.id, err)) continue;
+          throw err;
+        }
         run(db, "UPDATE accounts SET calendars_synced_at = ? WHERE id = ?", now0, a.id);
       }
       // A lower instance limit turns extra connected calendars off (plans edge case 1).
@@ -253,14 +317,21 @@ export class SyncService {
       );
       const now = this.#deps.now();
       let pulled = 0;
+      const lost = new Set<string>();
       for (const cal of calendars) {
-        pulled += await pullEvents(
-          db,
-          pool.get(cal.account_id),
-          cal.id,
-          now,
-          mirrored.has(cal.id) ? MIRROR_READ_AHEAD : undefined,
-        );
+        if (lost.has(cal.account_id)) continue;
+        try {
+          pulled += await pullEvents(
+            db,
+            pool.get(cal.account_id),
+            cal.id,
+            now,
+            mirrored.has(cal.id) ? MIRROR_READ_AHEAD : undefined,
+          );
+        } catch (err) {
+          if (!this.#disconnected(pool, cal.account_id, err)) throw err;
+          lost.add(cal.account_id);
+        }
       }
       if (!signedIn) {
         run(
@@ -311,6 +382,7 @@ export class SyncService {
       );
       if (fullMirror)
         run(db, "UPDATE users SET mirror_reconciled_at = ? WHERE id = ?", now, userId);
+      if (result) this.#paint(userId, result.paint);
       // Team out-of-office calendars this user owns (teams-ooo-calendar.md).
       await syncOutOfOffice(db, userId, pool, this.#deps.now());
       // Flexible meetings join calendars of several users (meetings-flexible.md

@@ -10,6 +10,7 @@ import { jsonBody, notFound } from "../http.ts";
 import type { Mailer } from "../mail.ts";
 import { notifyMeetingCancelled } from "../meeting-mail.ts";
 import { adoptableSeries } from "../meeting-series.ts";
+import { withState } from "../planner/markers.ts";
 import { logChange } from "../planner/meeting-log.ts";
 import {
   type Attendee,
@@ -440,7 +441,7 @@ export function meetingRoutes(
       if (!row?.event_id) return "missing" as const;
       if (row.start_ms <= now() || start <= now()) return "started" as const;
       const end = start + (row.end_ms - row.start_ms);
-      const title = row.user_edited ? row.title : `${markers.locked} ${m.title}`.trim();
+      const title = row.user_edited ? row.title : withState(markers, m.title, "locked");
       const ev = await pool.get(row.account_id).updateEvent(
         row.provider_id,
         row.event_id,

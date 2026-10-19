@@ -62,7 +62,22 @@ export async function addTask(page: Page, t: TaskForm): Promise<void> {
   if (t.max) await form.getByLabel("Longest chunk").fill(String(t.max));
   if (t.nextUp) await form.getByLabel(/Next up/).check();
   if (t.notes) await form.getByLabel("Notes").fill(t.notes);
+  await expect(form.getByLabel("Title")).toHaveValue(t.title);
+  // Wait for the save and for the plan run the form starts after it: callers
+  // read the calendar next, so addTask returns only when the new task is
+  // planned there. The list row alone can show up earlier, through a live update.
+  const created = page.waitForResponse(
+    (r) => r.request().method() === "POST" && new URL(r.url()).pathname === "/api/tasks",
+    { timeout: 60_000 },
+  );
   await form.getByRole("button", { name: "Add task" }).click();
+  const res = await created;
+  expect(res.status(), await res.text()).toBe(201);
+  const planned = await page.waitForResponse(
+    (r) => r.request().method() === "POST" && new URL(r.url()).pathname === "/api/planner/sync",
+    { timeout: 60_000 },
+  );
+  expect(planned.ok(), await planned.text()).toBe(true);
   await expect(page.locator(`[data-task-title="${t.title}"]`)).toBeVisible();
 }
 

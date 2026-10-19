@@ -40,14 +40,17 @@ const sync = new SyncService({
   refreshMs: config.GRANT_REFRESH_SECONDS * 1000,
   mirrorReconcileMs: config.MIRROR_RECONCILE_SECONDS * 1000,
 });
+const mailer = createMailer(config.SMTP_URL, config.MAIL_FROM);
 const webhooks = new WebhookWorker({
   db,
   box,
   allowPrivate: config.WEBHOOK_ALLOW_PRIVATE,
   retryBaseMs: config.WEBHOOK_RETRY_BASE_MS,
+  suspendAfterMs: config.WEBHOOK_SUSPEND_AFTER_SECONDS * 1000,
+  mailer,
+  baseUrl: config.BASE_URL,
   now,
 });
-const mailer = createMailer(config.SMTP_URL, config.MAIL_FROM);
 const provisioning = new ProvisionWorker({
   db,
   box,
