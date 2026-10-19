@@ -24,8 +24,8 @@ Evidence ids (`E-…`) refer to the private evidence index. Spec links point to
 - Rows: 963
 - done (CalDAV): 479
 - done (Google): 0
-- partial: 130
-- blocked: 354
+- partial: 129
+- blocked: 355
 
 "done (CalDAV)" means a full UI E2E test passes against a real CalDAV server (Radicale in a
 loopback container): Playwright drives the Tempoloom UI, the real API and scheduler write to the
@@ -117,7 +117,7 @@ the open questions in each spec list what is unknown.
 | 73 | Several ranges per day and copy to all days | E-0172 | [planning-hours.md#behavior](specs/planning-hours.md#behavior) | done (CalDAV) | Full UI E2E passes on CalDAV (Radicale): “a day can have several ranges and copy to all copies them to every day that is on; chunks never span the gap”. Google Calendar run pending (service-account key). |
 | 74 | Hours changes apply to existing events | E-0172 | [planning-hours.md#behavior](specs/planning-hours.md#behavior) | done (CalDAV) | Full UI E2E passes on CalDAV (Radicale): “editing work hours moves existing events into the new hours”. Google Calendar run pending (service-account key). |
 | 75 | Deleting a custom set asks for a replacement | E-0172 | [planning-hours.md#behavior](specs/planning-hours.md#behavior) | done (CalDAV) | Full UI E2E passes on CalDAV (Radicale): “deleting a custom hours set in use asks for a replacement and moves its task there; an unused set goes after a confirmation”. Google Calendar run pending (service-account key). |
-| 76 | Item-specific hours (not for tasks) | E-0172, E-0081, E-0077, E-0176 | [planning-hours.md#item-specific-hours](specs/planning-hours.md#item-specific-hours) | partial | Habits have item-specific hours (E2E on CalDAV: “a habit with item-specific hours is placed in them…”); focus time, flexible meetings and booking links do not offer them yet. |
+| 76 | Item-specific hours (not for tasks) | E-0172, E-0081, E-0077, E-0176 | [planning-hours.md#item-specific-hours](specs/planning-hours.md#item-specific-hours) | blocked | Blocked by the Tempoloom decision in planning-hours.md (item-specific hours): focus time, flexible meetings and booking links do not offer them; building them needs that spec decision changed first. Habits have item-specific hours (E2E on CalDAV: “a habit with item-specific hours is placed in them…”). |
 | 77 | Hours preview in item editors | E-0172 | [planning-hours.md#behavior](specs/planning-hours.md#behavior) | done (CalDAV) | Full UI E2E passes on CalDAV (Radicale): “the hours menu of the task and habit forms previews the chosen ranges and links to the hours page”. Google Calendar run pending (service-account key). |
 | 78 | Hours time zone label from Google | E-0172, E-0199 | [planning-hours.md#behavior](specs/planning-hours.md#behavior) | blocked | Needs a Google account: the zone comes from the Google Calendar setting. The hours page shows the zone that hours apply in and an active trip (E2E on CalDAV: “a browser that reports UTC gets a warning…”). Reference note: source conflict with E-0222. |
 | 79 | First-run review of hours | E-0098 | [planning-hours.md#behavior](specs/planning-hours.md#behavior) | done (CalDAV) | Full UI E2E passes on CalDAV (Radicale): “a new user is asked once to review hours; a change there moves events; the banner stays gone after reload and restart”. Google Calendar run pending (service-account key). Reference note: current version. |

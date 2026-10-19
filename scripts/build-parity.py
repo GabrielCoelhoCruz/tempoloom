@@ -817,6 +817,8 @@ E2E_NOTES.update({
 PARTIAL.pop(78, None)
 GOOGLE_ROWS.pop(147, None)
 BLOCKED[78] = "Needs a Google account: the zone comes from the Google Calendar setting. The hours page shows the zone that hours apply in and an active trip (E2E on CalDAV: \u201ca browser that reports UTC gets a warning\u2026\u201d)"
+PARTIAL.pop(76, None)
+BLOCKED[76] = "Blocked by the Tempoloom decision in planning-hours.md (item-specific hours): focus time, flexible meetings and booking links do not offer them; building them needs that spec decision changed first. Habits have item-specific hours (E2E on CalDAV: \u201ca habit with item-specific hours is placed in them\u2026\u201d)"
 BLOCKED[147] = "Needs a Google OAuth client and a Google test account: incremental consent can only be built and proven against Google sign-in; today Google sign-in asks for calendar scopes up front"
 # --- end U03 ---
 
