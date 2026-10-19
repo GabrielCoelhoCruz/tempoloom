@@ -67,7 +67,12 @@ describe("travel zone", () => {
       4: [[540, 1020]],
       5: [[540, 1020]],
     };
-    const set = hoursToTimeSet(weekdays, trip, ms("2026-11-09T00:00:00Z"), ms("2026-11-14T00:00:00Z"));
+    const set = hoursToTimeSet(
+      weekdays,
+      trip,
+      ms("2026-11-09T00:00:00Z"),
+      ms("2026-11-14T00:00:00Z"),
+    );
     expect(set.intervals().map((i) => [iso(i.start), iso(i.end)])).toEqual([
       // Monday at home ends when Tuesday starts in Tokyo (16:00 Berlin).
       ["2026-11-09T08:00:00.000Z", "2026-11-09T15:00:00.000Z"],
