@@ -5,6 +5,7 @@ import { z } from "zod";
 import { attends, hasTag, TAG_FOCUS } from "../../scheduler/blocking.ts";
 import { hoursToTimeSet, type WeeklyHours } from "../../scheduler/hours.ts";
 import { TimeSet } from "../../scheduler/timeset.ts";
+import { defaultEventSettings, readEventSettings } from "../../shared/event-settings.ts";
 import { addDays, localToUtc, utcToLocal } from "../../shared/time.ts";
 import type { AppEnv } from "../app.ts";
 import { all, type Db, one } from "../db.ts";
@@ -73,12 +74,20 @@ export function computeStats(db: Db, userId: string, from: string, to: string) {
     else cat = "soloEvents";
     spans.push({ cat, start: e.start_ms, end: e.end_ms });
   }
+  // A habit's category (work or personal) decides its group; it starts from its hours.
   const habitKind = new Map(
-    all<{ id: string; kind: string }>(
+    all<{ id: string; kind: string; event_settings: string }>(
       db,
-      "SELECT h.id, s.kind FROM habits h JOIN hours_sets s ON s.id = h.hours_set_id WHERE h.user_id = ?",
+      `SELECT h.id, s.kind, h.event_settings FROM habits h JOIN hours_sets s ON s.id = h.hours_set_id
+       WHERE h.user_id = ?`,
       userId,
-    ).map((h) => [h.id, h.kind]),
+    ).map((h) => [
+      h.id,
+      readEventSettings(
+        h.event_settings,
+        defaultEventSettings("habit", { personal: h.kind === "personal" }),
+      ).category,
+    ]),
   );
   for (const m of all<{ kind: string; source_id: string; start_ms: number; end_ms: number }>(
     db,
