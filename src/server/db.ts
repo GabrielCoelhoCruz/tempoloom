@@ -25,10 +25,21 @@ function migrate(db: Db): void {
     );
   }
   for (let v = current; v < MIGRATIONS.length; v++) {
-    tx(db, () => {
-      db.exec(MIGRATIONS[v] as string);
-      db.exec(`PRAGMA user_version = ${v + 1}`);
-    });
+    const sql = MIGRATIONS[v] as string;
+    // A migration that rebuilds a table runs with foreign keys off, so that
+    // dropping the old table does not cascade (SQLite's ALTER TABLE procedure).
+    const rebuild = sql.includes("-- rebuilds tables");
+    if (rebuild) db.exec("PRAGMA foreign_keys = OFF");
+    try {
+      tx(db, () => {
+        db.exec(sql);
+        if (rebuild && db.prepare("PRAGMA foreign_key_check").all().length > 0)
+          throw new Error(`Migration ${v + 1} breaks a foreign key`);
+        db.exec(`PRAGMA user_version = ${v + 1}`);
+      });
+    } finally {
+      if (rebuild) db.exec("PRAGMA foreign_keys = ON");
+    }
   }
 }
 

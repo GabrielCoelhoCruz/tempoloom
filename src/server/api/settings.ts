@@ -1,10 +1,11 @@
-// Settings, hours sets and calendars.
+// Settings and hours sets. Calendars and mirroring: calendars.ts, mirrors.ts.
 import { randomUUID } from "node:crypto";
 import { Hono } from "hono";
 import { z } from "zod";
 import type { AppEnv } from "../app.ts";
 import { all, type Db, one, run } from "../db.ts";
 import { jsonBody, notFound } from "../http.ts";
+import { instanceLimit, limitMessage } from "../limits.ts";
 import { getSettings, updateSettings } from "../settings.ts";
 import type { SyncService } from "../sync/service.ts";
 
@@ -17,7 +18,13 @@ export function settingsRoutes(db: Db, sync: SyncService, now: () => number): Ho
   const scopeChanges = new Map<string, number[]>();
   const r = new Hono<AppEnv>();
 
-  r.get("/settings", (c) => c.json({ settings: getSettings(db, c.get("user").id) }));
+  r.get("/settings", (c) =>
+    c.json({
+      settings: getSettings(db, c.get("user").id),
+      // Instance limit on the planning window (plans-feature-inventory.md rule 3).
+      windowLimit: instanceLimit(db, "max_scheduling_window_weeks"),
+    }),
+  );
 
   r.patch("/settings", async (c) => {
     const user = c.get("user");
@@ -35,6 +42,15 @@ export function settingsRoutes(db: Db, sync: SyncService, now: () => number): Ho
           429,
         );
       scopeChanges.set(user.id, [...recent, now()]);
+    }
+    const windowLimit = instanceLimit(db, "max_scheduling_window_weeks");
+    if (
+      windowLimit !== null &&
+      typeof body.schedulingWindowWeeks === "number" &&
+      body.schedulingWindowWeeks > windowLimit
+    ) {
+      const message = limitMessage("max_scheduling_window_weeks", windowLimit);
+      return c.json({ error: "limit_reached", message }, 400);
     }
     const parsed = (() => {
       try {
@@ -115,125 +131,6 @@ export function settingsRoutes(db: Db, sync: SyncService, now: () => number): Ho
         id,
       );
     }
-    sync.request(user.id);
-    return c.json({ ok: true });
-  });
-
-  r.get("/calendars", (c) =>
-    c.json({
-      calendars: all(
-        db,
-        `SELECT c.id, c.name, c.is_primary, c.writable, c.check_availability, a.provider, a.email
-         FROM calendars c JOIN accounts a ON a.id = c.account_id WHERE a.user_id = ? ORDER BY a.created_at, c.is_primary DESC, c.name`,
-        c.get("user").id,
-      ),
-    }),
-  );
-
-  /** Reads each account's calendar list again (new or removed calendars). */
-  r.post("/calendars/refresh", async (c) => {
-    const user = c.get("user");
-    await sync.refreshCalendars(user.id);
-    return c.json({ ok: true });
-  });
-
-  const policyInput = z.object({
-    sourceCalendarId: z.string(),
-    destCalendarId: z.string(),
-    calendarType: z.enum(["personal", "business", "travel"]).default("personal"),
-    visibility: z
-      .enum(["label_only", "busy_only", "details_private", "details_default"])
-      .default("label_only"),
-    allDayMode: z.enum(["none", "busy_only", "all"]).default("none"),
-    copyOutsideWorkHours: z.boolean().default(true),
-  });
-  const ownCalendar = (userId: string, id: string) =>
-    one<{ id: string; writable: number }>(
-      db,
-      "SELECT c.id, c.writable FROM calendars c JOIN accounts a ON a.id = c.account_id WHERE c.id = ? AND a.user_id = ?",
-      id,
-      userId,
-    );
-
-  r.get("/mirrors", (c) =>
-    c.json({
-      mirrors: all(
-        db,
-        `SELECT p.*, s.name AS source_name, d.name AS dest_name FROM mirror_policies p
-         JOIN calendars s ON s.id = p.source_calendar_id JOIN calendars d ON d.id = p.dest_calendar_id
-         WHERE p.user_id = ? ORDER BY p.created_at`,
-        c.get("user").id,
-      ),
-    }),
-  );
-
-  r.post("/mirrors", async (c) => {
-    const user = c.get("user");
-    const b = await jsonBody(c, policyInput);
-    const src = ownCalendar(user.id, b.sourceCalendarId);
-    const dst = ownCalendar(user.id, b.destCalendarId);
-    if (!src || !dst) notFound("calendar");
-    if (src.id === dst.id) return c.json({ error: "same_calendar" }, 400);
-    if (!dst.writable) return c.json({ error: "destination_read_only" }, 400);
-    const id = randomUUID();
-    run(
-      db,
-      `INSERT INTO mirror_policies (id, user_id, source_calendar_id, dest_calendar_id, calendar_type, visibility,
-         all_day_mode, copy_outside_work_hours, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      id,
-      user.id,
-      src.id,
-      dst.id,
-      b.calendarType,
-      b.visibility,
-      b.allDayMode,
-      b.copyOutsideWorkHours ? 1 : 0,
-      now(),
-    );
-    // Calendars in a policy count for availability (connected calendars spec).
-    run(db, "UPDATE calendars SET check_availability = 1 WHERE id IN (?, ?)", src.id, dst.id);
-    sync.request(user.id, 0);
-    return c.json({ id }, 201);
-  });
-
-  r.patch("/mirrors/:id", async (c) => {
-    const user = c.get("user");
-    const { enabled } = await jsonBody(c, z.object({ enabled: z.boolean() }));
-    run(
-      db,
-      "UPDATE mirror_policies SET enabled = ? WHERE id = ? AND user_id = ?",
-      enabled ? 1 : 0,
-      c.req.param("id"),
-      user.id,
-    );
-    sync.request(user.id, 0);
-    return c.json({ ok: true });
-  });
-
-  r.delete("/mirrors/:id", (c) => {
-    const user = c.get("user");
-    run(db, "DELETE FROM mirror_policies WHERE id = ? AND user_id = ?", c.req.param("id"), user.id);
-    sync.request(user.id, 0);
-    return c.body(null, 204);
-  });
-
-  r.patch("/calendars/:id", async (c) => {
-    const user = c.get("user");
-    const id = c.req.param("id");
-    const body = await jsonBody(c, z.object({ checkAvailability: z.boolean() }));
-    const owned = one(
-      db,
-      "SELECT 1 FROM calendars c JOIN accounts a ON a.id = c.account_id WHERE c.id = ? AND a.user_id = ?",
-      id,
-      user.id,
-    );
-    if (!owned) notFound("calendar");
-    run(
-      db,
-      "UPDATE calendars SET check_availability = ? WHERE id = ?",
-      body.checkAvailability ? 1 : 0,
-      id,
-    );
     sync.request(user.id);
     return c.json({ ok: true });
   });

@@ -1,6 +1,6 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type { SecretBox } from "./crypto.ts";
-import { type Db, one, run, tx } from "./db.ts";
+import { all, type Db, one, run, tx } from "./db.ts";
 import {
   type GoogleIdentity,
   type OAuthClient,
@@ -19,7 +19,7 @@ export interface User {
   time_zone: string;
 }
 
-export type Provider = "google" | "google_service" | "caldav";
+export type Provider = "google" | "google_service" | "caldav" | "ics";
 
 export interface AccountRow {
   id: string;
@@ -178,21 +178,30 @@ export interface AccountInput {
   accessToken?: string;
   accessExpiresAt?: number;
   scope?: string;
+  /** The main email of the user; by default when the user has none yet. Kept on update. */
+  isMain?: boolean;
 }
 
+/** True when the user has a main email (accounts-login-emails-permissions.md rule 10). */
+export const hasMainAccount = (db: Db, userId: string) =>
+  Boolean(one(db, "SELECT 1 FROM accounts WHERE user_id = ? AND is_main = 1", userId));
+
+/** Creates or updates the user's account with this provider identity. */
 export function upsertAccount(db: Db, box: SecretBox, a: AccountInput, now = Date.now()): string {
   const existing = one<{ id: string }>(
     db,
-    "SELECT id FROM accounts WHERE provider = ? AND external_id = ?",
+    "SELECT id FROM accounts WHERE user_id = ? AND provider = ? AND external_id = ?",
+    a.userId,
     a.provider,
     a.externalId,
   );
   const id = existing?.id ?? randomUUID();
+  const isMain = a.provider !== "ics" && (a.isMain ?? !hasMainAccount(db, a.userId));
   run(
     db,
     `INSERT INTO accounts (id, user_id, provider, external_id, email, server_url, credentials,
-       access_token, access_expires_at, scope, status, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ok', ?)
+       access_token, access_expires_at, scope, status, created_at, is_main)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ok', ?, ?)
      ON CONFLICT (id) DO UPDATE SET
        email = excluded.email, server_url = excluded.server_url, credentials = excluded.credentials,
        access_token = excluded.access_token, access_expires_at = excluded.access_expires_at,
@@ -208,8 +217,55 @@ export function upsertAccount(db: Db, box: SecretBox, a: AccountInput, now = Dat
     a.accessExpiresAt ?? 0,
     a.scope ?? "",
     now,
+    isMain ? 1 : 0,
   );
   return id;
+}
+
+/** Which Tempoloom account a sign-in with a calendar account opens. */
+export type LoginTarget =
+  | { userId: string }
+  /** Secondary email of several accounts and main of none (rule 3.3). */
+  | { several: true }
+  /** The typed email is the main email of an account that this calendar account is not in. */
+  | { taken: true }
+  /** Unknown: sign up (rule 3.4). */
+  | null;
+
+/**
+ * Resolves a sign-in (accounts-login-emails-permissions.md rule 3): the
+ * account where this identity is the main email, then a person who exists
+ * before a first calendar (provisioning, single sign-on), then the one account
+ * that holds it as a secondary email. A CalDAV server does not prove the typed
+ * email, so the email alone never opens an account that has calendars.
+ */
+export function loginTarget(
+  db: Db,
+  provider: Provider,
+  externalId: string,
+  email: string,
+): LoginTarget {
+  const holders = all<{ user_id: string; is_main: number }>(
+    db,
+    `SELECT user_id, is_main FROM accounts
+     WHERE provider = ? AND external_id = ? AND grant_team_id IS NULL ORDER BY is_main DESC, created_at`,
+    provider,
+    externalId,
+  );
+  const main = holders.find((h) => h.is_main === 1);
+  if (main) return { userId: main.user_id };
+  const byEmail = one<{ id: string }>(db, "SELECT id FROM users WHERE email = ?", email);
+  const ownAccounts = (userId: string) =>
+    one(
+      db,
+      "SELECT 1 FROM accounts WHERE user_id = ? AND grant_team_id IS NULL AND provider <> 'ics'",
+      userId,
+    );
+  if (byEmail && !ownAccounts(byEmail.id)) return { userId: byEmail.id };
+  const [only, second] = holders;
+  if (only && !second) return { userId: only.user_id };
+  if (second) return { several: true };
+  return byEmail ? { taken: true } : null;
 }
 
 /**
@@ -228,7 +284,7 @@ export function upsertGoogleLogin(
   return tx(db, () => {
     const existing = one<AccountRow>(
       db,
-      "SELECT * FROM accounts WHERE provider = 'google' AND external_id = ?",
+      "SELECT * FROM accounts WHERE provider = 'google' AND external_id = ? ORDER BY is_main DESC, created_at LIMIT 1",
       identity.sub,
     );
     const user = existing

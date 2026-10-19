@@ -8,6 +8,7 @@ import type { WeeklyHours } from "../../scheduler/hours.ts";
 import type { AppEnv } from "../app.ts";
 import { all, type Db, one, run, tx } from "../db.ts";
 import { jsonBody, notFound } from "../http.ts";
+import { automationCount, limitRefusal } from "../limits.ts";
 import { getSettings } from "../settings.ts";
 import type { SyncService } from "../sync/service.ts";
 
@@ -430,6 +431,8 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
 
   r.post("/habits", async (c) => {
     const user = c.get("user");
+    const full = limitRefusal(db, "max_automations_per_user", automationCount(db, user.id));
+    if (full) return c.json(full, 409);
     const body = await jsonBody(c, habitInput);
     const hours = hoursSetId(db, user.id, body.hoursSetId, "work");
     const ideal = checkHabit(user.id, body, hours);
@@ -572,6 +575,8 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
 
   r.post("/buffers", async (c) => {
     const user = c.get("user");
+    const full = limitRefusal(db, "max_automations_per_user", automationCount(db, user.id));
+    if (full) return c.json(full, 409);
     const b = await jsonBody(c, bufferInput);
     const lvl = b.level ?? 3;
     const id = randomUUID();
@@ -613,6 +618,8 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
 
   r.post("/focus", async (c) => {
     const user = c.get("user");
+    const full = limitRefusal(db, "max_automations_per_user", automationCount(db, user.id));
+    if (full) return c.json(full, 409);
     const f = await jsonBody(c, focusInput);
     const min = f.minBlockMinutes ?? 60;
     const max = f.maxBlockMinutes ?? 240;

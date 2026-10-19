@@ -34,6 +34,7 @@ const sync = new SyncService({
   intervalMs: config.SYNC_INTERVAL_SECONDS * 1000,
   baseUrl: config.BASE_URL,
   refreshMs: config.GRANT_REFRESH_SECONDS * 1000,
+  mirrorReconcileMs: config.MIRROR_RECONCILE_SECONDS * 1000,
 });
 const webhooks = new WebhookWorker({
   db,

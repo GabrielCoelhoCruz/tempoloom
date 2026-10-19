@@ -31,6 +31,8 @@ const schema = z.object({
   GRANT_REFRESH_SECONDS: z.coerce.number().int().min(5).default(86_400),
   /** People created (or calendars attached) per minute by paced provisioning. */
   PROVISION_PER_MINUTE: z.coerce.number().int().min(1).max(6000).default(60),
+  /** Seconds between full reconciles of the calendar mirroring copies (twice a day). */
+  MIRROR_RECONCILE_SECONDS: z.coerce.number().int().min(5).default(43_200),
   /** Directory with the built web client. */
   WEB_DIST: z.string().default("./dist/web"),
 });

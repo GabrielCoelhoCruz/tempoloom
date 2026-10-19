@@ -1,5 +1,6 @@
 // Runs calendar sync and planning for each user, one run at a time per user.
 import { all, one, run } from "../db.ts";
+import { enforceCalendarLimit } from "../limits.ts";
 import { oooOwnersOf, syncOutOfOffice } from "../ooo.ts";
 import { meetingPeers } from "../planner/meetings.ts";
 import { replanUser } from "../planner/replan.ts";
@@ -7,19 +8,22 @@ import { enforceAgendas } from "../policies/agendas.ts";
 import { applyPolicies } from "../policies/apply.ts";
 import { type ProviderDeps, ProviderPool } from "../providers/index.ts";
 import { applyCalendarEdits } from "./edits.ts";
-import { pullEvents, syncCalendarList } from "./pull.ts";
+import { MIRROR_READ_AHEAD, pullEvents, syncCalendarList } from "./pull.ts";
 
 export interface SyncServiceDeps extends ProviderDeps {
   intervalMs: number;
   baseUrl: string;
   /** How often people who never signed in are read (default 24 hours). */
   refreshMs?: number;
+  /** How often all mirroring policies get a full reconcile (default 12 hours; mirroring rule 39). */
+  mirrorReconcileMs?: number;
   log?: (msg: string, err?: unknown) => void;
 }
 
 const DEBOUNCE_MS = 300;
 const CALENDAR_LIST_EVERY_MS = 10 * 60_000;
 const REFRESH_MS = 86_400_000;
+const MIRROR_RECONCILE_MS = 12 * 3_600_000;
 
 export class SyncService {
   readonly #deps: SyncServiceDeps;
@@ -213,6 +217,30 @@ export class SyncService {
         await syncCalendarList(db, pool.get(a.id), a.id, userId);
         run(db, "UPDATE accounts SET calendars_synced_at = ? WHERE id = ?", now0, a.id);
       }
+      // A lower instance limit turns extra connected calendars off (plans edge case 1).
+      enforceCalendarLimit(db, userId);
+      // Mirroring calendars are read 12 months ahead. Twice a day (by default) they
+      // are read in full and every copy is checked field by field (mirroring rule 39).
+      const mirrored = new Set(
+        all<{ s: string; d: string }>(
+          db,
+          "SELECT source_calendar_id AS s, dest_calendar_id AS d FROM mirror_policies WHERE user_id = ? AND enabled = 1",
+          userId,
+        ).flatMap((p) => [p.s, p.d]),
+      );
+      const reconciled =
+        one<{ at: number | null }>(
+          db,
+          "SELECT mirror_reconciled_at AS at FROM users WHERE id = ?",
+          userId,
+        )?.at ?? null;
+      const fullMirror =
+        mirrored.size > 0 &&
+        (reconciled === null ||
+          now0 - reconciled >= (this.#deps.mirrorReconcileMs ?? MIRROR_RECONCILE_MS));
+      if (fullMirror)
+        for (const id of mirrored)
+          run(db, "UPDATE calendars SET sync_token = NULL WHERE id = ?", id);
       const calendars = all<{ id: string; account_id: string }>(
         db,
         `SELECT c.id, c.account_id FROM calendars c JOIN accounts a ON a.id = c.account_id
@@ -225,7 +253,13 @@ export class SyncService {
       const now = this.#deps.now();
       let pulled = 0;
       for (const cal of calendars) {
-        pulled += await pullEvents(db, pool.get(cal.account_id), cal.id, now);
+        pulled += await pullEvents(
+          db,
+          pool.get(cal.account_id),
+          cal.id,
+          now,
+          mirrored.has(cal.id) ? MIRROR_READ_AHEAD : undefined,
+        );
       }
       if (!signedIn) {
         run(
@@ -263,9 +297,12 @@ export class SyncService {
           provider: (accountId) => pool.get(accountId),
           now: this.#deps.now(),
           baseUrl: this.#deps.baseUrl,
+          fullMirror,
         },
         userId,
       );
+      if (fullMirror && result)
+        run(db, "UPDATE users SET mirror_reconciled_at = ? WHERE id = ?", now, userId);
       // Team out-of-office calendars this user owns (teams-ooo-calendar.md).
       await syncOutOfOffice(db, userId, pool, this.#deps.now());
       // Flexible meetings join calendars of several users (meetings-flexible.md

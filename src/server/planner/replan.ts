@@ -38,6 +38,8 @@ export interface ReplanContext {
   provider: (accountId: string) => CalendarProvider;
   now: number;
   baseUrl: string;
+  /** The full mirroring reconcile: copies are checked field by field (mirroring rule 39). */
+  fullMirror?: boolean;
 }
 
 export interface ReplanResult {
@@ -62,7 +64,7 @@ export function writeCalendar(db: Db, userId: string): CalendarInfo | undefined 
     `SELECT c.id, c.account_id, c.provider_id, c.is_primary, c.writable, c.check_availability
      FROM calendars c JOIN accounts a ON a.id = c.account_id
      WHERE a.user_id = ? AND a.status = 'ok' AND c.writable = 1
-     ORDER BY c.is_primary DESC, a.created_at, c.name LIMIT 1`,
+     ORDER BY a.is_main DESC, c.is_primary DESC, a.created_at, c.name LIMIT 1`,
     userId,
   );
 }
@@ -438,6 +440,14 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
       userId,
     ).map((p) => [p.id, p.calendar_type]),
   );
+  // A policy's color override paints all its copies (mirroring rule 29).
+  const mirrorColors = new Map(
+    all<{ id: string; color_override: string }>(
+      db,
+      "SELECT id, color_override FROM mirror_policies WHERE user_id = ? AND color_override IS NOT NULL",
+      userId,
+    ).map((p) => [p.id, p.color_override]),
+  );
   for (const d of desired) {
     const row = rowByKey.get(d.key);
     const manual = row?.event_id
@@ -463,7 +473,9 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
             },
             cats.userEmail,
           );
-    d.colorId = colorFor(settings, category);
+    d.colorId =
+      (d.kind === "mirror" ? mirrorColors.get(d.sourceId) : undefined) ??
+      colorFor(settings, category);
   }
 
   const calendars = new Map(
@@ -479,6 +491,7 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
       db,
       userId,
       now,
+      fullCheck: ctx.fullMirror ?? false,
       target: (calendarId) => {
         const c = calendars.get(calendarId);
         if (!c) throw new Error(`Unknown calendar ${calendarId}`);

@@ -681,3 +681,13 @@ table.heat td {
   object-fit: cover;
   border-radius: var(--radius);
 }
+
+/* A form field whose label points at its control (round 3 s4: mirroring form). */
+.field {
+  display: grid;
+  gap: 4px;
+}
+.field > select {
+  color: var(--fg);
+  font-size: 14px;
+}

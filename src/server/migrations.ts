@@ -790,6 +790,73 @@ export const MIGRATIONS: readonly string[] = [
   // round 3 s2
   // round 3 s3
   // round 3 s4
+  // r3 s4: one calendar account in several Tempoloom accounts and the main
+  // email, holiday feeds, shared calendars, calendar categories, mirroring
+  // colors, copy alerts, the full mirroring reconcile and instance limits.
+  `
+  -- rebuilds tables: runs with foreign keys off (db.ts), as SQLite's ALTER TABLE procedure requires.
+  CREATE TABLE accounts_new (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    provider TEXT NOT NULL CHECK (provider IN ('google', 'google_service', 'caldav', 'ics')),
+    -- Google subject, service account email, CalDAV server and user name, or feed URL.
+    external_id TEXT NOT NULL,
+    email TEXT NOT NULL,
+    server_url TEXT,
+    credentials TEXT NOT NULL,
+    access_token TEXT,
+    access_expires_at INTEGER NOT NULL DEFAULT 0,
+    scope TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'ok' CHECK (status IN ('ok', 'reauth_required')),
+    created_at INTEGER NOT NULL,
+    calendars_synced_at INTEGER,
+    grant_team_id TEXT,
+    refreshed_at INTEGER,
+    -- The main email of the Tempoloom account (accounts-login-emails-permissions.md rule 10).
+    is_main INTEGER NOT NULL DEFAULT 0,
+    -- An email can be a secondary email of many Tempoloom accounts (rule 4).
+    UNIQUE (user_id, provider, external_id)
+  ) STRICT;
+  INSERT INTO accounts_new (id, user_id, provider, external_id, email, server_url, credentials,
+      access_token, access_expires_at, scope, status, created_at, calendars_synced_at,
+      grant_team_id, refreshed_at)
+    SELECT id, user_id, provider, external_id, email, server_url, credentials,
+      access_token, access_expires_at, scope, status, created_at, calendars_synced_at,
+      grant_team_id, refreshed_at
+    FROM accounts;
+  DROP TABLE accounts;
+  ALTER TABLE accounts_new RENAME TO accounts;
+  CREATE INDEX accounts_user ON accounts(user_id);
+  CREATE INDEX accounts_external ON accounts(provider, external_id);
+  -- Until now the first own account was the main one.
+  UPDATE accounts SET is_main = 1 WHERE id IN (
+    SELECT (SELECT a.id FROM accounts a WHERE a.user_id = u.id AND a.grant_team_id IS NULL
+            ORDER BY a.created_at, a.id LIMIT 1)
+    FROM users u);
+
+  -- Calendars that someone shared with a CalDAV account, added by URL
+  -- (accounts-connected-calendars.md rule 30).
+  CREATE TABLE shared_calendars (
+    account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    url TEXT NOT NULL,
+    PRIMARY KEY (account_id, url)
+  ) STRICT;
+
+  -- business, personal or travel (accounts-connected-calendars.md rule 8).
+  ALTER TABLE calendars ADD COLUMN category TEXT NOT NULL DEFAULT 'business';
+  -- One of the 11 event colors, or NULL: the color rules decide (sync-calendar-mirroring.md rule 29).
+  ALTER TABLE mirror_policies ADD COLUMN color_override TEXT;
+  -- The event has an alert (a VALARM, or Google reminders); copies never do (rule 30).
+  ALTER TABLE events ADD COLUMN alerts INTEGER NOT NULL DEFAULT 0;
+  -- The last full reconcile of the user's mirroring policies (rule 39).
+  ALTER TABLE users ADD COLUMN mirror_reconciled_at INTEGER;
+
+  -- Operator settings, such as instance limits (plans-feature-inventory.md rule 2).
+  CREATE TABLE instance_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+  ) STRICT;
+  `,
   // round 3 s5
   // round 3 s6
   // round 3 s7

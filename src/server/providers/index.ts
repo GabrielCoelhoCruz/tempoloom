@@ -1,11 +1,12 @@
 import { account, credentialsOf, googleAccessToken } from "../accounts.ts";
 import type { SecretBox } from "../crypto.ts";
-import { type Db, one } from "../db.ts";
+import { all, type Db, one } from "../db.ts";
 import { GoogleCalendarApi } from "../google/calendar.ts";
 import type { OAuthClient } from "../google/oauth.ts";
 import type { ServiceAccountKey } from "../google/service-account.ts";
 import { CalDavProvider } from "./caldav.ts";
 import { GoogleProvider } from "./google.ts";
+import { IcsFeedProvider } from "./ics.ts";
 import type { CalendarProvider } from "./types.ts";
 
 export interface ProviderDeps {
@@ -18,6 +19,7 @@ export interface ProviderDeps {
 
 export function providerFor(deps: ProviderDeps, accountId: string, zone: string): CalendarProvider {
   const row = account(deps.db, accountId);
+  if (row.provider === "ics") return new IcsFeedProvider(row.external_id, zone, deps.now);
   if (row.provider === "caldav") {
     const creds = credentialsOf(deps.box, row);
     // An account attached through a team's calendar grant reads with the grant's account.
@@ -35,6 +37,11 @@ export function providerFor(deps: ProviderDeps, accountId: string, zone: string)
         password: grant ? deps.box.open(grant.password) : (creds.password ?? ""),
         email: row.email,
         ...(creds.homeUrl ? { homeUrl: creds.homeUrl } : {}),
+        sharedUrls: all<{ url: string }>(
+          deps.db,
+          "SELECT url FROM shared_calendars WHERE account_id = ? ORDER BY url",
+          accountId,
+        ).map((r) => r.url),
       },
       zone,
       deps.now,

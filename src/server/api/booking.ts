@@ -27,6 +27,7 @@ import {
 } from "../booking-team.ts";
 import { all, type Db, one, run, tx } from "../db.ts";
 import { jsonBody, notFound } from "../http.ts";
+import { limitRefusal } from "../limits.ts";
 import { MANAGED_PROP } from "../planner/push.ts";
 import { getSettings } from "../settings.ts";
 import type { SyncService } from "../sync/service.ts";
@@ -596,6 +597,13 @@ export function bookingRoutes(db: Db, now: () => number): Hono<AppEnv> {
 
   r.post("/links", async (c) => {
     const user = c.get("user");
+    const count = one<{ n: number }>(
+      db,
+      "SELECT COUNT(*) AS n FROM booking_links WHERE user_id = ?",
+      user.id,
+    );
+    const full = limitRefusal(db, "max_booking_links", count?.n ?? 0);
+    if (full) return c.json(full, 409);
     if (!one(db, "SELECT 1 FROM booking_pages WHERE user_id = ?", user.id))
       return c.json({ error: "no_page" }, 400);
     const body = await jsonBody(c, linkInput);

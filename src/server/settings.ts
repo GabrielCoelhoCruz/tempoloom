@@ -19,6 +19,7 @@ const eventColor = z.enum([
 ]);
 
 import { type Db, one, run } from "./db.ts";
+import { instanceLimit } from "./limits.ts";
 
 export const settingsSchema = z.object({
   schedulingWindowWeeks: z.number().int().min(1).max(12).default(3),
@@ -78,15 +79,24 @@ const DEFAULT_COLORS: Record<(typeof CATEGORIES)[number], z.infer<typeof eventCo
 
 export type Settings = z.infer<typeof settingsSchema>;
 
-export function getSettings(db: Db, userId: string): Settings {
+function storedSettings(db: Db, userId: string): Settings {
   const row = one<{ settings: string }>(db, "SELECT settings FROM users WHERE id = ?", userId);
   const raw: unknown = row ? JSON.parse(row.settings) : {};
   const parsed = settingsSchema.safeParse(raw);
   return parsed.success ? parsed.data : settingsSchema.parse({});
 }
 
+export function getSettings(db: Db, userId: string): Settings {
+  const settings = storedSettings(db, userId);
+  // An instance limit caps the planning window; the user's own value comes back without it.
+  const limit = instanceLimit(db, "max_scheduling_window_weeks");
+  return limit !== null && settings.schedulingWindowWeeks > limit
+    ? { ...settings, schedulingWindowWeeks: limit }
+    : settings;
+}
+
 export function updateSettings(db: Db, userId: string, patch: unknown): Settings {
-  const current = getSettings(db, userId);
+  const current = storedSettings(db, userId);
   const merged = settingsSchema.parse({
     ...current,
     ...(patch as object),

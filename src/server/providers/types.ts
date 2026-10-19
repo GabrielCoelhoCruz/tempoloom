@@ -35,6 +35,8 @@ export interface ProviderEvent {
   updated: number | null;
   /** Private key-value properties; Tempoloom marks its own events here. */
   privateProps: Record<string, string>;
+  /** The event alerts: a VALARM, or Google reminders. Mirroring copies never do. */
+  alerts?: boolean;
 }
 
 export interface EventWrite {
