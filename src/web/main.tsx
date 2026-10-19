@@ -6,15 +6,20 @@ import { lazyComponent } from "./lib/lazy.ts";
 import { onLinkClick, path } from "./lib/router.ts";
 import { loadMe, me } from "./lib/state.ts";
 import { AccountMenu, ActingBanner } from "./views/account-menu.tsx";
-import { PublicBooking } from "./views/book.tsx";
-import { Habits } from "./views/habits.tsx";
-import { Library } from "./views/library.tsx";
-import { Meetings } from "./views/meetings.tsx";
 import { Planner } from "./views/planner.tsx";
-import { Settings } from "./views/settings.tsx";
-import { StatsPage } from "./views/stats.tsx";
-import { Tasks } from "./views/tasks.tsx";
-import { MeetingCost, Pomodoro } from "./views/tools.tsx";
+
+// Only the planner is in the first chunk; every other page loads on first use.
+const Tasks = lazyComponent(() => import("./views/tasks.tsx").then((m) => m.Tasks));
+const Habits = lazyComponent(() => import("./views/habits.tsx").then((m) => m.Habits));
+const Meetings = lazyComponent(() => import("./views/meetings.tsx").then((m) => m.Meetings));
+const Library = lazyComponent(() => import("./views/library.tsx").then((m) => m.Library));
+const Settings = lazyComponent(() => import("./views/settings.tsx").then((m) => m.Settings));
+const StatsPage = lazyComponent(() => import("./views/stats.tsx").then((m) => m.StatsPage));
+const MeetingCost = lazyComponent(() => import("./views/tools.tsx").then((m) => m.MeetingCost));
+const Pomodoro = lazyComponent(() => import("./views/tools.tsx").then((m) => m.Pomodoro));
+const PublicBooking = lazyComponent<{ path: string }>(() =>
+  import("./views/book.tsx").then((m) => m.PublicBooking),
+);
 
 const TeamPage = lazyComponent(() => import("./views/team.tsx").then((m) => m.TeamPage));
 const AccountPage = lazyComponent(() => import("./views/account.tsx").then((m) => m.AccountPage));
