@@ -8,8 +8,11 @@ import { useCallback, useEffect, useState } from "preact/hooks";
 import { utcToLocal } from "../../shared/time.ts";
 import { ApiError, api } from "../lib/api.ts";
 import { toLocalInput } from "../lib/format.ts";
+import { lazyComponent } from "../lib/lazy.ts";
 import { useLive } from "../lib/live.ts";
 import { loadMe, me, type Person, zone } from "../lib/state.ts";
+
+const McpSection = lazyComponent(() => import("./mcp-section.tsx").then((m) => m.McpSection));
 
 interface ApiKey {
   id: string;
@@ -404,6 +407,8 @@ export function AccountPage() {
           ))}
         </div>
       </Section>
+
+      <McpSection />
 
       <Section title="Delete account" id="delete-account">
         {!deleting ? (

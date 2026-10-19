@@ -33,6 +33,8 @@ const schema = z.object({
   PROVISION_PER_MINUTE: z.coerce.number().int().min(1).max(6000).default(60),
   /** Directory with the built web client. */
   WEB_DIST: z.string().default("./dist/web"),
+  /** false: AI tools (MCP clients) may read but not stage changes (plans-feature-inventory.md). */
+  MCP_WRITE_ENABLED: z.stringbool().default(true),
 });
 
 export type Config = z.infer<typeof schema> & { dbPath: string };

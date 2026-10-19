@@ -172,6 +172,9 @@ export class GoogleProvider implements CalendarProvider {
     const patch: Partial<GoogleEventInput> = {};
     if (change.description !== undefined) patch.description = change.description;
     if (change.end !== undefined) patch.end = { dateTime: new Date(change.end).toISOString() };
+    if (change.start !== undefined)
+      patch.start = { dateTime: new Date(change.start).toISOString() };
+    if (change.summary !== undefined) patch.summary = change.summary;
     const answer = change.selfResponse;
     if (answer) {
       const current = await this.#api.getEvent(calendarId, eventId).catch(mapError);

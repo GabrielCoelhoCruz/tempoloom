@@ -132,7 +132,10 @@ test("with preview mode on, a new habit shows its calendar impact and writes not
   await page.getByRole("link", { name: "Habits" }).click();
   await page.locator('[data-habit-title="Walk"]').getByRole("button", { name: "Turn off" }).click();
   await expect(page.getByTestId("preview-banner")).toContainText("1 staged change");
-  await expect(page.locator('[data-habit-title="Walk"]')).not.toContainText("off");
+  // Still on: the button still offers to turn it off.
+  await expect(
+    page.locator('[data-habit-title="Walk"]').getByRole("button", { name: "Turn off" }),
+  ).toBeVisible();
   await openWeek(page);
   await expect(stagedRow(page, "Walk")).toContainText("Edit habit");
   await expect(page.locator(".ev-staged-deleted", { hasText: "Walk" })).toHaveCount(5);
@@ -145,5 +148,7 @@ test("with preview mode on, a new habit shows its calendar impact and writes not
     (evs) => expect(titled(evs, "Walk")).toHaveLength(0),
   );
   await page.getByRole("link", { name: "Habits" }).click();
-  await expect(page.locator('[data-habit-title="Walk"]')).toContainText("off");
+  await expect(
+    page.locator('[data-habit-title="Walk"]').getByRole("button", { name: "Turn on" }),
+  ).toBeVisible();
 });

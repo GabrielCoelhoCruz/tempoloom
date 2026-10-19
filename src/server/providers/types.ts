@@ -61,6 +61,9 @@ export interface ExternalChange {
   selfResponse?: ResponseStatus;
   description?: string;
   end?: number;
+  /** A new start and title, for an event the user organizes (preview mode apply). */
+  start?: number;
+  summary?: string;
 }
 
 export interface EventChanges {

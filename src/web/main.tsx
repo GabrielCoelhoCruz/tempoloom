@@ -46,6 +46,9 @@ const LOGIN_ERRORS: Record<string, string> = {
   no_seats: "Your organization's team has no free seats.",
   deactivated: "Your organization deactivated this account.",
 };
+const PreviewBanner = lazyComponent(() =>
+  import("./views/preview.tsx").then((m) => m.PreviewBanner),
+);
 const PoliciesPage = lazyComponent(() =>
   import("./views/policies.tsx").then((m) => m.PoliciesPage),
 );
@@ -240,6 +243,7 @@ function App() {
       </nav>
       <main class="main">
         <ActingBanner />
+        {path.value !== "/" && <PreviewBanner />}
         {!me.value.accounts.some((a) => !a.viaGrant) && <ConnectCalendar />}
         <Page />
       </main>

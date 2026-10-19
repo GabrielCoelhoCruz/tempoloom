@@ -107,6 +107,10 @@ Observed rules:
 - **SCH-7.** Current reference: creating or editing an automation first shows
   its calendar effect as a preview; the user applies it (E-0043, E-0077,
   E-0081, E-0051).
+  Tempoloom decision: while preview mode is on (`assistant-preview-mode.md`),
+  saving a habit, focus time goal or buffer runs the scheduler on the changed
+  rules without saving them, and stages the difference to the current plan;
+  with preview mode off the save applies at once.
 
 Proposed defaults:
 

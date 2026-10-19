@@ -681,3 +681,41 @@ table.heat td {
   object-fit: cover;
   border-radius: var(--radius);
 }
+
+/* Preview mode (assistant-preview-mode.md rule 4): dashed staged events, struck-through deletes */
+.preview {
+  display: grid;
+  gap: 8px;
+  margin: 8px 0;
+}
+.preview-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+.preview-banner {
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--accent) 12%, var(--panel));
+}
+.ev.ev-staged {
+  background: color-mix(in srgb, var(--accent) 14%, var(--panel));
+  color: var(--fg);
+  border: 2px dashed var(--accent);
+  z-index: 2;
+}
+.ev.ev-staged-from {
+  opacity: 0.45;
+}
+.ev.ev-staged-deleted {
+  opacity: 0.6;
+}
+.ev-staged-deleted .ev-title {
+  text-decoration: line-through;
+}
+.apply-summary {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+}

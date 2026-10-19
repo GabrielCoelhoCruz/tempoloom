@@ -202,6 +202,10 @@ or file family that specifies the feature.
 5. When `mcp_write_enabled` is false, MCP clients and the ChatGPT app can
    read but not stage changes (`assistant-mcp-server.md`).
 
+   Tempoloom decision: the operator sets it with the environment variable
+   `MCP_WRITE_ENABLED=false`. Read-only means read tools only: nothing can
+   be staged or applied through MCP.
+
 ## Outputs
 
 - Instance settings page for the limits (instance admin only).

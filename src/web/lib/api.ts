@@ -25,5 +25,8 @@ export async function api<T>(method: string, url: string, body?: unknown): Promi
   if (res.status === 403 && (data as { error?: string } | undefined)?.error === "acting_ended")
     location.assign("/?acting_ended=1");
   if (!res.ok) throw new ApiError(res.status, data);
+  // Preview mode staged the change instead of saving it (assistant-preview-mode.md).
+  if (res.status === 202 && (data as { staged?: unknown } | undefined)?.staged)
+    dispatchEvent(new Event("tl-staged"));
   return data as T;
 }

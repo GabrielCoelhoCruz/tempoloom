@@ -50,6 +50,8 @@ time first.
 2. The library groups templates by type: habits, buffers, focus, flexible meetings and meeting quality (E-0043). A template that the user has already added shows an "added" badge (E-0043). The library catalog and its presets are in `automations-library.md`.
 3. The user may add the same template more than once. Proposed (several buffer automations are expected, E-0051).
 4. Saving a new automation, or saving changes to one, stages its effect in preview mode: the managed events that Tempoloom will add, move or remove in the scheduling window. The user applies or discards the staged changes as defined in `assistant-preview-mode.md`. Discarding all of them leaves the calendar unchanged (E-0043, E-0081, E-0077, E-0070, E-0051).
+
+   Tempoloom decision: the save is staged while preview mode is on (`assistant-preview-mode.md` rule 2); with preview mode off it applies at once. The staged impact is the full difference between the plan now and the plan with the change, so it also lists other managed events that move or go as a side effect.
 5. An automation created through the assistant chat also goes through preview mode before it changes the calendar (E-0015 "approvals"; E-0043).
 
 ### The list
