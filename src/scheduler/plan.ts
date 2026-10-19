@@ -249,8 +249,11 @@ function greedyChunks(
   }
   const chunks: Interval[] = [];
   const step = ctx.step;
+  // TSK-14: the next chunk starts no earlier than the last end plus the
+  // cooldown, also in a later free interval.
+  let floor = -Infinity;
   for (const iv of free.intervals()) {
-    let cursor = ceilTo(iv.start, step);
+    let cursor = ceilTo(Math.max(iv.start, floor), step);
     while (need > 0 && cursor < iv.end) {
       if (r.oncePerDay && usedDays.has(dayStartOf(ctx, cursor))) {
         cursor = ceilTo(nextDayStart(ctx, cursor), step);
@@ -273,7 +276,8 @@ function greedyChunks(
         usedDays.add(dayStartOf(ctx, cursor));
         cursor = ceilTo(nextDayStart(ctx, cursor), step);
       } else {
-        cursor = ceilTo(cursor + length + r.gap, step);
+        floor = cursor + length + r.gap;
+        cursor = ceilTo(floor, step);
       }
     }
     if (need <= 0) break;

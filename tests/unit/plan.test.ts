@@ -568,6 +568,25 @@ describe("task chunks", () => {
     ]);
   });
 
+  it("keeps the cooldown between chunks across a busy event, and a replan keeps both (TSK-14, SCH-88)", () => {
+    // A busy event 09:15-09:30 cuts the free time in two. The second chunk
+    // must start 30 minutes after the first ends, not at the start of the
+    // next free interval.
+    const events = [ext(at(MON, "09:15"), at(MON, "09:30"))];
+    const t = task({ id: "t", remainingMinutes: 30, minChunkMinutes: 15, maxChunkMinutes: 15 });
+    const first = plan(snapshot({ chunkCooldown: "30m", events, tasks: [t] }));
+    expect(spans(of(first, "t"))).toEqual([`${MON}T09:00/09:15`, `${MON}T09:45/10:00`]);
+    const current = first.placements.map((p) => ({
+      key: p.key,
+      itemId: p.itemId,
+      start: p.start,
+      end: p.end,
+      locked: false,
+    }));
+    const again = plan(snapshot({ chunkCooldown: "30m", events, tasks: [t], current }));
+    expect(again.placements).toEqual(first.placements);
+  });
+
   it("never spans two hours ranges (HRS-2)", () => {
     const result = plan(
       snapshot({
