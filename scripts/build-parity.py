@@ -785,8 +785,9 @@ T.update({
     "u5_tags": "travel tags in the title, the description and the user's own RSVP note add travel time; #tl_flight adds airport time and #tl_trip only the travel category, also at an address; a removed tag removes its buffers",
     "u5_quick": "a busy event titled only #tl_busy turns free and still keeps tasks out; a longer title stays busy",
     "u5_focus": "an event tagged #tl_focus counts toward the weekly focus goal, so less focus time is placed",
-    "u5_away": "out-of-office time blocks habits and counts as vacation from 8 hours, else as a personal commitment; #tl_free in its title lets habits back",
-    "u5_holiday": "a company holiday blocks the day once the user accepts its invitation; an unanswered one and a free holiday do not",
+    "u5_away": "out-of-office time blocks habits and tasks and counts as vacation from 8 hours, else as a personal commitment; #tl_free in its title lets habits and tasks back",
+    "u5_away_conflict": "a habit that keeps conflicts is skipped on time away and kept as a conflict on plain busy time",
+    "u5_holiday": "a company holiday blocks the day once the user answers yes or maybe to its invitation; an unanswered one and a free holiday do not",
     "u5_guests": "a meeting gets a new category and color when its guests change in the calendar",
     "u5_repaint": "a new category color repaints events that ended too; Repaint all events puts back colors changed in the calendar, at most twice a minute",
     "u5_markers": "chosen markers after the title replace the defaults on new and changed events; the planner shows plain titles; back before the title rewrites them",
@@ -802,10 +803,8 @@ E2E.update({
     256: ["u5_tags"],
     257: ["u5_focus"],
     259: ["u5_tags"],
-    261: ["u5_away"],
     262: ["u5_away"],
     263: ["u5_away"],
-    265: ["u5_holiday"],
     278: ["u5_guests"],
     283: ["c_paint", "u5_repaint"],
     285: ["c_paint", "u5_repaint"],
@@ -816,18 +815,30 @@ E2E.update({
 E2E_NOTES.update({
     245: "A travel buffer is the one managed event that mirroring copies, so its copy follows the policy",
     253: "Quick block: the event turns free within one run",
-    259: "On CalDAV the RSVP note is the X-RESPONSE-COMMENT of the user's attendee line, or the COMMENT of an invitation copy",
-    261: "On CalDAV an out-of-office event is one marked X-MICROSOFT-CDO-BUSYSTATUS:OOF, as Outlook-style clients write it; the planner shows it as vacation or personal commitment",
+    259: "On CalDAV the RSVP note is the X-RESPONSE-COMMENT of the user's own attendee line; a COMMENT on the event is the organizer's text and is not read (edge case 5)",
     262: "Exactly 8 hours is vacation; stats show personal commitments on their own line",
-    265: "A shared holiday calendar of busy all-day invitations works the same way; holiday feeds are row 266",
     285: "Repaint all events is a button in the Colors section; it counts toward the same limit of 2 a minute",
     292: "Settings, Title markers: one field for each state marker and a position before or after the title",
     298: "The planner shows a mirrored copy as its source event, so one control covers both",
 })
+PARTIAL[261] = (
+    "Out-of-office events are read from the Google event type outOfOffice and, on CalDAV, from "
+    "X-MICROSOFT-CDO-BUSYSTATUS:OOF, as Outlook-style clients write it. Full UI E2E passes on CalDAV (Radicale) "
+    f"only: \u201c{T['u5_away']}\u201d; \u201c{T['u5_away_conflict']}\u201d. "
+    "Limit: the Google event type has no E2E; the Google Calendar run is pending (service-account key)"
+)
+PARTIAL[265] = (
+    f"Full UI E2E passes on CalDAV (Radicale): \u201c{T['u5_holiday']}\u201d. "
+    "Limit: an invitation that lists only a mailing list, not the user, blocks before the user answers, "
+    "because Tempoloom cannot see the user's own answer; holiday feeds are row 266. Google Calendar run pending (service-account key)"
+)
 BLOCKED[284] = "Needs a Google Calendar account: the events that cannot change color (made from mail, birthdays) exist only in Google Calendar; a CalDAV server lets the owner change every event. Painting skips refused events and never stops a run (code)"
 BLOCKED[317] = "The chat app channel needs the Slack app (a vendor developer app and a test workspace); the daily digest by email, at a time the user sets, has full UI E2E on CalDAV (\u201clibrary entry 'Flag meeting problems' turns on the checks and an email digest of open, not ignored, issues at the chosen time, once a day\u201d)"
-for n in [245, 253, 254, 255, 256, 257, 259, 261, 262, 263, 265, 278, 283, 284, 285, 292, 297, 298, 317]:
+for n in [245, 253, 254, 255, 256, 257, 259, 262, 263, 278, 283, 284, 285, 292, 297, 298, 317]:
     PARTIAL.pop(n, None)
+    UNIT.pop(n, None)
+    GOOGLE_ROWS.pop(n, None)
+for n in [261, 265]:
     UNIT.pop(n, None)
     GOOGLE_ROWS.pop(n, None)
 # --- end U05 ---
