@@ -2,6 +2,7 @@
 // The scheduler run lists the events whose color is wrong; a background job
 // writes the colors after the run, so a repaint never delays a run.
 import { type Db, one, run } from "../db.ts";
+import { OAuthError } from "../google/oauth.ts";
 import { type CalendarProvider, ProviderError } from "../providers/types.ts";
 import { cacheEvent } from "../sync/pull.ts";
 
@@ -94,8 +95,13 @@ export async function writePaint(ctx: PaintContext, p: Paint): Promise<boolean> 
     setManaged(ev.etag);
     return true;
   } catch (err) {
-    // Refused (rule 10: mail-made events, birthdays) or gone: nothing to retry.
-    return err instanceof ProviderError && [400, 403, 404, 410].includes(err.status);
+    // Refused (rule 10: mail-made events, birthdays), gone, or the account needs
+    // a new login: a retry cannot succeed, so it must not hold a "repaint all".
+    return (
+      err instanceof OAuthError ||
+      (err instanceof ProviderError &&
+        (err.kind === "auth" || [400, 401, 403, 404, 410].includes(err.status)))
+    );
   }
 }
 

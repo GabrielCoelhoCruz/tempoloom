@@ -7,13 +7,17 @@
 //    Google answers 412 and the event keeps the wrong color.
 // 2. A "repaint all" request is used up when a write fails, so the colors
 //    stay wrong until the user asks again.
+// 3. A "repaint all" request never clears while an account needs a new login,
+//    so every run repaints all and puts back colors the user sets.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ensureUser } from "../../src/server/accounts.ts";
 import { type Db, one, openDb, run } from "../../src/server/db.ts";
 import { GoogleCalendarApi } from "../../src/server/google/calendar.ts";
+import { OAuthError } from "../../src/server/google/oauth.ts";
 import { type PaintJob, requestRepaint, runPaint } from "../../src/server/planner/repaint.ts";
 import { replanUser } from "../../src/server/planner/replan.ts";
 import { GoogleProvider } from "../../src/server/providers/google.ts";
+import { type CalendarProvider, ProviderError } from "../../src/server/providers/types.ts";
 
 const NOW = Date.parse("2026-10-19T12:00:00Z");
 const HOUR = 3_600_000;
@@ -151,5 +155,68 @@ describe("repaint", () => {
     // Done: a third run writes nothing.
     await runOnce(db, userId, google.provider);
     expect(google.calls.filter((c) => c.colorId !== undefined)).toHaveLength(2);
+  });
+
+  it("clears a repaint all request when only an account that needs a new login is left (rule 12)", async () => {
+    const { db, userId } = setup("2");
+    run(
+      db,
+      `INSERT INTO accounts (id, user_id, provider, external_id, email, credentials, created_at, is_main, status)
+       VALUES ('acc2', ?, 'google', 'sub-2', 'other@example.com', '', ?, 0, 'reauth_required')`,
+      userId,
+      NOW,
+    );
+    run(
+      db,
+      `INSERT INTO calendars (id, account_id, provider_id, name, is_primary, check_availability, writable)
+       VALUES ('cal2', 'acc2', 'other@example.com', 'Other', 1, 1, 1)`,
+    );
+    run(
+      db,
+      `INSERT INTO managed_events (id, user_id, calendar_id, event_id, key, kind, source_id, start_ms,
+         end_ms, busy, title, color_id, etag)
+       VALUES ('m2', ?, 'cal2', 'ev2', 'buffer:b2:x', 'buffer', 'b2', ?, ?, 1, 'Travel', '2', '"m2"')`,
+      userId,
+      NOW - 3 * HOUR,
+      NOW - 2 * HOUR,
+    );
+    run(
+      db,
+      `INSERT INTO events (calendar_id, event_id, summary, start_ms, end_ms, color_id, etag, private_props)
+       VALUES ('cal2', 'ev2', 'Travel', ?, ?, '5', '"e2"', '{"tl":"1"}')`,
+      NOW - 3 * HOUR,
+      NOW - 2 * HOUR,
+    );
+    const google = fakeGoogle({ etag: '"e-new"' });
+    // Every call for the account that needs a new login fails like the real token store.
+    const locked = new Proxy({} as CalendarProvider, {
+      get: () => async () => {
+        throw new OAuthError("reauth_required", "Account needs a new login");
+      },
+    });
+    const provider = (id: string) => (id === "acc2" ? locked : google.provider);
+    requestRepaint(db, userId, NOW);
+    const result = (await replanUser(
+      { db, provider, now: NOW, baseUrl: "http://localhost" },
+      userId,
+    )) as { paint: PaintJob };
+    await runPaint({ db, provider }, userId, result.paint);
+    expect(google.calls.filter((c) => c.colorId !== undefined)).toHaveLength(1);
+    expect(requested(db)).toBeNull();
+  });
+
+  it("clears a repaint all request when a write fails because the login is no longer valid (rule 12)", async () => {
+    const { db, userId } = setup("2");
+    requestRepaint(db, userId, NOW);
+    const badPassword = new Proxy({} as CalendarProvider, {
+      get: () => async () => {
+        throw new ProviderError("auth", 401, "Unauthorized");
+      },
+    });
+    await runPaint({ db, provider: () => badPassword }, userId, {
+      paints: [{ calendarId: "cal", eventId: "ev1", series: false, color: "2", managedId: "m1" }],
+      requestedAt: NOW,
+    });
+    expect(requested(db)).toBeNull();
   });
 });

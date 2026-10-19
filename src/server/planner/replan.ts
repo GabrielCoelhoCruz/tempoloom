@@ -728,8 +728,11 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
   for (const r of all<ManagedRow & { cached_color: string | null; attendees: string | null }>(
     db,
     `SELECT m.*, e.color_id AS cached_color, e.attendees FROM managed_events m
+       JOIN calendars c ON c.id = m.calendar_id
+       JOIN accounts a ON a.id = c.account_id
        LEFT JOIN events e ON e.calendar_id = m.calendar_id AND e.event_id = m.event_id
-     WHERE m.user_id = ? AND m.event_id IS NOT NULL AND m.end_ms > ? AND m.end_ms <= ?`,
+     WHERE m.user_id = ? AND a.status = 'ok' AND c.writable = 1
+       AND m.event_id IS NOT NULL AND m.end_ms > ? AND m.end_ms <= ?`,
     userId,
     now - 90 * DAY,
     requestedAt === null ? now : Number.MAX_SAFE_INTEGER,
