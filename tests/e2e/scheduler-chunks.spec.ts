@@ -1,12 +1,15 @@
 // Chunk sizes that leave no valid split (docs/specs/planning-tasks.md TSK-10,
 // TSK-12, TSK-13): with shortest chunk = longest chunk = 60 minutes, 90 or
 // 150 minutes cannot split into 60-minute chunks. The scheduler places the
-// 60-minute chunks and then the rest as one short last chunk.
+// 60-minute chunks and then the rest as one short last chunk. When a split
+// exists (ceil(need / longest) * shortest <= need), no chunk is short: 195
+// minutes with 60-90 minute chunks gets 75, 60 and 60.
 //
 // Ways it can fail, and the check that catches each:
 // - the task is not placed at all and shows "no free time"  -> Radicale total, task-issue
 // - the rest is dropped (only whole 60-minute chunks)       -> Radicale total
 // - a chunk breaks the longest chunk (a 90-minute chunk)    -> chunk lengths
+// - a short chunk although a split exists (90, 90, 15)      -> chunk lengths
 // - the result is lost on reload                            -> state after reload
 import type { Page } from "@playwright/test";
 import type { CalendarDriver } from "./fixtures.ts";
@@ -61,4 +64,21 @@ test("+30 min on a 120-minute task with 60-minute chunks places 60, 60 and 30 mi
   await expect(row.getByTestId("task-left")).toHaveText("2 h 30 min left");
   await expect(row.getByTestId("task-issue")).toHaveCount(0);
   await expectChunks(page, cal, "AT-Plus", [60, 60, 30]);
+});
+
+test("a 195-minute task with 60-90 minute chunks gets 75, 60 and 60 minutes, no short chunk (TSK-10, TSK-13)", async ({
+  page,
+  cal,
+  signIn,
+}) => {
+  // A split exists (3 x 60 <= 195), so no chunk may be shorter than 60.
+  // Longest chunks first would give 90, 90 and 15.
+  await signIn();
+  await addTask(page, { title: "AT-Split", minutes: 195, min: 60, max: 90, due: "" });
+  await expectChunks(page, cal, "AT-Split", [75, 60, 60]);
+  await page.reload();
+  await expect(page.locator('[data-task-title="AT-Split"]').getByTestId("task-left")).toHaveText(
+    "3 h 15 min left",
+  );
+  await expectChunks(page, cal, "AT-Split", [75, 60, 60]);
 });

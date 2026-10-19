@@ -452,6 +452,32 @@ describe("task chunks", () => {
     );
   });
 
+  it.each([
+    [195, 60, 90, [75, 60, 60]],
+    [200, 60, 90, [80, 60, 60]],
+    [90, 60, 60, [60, 30]],
+    [150, 60, 60, [60, 60, 30]],
+  ])(
+    "splits %i minutes at %i-%i into the chunks of the split rule (TSK-10, TSK-13)",
+    (remaining, min, max, expected) => {
+      // A split within the bounds exists when ceil(need / max) * min <= need.
+      // Then no chunk is short; else only the last rest is.
+      const result = plan(
+        snapshot({
+          tasks: [
+            task({
+              id: "t",
+              remainingMinutes: remaining,
+              minChunkMinutes: min,
+              maxChunkMinutes: max,
+            }),
+          ],
+        }),
+      );
+      expect(of(result, "t").map((c) => (c.end - c.start) / MIN)).toEqual(expected);
+    },
+  );
+
   it("places one chunk per day with the once-per-day cooldown", () => {
     const result = plan(
       snapshot({

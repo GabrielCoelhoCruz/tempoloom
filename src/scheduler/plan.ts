@@ -223,6 +223,14 @@ const dayStartOf = (ctx: Ctx, t: number) =>
 const nextDayStart = (ctx: Ctx, t: number) =>
   localToUtc(ctx.s.zone, addDays(utcToLocal(ctx.s.zone, t).date, 1), 0);
 
+/**
+ * A need splits into chunks within the bounds when k = ceil(need / max)
+ * chunks of the minimum fit in it. Else the rest after max-length chunks is
+ * one chunk shorter than the minimum (TSK-13).
+ */
+const splits = (need: number, r: ChunkRules) =>
+  need <= 0 || Math.ceil(need / r.max) * r.min <= need;
+
 /** SCH-90: fills free intervals in time order with chunks. Returns chunks and the unplaced rest. */
 function greedyChunks(
   ctx: Ctx,
@@ -242,11 +250,12 @@ function greedyChunks(
       }
       const room = floorTo(iv.end - cursor, step);
       let length = Math.min(r.max, need, room);
-      // Never leave a rest shorter than the minimum, unless no chunk sizes
-      // within the bounds add up to the need (need > max and need < 2 * min).
-      // Then the rest becomes one short last chunk (TSK-13).
-      if (need - length > 0 && need - length < r.min && (need <= r.max || need >= 2 * r.min)) {
-        length = need - r.min;
+      if (splits(need, r)) {
+        // Take the most that still leaves k - 1 chunks of at least the
+        // minimum, and keep the rest splittable when the room is short.
+        const k = Math.ceil(need / r.max);
+        length = Math.min(length, need - (k - 1) * r.min);
+        if (!splits(need - length, r)) length = need - Math.ceil((need - length) / r.max) * r.min;
       }
       if (length < r.min && !(need < r.min && length === need)) break;
       if (length <= 0) break;
@@ -301,7 +310,8 @@ function placeTask(ctx: Ctx, t: TaskItem): void {
       }
       const l = len(iv);
       const okLength =
-        (l >= rules.min && l <= rules.max) || (l < rules.min && l === rest && rest < rules.min);
+        ((l >= rules.min && l <= rules.max) || (l < rules.min && l === rest && rest < rules.min)) &&
+        (splits(rest - l, rules) || !splits(rest, rules));
       const day = dayStartOf(ctx, iv.start);
       if (!okLength || !local.contains(iv) || (rules.oncePerDay && usedDays.has(day))) continue;
       kept.push({ key: c.key, iv });
