@@ -14,7 +14,14 @@
 //   button for a new mirroring policy goes nowhere                          -> category
 // Every test reloads the page and reads the state again.
 
-import { addSharedCalendar, calendarRow, openSettings, week } from "./calendar-helpers.ts";
+import {
+  addPolicy,
+  addSharedCalendar,
+  calendarRow,
+  copies,
+  openSettings,
+  week,
+} from "./calendar-helpers.ts";
 import { addCalDavAccount } from "./delegation-helpers.ts";
 import {
   at,
@@ -61,6 +68,12 @@ test("a calendar shared with full access can be added, connected and blocks time
   expect((await week(shared)).map((e) => e.summary)).toEqual(["Rota duty"]);
   await pc.reload();
   await expect(calendarRow(pc, "Shared").getByRole("checkbox")).toBeChecked();
+  // It can also be the source of a mirroring policy (sync-calendar-mirroring.md rule 2).
+  await addPolicy(pc, { from: "Shared", to: "Work" });
+  await eventually(
+    () => week(colleague.cal),
+    (l) => expect(copies(l).map((e) => local(e.start))).toEqual([`${W} 09:00`]),
+  );
 
   // Read-only access is not enough: the calendar is refused and not listed.
   const reader = await people(3);
