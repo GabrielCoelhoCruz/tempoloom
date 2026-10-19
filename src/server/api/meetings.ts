@@ -7,6 +7,7 @@ import { addDays, type LocalDate, weekdayOf } from "../../shared/time.ts";
 import type { AppEnv } from "../app.ts";
 import { all, type Db, one, run } from "../db.ts";
 import { jsonBody, notFound } from "../http.ts";
+import type { Mailer } from "../mail.ts";
 import { adoptableSeries } from "../meeting-series.ts";
 import { logChange } from "../planner/meeting-log.ts";
 import {
@@ -19,6 +20,7 @@ import {
 } from "../planner/meetings.ts";
 import { KEY_PROP, MANAGED_PROP, type ManagedRow } from "../planner/push.ts";
 import { loadSnapshot } from "../planner/replan.ts";
+import { when } from "../preview.ts";
 import type { ProviderPool } from "../providers/index.ts";
 import { getSettings } from "../settings.ts";
 import { cacheEvent } from "../sync/pull.ts";
@@ -211,7 +213,12 @@ function person(db: Db, email: string) {
     : { email, class: "none" as const, name: null, timeZone: null };
 }
 
-export function meetingRoutes(db: Db, sync: SyncService, now: () => number): Hono<AppEnv> {
+export function meetingRoutes(
+  db: Db,
+  sync: SyncService,
+  now: () => number,
+  mailer?: Mailer,
+): Hono<AppEnv> {
   const r = new Hono<AppEnv>();
   const changed = (userId: string) => {
     sync.request(userId);
@@ -490,16 +497,42 @@ export function meetingRoutes(db: Db, sync: SyncService, now: () => number): Hon
     return c.json({ ok: true });
   });
 
+  /** MEET-02 rule 28: delete, and email the guests about the cancelled times only when asked (?notify=1). */
   r.delete("/meetings/:id", async (c) => {
     const user = c.get("user");
     const m = own(c.req.param("id"), user.id);
     const peers = meetingPeers(db, user.id).attendees;
+    const notify = c.req.query("notify") === "1";
+    const guests = attendeesOf(db, m.id).filter((a) => a.email !== user.email);
+    const future = all<{ start_ms: number; end_ms: number }>(
+      db,
+      "SELECT start_ms, end_ms FROM managed_events WHERE user_id = ? AND kind = 'meeting' AND source_id = ? AND start_ms > ? ORDER BY start_ms",
+      user.id,
+      m.id,
+      now(),
+    );
     await sync.exclusive(user.id, async (pool) => {
       if (m.series_event_id) await releaseSeries(db, pool, m);
       run(db, "DELETE FROM meetings WHERE id = ?", m.id);
     });
     sync.request(user.id);
     for (const id of peers) sync.request(id);
+    if (notify && mailer?.configured && future.length > 0) {
+      const zone =
+        one<{ time_zone: string }>(db, "SELECT time_zone FROM users WHERE id = ?", user.id)
+          ?.time_zone ?? "UTC";
+      const text = [
+        `${user.email} cancelled "${m.title}". These times are cancelled:`,
+        "",
+        ...future.map((o) => `- ${when(zone, o.start_ms, o.end_ms)}`),
+        "",
+        `Times are in ${zone}.`,
+      ].join("\n");
+      for (const g of guests)
+        await mailer
+          .send({ to: g.email, subject: `Cancelled: ${m.title}`, text })
+          .catch(() => undefined);
+    }
     return c.body(null, 204);
   });
   return r;
