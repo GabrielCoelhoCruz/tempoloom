@@ -1,5 +1,5 @@
 // Shared steps for E2E scenarios: they drive the real UI like a user would.
-import type { Browser, Page, Response } from "@playwright/test";
+import type { Browser, Page } from "@playwright/test";
 import type { ProviderEvent } from "../../src/server/providers/types.ts";
 import { addDays } from "../../src/shared/time.ts";
 import {
@@ -63,18 +63,21 @@ export async function addTask(page: Page, t: TaskForm): Promise<void> {
   if (t.nextUp) await form.getByLabel(/Next up/).check();
   if (t.notes) await form.getByLabel("Notes").fill(t.notes);
   await expect(form.getByLabel("Title")).toHaveValue(t.title);
-  // The save ends when the plan run after it answers: only then does the form
-  // clear the title. The list can show the task earlier, through a live update,
-  // so waiting for the row alone lets the next title be typed and then cleared.
-  const post = (path: string) => (r: Response) =>
-    r.request().method() === "POST" && new URL(r.url()).pathname === path;
-  const created = page.waitForResponse(post("/api/tasks"), { timeout: 60_000 });
-  const planned = page.waitForResponse(post("/api/planner/sync"), { timeout: 60_000 });
-  planned.catch(() => {});
+  // Wait for the save and for the plan run the form starts after it: callers
+  // read the calendar next, so addTask returns only when the new task is
+  // planned there. The list row alone can show up earlier, through a live update.
+  const created = page.waitForResponse(
+    (r) => r.request().method() === "POST" && new URL(r.url()).pathname === "/api/tasks",
+    { timeout: 60_000 },
+  );
   await form.getByRole("button", { name: "Add task" }).click();
   const res = await created;
   expect(res.status(), await res.text()).toBe(201);
-  await planned;
+  const planned = await page.waitForResponse(
+    (r) => r.request().method() === "POST" && new URL(r.url()).pathname === "/api/planner/sync",
+    { timeout: 60_000 },
+  );
+  expect(planned.ok(), await planned.text()).toBe(true);
   await expect(page.locator(`[data-task-title="${t.title}"]`)).toBeVisible();
 }
 

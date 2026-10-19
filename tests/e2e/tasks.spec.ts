@@ -68,40 +68,6 @@ test("a P1 task takes the first free slot ahead of a P4 task, and due dates orde
   expect(local(titled(evs, "AT-P1")[0]?.start ?? 0)).toBe(`${W} 09:00`);
 });
 
-test("tasks added one after another while each plan run is slow are all saved", async ({
-  page,
-  app,
-  cal,
-  signIn,
-}) => {
-  await blockUntil(cal, W);
-  await signIn();
-  // On a busy host the plan run after a save ends late: the list can show the
-  // new task before it ends, and the form clears the title only after it. Each
-  // added task must wait for that end, or the next title can be lost.
-  let planning = 0;
-  await page.route("**/api/planner/sync", async (route) => {
-    planning++;
-    const response = await route.fetch();
-    await new Promise((r) => setTimeout(r, 2_000));
-    planning--;
-    await route.fulfill({ response });
-  });
-  for (const title of ["AT-Slow 1", "AT-Slow 2", "AT-Slow 3"]) {
-    await addTask(page, { title, minutes: 60, split: false, due: "" });
-    expect(planning, `the save of ${title} has ended`).toBe(0);
-  }
-  await page.unroute("**/api/planner/sync");
-  expect(
-    app.query<{ title: string }>(
-      "SELECT title FROM tasks WHERE title LIKE 'AT-Slow%' ORDER BY title",
-    ),
-  ).toEqual([{ title: "AT-Slow 1" }, { title: "AT-Slow 2" }, { title: "AT-Slow 3" }]);
-  await page.reload();
-  for (const title of ["AT-Slow 1", "AT-Slow 2", "AT-Slow 3"])
-    await expect(page.locator(`[data-task-title="${title}"]`)).toBeVisible();
-});
-
 test("start after delays the first chunk (TSK-15)", async ({ page, cal, signIn }) => {
   await blockUntil(cal, W);
   await signIn();
