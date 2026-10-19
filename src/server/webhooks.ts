@@ -189,9 +189,12 @@ async function attempt(
   );
   // Rule 15: suspend an endpoint whose deliveries have all failed for over 24 hours.
   const suspendAfter = deps.suspendAfterMs ?? SUSPEND_AFTER_MS;
-  const oldest = one<{ t: number | null }>(
+  // The period starts at the oldest waiting delivery, or at the last resume when later.
+  const since = one<{ t: number | null }>(
     deps.db,
-    "SELECT MIN(created_at) AS t FROM webhook_deliveries WHERE endpoint_id = ? AND status = 'pending'",
+    `SELECT MAX(MIN(d.created_at), COALESCE(e.resumed_at, 0)) AS t
+     FROM webhook_deliveries d JOIN webhook_endpoints e ON e.id = d.endpoint_id
+     WHERE d.endpoint_id = ? AND d.status = 'pending'`,
     d.endpoint_id,
   )?.t;
   const recent = one(
@@ -200,9 +203,12 @@ async function attempt(
     d.endpoint_id,
     deps.now() - suspendAfter,
   );
-  if (oldest !== null && oldest !== undefined && deps.now() - oldest > suspendAfter && !recent) {
+  if (since !== null && since !== undefined && deps.now() - since > suspendAfter && !recent) {
     run(deps.db, "UPDATE webhook_endpoints SET status = 'suspended' WHERE id = ?", d.endpoint_id);
-    await tellAdmins(deps, d.endpoint_id);
+    // The email goes out on its own: a slow mail server must not hold other deliveries.
+    void tellAdmins(deps, d.endpoint_id).catch((err) =>
+      console.error("could not send the webhook suspension email", err),
+    );
   }
 }
 
