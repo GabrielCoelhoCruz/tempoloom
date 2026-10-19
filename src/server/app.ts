@@ -44,6 +44,7 @@ import type { SecretBox } from "./crypto.ts";
 import { all, type Db, one, run } from "./db.ts";
 import { ownersOf, sessionIdentity } from "./delegation.ts";
 import { isDeactivated } from "./directory.ts";
+import { embedRoutes } from "./embed.ts";
 import {
   buildAuthRequest,
   exchangeCode,
@@ -269,6 +270,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   );
 
   app.route("/pub", publicInviteRoutes(db));
+  app.route("/", embedRoutes());
   app.route("/pub", publicBrandingRoutes(db));
   app.route("/scim/v2", scimRoutes(db, config.BASE_URL, now));
   const ssoDeps = {

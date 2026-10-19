@@ -162,18 +162,32 @@ Template variables (names are Proposed; E-0138 lists their meaning):
 23. The share action of a link card offers: copy URL, share by email (opens
     a mail draft with the URL), share on social networks (opens the
     network's share page with the URL), and embed (E-0174, E-0163).
+    Tempoloom decision: the email draft is a `mailto:` link with the link
+    title as subject and the proposed `shareMessage` ("Book a time with me:
+    {link}") as body. The social networks are LinkedIn, X and Facebook,
+    through their public share URLs in a new tab; no vendor API is used.
 24. Embed formats (E-0174):
     - script: a script tag and a container; the script loads the page in a
       frame and resizes it (recommended; it follows page design changes);
     - object: an `<object>` tag;
     - iframe: an `<iframe>` tag;
     - URL: the plain URL.
+    Tempoloom decision: the script, object and iframe codes load
+    `<link URL>?embed=1&redirect=<mode>`. The script is `<BASE_URL>/embed.js`;
+    it replaces each `.tempoloom-embed[data-url]` container with a frame and
+    sets the frame's height from messages the embedded page sends. Object
+    and iframe have a fixed height of 760 px. The container and the object
+    hold a plain link to the booking page as a fallback.
 25. Embed redirect mode, in the embed advanced options (E-0174):
     - `disabled` (default): no redirect after booking inside an embed;
     - `topPage`: the whole browser page goes to `redirectUrl`;
     - `frame`: only the frame goes to `redirectUrl`; the target page must
       allow framing.
     Tempoloom remembers the user's last choice (E-0174).
+    Tempoloom decision: the choice is saved per user on the server when it
+    changes, and goes into the code as `redirect=`. In `topPage` mode the
+    embedded page navigates the top window and also asks the embed script
+    to do it. Outside an embed the redirect works as SPEC-LINK-03 rule 17.
 26. Embedded pages use the link's branding (E-0055).
 
 ### Calendar and mail add-on

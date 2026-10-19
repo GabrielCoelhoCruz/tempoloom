@@ -13,6 +13,9 @@ const Personalize = lazyComponent<{
   people: PersonOption[];
   onClose: () => void;
 }>(() => import("./link-personalize.tsx").then((m) => m.Personalize));
+const SharePanel = lazyComponent<{ title: string; url: string; onClose: () => void }>(() =>
+  import("./link-share.tsx").then((m) => m.SharePanel),
+);
 
 interface Endpoint {
   id: string;
@@ -121,6 +124,7 @@ export function Links() {
   const [editing, setEditing] = useState<string | null>(null);
   const [groups, setGroups] = useState<Group[]>([]);
   const [personalizing, setPersonalizing] = useState<string | null>(null);
+  const [sharing, setSharing] = useState<{ title: string; url: string } | null>(null);
   const [groupForm, setGroupForm] = useState(false);
   const [groupAction, setGroupAction] = useState<{ id: string; kind: "edit" | "delete" } | null>(
     null,
@@ -172,11 +176,24 @@ export function Links() {
   if (page === undefined) return null;
   const edited = [...links, ...teamLinks].find((l) => l.id === editing);
   const myId = me.value?.user.id;
+  const shareButton = (l: EditableLink, url: string) => (
+    <button
+      type="button"
+      onClick={() => {
+        setEditing(null);
+        setPersonalizing(null);
+        setSharing({ title: l.title, url });
+      }}
+    >
+      Share
+    </button>
+  );
   const personalizeButton = (l: EditableLink) => (
     <button
       type="button"
       onClick={() => {
         setEditing(null);
+        setSharing(null);
         setPersonalizing(l.id);
       }}
     >
@@ -189,6 +206,7 @@ export function Links() {
       onClick={() => {
         setSaved(null);
         setPersonalizing(null);
+        setSharing(null);
         setEditing(l.id);
       }}
     >
@@ -268,6 +286,7 @@ export function Links() {
           </button>
           {editButton(l)}
           {personalizeButton(l)}
+          {shareButton(l, url)}
           <button
             type="button"
             class="danger"
@@ -557,6 +576,14 @@ export function Links() {
               }}
             />
           )}
+          {sharing && (
+            <SharePanel
+              key={sharing.url}
+              title={sharing.title}
+              url={sharing.url}
+              onClose={() => setSharing(null)}
+            />
+          )}
           {personalizing && [...links, ...teamLinks].some((l) => l.id === personalizing) && (
             <Personalize
               key={personalizing}
@@ -608,6 +635,7 @@ export function Links() {
                       )}
                       {editButton(l)}
                       {personalizeButton(l)}
+                      {l.pageSlug && shareButton(l, bookUrl(l.pageSlug, l.slug))}
                     </div>
                   </div>
                 ))}

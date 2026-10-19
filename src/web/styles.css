@@ -751,3 +751,23 @@ fieldset {
   flex-wrap: wrap;
   gap: 8px 16px;
 }
+/* Share panel, personalize and embeds (booking-links-sharing.md) */
+.panel {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px 16px;
+  margin: 12px 0;
+  background: var(--panel);
+}
+.panel h2 {
+  font-size: 16px;
+  margin: 0 0 8px;
+}
+.preview {
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+  padding: 8px 12px;
+}
+.public.embedded {
+  padding: 12px;
+}

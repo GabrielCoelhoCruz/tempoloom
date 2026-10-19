@@ -324,14 +324,35 @@ interface Booked {
 
 const REDIRECT_DELAY = 7_000;
 
+type EmbedRedirect = "disabled" | "topPage" | "frame";
+
+/** Inside a website embed: the redirect mode of its code (sharing rule 25); null when not embedded. */
+const embedMode = (): EmbedRedirect | null => {
+  const q = new URLSearchParams(location.search);
+  if (q.get("embed") !== "1" || window.parent === window) return null;
+  const mode = q.get("redirect");
+  return mode === "topPage" || mode === "frame" ? mode : "disabled";
+};
+
 function Confirmation({ info, done, view }: { info: LinkInfo; done: Booked; view: View }) {
-  const url = info.link.redirectUrl;
+  const mode = useMemo(embedMode, []);
+  const url = mode === "disabled" ? null : info.link.redirectUrl;
   useEffect(() => {
     if (!url) return;
     // Rule 17: the confirmation shows first; the page goes on 7 seconds later.
-    const timer = setTimeout(() => location.assign(url), REDIRECT_DELAY);
+    const timer = setTimeout(() => {
+      if (mode !== "topPage") {
+        location.assign(url);
+        return;
+      }
+      // The embed script moves the host page; a plain frame moves it itself.
+      window.parent.postMessage({ type: "tempoloom:redirect", url }, "*");
+      try {
+        (window.top ?? window).location.href = url;
+      } catch {}
+    }, REDIRECT_DELAY);
     return () => clearTimeout(timer);
-  }, [url]);
+  }, [url, mode]);
   return (
     <div data-testid="booked">
       <Brand b={info.branding} />
@@ -781,11 +802,30 @@ function Manage({ token }: { token: string }) {
 }
 
 export function PublicBooking({ path }: { path: string }) {
+  const embedded = useMemo(() => embedMode() !== null, []);
+  const root = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = root.current;
+    if (!embedded || !el) return;
+    // The embed script sizes the frame to the page (sharing rule 24).
+    const send = () =>
+      window.parent.postMessage(
+        { type: "tempoloom:height", height: el.getBoundingClientRect().height + 1 },
+        "*",
+      );
+    const watch = new ResizeObserver(send);
+    watch.observe(el);
+    return () => watch.disconnect();
+  }, [embedded]);
   const parts = path.split("/").filter(Boolean).slice(1);
   let body = <p>Not found.</p>;
   if (parts[0] === "manage" && parts[1]) body = <Manage token={parts[1]} />;
   else if (parts.length === 1 && parts[0]) body = <PageLinks page={parts[0]} />;
   else if (parts.length === 2 && parts[0] && parts[1])
     body = <BookingPage page={parts[0]} link={parts[1]} />;
-  return <div class="public page">{body}</div>;
+  return (
+    <div class={embedded ? "public page embedded" : "public page"} ref={root}>
+      {body}
+    </div>
+  );
 }
