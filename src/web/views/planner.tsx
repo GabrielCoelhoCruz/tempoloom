@@ -79,20 +79,27 @@ export function Planner() {
     [weekStart],
   );
 
+  // Answers can arrive out of order (another week, a live update): only the
+  // newest load may draw.
+  const loads = useRef(0);
   const load = useCallback(async () => {
+    const n = ++loads.current;
     const from = localToUtc(z, weekStart, 0);
     const to = localToUtc(z, addDays(weekStart, 7), 0);
     const [ev, rep] = await Promise.all([
       api<{ events: PlannerEvent[] }>("GET", `/api/planner/events?from=${from}&to=${to}`),
       api<{ report: ReportEntry[] }>("GET", "/api/planner/report"),
     ]);
+    if (n !== loads.current) return;
     setEvents(ev.events);
     setReport(rep.report);
     settle();
+    // An ?item= link opens its event once the week that holds it is drawn.
     const want = openItem.current;
-    if (want?.startsWith("event:")) {
+    const hit = want?.startsWith("event:") && ev.events.find((e) => e.id === want.slice(6));
+    if (hit) {
       openItem.current = null;
-      setSelected(ev.events.find((e) => e.id === want.slice(6)) ?? null);
+      setSelected(hit);
     }
   }, [z, weekStart]);
 
