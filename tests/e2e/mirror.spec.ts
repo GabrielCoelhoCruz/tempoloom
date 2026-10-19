@@ -66,7 +66,7 @@ test("copies follow the source: create, label, skip rules, move, delete, put bac
   );
   const [copy] = copies(first);
   expect([copy?.summary, local(copy?.start ?? 0), local(copy?.end ?? 0), copy?.busy]).toEqual([
-    "Personal commitment",
+    "🏠 Personal commitment",
     `${W} 10:00`,
     `${W} 11:00`,
     true,
@@ -98,7 +98,7 @@ test("copies follow the source: create, label, skip rules, move, delete, put bac
   await cal.update(moved.id, { start: moved.start, end: moved.end, summary: "Edited copy" });
   await eventually(
     () => week(cal),
-    (l) => expect(copies(l)[0]?.summary).toBe("Personal commitment"),
+    (l) => expect(copies(l)[0]?.summary).toBe("🏠 Personal commitment"),
   );
   // Delete the source: the copy goes (rule 36).
   await priv.remove(dentist);
@@ -141,7 +141,7 @@ test("details mode copies the title; two-way mirroring never copies a copy (rule
   expect(copies(work)[0]?.busy).toBe(true);
   const priv2 = await eventually(
     () => week(priv),
-    (l) => expect(copies(l).map((e) => e.summary)).toEqual(["Personal commitment"]),
+    (l) => expect(copies(l).map((e) => e.summary)).toEqual(["🏠 Personal commitment"]),
   );
   // The copy of Standup is on Private; Climbing's copy on Work is not copied back.
   expect(copies(priv2)).toHaveLength(1);

@@ -16,6 +16,11 @@ const day = (n: number) => addDays(W, n);
 const week = (cal: CalendarDriver) => cal.events(at(W, "00:00"), at(day(7), "00:00"));
 const entry = (page: Page, name: string) => page.locator(`[data-entry="${name}"]`);
 
+async function saveForm(page: Page) {
+  await page.getByTestId("automation-form").getByRole("button", { name: "Save" }).click();
+  await expect(page.getByTestId("automations-page")).toBeVisible();
+}
+
 async function openLibrary(page: Page) {
   await page.getByRole("link", { name: "Library" }).click();
   await expect(page.getByTestId("library-page")).toBeVisible();
@@ -91,7 +96,10 @@ test("buffer and focus entries add their automation as set; prompts offer no act
   });
   await signIn();
   await openLibrary(page);
-  await entry(page, "Prep before interviews").getByRole("button", { name: "Add" }).click();
+  // The entry opens the shared automation form with its preset; saving adds it.
+  await entry(page, "Prep before interviews").getByRole("button", { name: "Use" }).click();
+  await saveForm(page);
+  await openLibrary(page);
   await expect(entry(page, "Prep before interviews")).toContainText("Added");
   await eventually(
     () => week(cal),
@@ -104,7 +112,9 @@ test("buffer and focus entries add their automation as set; prompts offer no act
   );
 
   await page.getByRole("tab", { name: "Focus time" }).click();
-  await entry(page, "Deep work protection").getByRole("button", { name: "Add" }).click();
+  await entry(page, "Deep work protection").getByRole("button", { name: "Use" }).click();
+  await saveForm(page);
+  await openLibrary(page);
   await expect(entry(page, "Deep work protection")).toContainText("Added");
   await eventually(
     () => week(cal),
