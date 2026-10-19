@@ -2,6 +2,7 @@
 // rules 1-13, 26, 29, 39, 40, edge cases 11, 16): the policy form, the list
 // with one tab per account, edit, the status toggle and delete.
 import { useCallback, useEffect, useId, useState } from "preact/hooks";
+import type { Settings as UserSettings } from "../../server/settings.ts";
 import { api } from "../lib/api.ts";
 import {
   type Ask,
@@ -16,6 +17,8 @@ import { COLORS } from "../lib/categories.ts";
 import { toLocalInput } from "../lib/format.ts";
 import { templateFromUrl } from "../lib/library.ts";
 import { me, planNow, zone } from "../lib/state.ts";
+
+type NoReply = UserSettings["noReplyCopies"];
 
 interface Policy {
   id: string;
@@ -222,7 +225,7 @@ export function MirrorSettings() {
   const [message, setMessage] = useState<string | null>(null);
   const [ask, setAsk] = useState<Ask | null>(null);
   const [created, setCreated] = useState(0);
-  const [noReply, setNoReply] = useState<string | null>(null);
+  const [noReply, setNoReply] = useState<NoReply | null>(null);
   const calendars = calendarList.value;
   const accounts = (me.value?.accounts ?? []).filter((a) => !a.viaGrant);
 
@@ -233,7 +236,7 @@ export function MirrorSettings() {
   }, []);
   useEffect(() => void load(), [load]);
   useEffect(() => {
-    void api<{ settings: { noReplyCopies: string } }>("GET", "/api/settings").then((r) =>
+    void api<{ settings: Pick<UserSettings, "noReplyCopies"> }>("GET", "/api/settings").then((r) =>
       // A choice made before this first load stays.
       setNoReply((prev) => prev ?? r.settings.noReplyCopies),
     );
@@ -314,9 +317,16 @@ export function MirrorSettings() {
           value={noReply ?? "free"}
           disabled={noReply === null}
           onChange={(e) => {
-            const value = e.currentTarget.value;
+            const value = e.currentTarget.value as NoReply;
+            const before = noReply;
             setNoReply(value);
-            void act(() => api("PATCH", "/api/settings", { noReplyCopies: value }));
+            // A failed save shows the stored choice again.
+            void act(() =>
+              api("PATCH", "/api/settings", { noReplyCopies: value }).catch((err: unknown) => {
+                setNoReply(before);
+                throw err;
+              }),
+            );
           }}
         >
           <option value="free">Show as free</option>
