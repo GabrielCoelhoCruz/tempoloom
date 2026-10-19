@@ -784,13 +784,13 @@ E2E_NOTES.update({
     729: "The ideal time is read from the user's work hours when the form opens",
     764: "The 11:30 to 14:00 window is item-specific hours on workdays",
     746: "An external meeting with an address: the buffer filter is the external meeting category and an address",
-    737: "A meeting has at least one other attendee",
+    737: "A meeting has at least one other attendee; a meeting of exactly 60 min with exactly one other person gets the break",
     750: "The form needs at least one guest; the entry does not check that the guests are external",
     756: "The entry fills the mirroring form with busy-only copies; the user adds one policy in each direction",
     757: "The entry fills the mirroring form with busy-only copies; the user adds one policy for each pair of calendars",
     604: "Time away is the work hours that out-of-office time covers",
-    610: "The test sets the server clock (TEST_CLOCK_START) so that a day begins and ends; time logged with the task timer is a past event of its task (rule 15), so it counts in actual time",
-    634: "Up to 4 facts that apply, in the stats page's order, as colored blocks under the totals; the operator command weekly-reports --now runs the same check the server runs each minute",
+    610: "The test sets the server clock (TEST_CLOCK_START, test mode only) so that a day begins and ends; time logged with the task timer is a past event of its task (rule 15), so it counts in actual time once (rule 16 decision)",
+    634: "Up to 4 facts that apply, in the stats page's order, as colored blocks under the totals; with 5 kinds of facts the fifth does not show; the report counts the week up to the send time; the operator command weekly-reports --now runs one tick of the server's email worker, and one test lets the server's own clock (TEST_CLOCK_START) reach the send hour",
     704: "The timer page changes no calendar event, so the test checks that the calendar stays empty",
     708: "Three alarm sounds made in the browser (Bell, Chime, Digital); the choice stays in this browser",
     712: "The stats come from the session log in this browser; the chart groups by day, week or month",
@@ -805,10 +805,22 @@ for n in [610, 634]:
     PARTIAL.pop(n, None)
 GOOGLE_ROWS.pop(638, None)
 BLOCKED[638] = (
-    "Needs a Google OAuth client and a Google test account for the E2E of Google sign-in, which is "
-    "built and follows the team's SSO rules; Microsoft sign-in needs a Microsoft app registration, "
-    "a Microsoft 365 account and a Microsoft Graph provider, which is not built"
+    "Google sign-in is built and follows the team's SSO rules; its E2E needs a Google OAuth client "
+    "and a Google test account. Microsoft sign-in is not built: it needs a Microsoft app "
+    "registration and a Microsoft 365 account to build and test a Microsoft Graph provider"
 )
+# Rows whose entry covers only part of its preset (review of PR 10).
+for n in [725, 729, 741, 750, 756, 757]:
+    E2E.pop(n, None)
+    E2E_NOTES.pop(n, None)
+PARTIAL.update({
+    725: "The entry adds 8 h of weekly focus in a 09:00 to 12:00 window on workdays (E2E: \u201clibrary focus entries 7 and 23 place their weekly goal inside the 09:00 to 12:00 window, and the window stays on edit\u201d). Focus time has no ideal time (focus-time.md), so the mornings are hard hours: with busy mornings no focus goes to the afternoon, where the preset's ideal time would allow it",
+    741: "The entry adds 10 h of weekly focus in a 09:00 to 12:00 window on workdays that the user can change (E2E: \u201clibrary focus entries 7 and 23 place their weekly goal inside the 09:00 to 12:00 window, and the window stays on edit\u201d). Focus time has no ideal time (focus-time.md), so the window is hard hours, not an ideal window",
+    729: "The entry adds the habit at P3, 30 min on workdays (E2E: \u201clibrary habit entries 11, 35, 36, 43, 45, 46 add habits with their presets: wrap-up at the end of work hours, Lunch inside 11:30 to 14:00\u201d). A habit has one ideal time, read from the latest end of work hours when the form opens; a day whose work hours end earlier keeps that time, not its own last 30 min",
+    750: "The entry fills a flexible meeting every 2 weeks, 30 min, P2, that needs at least one guest (E2E: \u201clibrary entries 32, 34 and 37: flexible meetings repeat at their period with the guests, and the priority link offers time over P3 and P4 habits\u201d). It does not check that the guests are external",
+    756: "The entry fills the mirroring form with busy-only copies (E2E: \u201clibrary mirroring entries 38 and 39 copy busy time only between job calendars, both ways, never copying a copy\u201d). It adds no two-way behavior: the user adds one policy in each direction",
+    757: "The entry fills the mirroring form with busy-only copies (E2E: \u201clibrary mirroring entries 38 and 39 copy busy time only between job calendars, both ways, never copying a copy\u201d). It adds no mesh of calendars: the user adds one policy for each pair",
+})
 # --- end U09 ---
 
 # --- merge: rows that need the work of more than one stream ---

@@ -36,6 +36,9 @@ gets this email.
    09:00 on Friday, in the user's home time zone.
 5. The report covers the current work week from its first workday up to the
    send time (proposal; the evidence does not state the cut-off).
+   Tempoloom decision: events count only up to the send time; a later event
+   on the send day is not in that report. A report missed in its send hour
+   (for example, the server was down) is not sent later.
 
 ### Content
 
@@ -113,6 +116,8 @@ to Fri 08:00 to 17:00. The test environment can set the server clock
 (proposal for testability). This week U has: 3 h of meetings with other
 invitees, 4 h of events with no invitees, one personal habit of 1 h. Next
 week U has a meeting on Tuesday.
+Tempoloom decision: the server clock is set with `TEST_CLOCK_START`, which
+the server accepts only with `TEMPOLOOM_TEST_MODE=1`.
 
 ### T1. Delivery time and totals
 

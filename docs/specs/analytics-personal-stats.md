@@ -138,6 +138,10 @@ exactly 120 minutes counts as deep work (proposal).
     time. Proposed: planned time is the managed event time that was on the
     calendar at the start of the day; actual time is the event time at the
     end of the day plus logged time.
+    Tempoloom decision: logged time is a past managed event of its item
+    (rule 15), so actual time is the managed event time on the calendar at
+    the end of the day, logged time included. Logged time is not added a
+    second time. Only days that have ended count.
 
     Tempoloom decision: planned time is rebuilt from Tempoloom's change log
     (`support-troubleshooting.md` rule 12), per kind of item; actual time is
