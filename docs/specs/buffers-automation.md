@@ -51,6 +51,23 @@ that filters "can be combined" (E-0051).
 | `tag` | list of tags | The title, description or RSVP note contains the tag (see `events-tags.md`). |
 | `has_video_link` | bool | The event has a video conference link. Legacy recovery setting "video meetings only" (E-0052). |
 
+Tempoloom decisions for the event filter:
+
+- One condition, "with people", covers `attendee` and `organizer`: it matches
+  when an attendee address equals a value (case-insensitive), or ends with a
+  value that starts with "@" (anyone at that domain). On CalDAV and Google the
+  organizer is in the attendee list. Names are not matched.
+- Comparisons also include `>` and `<` ("longer than", "fewer than").
+- `run_longer_than_minutes` (library entry 27): matching events with no gap
+  between them (the next starts at or before the previous end) form one run.
+  Each run longer than the value is one anchor from the run's start to its
+  end, so buffers sit before or after the whole run. One event longer than the
+  value is a run of one.
+- `calendar_scope`: with one calendar, only events on that calendar are
+  anchors. Tempoloom's own mirror copies on that calendar are anchors as the
+  copy shows them (`buffers-travel.md` rule 13), unless their source event is
+  itself an anchor of the same automation.
+
 ### Templates
 
 | Template | Side | Default length (Proposed unless noted) | Default filter |
@@ -70,7 +87,17 @@ recovery and prep templates are not in the evidence.
 1. The user can create any number of buffer automations (E-0051).
 2. The user can create one from a library template, from the "create" button, or through the assistant chat, for example "give me a 15-minute prep block ahead of each external meeting" (E-0051).
 3. The filter editor shows the list of upcoming events that match the current filter, and updates it on every change (E-0051).
+   Tempoloom decision: the list covers the scheduling window from now, shows the number of matches and at most 50 events, and follows every change of the conditions and of `calendar_scope`.
 4. The user can type a plain-language description of the events. The assistant turns it into filter conditions that the user can review and edit (E-0051).
+   Tempoloom decision: no assistant and no language model. A fixed grammar reads the description and replaces the form's conditions with what it names; words it does not know are named in an error and nothing changes. Phrases, case-insensitive, separated by spaces, commas, "and" or "or":
+   - `with <address>` or `with anyone at @<domain>`, several joined by "or", "and" or commas: people.
+   - `with N or more people`, `with at least N`, `with at most N`, `with N or fewer`, `with more than N`, `with fewer than N`, `with N people` (or attendees, guests, participants): the attendee count.
+   - `longer than`, `shorter than`, `at least`, `at most`, `lasting`, `exactly` or `of` with a length in minutes (min, m) or hours (h, hours): the length.
+   - `titled "X"`, `called "X"`, `named "X"`: the exact title. `containing "X"` or `with "X" in the title`: title text. `mentioning "X"`: text in the title, description or location.
+   - `tagged #a and #b`, `with #a`, or a bare `#a`: tags.
+   - `external meetings`, `one-on-ones` (or `1:1s`), `team meetings`, `personal events`: categories. `flights`: flight events. `at an address` or `with a location`: travel events (`buffers-travel.md` rules 1 and 2).
+   - `back-to-back meetings longer than D in a row` or `runs of meetings longer than D`: a run of meetings.
+   - The words "meetings", "events", "calls", "appointments", "all", "my", "any", "every", "each" and "the" carry no condition.
 5. Saving a new or edited buffer automation stages the buffers it will add, move or remove in preview mode (`assistant-preview-mode.md`). Tempoloom writes nothing until the user applies them (E-0051, E-0043).
 6. Disabling a buffer automation deletes its future buffer events. Past events stay. Removing the automation does the same and deletes its settings (E-0043).
 

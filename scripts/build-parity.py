@@ -377,6 +377,46 @@ GOOGLE_ROWS = {
 # --- end s1 ---
 
 # --- s2: habit actions, focus and buffers ---
+T.update({
+    "s2_make_habit": "a solo recurring event becomes a habit from the planner with its title, length, days and time; a series with guests offers a flexible meeting instead",
+    "s2_reschedule": "reschedule puts one occurrence at the legal slot nearest the chosen time on its day and keeps it there",
+    "s2_edit_habit": "edit habit opens the habit of any of its events and moves its future events only",
+    "s2_done": "an ended habit occurrence gets the done marker on the calendar and shows done in the planner",
+    "s2_monthly": "a monthly habit is placed once, on a day of the month or on the nth weekday",
+    "s2_habit_tasks": "a habit's saved task search lists matching tasks on every event and while it runs, and changes no event",
+    "s2_focus_modes": "proactive focus keeps daily limits and shows the goal is not reached; reactive focus waits, then protects the last free time",
+    "s2_focus_decline": "auto-decline declines unanswered invitations over focus time with the message; the focus event stays",
+    "s2_focus_tasks": "every focus event lists the same task search, and the planner shows its tasks while focus runs",
+    "s2_overload_daily": "a daily meeting limit turns the rest of the day into focus time, declines invitations there with a note, shows its task search, and goes when meetings drop",
+    "s2_overload_weekly": "the meeting load cap entry fills the form; a weekly limit protects the rest of the week once reached",
+    "s2_recovery_day": "the recovery day entry caps meetings only on the workday after a heavy meeting day",
+    "s2_filter_describe": "the executive prep entry needs people; descriptions set people, count, category, title, text, tag and length conditions; the live list follows each change; the buffer lands before the matching meeting",
+    "s2_scope": "a buffer for one calendar skips meetings on other calendars; all calendars covers them",
+    "s2_runs": "the meeting runs entry adds one recovery buffer after a run of back-to-back meetings longer than 90 minutes",
+    "s2_mirror_travel": "a mirrored copy with details gets travel time from its tag; a busy-only copy gets none",
+})
+E2E.update({
+    48: ["s2_focus_tasks"], 49: ["s2_habit_tasks"], 50: ["s2_overload_daily"],
+    127: ["s2_make_habit"], 173: ["s2_habit_tasks"], 174: ["s2_make_habit"],
+    182: ["s2_reschedule"], 190: ["s2_edit_habit"], 191: ["s2_done"],
+    198: ["s2_focus_modes"], 200: ["s2_focus_decline"], 210: ["s2_focus_modes"], 211: ["s2_focus_tasks"],
+    212: ["s2_overload_daily", "s2_overload_weekly"], 213: ["s2_overload_daily"],
+    221: ["s2_filter_describe", "c_buffer"], 222: ["s2_filter_describe"], 223: ["s2_filter_describe"],
+    224: ["s2_scope"], 246: ["s2_mirror_travel"],
+    720: ["s2_filter_describe"], 726: ["s2_recovery_day"], 744: ["s2_overload_weekly"], 745: ["s2_runs"],
+    768: ["s2_monthly", "lib_habit", "tpl_habits"],
+})
+E2E_NOTES.update({
+    48: "The search has a name, a title keyword and an optional due range over Tempoloom tasks; integration fields come with the task integrations",
+    49: "The search has a name, a title keyword and an optional due range over Tempoloom tasks",
+    50: "Assigned in the meeting overload form; the list shows on its events",
+    173: "The task filter is a saved task search (planning-next-up.md NXT-40)",
+    198: "Reactive mode protects the free time left once it is not more than the missing goal",
+    222: "A fixed, documented grammar reads the description; no language model (buffers-automation.md rule 4)",
+    221: "One \u201cwith people\u201d condition matches attendee and organizer addresses or a domain",
+    246: "Tempoloom's own mirror copies count as anchors as they show on their calendar",
+    768: "The monthly reviews are habits with the monthly frequency; the other executive routines are library entries and team habit templates",
+})
 # --- end s2 ---
 
 # --- s3: tasks, planner, time zones and tools ---

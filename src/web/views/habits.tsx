@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "preact/hooks";
+import type { HabitFrequency } from "../../scheduler/model.ts";
 import { api } from "../lib/api.ts";
 import { duration, hhmm } from "../lib/format.ts";
 import { lazyComponent } from "../lib/lazy.ts";
@@ -6,6 +7,13 @@ import { freeName, templateFromUrl } from "../lib/library.ts";
 import { useLive } from "../lib/live.ts";
 import { loadPolicyMarks, PolicyMark, policyMarks } from "../lib/policy-marks.tsx";
 import { LEVEL_NAMES, planNow } from "../lib/state.ts";
+import {
+  type EditorTarget,
+  frequencyText,
+  HabitEditor,
+  MonthlyFields,
+  readFrequency,
+} from "./habit-editor.tsx";
 
 interface Habit {
   id: string;
@@ -44,6 +52,13 @@ export function Habits() {
   const template = templateFromUrl();
   const preset = template?.kind === "habit" ? template.preset : null;
   const personal = hours.find((h) => h.kind === "personal")?.id;
+  // ?edit=<id> edits a habit, ?from=<event> makes one from a recurring event (rules 6, 8).
+  const [target, setTarget] = useState<EditorTarget | null>(() => {
+    const q = new URLSearchParams(location.search);
+    const edit = q.get("edit");
+    const from = q.get("from");
+    return edit ? { edit } : from ? { from } : null;
+  });
 
   const load = useCallback(async () => {
     const [h, hs] = await Promise.all([
@@ -74,7 +89,6 @@ export function Habits() {
     const formEl = e.currentTarget as HTMLFormElement;
     const f = new FormData(formEl);
     const text = (k: string) => String(f.get(k) ?? "").trim();
-    const days = f.getAll("days").map(Number);
     const words = text("reservedWords")
       .split(",")
       .map((w) => w.trim())
@@ -86,7 +100,7 @@ export function Habits() {
         idealTime: text("idealTime"),
         minMinutes: Number(f.get("minMinutes")),
         maxMinutes: Number(f.get("maxMinutes")),
-        frequency: days.length ? { period: "weekly", days } : { period: "daily" },
+        frequency: readFrequency(f),
         defense: text("defense"),
         whenUnplaceable: text("whenUnplaceable"),
         ...(words.length ? { reservedWords: words } : {}),
@@ -103,6 +117,17 @@ export function Habits() {
     <div class="page" data-testid="habits-page">
       <h1>Habits</h1>
       <TeamHabitTemplates habits={habits.map((h) => h.title)} onAdded={load} />
+      {target && (
+        <HabitEditor
+          key={JSON.stringify(target)}
+          target={target}
+          onClose={() => {
+            history.replaceState(null, "", "/habits");
+            setTarget(null);
+            void load();
+          }}
+        />
+      )}
       <form
         class="form"
         onSubmit={create}
@@ -220,6 +245,7 @@ export function Habits() {
             </label>
           ))}
         </fieldset>
+        <MonthlyFields />
         <label class="wide">
           Notes
           <textarea name="notes" rows={2} />
@@ -235,22 +261,22 @@ export function Habits() {
       )}
       <div class="list" data-testid="habit-list">
         {habits.map((h) => {
-          const f = JSON.parse(h.frequency) as { period: string; days?: number[] };
+          const f = JSON.parse(h.frequency) as HabitFrequency;
           return (
             <div class="row" key={h.id} data-testid="habit-row" data-habit-title={h.title}>
               <div>
                 <div>{h.title}</div>
                 <div class="meta">
                   {LEVEL_NAMES[h.level]} · ideal {hhmm(h.ideal_minute)} · {duration(h.min_minutes)}{" "}
-                  to {duration(h.max_minutes)} ·{" "}
-                  {f.period === "daily"
-                    ? "daily"
-                    : (f.days ?? []).map((d) => DAY_NAMES[d - 1]).join(", ")}{" "}
-                  · {DEFENSE[h.defense] ?? h.defense}
+                  to {duration(h.max_minutes)} · {frequencyText(f)} ·{" "}
+                  {DEFENSE[h.defense] ?? h.defense}
                   {h.enabled ? "" : " · off"} <PolicyMark id={h.id} />
                 </div>
               </div>
               <div class="actions">
+                <button type="button" onClick={() => setTarget({ edit: h.id })}>
+                  Edit
+                </button>
                 <button
                   type="button"
                   onClick={() =>

@@ -15,18 +15,22 @@ const FORM_PAGE: Partial<Record<LibraryEntry["kind"], string>> = {
   flexible_meeting: "/meetings",
   booking_link: "/links",
   calendar_mirroring: "/settings",
+  meeting_overload: "/settings",
 };
 
 /** Names of the user's automations; an entry with the same name shows "Added" (rule 4). */
 async function automationNames(): Promise<string[]> {
-  const [h, b, f, m, l] = await Promise.all([
+  const [h, b, f, m, l, o] = await Promise.all([
     api<{ habits: { title: string }[] }>("GET", "/api/habits"),
     api<{ buffers: { title: string }[] }>("GET", "/api/buffers"),
     api<{ focus: { title: string }[] }>("GET", "/api/focus"),
     api<{ meetings: { title: string }[] }>("GET", "/api/meetings"),
     api<{ links: { title: string }[] }>("GET", "/api/booking/links").catch(() => ({ links: [] })),
+    api<{ overloads: { title: string }[] }>("GET", "/api/meeting-overloads"),
   ]);
-  return [...h.habits, ...b.buffers, ...f.focus, ...m.meetings, ...l.links].map((x) => x.title);
+  return [...h.habits, ...b.buffers, ...f.focus, ...m.meetings, ...l.links, ...o.overloads].map(
+    (x) => x.title,
+  );
 }
 
 export function Library() {
@@ -79,7 +83,7 @@ export function Library() {
       )}
       <div class="list" data-testid="library-list">
         {shown.map((e) => {
-          const page = FORM_PAGE[e.kind];
+          const page = e.kind === "buffer" && e.form ? "/settings" : FORM_PAGE[e.kind];
           return (
             <div class="row" key={e.slug} data-testid="library-entry" data-entry={e.name}>
               <div>
@@ -95,7 +99,7 @@ export function Library() {
                     Use
                   </button>
                 )}
-                {(e.kind === "buffer" || e.kind === "focus_time") && (
+                {((e.kind === "buffer" && !e.form) || e.kind === "focus_time") && (
                   <button type="button" onClick={() => void addNow(e)}>
                     Add
                   </button>

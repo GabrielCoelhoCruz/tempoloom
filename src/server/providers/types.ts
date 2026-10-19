@@ -59,6 +59,8 @@ export interface EventWrite {
 export interface ExternalChange {
   /** The user's own answer to the invitation. */
   selfResponse?: ResponseStatus;
+  /** A note to the organizer with the answer (focus-time.md rule 23). */
+  comment?: string;
   description?: string;
   end?: number;
   /** A new start and title, for an event the user organizes (preview mode apply). */

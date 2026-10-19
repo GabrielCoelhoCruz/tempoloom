@@ -26,6 +26,8 @@ export interface GoogleAttendee {
   responseStatus?: "needsAction" | "declined" | "tentative" | "accepted";
   optional?: boolean;
   resource?: boolean;
+  /** The attendee's note to the organizer with the answer. */
+  comment?: string;
 }
 
 export interface GoogleEvent {

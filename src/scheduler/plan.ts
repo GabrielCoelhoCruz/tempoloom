@@ -10,17 +10,27 @@ import {
   utcToLocal,
   weekdayOf,
 } from "../shared/time.ts";
-import { allDayBlocks, blockingIntervals, hasTag, isFlightTitle, TAG_FOCUS } from "./blocking.ts";
+import {
+  allDayBlocks,
+  attends,
+  blockingIntervals,
+  hasTag,
+  isFlightTitle,
+  TAG_FOCUS,
+} from "./blocking.ts";
 import { hoursToTimeSet } from "./hours.ts";
 import type {
   BufferFilter,
   BufferItem,
+  Comparison,
   CurrentPlacement,
   ExternalEvent,
   FocusItem,
+  HabitFrequency,
   HabitItem,
   Level,
   MeetingItem,
+  OverloadItem,
   Placement,
   PlacementKind,
   Plan,
@@ -112,6 +122,7 @@ function init(s: Snapshot): Ctx {
     ...s.meetings.map((m) => `meeting:${m.id}`),
     ...s.buffers.map((b) => `buffer:${b.id}`),
     ...s.focus.map((f) => `focus:${f.id}`),
+    ...(s.overloads ?? []).map((o) => `focus:${o.id}`),
   ]);
   const external = blockingIntervals(s.events);
   const fixedManaged = s.current.filter(
@@ -400,6 +411,9 @@ function habitOccurrences(ctx: Ctx, h: HabitItem): Occurrence[] {
   const hasHours = (d: LocalDate) => (s.hours[h.hours]?.[weekdayOf(d)]?.length ?? 0) > 0;
   const allowed = (d: LocalDate) => !h.starting || d >= h.starting;
   const out: Occurrence[] = [];
+  if (h.frequency.period === "monthly") {
+    return monthlyOccurrences(h.frequency, first, last, hasHours, allowed);
+  }
   for (let d = first; d <= last; d = addDays(d, 1)) {
     if (!allowed(d)) continue;
     if (h.frequency.period === "daily") {
@@ -419,6 +433,54 @@ function habitOccurrences(ctx: Ctx, h: HabitItem): Occurrence[] {
       (a, b) => Math.abs(dayDiff(a, d)) - Math.abs(dayDiff(b, d)) || (a < b ? -1 : 1),
     );
     out.push({ date: d, alternatives, periodStart: ws, periodEnd: addDays(ws, 6) });
+  }
+  return out;
+}
+
+type MonthlyFrequency = Extract<HabitFrequency, { period: "monthly" }>;
+
+/**
+ * The date a monthly habit selects in the month of `month` (YYYY-MM-01), or
+ * null. Tempoloom decision: day 31 in a 30-day month is the month's last day;
+ * a 5th weekday that does not exist selects nothing.
+ */
+export function monthlyDate(month: LocalDate, f: MonthlyFrequency): LocalDate | null {
+  const y = Number(month.slice(0, 4));
+  const m = Number(month.slice(5, 7));
+  const daysIn = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  const on = (d: number) => `${month.slice(0, 8)}${String(d).padStart(2, "0")}`;
+  if ("dayOfMonth" in f) return on(Math.min(f.dayOfMonth, daysIn));
+  let d = 1 + ((f.weekday - weekdayOf(month) + 7) % 7);
+  if (f.nth === "last") {
+    while (d + 7 <= daysIn) d += 7;
+    return on(d);
+  }
+  d += (f.nth - 1) * 7;
+  return d <= daysIn ? on(d) : null;
+}
+
+/** Rule 15 (proposed): a monthly occurrence may move up to 6 days later, inside its month. */
+function monthlyOccurrences(
+  f: MonthlyFrequency,
+  first: LocalDate,
+  last: LocalDate,
+  hasHours: (d: LocalDate) => boolean,
+  allowed: (d: LocalDate) => boolean,
+): Occurrence[] {
+  const out: Occurrence[] = [];
+  for (let month = `${first.slice(0, 8)}01`; month <= last; ) {
+    const date = monthlyDate(month, f);
+    const next = addDays(month, 32).slice(0, 8);
+    const monthEnd = addDays(`${next}01`, -1);
+    if (date && date >= first && date <= last && allowed(date)) {
+      const alternatives: LocalDate[] = [];
+      for (let i = 1; i <= 6; i++) {
+        const a = addDays(date, i);
+        if (a <= monthEnd && hasHours(a)) alternatives.push(a);
+      }
+      out.push({ date, alternatives, periodStart: month, periodEnd: monthEnd });
+    }
+    month = `${next}01`;
   }
   return out;
 }
@@ -462,7 +524,7 @@ function searchHabit(
   date: LocalDate,
   window?: TimeSet,
 ): Interval | null {
-  const ideal = localToUtc(ctx.s.zone, date, h.idealMinute);
+  const ideal = localToUtc(ctx.s.zone, date, h.rescheduled?.[date] ?? h.idealMinute);
   const lengths: number[] = [];
   for (let m = h.maxMinutes; m >= h.minMinutes; m -= 15) lengths.push(m * MINUTE);
   if (lengths.at(-1) !== h.minMinutes * MINUTE) lengths.push(h.minMinutes * MINUTE);
@@ -528,7 +590,9 @@ function placeHabit(ctx: Ctx, h: HabitItem): void {
       continue;
     }
     const fullWindow = dayWindow(ctx, h.hours, occ.date);
-    const days = [occ.date, ...occ.alternatives];
+    // Rule 30: a rescheduled occurrence stays on its day, nearest the chosen time.
+    const moved = h.rescheduled?.[occ.date] !== undefined;
+    const days = moved ? [occ.date] : [occ.date, ...occ.alternatives];
     const windows = days.map((d) => dayWindow(ctx, h.hours, d));
     if (windows.every((w) => w.total() === 0)) continue;
     const required = h.maxMinutes;
@@ -549,7 +613,7 @@ function placeHabit(ctx: Ctx, h: HabitItem): void {
     const frees = windows.map((w) => minus(w.intersect(ctx.freeTH), h.exclusions));
     let chosen: { iv: Interval; dayIdx: number } | null = null;
     const cur = ctx.current.get(key);
-    if (cur && !h.changed) {
+    if (cur && !h.changed && !moved) {
       const l = len(cur);
       const okLen = l >= h.minMinutes * MINUTE && l <= h.maxMinutes * MINUTE;
       const dayIdx = frees.findIndex((f) => f.contains(cur));
@@ -792,8 +856,19 @@ function placeMeeting(ctx: Ctx, m: MeetingItem): void {
 
 // ---------------------------------------------------------------- buffers
 
-function compare(op: ">=" | "<=" | "=", a: number, b: number): boolean {
+function compare(op: Comparison, a: number, b: number): boolean {
+  if (op === ">") return a > b;
+  if (op === "<") return a < b;
   return op === ">=" ? a >= b : op === "<=" ? a <= b : a === b;
+}
+
+/** An attendee matches a full address, or any address at an "@domain" value. */
+function hasPerson(e: ExternalEvent, people: string[]): boolean {
+  const attendees = (e.attendees ?? []).map((a) => a.toLowerCase());
+  return people.some((raw) => {
+    const p = raw.trim().toLowerCase();
+    return p.startsWith("@") ? attendees.some((a) => a.endsWith(p)) : attendees.includes(p);
+  });
 }
 
 /** buffers-travel.md rules 2 and 5. */
@@ -829,22 +904,52 @@ export function matchesFilter(f: BufferFilter, e: ExternalEvent): boolean {
     return false;
   }
   if (f.tags && !f.tags.some((t) => hasTag(e, t))) return false;
+  if (f.people && f.people.length > 0 && !hasPerson(e, f.people)) return false;
   return true;
 }
 
+/**
+ * Rule 7 and the calendar scope: the anchors of a buffer in [from, to). Mirror
+ * copies count as their calendars show them (buffers-travel.md rule 13), unless
+ * their source event is an anchor itself. With `runLongerThanMinutes`, each run
+ * of back-to-back matching events longer than that is one anchor.
+ */
+export function bufferAnchors(
+  events: ExternalEvent[],
+  copies: ExternalEvent[],
+  b: Pick<BufferItem, "filter" | "calendarScope">,
+  from: number,
+  to: number,
+): ExternalEvent[] {
+  const scope = b.calendarScope ?? null;
+  const usable = (e: ExternalEvent) =>
+    e.busy &&
+    !e.allDay &&
+    e.selfResponse !== "declined" &&
+    e.end > e.start &&
+    e.end > from &&
+    e.start < to &&
+    (scope === null || e.calendarId === scope) &&
+    matchesFilter(b.filter, e);
+  const direct = events.filter(usable);
+  const sources = new Set(direct.map((e) => `${e.calendarId}:${e.start}:${e.end}`));
+  const anchors = [
+    ...direct,
+    ...copies.filter((c) => usable(c) && !sources.has(`${c.mirrorSource}:${c.start}:${c.end}`)),
+  ].sort((x, y) => x.start - y.start || x.id.localeCompare(y.id));
+  const limit = b.filter.runLongerThanMinutes;
+  if (!limit) return anchors;
+  const runs: ExternalEvent[] = [];
+  for (const a of anchors) {
+    const last = runs.at(-1);
+    if (last && a.start <= last.end) last.end = Math.max(last.end, a.end);
+    else runs.push({ ...a, id: `run:${a.id}` });
+  }
+  return runs.filter((r) => r.end - r.start > limit * MINUTE);
+}
+
 function placeBuffer(ctx: Ctx, b: BufferItem): void {
-  const anchors = ctx.s.events
-    .filter(
-      (e) =>
-        e.busy &&
-        !e.allDay &&
-        e.selfResponse !== "declined" &&
-        e.end > e.start &&
-        e.end > ctx.earliest &&
-        e.start < ctx.end &&
-        matchesFilter(b.filter, e),
-    )
-    .sort((x, y) => x.start - y.start || x.id.localeCompare(y.id));
+  const anchors = bufferAnchors(ctx.s.events, ctx.s.mirrorCopies ?? [], b, ctx.earliest, ctx.end);
   for (const a of anchors) {
     const sides = b.side === "both" ? (["before", "after"] as const) : [b.side];
     for (const side of sides) {
@@ -958,7 +1063,16 @@ function placeFocus(ctx: Ctx, f: FocusItem): void {
       });
       need -= len(iv);
     };
-    if (!f.changed) {
+    if (f.mode === "reactive") {
+      // Rules 8-9: wait while the free time left is more than the missing goal;
+      // then turn all of it into focus, without the block and daily limits (rule 10).
+      const blocks = days.flatMap((d) =>
+        alignedBlocks(ctx, freeOn(d), minB).map((iv) => ({ d, iv })),
+      );
+      if (blocks.reduce((a, b) => a + len(b.iv), 0) > need) continue;
+      for (const b of blocks) put(keyFor(b.d), b.iv);
+    }
+    if (!f.changed && f.mode !== "reactive") {
       const sticky = s.current
         .filter(
           (c) =>
@@ -977,10 +1091,12 @@ function placeFocus(ctx: Ctx, f: FocusItem): void {
         put(c.key, { start: c.start, end: c.end });
       }
     }
-    for (const capOf of [
-      (d: LocalDate) => f.dailyMinMinutes * MINUTE - dayTotal(d),
-      (d: LocalDate) => f.dailyMaxMinutes * MINUTE - dayTotal(d),
-    ]) {
+    for (const capOf of f.mode === "reactive"
+      ? []
+      : [
+          (d: LocalDate) => f.dailyMinMinutes * MINUTE - dayTotal(d),
+          (d: LocalDate) => f.dailyMaxMinutes * MINUTE - dayTotal(d),
+        ]) {
       for (const d of days) {
         for (;;) {
           const cap = capOf(d);
@@ -1022,6 +1138,82 @@ function placeFocus(ctx: Ctx, f: FocusItem): void {
         placedMinutes: required - missing,
         status: missing < required ? "partial" : "unplaced",
         reason,
+      });
+    }
+  }
+}
+
+/** Free intervals on the step grid that are at least `min` long. */
+function alignedBlocks(ctx: Ctx, free: TimeSet, min: number): Interval[] {
+  return free
+    .intervals()
+    .map((i) => ({ start: ceilTo(i.start, ctx.step), end: floorTo(i.end, ctx.step) }))
+    .filter((i) => len(i) >= min);
+}
+
+// ---------------------------------------------------------------- meeting overload
+
+/**
+ * focus-time.md rule 11 (Tempoloom decision): busy events with another
+ * attendee that the user organized, accepted or marked maybe; booking-link
+ * meetings and flexible meetings. Overlaps count once.
+ */
+function meetingTime(ctx: Ctx): TimeSet {
+  const isMeeting = (e: ExternalEvent) =>
+    !e.allDay &&
+    e.busy &&
+    (e.bookedViaLink ||
+      (e.attendeeCount >= 2 &&
+        attends(e) &&
+        (e.organizerSelf || e.selfResponse === "accepted" || e.selfResponse === "tentative")));
+  return TimeSet.from([
+    ...ctx.s.events.filter(isMeeting),
+    ...ctx.placements.filter((p) => p.kind === "meeting" && !p.conflict),
+  ]);
+}
+
+/** Rules 12-15: protects the free time of each day on which a meeting limit is reached. */
+function placeOverload(ctx: Ctx, o: OverloadItem, meetings: TimeSet): void {
+  const { s } = ctx;
+  const minB = o.minBlockMinutes * MINUTE;
+  const first = utcToLocal(s.zone, ctx.earliest).date;
+  const last = utcToLocal(s.zone, ctx.end - 1).date;
+  const dayStart = (d: LocalDate) => localToUtc(s.zone, d, 0);
+  const onDay = (d: LocalDate) => meetings.clip(dayStart(d), dayStart(addDays(d, 1))).total();
+  const workday = (d: LocalDate) => (s.hours[o.hours]?.[weekdayOf(d)]?.length ?? 0) > 0;
+  const afterHeavyDay = (d: LocalDate) => {
+    if (o.heavyDayMinutes === null) return true;
+    for (let i = 1; i <= 7; i++) {
+      const prev = addDays(d, -i);
+      if (workday(prev)) return onDay(prev) >= o.heavyDayMinutes * MINUTE;
+    }
+    return false;
+  };
+  for (let d = first; d <= last; d = addDays(d, 1)) {
+    if (!workday(d)) continue;
+    const daily =
+      o.dailyMaxMinutes !== null && onDay(d) >= o.dailyMaxMinutes * MINUTE && afterHeavyDay(d);
+    const weekly =
+      o.weeklyMaxMinutes !== null &&
+      meetings.clip(dayStart(weekStartDate(ctx, d)), dayStart(addDays(d, 1))).total() >=
+        o.weeklyMaxMinutes * MINUTE;
+    if (!daily && !weekly) continue;
+    const free = minus(dayWindow(ctx, o.hours, d).intersect(ctx.freeOther), o.exclusions);
+    let n = 0;
+    for (const iv of alignedBlocks(ctx, free, minB)) {
+      // Locked events of this automation keep their keys.
+      while (ctx.fixedKeys.has(`focus:${o.id}:${d}:${n}`)) n++;
+      occupy(ctx, iv, "focus");
+      ctx.placements.push({
+        key: `focus:${o.id}:${d}:${n++}`,
+        kind: "focus",
+        itemId: o.id,
+        start: iv.start,
+        end: iv.end,
+        busy: true,
+        locked: false,
+        conflict: false,
+        afterDue: false,
       });
     }
   }
@@ -1146,6 +1338,15 @@ export function plan(s: Snapshot): Plan {
       .filter((t) => t.nextUpRank === null && effective.get(t.id) === level)
       .sort(taskKey);
     for (const t of band) placeTask(ctx, t);
+  }
+  // Both focus automations come after every other item; overload goes first (focus edge case 5).
+  const overloads = s.overloads ?? [];
+  if (overloads.length > 0) {
+    const meetings = meetingTime(ctx);
+    for (const o of [...overloads].sort(
+      (a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id),
+    ))
+      placeOverload(ctx, o, meetings);
   }
   const focus = [...s.focus].sort(
     (a, b) => a.rank - b.rank || a.createdAt - b.createdAt || a.id.localeCompare(b.id),

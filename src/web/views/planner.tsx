@@ -27,6 +27,19 @@ const PreviewPanel = lazyComponent<{ onApplied: () => void }>(() =>
   import("./preview.tsx").then((m) => m.PreviewPanel),
 );
 const PlannerHints = lazyComponent(() => import("./hints.tsx").then((m) => m.PlannerHints));
+// Event actions, the running event's tasks and focus progress load on demand.
+const EventActions = lazyComponent<{
+  event: PlannerEvent;
+  zone: string;
+  run: (fn: () => Promise<unknown>) => void;
+  close: () => void;
+}>(() => import("./planner-extras.tsx").then((m) => m.EventActions));
+const CurrentTasks = lazyComponent(() =>
+  import("./planner-extras.tsx").then((m) => m.CurrentTasks),
+);
+const FocusProgress = lazyComponent<{ week: string }>(() =>
+  import("./planner-extras.tsx").then((m) => m.FocusProgress),
+);
 
 function mondayOf(z: string, t: number): string {
   const d = utcToLocal(z, t).date;
@@ -132,6 +145,8 @@ export function Planner() {
       </div>
       <PlannerHints />
       <PreviewPanel onApplied={() => void load()} />
+      <FocusProgress week={weekStart} />
+      <CurrentTasks />
       <WeekView
         days={days}
         zone={z}
@@ -286,6 +301,13 @@ export function Planner() {
               )}
             </div>
           )}
+          <EventActions
+            key={selected.id}
+            event={selected}
+            zone={z}
+            run={(fn) => void run(fn)}
+            close={() => setSelected(null)}
+          />
           <button type="button" onClick={() => setSelected(null)}>
             Close
           </button>

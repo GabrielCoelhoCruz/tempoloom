@@ -59,6 +59,7 @@ Tags used here (full rules in `events-tags.md`):
 11. When the user lengthens or shortens a travel buffer event, Tempoloom keeps the new length (E-0052).
 12. When the anchor loses its address, tag and flight category, Tempoloom deletes its travel buffers.
 13. On a mirrored copy whose mirroring policy hides title, location and description, Tempoloom cannot see the address or tags, so the copy gets no travel buffer from them (E-0207).
+    Tempoloom decision: Tempoloom's own mirror copies (`sync-calendar-mirroring.md`) are anchors on their calendar with the title and description the copy shows; copies carry no location. A busy-only or label-only copy shows neither the source's address nor its tags, so it gets no travel buffer. A copy with details shows the description, so `#tl_travel` there counts. A copy whose source event is itself an anchor of the same automation gives no second buffer.
 
 ### Scheduler interaction
 

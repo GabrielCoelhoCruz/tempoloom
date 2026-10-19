@@ -788,6 +788,67 @@ export const MIGRATIONS: readonly string[] = [
   // Round 3: each stream adds at most one migration, right below its own line.
   // round 3 s1
   // round 3 s2
+  `
+  -- r3 s2: habit actions, focus options, meeting overload, task searches, buffer scope
+  -- Saved task searches (planning-next-up.md NXT-40 to NXT-45), assigned to automations.
+  CREATE TABLE task_searches (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    keyword TEXT NOT NULL DEFAULT '',
+    due_within_days INTEGER,
+    created_at INTEGER NOT NULL
+  ) STRICT;
+  CREATE INDEX task_searches_user ON task_searches(user_id);
+  ALTER TABLE habits ADD COLUMN task_search_id TEXT REFERENCES task_searches(id) ON DELETE SET NULL;
+  ALTER TABLE focus_goals ADD COLUMN task_search_id TEXT REFERENCES task_searches(id) ON DELETE SET NULL;
+
+  -- focus-time.md rules 1-10 and 23.
+  ALTER TABLE focus_goals ADD COLUMN mode TEXT NOT NULL DEFAULT 'proactive';
+  ALTER TABLE focus_goals ADD COLUMN decline_enabled INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE focus_goals ADD COLUMN decline_message TEXT NOT NULL DEFAULT '';
+
+  -- The meeting overload automation (focus-time.md rules 11-16); NULL limit: none.
+  CREATE TABLE meeting_overloads (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    title TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    hours_set_id TEXT NOT NULL REFERENCES hours_sets(id),
+    daily_max_minutes INTEGER,
+    weekly_max_minutes INTEGER,
+    heavy_day_minutes INTEGER,
+    min_block_minutes INTEGER NOT NULL,
+    decline_enabled INTEGER NOT NULL DEFAULT 0,
+    decline_message TEXT NOT NULL DEFAULT '',
+    task_search_id TEXT REFERENCES task_searches(id) ON DELETE SET NULL,
+    created_at INTEGER NOT NULL,
+    rules_changed_at INTEGER NOT NULL
+  ) STRICT;
+  CREATE INDEX meeting_overloads_user ON meeting_overloads(user_id);
+
+  -- One habit occurrence moved to a chosen time of day (habits-automation.md rule 30).
+  CREATE TABLE habit_reschedules (
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    habit_id TEXT NOT NULL REFERENCES habits(id) ON DELETE CASCADE,
+    date TEXT NOT NULL,
+    minute INTEGER NOT NULL,
+    PRIMARY KEY (habit_id, date)
+  ) STRICT;
+
+  -- One calendar id, or NULL for all calendars (buffers-automation.md calendar_scope).
+  ALTER TABLE buffers ADD COLUMN calendar_scope TEXT;
+
+  -- Invitations Tempoloom declined for focus time; never declined twice.
+  CREATE TABLE auto_declines (
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    calendar_id TEXT NOT NULL,
+    event_id TEXT NOT NULL,
+    source_id TEXT NOT NULL,
+    declined_at INTEGER NOT NULL,
+    PRIMARY KEY (user_id, calendar_id, event_id)
+  ) STRICT;
+  `,
   // round 3 s3
   // round 3 s4
   // round 3 s5

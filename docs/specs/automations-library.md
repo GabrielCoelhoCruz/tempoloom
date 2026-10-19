@@ -122,6 +122,8 @@ have none (`automations-overview.md`), so their presets set no priority.
 
 1. A buffer entry needs a person list (entry 2) and the list is empty: the
    form asks for at least one person before save.
+   Tempoloom decision: entry 2 opens the buffer form, and saving with no
+   person shows "Add at least one person."
 2. A mirroring entry needs two connected calendars and the user has one:
    the form explains this and links to calendar connection.
 3. A flexible meeting entry needs attendees: the form asks for at least one.

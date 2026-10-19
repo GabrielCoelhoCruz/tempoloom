@@ -22,7 +22,10 @@ import { accountRoutes } from "./api/account.ts";
 import { analyticsRoutes } from "./api/analytics.ts";
 import { bookingRoutes, publicBookingRoutes } from "./api/booking.ts";
 import { brandingRoutes, publicBrandingRoutes } from "./api/branding.ts";
+import { bufferFilterRoutes } from "./api/buffer-filters.ts";
 import { delegationGuard, delegationRoutes } from "./api/delegation.ts";
+import { eventActionRoutes } from "./api/event-actions.ts";
+import { focusExtraRoutes } from "./api/focus-extras.ts";
 import { helpRoutes } from "./api/help.ts";
 import { insightRoutes } from "./api/insights.ts";
 import { itemRoutes } from "./api/items.ts";
@@ -36,6 +39,7 @@ import { scimRoutes } from "./api/scim.ts";
 import { settingsRoutes } from "./api/settings.ts";
 import { ssoAdminRoutes, ssoAuthRoutes } from "./api/sso.ts";
 import { statsRoutes } from "./api/stats.ts";
+import { taskSearchRoutes } from "./api/task-searches.ts";
 import { publicInviteRoutes, teamRoutes } from "./api/team.ts";
 import { teamDefaultRoutes } from "./api/team-defaults.ts";
 import { webhookRoutes } from "./api/webhooks.ts";
@@ -402,6 +406,10 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
       now,
     }),
   );
+  app.route("/api", eventActionRoutes(db, sync, now));
+  app.route("/api", taskSearchRoutes(db, now));
+  app.route("/api", focusExtraRoutes(db, sync, now));
+  app.route("/api", bufferFilterRoutes(db, now));
 
   // Static client with a single-page fallback. Text files are compressed once
   // per encoding and kept in memory; the build output does not change at run time.

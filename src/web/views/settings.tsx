@@ -8,6 +8,8 @@ import { lazyComponent } from "../lib/lazy.ts";
 import { templateFromUrl } from "../lib/library.ts";
 import { loadPolicyMarks, PolicyMark, policyMarks } from "../lib/policy-marks.tsx";
 import { loadMe, me, planNow } from "../lib/state.ts";
+import { BufferEditor } from "./buffer-editor.tsx";
+import { FocusOptionsList, MeetingOverloadSection } from "./focus-options.tsx";
 
 interface HoursSet {
   id: string;
@@ -104,7 +106,14 @@ export function Settings() {
   const [hours, setHours] = useState<HoursSet[]>([]);
   const [calendars, setCalendars] = useState<Calendar[]>([]);
   const [buffers, setBuffers] = useState<
-    { id: string; title: string; side: string; minutes_before: number; minutes_after: number }[]
+    {
+      id: string;
+      title: string;
+      side: string;
+      minutes_before: number;
+      minutes_after: number;
+      calendar_scope: string | null;
+    }[]
   >([]);
   const [focus, setFocus] = useState<{ id: string; title: string; weekly_goal_minutes: number }[]>(
     [],
@@ -487,6 +496,7 @@ export function Settings() {
             Add airport time (2 h before, 1 h after)
           </button>
         </div>
+        <BufferEditor calendars={calendars} onSaved={load} />
         <div class="list" data-testid="buffer-list">
           {buffers.map((b) => (
             <div class="row" key={b.id} data-buffer-title={b.title}>
@@ -495,6 +505,10 @@ export function Settings() {
                 {b.side === "before"
                   ? `${b.minutes_before} min before`
                   : `${b.minutes_after} min after`}{" "}
+                ·{" "}
+                {b.calendar_scope
+                  ? `${calendars.find((c) => c.id === b.calendar_scope)?.name ?? "one calendar"} only`
+                  : "all calendars"}{" "}
                 <PolicyMark id={b.id} />
               </span>
               {!policyMarks.value[b.id] && (
@@ -598,7 +612,10 @@ export function Settings() {
             </div>
           ))
         )}
+        {focus.length > 0 && <FocusOptionsList key={focus.map((f) => f.id).join(",")} />}
       </section>
+
+      <MeetingOverloadSection />
     </div>
   );
 }

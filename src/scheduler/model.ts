@@ -28,6 +28,12 @@ export interface ExternalEvent {
   bookedViaLink: boolean;
   /** events-categories-and-colors.md; unknown when not given. */
   category?: Category;
+  /** The calendar that holds the event (buffer calendar scope). */
+  calendarId?: string;
+  /** Attendee emails, lower case (buffer filter by person). */
+  attendees?: string[];
+  /** For a Tempoloom mirror copy: the calendar of its source event. */
+  mirrorSource?: string;
 }
 
 /** An existing managed event. */
@@ -69,7 +75,7 @@ export interface HabitItem {
   idealMinute: number;
   minMinutes: number;
   maxMinutes: number;
-  frequency: { period: "daily" } | { period: "weekly"; days: number[] };
+  frequency: HabitFrequency;
   starting: LocalDate | null;
   defense: HabitDefense;
   whenUnplaceable: WhenUnplaceable;
@@ -78,7 +84,16 @@ export interface HabitItem {
   skips: LocalDate[];
   exclusions: Interval[];
   changed: boolean;
+  /** Occurrence date -> the time of day the user chose for it (habits rule 30). */
+  rescheduled?: Partial<Record<LocalDate, number>>;
 }
+
+/** habits-automation.md "Frequency"; weekday 1 is Monday. */
+export type HabitFrequency =
+  | { period: "daily" }
+  | { period: "weekly"; days: number[] }
+  | { period: "monthly"; dayOfMonth: number }
+  | { period: "monthly"; nth: 1 | 2 | 3 | 4 | 5 | "last"; weekday: number };
 
 /** A flexible meeting (docs/specs/meetings-flexible.md); the user is the organizer. */
 export interface MeetingItem {
@@ -108,10 +123,12 @@ export interface MeetingItem {
   changed: boolean;
 }
 
+export type Comparison = ">=" | "<=" | "=" | ">" | "<";
+
 export interface BufferFilter {
   text?: { values: string[]; fields: ("title" | "description" | "location")[] };
-  participants?: { op: ">=" | "<=" | "="; value: number };
-  length?: { op: ">=" | "<=" | "="; minutes: number };
+  participants?: { op: Comparison; value: number };
+  length?: { op: Comparison; minutes: number };
   exactTitle?: string;
   tags?: string[];
   /** Travel time: a physical address (two or more commas) or #tl_travel, and not a flight. */
@@ -120,6 +137,10 @@ export interface BufferFilter {
   flight?: boolean;
   /** Event categories (events-categories-and-colors.md rule 14). */
   categories?: Category[];
+  /** Attendee or organizer emails, or "@domain" for anyone at a domain. */
+  people?: string[];
+  /** The anchor is a run of back-to-back matching events longer than this. */
+  runLongerThanMinutes?: number;
 }
 
 export interface BufferItem {
@@ -135,6 +156,8 @@ export interface BufferItem {
   filter: BufferFilter;
   onConflict: WhenUnplaceable;
   changed: boolean;
+  /** One calendar id, or null (or absent) for all calendars. */
+  calendarScope?: string | null;
 }
 
 export interface FocusItem {
@@ -150,6 +173,23 @@ export interface FocusItem {
   maxBlockMinutes: number;
   busy: boolean;
   /** Ranges the user deleted; never used again. */
+  exclusions: Interval[];
+  changed: boolean;
+  /** focus-time.md rules 1-10; proactive when absent. */
+  mode?: "proactive" | "reactive";
+}
+
+/** The meeting overload automation (focus-time.md rules 11-16); its events are focus events. */
+export interface OverloadItem {
+  id: string;
+  title: string;
+  createdAt: number;
+  hours: string;
+  dailyMaxMinutes: number | null;
+  weeklyMaxMinutes: number | null;
+  /** The daily limit applies only on a workday after a day with this many meeting minutes. */
+  heavyDayMinutes: number | null;
+  minBlockMinutes: number;
   exclusions: Interval[];
   changed: boolean;
 }
@@ -179,6 +219,9 @@ export interface Snapshot {
   meetings: MeetingItem[];
   buffers: BufferItem[];
   focus: FocusItem[];
+  overloads?: OverloadItem[];
+  /** Tempoloom's own mirror copies, as their calendars show them; buffer anchors only. */
+  mirrorCopies?: ExternalEvent[];
   /**
    * A fragmentation policy (teams-policies.md rule 23): new habits and flexible
    * meetings prefer slots that leave no gap shorter than `minBlockMinutes`

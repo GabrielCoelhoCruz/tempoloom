@@ -78,12 +78,16 @@ Its priority is also fixed at P4 (E-0070, E-0141).
 8. Tempoloom places no focus event while the free time left in the week, in blocks of at least `min_block_minutes`, is more than the goal still missing (E-0078, E-0071).
 9. When the free time left falls to the missing goal or below, Tempoloom turns that free time into focus events.
 10. In reactive mode the user sets `weekly_goal_hours`, `daily_min_hours` or both, and `min_block_minutes`. The other block and daily fields are not shown (E-0078).
+    Tempoloom decision: "free time left" is the free time inside the goal's `hours` from now to the end of the week, after all other items, in gaps of at least `min_block_minutes`. When it is not more than the missing goal, each such gap becomes one focus event; `max_block_minutes` and `daily_max_hours` do not apply. While it is more, reactive mode places nothing and the planner shows no "goal not reached" notice.
 
 ### Meeting overload automation
 
 11. Meeting hours for a day are the hours of events that are meetings: a busy event with at least one attendee other than the user, which the user organized, accepted or marked as maybe. Unanswered and declined invitations do not count. Booking-link meetings and flexible meetings count. Managed habits, tasks, focus events and buffers never count. Proposed definition (open question 2).
+    Tempoloom decision: Tempoloom uses this definition. Meeting time that overlaps counts once. The meeting hours of a day are the meeting time on that local day, also outside `hours`.
 12. When meeting hours on a day reach `daily_max_meeting_hours`, Tempoloom turns all remaining free time inside `hours` on that day into focus events, each at least `min_block_minutes` long (E-0070, E-0095).
 13. When meeting hours in a week reach `weekly_max_meeting_hours`, Tempoloom does the same for every remaining day of that week (E-0070).
+    Tempoloom decision: the protected days are the day on which the meeting hours since the start of the week reach the limit, and every later day of that week. On a protected day, each free gap inside `hours` from now on that is at least `min_block_minutes` long becomes one focus event; there is no longest block. Protection starts when a limit is reached, with no approach margin (open question 3).
+    Tempoloom decision (library entry 8, "recovery day"): the automation may also set `heavy_day_meeting_hours`. Then the daily limit applies only on a workday (a day that `hours` allows) whose previous workday had at least that many meeting hours.
 14. While no limit is reached, this automation places no focus event (E-0070, E-0095). The current help says protection grows "as you approach" the limit; the exact approach margin is open (open question 3).
 15. When meetings are removed and meeting hours fall below the limit again, Tempoloom removes the focus events that this automation added and that the user did not lock. Proposed.
 16. Both focus automations can run at the same time. Their events are the same type (E-0070).
@@ -97,7 +101,9 @@ Its priority is also fixed at P4 (E-0070, E-0141).
 21. When the user deletes a focus event, Tempoloom treats it as skipped. It places no focus event in that time range again (E-0077, E-0078). Proposed: the lost hours may be placed in another range of the same week.
 22. Reschedule action: the user picks a minimum delay from now. Tempoloom moves the focus event to the first legal free range that starts at or after now plus that delay (E-0071).
 23. When `auto_decline.enabled=true`, Tempoloom declines invitations that overlap a placed focus event, with the message as the decline note to the organizer (E-0077, E-0070). Without it, Tempoloom declines nothing; the busy event alone protects the time (E-0070).
+    Tempoloom decision: auto-decline answers unanswered invitations from other organizers that overlap a placed focus event of that automation, after each run. Accepted and tentative invitations are not changed (an accepted one moves the focus event, rule 18). Tempoloom answers each invitation once, so the user may accept it again. On CalDAV the decline is `PARTSTAT=DECLINED` on the user's copy with the message as its `COMMENT`; on Google it is the attendee answer with the message as its comment. An empty message sends "Declined automatically: this time is protected for focus." One occurrence of a recurring invitation on CalDAV is not declined. The meeting overload automation has the same setting.
 24. A focus event can carry a task list. The same list shows on every focus event of the week (E-0077).
+    Tempoloom decision: the task list is the automation's saved task search (`planning-next-up.md` NXT-40). The details panel of every focus event of the automation shows the same search and its matching tasks. The list does not change the events.
 
 ### Team focus template and company focus policy
 
@@ -115,6 +121,7 @@ Its priority is also fixed at P4 (E-0070, E-0141).
 33. Focus events respect `#tl_busy` blocks as busy. Proposed: focus may be placed inside a busy `#tl_free` block, like tasks and habits (open question 6).
 34. The scheduler never moves a locked focus event or a past focus event.
 35. When the goal cannot be reached, the planner shows "goal not reached" with the missing hours. Proposed text. It does not list one unplaced item per missing block.
+    Tempoloom decision: above the week, the planner shows "<title>: X h of Y h this week." per focus goal, with the counted time of that week, and adds "Goal not reached: N h missing." when the last plan could not reach the goal for that week.
 
 ## Outputs
 
