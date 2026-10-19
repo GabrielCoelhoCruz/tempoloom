@@ -18,6 +18,14 @@ export const LABELS = {
 export const COPY_NOTE =
   "Copied by Tempoloom from another calendar. Change the original event, not this copy.";
 
+/** The managed key of the copy of one source event under one policy. */
+export const mirrorKey = (policyId: string, sourceEventId: string) =>
+  `mirror:${policyId}:${sourceEventId}`;
+
+/** The source event id in the key of a copy made by the policy. */
+export const mirrorSource = (key: string, policyId: string) =>
+  key.slice(mirrorKey(policyId, "").length);
+
 const MEETINGS: Category[] = ["team_meeting", "one_on_one", "external_meeting"];
 
 /**
@@ -149,7 +157,7 @@ export function mirrorCopies(
         title = copyLabel(category, p.calendar_type);
       }
       out.push({
-        key: `mirror:${p.id}:${e.event_id}`,
+        key: mirrorKey(p.id, e.event_id),
         kind: "mirror",
         sourceId: p.id,
         calendarId: p.dest_calendar_id,

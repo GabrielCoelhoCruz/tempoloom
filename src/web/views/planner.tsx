@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { CATEGORIES } from "../../scheduler/categories.ts";
 import type { ReportEntry } from "../../scheduler/model.ts";
-import type { PlannerEvent } from "../../server/api/planner.ts";
+import type { CalendarRef, PlannerEvent } from "../../server/api/planner.ts";
 import { addDays, localToUtc, utcToLocal, weekdayOf } from "../../shared/time.ts";
 import { api } from "../lib/api.ts";
+import { calendarList, displayName, loadCalendars } from "../lib/calendars.tsx";
 import { CATEGORY_LABELS } from "../lib/categories.ts";
 import { formatWhen } from "../lib/format.ts";
 import { lazyComponent, settle, settled } from "../lib/lazy.ts";
@@ -38,10 +39,16 @@ const REASONS: Record<string, string> = {
 /** One note per reason the level of an external event stays P1. */
 const LEVEL_FIXED_NOTES: Record<NonNullable<PlannerEvent["levelFixed"]>, string> = {
   "booking-link": "Meetings booked through a booking link stay P1: they are fixed.",
-  "mirror-copy": "Mirrored copies stay P1: they follow their source event.",
+  mirrored: "Mirrored events stay P1: their copies on other calendars count as P1.",
   "other-calendar":
     "Events from other calendars stay P1: only events on your main calendar can change.",
 };
+
+/** A calendar's name as the calendar list shows it; the server's name until that list loads. */
+function calendarName(ref: CalendarRef): string {
+  const row = calendarList.value.find((c) => c.id === ref.id);
+  return row ? displayName(row, calendarList.value) : ref.name;
+}
 
 const PreviewPanel = lazyComponent<{ onApplied: () => void }>(() =>
   import("./preview.tsx").then((m) => m.PreviewPanel),
@@ -78,6 +85,11 @@ export function Planner() {
   const [events, setEvents] = useState<PlannerEvent[]>([]);
   const [report, setReport] = useState<ReportEntry[]>([]);
   const [selected, setSelected] = useState<PlannerEvent | null>(null);
+  // The drawer names calendars as the calendar list does; that list loads on the first open.
+  const external = selected?.kind === "external";
+  useEffect(() => {
+    if (external && calendarList.value.length === 0) void loadCalendars().catch(() => {});
+  }, [external]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // A planner link (?item=task:<id>, planning-event-content.md CNT-10) opens that item's event.
@@ -277,12 +289,12 @@ export function Planner() {
           </div>
           {selected.calendar && (
             <div class="status" data-testid="event-source">
-              Calendar: {selected.calendar}
+              Calendar: {calendarName(selected.calendar)}
             </div>
           )}
           {selected.copies && selected.copies.length > 0 && (
             <div class="status" data-testid="event-copies">
-              Copied to: {selected.copies.join(", ")}
+              Copied to: {selected.copies.map(calendarName).join(", ")}
             </div>
           )}
           <EventExtras event={selected} onDone={() => setSelected(null)} />

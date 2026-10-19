@@ -868,16 +868,17 @@ T.update({
     "u16_onboarding": "onboarding offers a first mirroring policy with one source and one destination",
     "u16_one_item": "the planner shows a source event and its copy as one item with the source details",
     "u16_p1": "copies and events on other connected calendars stay P1",
+    "u16_not_now": "Not now hides the first mirroring offer for good",
 })
 E2E.update({
-    458: ["u16_onboarding"],
+    458: ["u16_onboarding", "u16_not_now"],
     485: ["u16_p1"],
     298: ["u03_other", "u16_p1"],
 })
 E2E_NOTES.update({
-    458: "Tempoloom decision: the offer is a planner hint, shown while the user has no policy and has at least two calendars; the other policy fields keep their defaults",
-    485: "The priority control of an event on another connected calendar is disabled at P1 with a note; a main-calendar event keeps the control. Copies are not separate planner items, and the API refuses a level for a copy on the main calendar",
-    298: "Tempoloom decision: copies are not separate planner items (mirroring rule 33), so the source event carries the note. The control of an event on another connected calendar is disabled at P1 with a note, and the API refuses a level for a copy on the main calendar",
+    458: "Tempoloom decision: the offer is a planner hint, shown while the user has no policy and has at least two calendars; the other policy fields keep their defaults. Not now hides it after a reload too",
+    485: "A main-calendar event that is mirrored is one item with its copy (mirroring rule 33): its priority control is disabled at P1 with a note, because the copy keeps the time at P1. An event on another connected calendar is disabled at P1 with a note; a main-calendar event that is not mirrored keeps the control. The API refuses a level for the mirrored event, and a copy is not an external event for it",
+    298: "Tempoloom decision: copies are not separate planner items (mirroring rule 33), so a mirrored event and its copy are one item. Its control is disabled at P1 with a note that the copies count as P1; the control of an event on another connected calendar is disabled at P1 with a note. The API refuses both",
 })
 BLOCKED.update({
     484: "The calendar add-on part needs a Google Workspace add-on (the vendor's developer app and a test account). The planner part has full UI E2E on CalDAV: the source event and its copy are one item that names its calendar, the calendars it is copied to and its details (\u201c" + T["u16_one_item"] + "\u201d)",

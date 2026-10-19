@@ -8,7 +8,9 @@
 //   name its source calendar and where it is copied to                     -> one item
 // - an event on another connected calendar offers a priority change, or
 //   gives no note that it stays P1; a main-calendar event loses the control;
-//   the API accepts a level for a copy on the main calendar               -> P1
+//   a mirrored main-calendar event offers a change though its copy stays P1;
+//   the API accepts a level for a mirrored event or a copy                  -> P1
+// - "Not now" does not keep the offer hidden after a reload               -> Not now
 // Every test reloads the page and reads the calendar again.
 import { addPolicy, copies, openSettings, policyRow, week } from "./calendar-helpers.ts";
 import { at, BACKEND, blockUntil, eventually, expect, test } from "./fixtures.ts";
@@ -91,55 +93,118 @@ test("copies and events on other connected calendars stay P1 (rule 34)", async (
 }) => {
   await blockUntil(cal, W);
   await cal.addEvent({ title: "Standup", start: at(W, "09:00"), end: at(W, "09:30") });
+  // The tag keeps this main-calendar event out of the mirroring: it keeps the control.
+  await cal.addEvent({
+    title: "Review",
+    start: at(W, "13:00"),
+    end: at(W, "13:30"),
+    description: "#tl_nosync",
+  });
   await signIn();
   const priv = await cal.newCalendar("Private");
   await priv.addEvent({ title: "Gym", start: at(W, "07:00"), end: at(W, "08:00") });
-  await addPolicy(page, { from: "Private", to: "Work" });
+  await addPolicy(page, { from: "Work", to: "Private" });
   const copy = copies(
     await eventually(
-      () => week(cal),
+      () => week(priv),
       (evs) => expect(copies(evs)).toHaveLength(1),
     ),
   )[0];
-  // The copy is on the main calendar, where a level can change; the API refuses it.
+  expect(copy?.summary).not.toContain("Review");
   await openWeek(page);
+  // The API refuses a level for the mirrored source, and treats the copy as no external event.
   await expect
     .poll(() =>
       page.evaluate(
-        async ({ from, to, eventId }) => {
+        async ({ from, to, copyId }) => {
           const r = await fetch(`/api/planner/events?from=${from}&to=${to}`);
           const { events } = (await r.json()) as { events: { id: string; title: string }[] };
-          const [, calendarId] = (events.find((e) => e.title === "Standup")?.id ?? "").split(":");
-          const post = await fetch(
-            `/api/planner/external/${encodeURIComponent(calendarId ?? "")}/${encodeURIComponent(eventId)}/priority`,
-            {
-              method: "POST",
-              headers: { "content-type": "application/json" },
-              body: JSON.stringify({ level: 4 }),
-            },
-          );
-          return `${post.status} ${((await post.json()) as { reason?: string }).reason ?? ""}`;
+          // The id is ext:<calendar id>:<event id>; the event id may hold colons.
+          const ref = (title: string) => {
+            const [, calendarId, ...rest] = (events.find((e) => e.title === title)?.id ?? "").split(
+              ":",
+            );
+            return [calendarId, rest.join(":")];
+          };
+          const [mainId, standupId] = ref("Standup");
+          const [privId] = ref("Gym");
+          const post = async (calendarId = "", eventId = "") => {
+            const res = await fetch(
+              `/api/planner/external/${encodeURIComponent(calendarId)}/${encodeURIComponent(eventId)}/priority`,
+              {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ level: 4 }),
+              },
+            );
+            return `${res.status} ${((await res.json()) as { reason?: string }).reason ?? ""}`.trim();
+          };
+          return [await post(mainId, standupId), await post(privId, copyId)];
         },
-        { from: at(W, "00:00"), to: at(W, "23:59"), eventId: copy?.id ?? "" },
+        { from: at(W, "00:00"), to: at(W, "23:59"), copyId: copy?.id ?? "" },
       ),
     )
-    .toBe("400 mirror-copy");
+    .toEqual(["400 mirrored", "404"]);
   for (const pass of ["first", "after reload"]) {
     if (pass === "first") await openWeek(page);
     else await page.reload();
-    await page.locator(".ev-external", { hasText: "Gym" }).click();
-    const fixed = page.getByTestId("external-priority-fixed");
+    // A main-calendar event that is mirrored: its copy keeps the time at P1.
+    await page.locator(".ev-external", { hasText: "Standup" }).click();
+    let fixed = page.getByTestId("external-priority-fixed");
     await expect(fixed.getByLabel("Priority for booking links")).toBeDisabled();
     await expect(fixed.getByLabel("Priority for booking links")).toHaveValue("1");
     await expect(page.getByRole("button", { name: "Save priority" })).toHaveCount(0);
     await expect(fixed).toContainText(
+      "Mirrored events stay P1: their copies on other calendars count as P1.",
+    );
+    await page.getByRole("button", { name: "Close" }).click();
+    // An event on another connected calendar.
+    await page.locator(".ev-external", { hasText: "Gym" }).click();
+    fixed = page.getByTestId("external-priority-fixed");
+    await expect(fixed.getByLabel("Priority for booking links")).toBeDisabled();
+    await expect(fixed).toContainText(
       "Events from other calendars stay P1: only events on your main calendar can change.",
     );
     await page.getByRole("button", { name: "Close" }).click();
-    // A main-calendar event keeps the control.
-    await page.locator(".ev-external", { hasText: "Standup" }).click();
+    // A main-calendar event that is not mirrored keeps the control.
+    await page.locator(".ev-external", { hasText: "Review" }).click();
     await expect(
       page.getByTestId("external-priority").getByLabel("Priority for booking links"),
     ).toBeEnabled();
+    await page.getByRole("button", { name: "Close" }).click();
   }
+});
+
+test("Not now hides the first mirroring offer for good (rule 11)", async ({
+  page,
+  cal,
+  signIn,
+}) => {
+  await blockUntil(cal, W);
+  await signIn();
+  await cal.newCalendar("Private");
+  await openSettings(page);
+  await page.getByRole("button", { name: "Refresh calendar list" }).click();
+  await expect(page.getByTestId("calendar-list")).toContainText("Private");
+  await openWeek(page);
+  const offer = page.getByTestId("hint-first-mirror");
+  await expect(offer).toBeVisible();
+  const dismissed = page.waitForResponse(
+    (r) => r.url().endsWith("/api/hints/first-mirror/dismiss") && r.ok(),
+  );
+  await offer.getByRole("button", { name: "Not now" }).click();
+  await dismissed;
+  await expect(offer).toHaveCount(0);
+  await page.reload();
+  await expect(page.getByTestId("planner-hints")).toHaveAttribute("data-loaded", "true");
+  await expect(offer).toHaveCount(0);
+  // Still no policy and two calendars: only the dismissal hides the offer.
+  expect(
+    await page.evaluate(async () => {
+      const get = async (path: string) => (await fetch(path)).json();
+      const { mirrors } = (await get("/api/mirrors")) as { mirrors: unknown[] };
+      const { calendars } = (await get("/api/calendars")) as { calendars: { provider: string }[] };
+      return [mirrors.length, calendars.filter((c) => c.provider !== "ics").length];
+    }),
+  ).toEqual([0, 2]);
 });
