@@ -132,7 +132,13 @@ test("travel buffers, flights Tempoloom may edit and personal mirror copies get 
     expect(mine.find((e) => e.id === flight)?.summary).toBe("✈️ Flight LH 1234");
     expect(mine.find((e) => e.id === invite)?.summary).toBe("Flight BA 99");
     expect(copies.length).toBeGreaterThanOrEqual(3);
-    for (const c of copies) expect(c.summary).toBe("🏠 Personal commitment");
+    // Flights keep their category label (mirroring rule 27); only copies that
+    // show the personal commitment label get the house marker.
+    const labels = copies.map((c) => c.summary);
+    expect(labels.filter((l) => l === "Flight")).toHaveLength(2);
+    const other = labels.filter((l) => l !== "Flight");
+    expect(other.length).toBeGreaterThanOrEqual(1);
+    for (const l of other) expect(l).toBe("🏠 Personal commitment");
   };
   const { copies } = await eventually(read, check);
   // Mirroring copies never get reminders (NTF table).

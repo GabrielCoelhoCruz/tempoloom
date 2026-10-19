@@ -64,7 +64,7 @@ test("a secondary email signs in to the same account; removing it removes its po
   await addPolicy(page, { from: `Work (${extra.email})`, to: `Work (${EMAIL})` });
   await eventually(
     () => week(cal),
-    (l) => expect(copies(l).map((e) => e.summary)).toEqual(["Personal commitment"]),
+    (l) => expect(copies(l).map((e) => e.summary)).toEqual(["🏠 Personal commitment"]),
   );
 
   // Log out, then log in with the secondary email: the same account opens.
