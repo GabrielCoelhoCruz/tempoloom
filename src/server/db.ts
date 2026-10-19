@@ -52,7 +52,9 @@ export function tx<T>(db: Db, fn: () => T): T {
     db.exec("COMMIT");
     return result;
   } catch (err) {
-    db.exec("ROLLBACK");
+    // SQLite ends the transaction itself on some errors (SQLITE_FULL,
+    // SQLITE_IOERR, ...); a ROLLBACK then would throw and hide err.
+    if (db.isTransaction) db.exec("ROLLBACK");
     throw err;
   }
 }
