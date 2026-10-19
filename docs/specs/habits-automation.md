@@ -69,6 +69,8 @@ names the same idea as "can move within" days and hours (E-0081).
 
 1. The user can create a habit from a blank form, from a template in the automation library, from the top-bar "create" button, or through the assistant chat (E-0081, E-0043).
 2. Saving a new or edited habit stages the events it would add, move or remove in preview mode (`assistant-preview-mode.md`). Tempoloom writes no event until the user applies the staged changes. Discarding them writes nothing (E-0081, E-0043).
+
+   Tempoloom decision: the save is staged while preview mode is on (`assistant-preview-mode.md` rule 2); with preview mode off it applies at once. The staged impact is the full difference between the plan now and the plan with the change, so it also lists other managed events that move or go as a side effect.
 3. Saving a habit with `ideal_time` outside every range of `hours` fails with a field error.
 4. Saving a habit with `duration_min > duration_max` fails with a field error.
 5. The user can edit any field except `target_calendar` at any time. Edits apply to future occurrences only. Past events do not change.

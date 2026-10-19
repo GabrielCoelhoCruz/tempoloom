@@ -1,6 +1,7 @@
 // Writes the desired managed events to calendars: creates, moves and deletes
 // events so that the calendars match the plan. Unchanged events get no write.
 import { randomUUID } from "node:crypto";
+import { logManaged, pruneChangeLog } from "../change-log.ts";
 import { all, type Db, one, run } from "../db.ts";
 import { type CalendarProvider, type EventWrite, ProviderError } from "../providers/types.ts";
 import { cacheEvent } from "../sync/pull.ts";
@@ -137,6 +138,8 @@ export async function pushSchedule(ctx: PushContext, desired: DesiredEvent[]): P
     if (wanted.has(row.key) || row.locked || row.start_ms <= now) continue;
     await deleteRemote(ctx, row);
     run(db, "DELETE FROM managed_events WHERE id = ?", row.id);
+    if (row.event_id)
+      logManaged(db, userId, managedRef(row, row.event_id), "delete", plain(row), now);
     result.deleted++;
   }
 
@@ -168,6 +171,8 @@ export async function pushSchedule(ctx: PushContext, desired: DesiredEvent[]): P
       );
       cacheEvent(db, row.calendar_id, ev);
       saveRow(db, userId, d, ev.id, ev.etag, row.id);
+      const moved = row.start_ms !== d.start || row.end_ms !== d.end;
+      logManaged(db, userId, desiredRef(d, ev.id), "update", { ...d, moved }, now);
       result.updated++;
     } catch (err) {
       // precondition_failed: the user changed the event since our last read. The
@@ -193,10 +198,23 @@ export async function pushSchedule(ctx: PushContext, desired: DesiredEvent[]): P
     const ev = await provider.insertEvent(providerCalendarId, write(userId, d));
     cacheEvent(db, d.calendarId, ev);
     saveRow(db, userId, d, ev.id, ev.etag, row?.id);
+    logManaged(db, userId, desiredRef(d, ev.id), "create", d, now);
     result.created++;
   }
+  pruneChangeLog(db, now);
   return result;
 }
+
+// Change log references (docs/specs/support-troubleshooting.md rule 12).
+const managedRef = (r: ManagedRow, eventId: string) => ({
+  calendarId: r.calendar_id,
+  eventId,
+  key: r.key,
+  kind: r.kind,
+  sourceId: r.source_id,
+});
+const desiredRef = (d: DesiredEvent, eventId: string) => ({ ...d, eventId });
+const plain = (r: ManagedRow) => ({ title: r.title, start: r.start_ms, end: r.end_ms });
 
 async function deleteRemote(ctx: PushContext, row: ManagedRow): Promise<void> {
   if (!row.event_id) return;

@@ -577,6 +577,14 @@ export class CalDavProvider implements CalendarProvider {
       ev.removeAllProperties("dtend");
       ev.addPropertyWithValue("dtend", toUtcTime(change.end));
     }
+    if (change.start !== undefined) {
+      ev.removeAllProperties("dtstart");
+      ev.addPropertyWithValue("dtstart", toUtcTime(change.start));
+    }
+    if (change.summary !== undefined) {
+      ev.removeAllProperties("summary");
+      ev.addPropertyWithValue("summary", change.summary);
+    }
     if (change.selfResponse) {
       const self = this.#creds.email.toLowerCase();
       const partstat = {
@@ -604,7 +612,7 @@ export class CalDavProvider implements CalendarProvider {
       {
         summary: read("summary"),
         description: read("description"),
-        start: 0,
+        start: change.start ?? 0,
         end: change.end ?? 0,
         busy: read("transp").toUpperCase() !== "TRANSPARENT",
         colorId: null,

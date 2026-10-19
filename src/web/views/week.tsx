@@ -12,6 +12,8 @@ export interface WeekEvent {
   busy: boolean;
   locked: boolean;
   movable: boolean;
+  /** Preview mode: a staged new or moved event, the old place of a moved one, or a deleted one. */
+  staged?: "new" | "from" | "deleted";
 }
 
 interface Props {
@@ -179,7 +181,7 @@ export function WeekView({ days, zone, events, now, onMove, onSelect }: Props) {
               return (
                 <div
                   key={`${b.ev.id}:${b.day}`}
-                  class={`ev ev-${b.ev.kind}${b.ev.busy ? "" : " ev-free"}${b.ev.locked ? " ev-locked" : ""}${d ? " ev-drag" : ""}`}
+                  class={`ev ev-${b.ev.kind}${b.ev.busy ? "" : " ev-free"}${b.ev.locked ? " ev-locked" : ""}${d ? " ev-drag" : ""}${b.ev.staged ? ` ev-staged-${b.ev.staged}` : ""}`}
                   data-event-id={b.ev.id}
                   title={b.ev.title}
                   style={{

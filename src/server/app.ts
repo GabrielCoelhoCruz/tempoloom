@@ -23,11 +23,14 @@ import { analyticsRoutes } from "./api/analytics.ts";
 import { bookingRoutes, publicBookingRoutes } from "./api/booking.ts";
 import { brandingRoutes, publicBrandingRoutes } from "./api/branding.ts";
 import { delegationGuard, delegationRoutes } from "./api/delegation.ts";
+import { helpRoutes } from "./api/help.ts";
+import { insightRoutes } from "./api/insights.ts";
 import { itemRoutes } from "./api/items.ts";
 import { meetingRoutes } from "./api/meetings.ts";
 import { oooRoutes } from "./api/ooo.ts";
 import { plannerRoutes } from "./api/planner.ts";
 import { policyRoutes } from "./api/policies.ts";
+import { previewRoutes } from "./api/preview.ts";
 import { provisioningRoutes } from "./api/provisioning.ts";
 import { scimRoutes } from "./api/scim.ts";
 import { settingsRoutes } from "./api/settings.ts";
@@ -39,7 +42,7 @@ import { webhookRoutes } from "./api/webhooks.ts";
 import { apiKeyUser } from "./api-keys.ts";
 import type { Config } from "./config.ts";
 import type { SecretBox } from "./crypto.ts";
-import { all, type Db, one, run } from "./db.ts";
+import { all, type Db, one, openDb, run } from "./db.ts";
 import { ownersOf, sessionIdentity } from "./delegation.ts";
 import { isDeactivated } from "./directory.ts";
 import {
@@ -52,6 +55,8 @@ import { dropCoveredGrant } from "./grant.ts";
 import { jsonBody } from "./http.ts";
 import { createLiveHub } from "./live.ts";
 import type { Mailer } from "./mail.ts";
+import { mcpRoutes } from "./mcp.ts";
+import { createPreview } from "./preview.ts";
 import { CalDavProvider } from "./providers/caldav.ts";
 import { ProviderError } from "./providers/types.ts";
 import { getSettings } from "./settings.ts";
@@ -89,6 +94,9 @@ const MIME: Record<string, string> = {
   ".json": "application/json",
   ".woff2": "font/woff2",
 };
+
+/** The sync service of a dry-run app: every call does nothing. */
+const DRY_SYNC = new Proxy({}, { get: () => () => undefined }) as SyncService;
 
 const caldavLogin = z.object({
   serverUrl: z.url({ protocol: /^https?$/ }),
@@ -274,6 +282,34 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   const live = createLiveHub();
   sync.onChange((userId) => live.notify(userId));
 
+  // Preview mode (assistant-preview-mode.md). Dry runs of automation edits use an
+  // app on a second connection, inside a transaction that is rolled back.
+  let dry: { app: Hono<AppEnv>; db: Db } | null | undefined;
+  const preview = createPreview({
+    db,
+    sync,
+    mailer: deps.mailer,
+    live,
+    now,
+    app: () => app,
+    dry: () => {
+      if (dry === undefined) {
+        const dryDb = config.dbPath === ":memory:" ? null : openDb(config.dbPath);
+        dry = dryDb && {
+          db: dryDb,
+          app: createApp({
+            ...deps,
+            db: dryDb,
+            sync: DRY_SYNC,
+            // No static client: the dry app answers API calls only.
+            config: { ...config, WEB_DIST: join(config.DATA_DIR, "no-web-client") },
+          }),
+        };
+      }
+      return dry;
+    },
+  });
+
   app.use("/api/*", async (c, next) => {
     const token = getCookie(c, SESSION_COOKIE);
     const found = token ? sessionIdentity(db, token, now()) : undefined;
@@ -287,6 +323,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
     await next();
   });
   app.use("/api/*", delegationGuard(db, live, now));
+  app.use("/api/*", preview.guard);
 
   app.get("/api/me", (c) => {
     const user = c.get("user");
@@ -344,6 +381,27 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
 
   app.route("/api", teamDefaultRoutes(db, now));
   app.route("/api", oooRoutes(db, sync, now));
+  app.route(
+    "/api",
+    previewRoutes(
+      db,
+      preview,
+      { baseUrl: config.BASE_URL, mcpWriteEnabled: config.MCP_WRITE_ENABLED },
+      now,
+    ),
+  );
+  app.route("/api", helpRoutes(db, config.SUPPORT_URL, now));
+  app.route("/api", insightRoutes(db, now));
+  app.route(
+    "/mcp",
+    mcpRoutes({
+      db,
+      preview,
+      baseUrl: config.BASE_URL,
+      writeEnabled: config.MCP_WRITE_ENABLED,
+      now,
+    }),
+  );
 
   // Static client with a single-page fallback. Text files are compressed once
   // per encoding and kept in memory; the build output does not change at run time.

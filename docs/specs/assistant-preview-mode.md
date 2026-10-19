@@ -34,6 +34,12 @@ feature the "change preview"; it is the same thing.
 |---|---|---|
 | `preview_on` (per user, per planner session) | boolean | off; turns on when a change is staged (proposal) |
 
+Tempoloom decision: `preview_on` is stored per user, so every planner session
+of the user sees the same switch. A staged change turns it on. Preview mode
+that a staged change turned on turns off again when no change is left to
+review; preview mode the user turned on by hand stays on until the user
+turns it off.
+
 ## Behavior
 
 ### Staging
@@ -44,9 +50,21 @@ feature the "change preview"; it is the same thing.
 2. When the user creates or edits an automation, the system stages the
    calendar impact of that automation (the managed events it would create,
    move or delete).
+
+   Tempoloom decision: creating or editing a habit, focus time goal or buffer
+   (including turning it on or off) is staged only while preview mode is on;
+   with preview mode off the change applies at once, as before. The impact is
+   the difference between the plan the scheduler makes now and the plan it
+   would make with the change, computed without saving anything. Apply saves
+   the automation through the same action as the form, and the next plan
+   writes its events.
 3. The user can turn preview mode on by hand. While it is on, manual edits
    in the planner become staged changes with `source = manual` (proposal;
    the evidence shows a toggle and a "try a change in preview" step).
+
+   Tempoloom decision: in preview mode, dragging a planned event in the
+   planner is staged. Other planner actions (lock, skip, mark done, category)
+   apply at once.
 
 ### Display
 
@@ -60,13 +78,27 @@ feature the "change preview"; it is the same thing.
 
 6. For each pending change the user can accept it, discard it (other
    changes stay), or reply in assistant chat to ask for a different change.
+
+   Tempoloom decision: the planner shows each change's source ("AI tool"
+   with the API key's name, "Automation edit", "Your edit"), its reason and
+   the number of calendar events it creates, moves and removes. The reply in
+   assistant chat needs the assistant chat, which is not built.
 7. A "Review and apply changes" action opens a final list of all accepted
    and pending changes. In that list the user can remove single items, then
    confirm.
+
+   Tempoloom decision: removing an item from the final list discards it. To
+   keep a change for later, close the list without confirming.
 8. On confirm, the system writes the changes to the calendars and
    automations, in the order they were staged, and sets each to `applied`.
 9. Attendee invitations, updates and cancellations go out only at step 8.
    Staging never notifies anyone.
+
+   Tempoloom decision: CalDAV servers do not have to deliver invitations, so at
+   apply Tempoloom sends each guest of a created, moved or deleted event one
+   plain email through the instance's SMTP server ("Invitation", "Updated" or
+   "Cancelled", with the time in the organizer's time zone). It asks the
+   calendar provider not to send its own.
 10. Closing the review, or turning preview mode off, leaves the changes
     pending. Pending changes stay for later.
 11. Proposed: pending changes persist across reloads and browser restarts
@@ -78,6 +110,11 @@ feature the "change preview"; it is the same thing.
 12. Before writing a change, the system checks that the target still
     matches `before`. When it does not, the change becomes `stale`, is not
     written, and the user sees which changes were skipped and why.
+
+    Tempoloom decision: apply reads the calendars first. An event matches
+    when its start, end and title are as they were at staging time; a
+    planned event matches when Tempoloom has not moved it since; an
+    automation matches when its rules have not changed since.
 13. When a write fails (for example a calendar API error), the change becomes
     `failed` and the user sees the error. Other changes still apply.
 

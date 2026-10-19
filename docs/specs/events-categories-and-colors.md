@@ -21,7 +21,7 @@ events. The user can change the category of any single event.
 | `team_meeting` | Three or more people, all with an email in the user's login domain (E-0087). |
 | `one_on_one` | Exactly one other attendee, in the user's login domain (E-0087). |
 | `external_meeting` | At least one other attendee with an email outside the user's login domain (E-0087). |
-| `solo_work` | Not personal, and the user is the only attendee (E-0087). Work task chunks also use it (E-0172). Stats split it into deep (longer than 2 hours) and shallow (shorter than 2 hours) (E-0087). |
+| `solo_work` | Not personal, and the user is the only attendee (E-0087). Work task chunks also use it (E-0172). Stats split it into deep (longer than 2 hours) and shallow (shorter than 2 hours) (E-0087). Tempoloom decision: the split uses sessions, as `analytics-personal-stats.md` defines them; a session of exactly 2 hours is deep. |
 | `personal` | Mirrored from a calendar marked personal, or detected by keywords in title or description (E-0087). |
 | `travel` | Travel and logistics: travel and recovery buffers, `#tl_trip` events, and events detected by travel keywords (E-0087, E-0207). |
 | `flight` | A flight, detected or tagged (E-0052, E-0207). |

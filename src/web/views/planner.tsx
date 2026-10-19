@@ -6,7 +6,9 @@ import { addDays, localToUtc, utcToLocal, weekdayOf } from "../../shared/time.ts
 import { api } from "../lib/api.ts";
 import { CATEGORY_LABELS } from "../lib/categories.ts";
 import { formatWhen } from "../lib/format.ts";
+import { lazyComponent } from "../lib/lazy.ts";
 import { useLive } from "../lib/live.ts";
+import { overlay, withPreview } from "../lib/preview.ts";
 import { planNow, zone } from "../lib/state.ts";
 import { WeekView } from "./week.tsx";
 
@@ -20,6 +22,11 @@ const REASONS: Record<string, string> = {
   "no-space-priority": "higher-priority items use the free time",
   "after-due": "part of the work ends after the due date",
 };
+
+const PreviewPanel = lazyComponent<{ onApplied: () => void }>(() =>
+  import("./preview.tsx").then((m) => m.PreviewPanel),
+);
+const PlannerHints = lazyComponent(() => import("./hints.tsx").then((m) => m.PlannerHints));
 
 function mondayOf(z: string, t: number): string {
   const d = utcToLocal(z, t).date;
@@ -123,10 +130,12 @@ export function Planner() {
           Plan now
         </button>
       </div>
+      <PlannerHints />
+      <PreviewPanel onApplied={() => void load()} />
       <WeekView
         days={days}
         zone={z}
-        events={events}
+        events={withPreview(events, overlay.value)}
         now={Date.now()}
         onMove={onMove}
         onSelect={(id) => setSelected(events.find((e) => e.id === id) ?? null)}

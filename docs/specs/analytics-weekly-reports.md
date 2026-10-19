@@ -51,6 +51,10 @@ gets this email.
    week. Proposed set, show up to 4 that apply: busiest meeting day, longest
    focus session, number of meetings booked through booking links, hours of
    breaks taken, number of people met.
+
+   Tempoloom decision: until the weekly email exists, the stats page shows
+   these calendar facts for the chosen range, in this order, skipping facts
+   with a zero value.
 8. Next week preview: the primary calendar's events for next week, by day,
    with the busiest and the lightest day marked. Each day and each event
    links to the planner at that day.

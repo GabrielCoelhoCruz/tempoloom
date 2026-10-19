@@ -2,8 +2,14 @@ import { useEffect, useState } from "preact/hooks";
 import { addDays, utcToLocal, weekdayOf } from "../../shared/time.ts";
 import { api } from "../lib/api.ts";
 import { duration } from "../lib/format.ts";
+import { lazyComponent } from "../lib/lazy.ts";
 import { zone } from "../lib/state.ts";
 import { StatsTabs } from "./stats-tabs.tsx";
+
+const StatsExtras = lazyComponent<{ from: string; to: string }>(() =>
+  import("./stats-extras.tsx").then((m) => m.StatsExtras),
+);
+const DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 type Category =
   | "oneOnOne"
@@ -62,11 +68,17 @@ export function StatsPage() {
     "Next week": [addDays(monday, 7), addDays(monday, 13)],
     "Last 4 weeks": [addDays(monday, -28), addDays(monday, -1)],
   } as const;
-  const [range, setRange] = useState<readonly [string, string]>(picks["This week"]);
+  // ?from=&to= keeps the range across reloads.
+  const [range, setRange] = useState<readonly [string, string]>(() => {
+    const q = new URLSearchParams(location.search);
+    const [f, t] = [q.get("from") ?? "", q.get("to") ?? ""];
+    return DATE.test(f) && DATE.test(t) ? [f, t] : picks["This week"];
+  });
   const [grouping, setGrouping] = useState<"day" | "week">("day");
   const [stats, setStats] = useState<Stats | null>(null);
   useEffect(() => {
     void api<Stats>("GET", `/api/stats?from=${range[0]}&to=${range[1]}`).then(setStats);
+    history.replaceState(null, "", `/stats?from=${range[0]}&to=${range[1]}`);
   }, [range]);
 
   const groups = (() => {
@@ -186,6 +198,7 @@ export function StatsPage() {
               <strong data-testid="hl-bookings">{stats.highlights.bookings}</strong>
             </div>
           </div>
+          <StatsExtras from={range[0]} to={range[1]} />
         </>
       )}
     </div>

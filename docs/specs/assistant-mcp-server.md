@@ -24,6 +24,14 @@ products (ChatGPT, Claude, Cursor) belongs to the integration specs.
 | Authorization | OAuth 2.1 as in the MCP authorization spec | | Proposal. The reference says setup differs per client. |
 | `mcp_write_enabled` | boolean | true | Instance setting (`plans-feature-inventory.md`). When false, only read tools exist. |
 
+Tempoloom decision: the server URL is `<BASE_URL>/mcp`. The transport is
+Streamable HTTP with one JSON-RPC 2.0 message per POST and a JSON response;
+the server offers no server-sent stream and no sessions, so GET and DELETE
+answer 405. A client authenticates with a personal API key
+(`integrations-api-keys-zapier.md`) as a bearer token, instead of OAuth 2.1:
+Tempoloom has no OAuth authorization server. `mcp_write_enabled` is the
+environment variable `MCP_WRITE_ENABLED`.
+
 ### Tools (proposed set)
 
 The evidence names use cases, not tool names. Proposed tools, each scoped
@@ -46,6 +54,20 @@ to the signed-in user:
 | `propose_log_task_time` | write (staged) | `task_id`, `start`, `minutes` | Staged change id |
 | `list_staged_changes` | read | none | Pending staged changes of the user, with source and summary |
 | `apply_staged_changes` | write | list of staged change ids | Result per id: applied, stale or failed |
+
+Tempoloom decision: the server has all tools above except
+`propose_automation_change`, `propose_rsvp` and `propose_log_task_time`.
+Times are ISO 8601 with an offset. `find_free_time` returns slots of the
+given length, every 30 minutes and earliest first, inside the user's meeting
+hours (work hours when there are none), where the user, and guests who use
+the same instance, have no event that blocks planning; Tempoloom's own tasks,
+habits and focus time do not count as busy, because the planner moves them.
+`get_meeting_context` lists the meetings of the last 12 weeks that share a
+guest, and open tasks that share a word of four letters or more with the
+title. `propose_update_event` on an event that Tempoloom plans can change
+its start only; the move locks the event, as a drag in the planner does.
+A tool's input that does not match its schema gives a tool result with
+`isError`, so the model can correct it.
 
 ## Behavior
 
@@ -75,8 +97,16 @@ to the signed-in user:
 9. When `mcp_write_enabled` is false, the server does not list the
    `propose_*` tools or `apply_staged_changes`, and calls to them fail with
    a clear error.
+
+   Tempoloom decision: such a call gets the JSON-RPC error -32602 with a
+   message that says the server gives AI tools read-only access. The Account
+   page says the same.
 10. Each connection appears in the user's settings with client name and last
    use time. The user can revoke a connection (proposal).
+
+   Tempoloom decision: the API key list on the Account page is the connection
+   list: each key has a name and a last use time, and deleting the key
+   disconnects the tool. The planner names the key in each change it staged.
 
 ## Outputs
 

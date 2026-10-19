@@ -71,14 +71,28 @@ exactly 120 minutes counts as deep work (proposal).
 4. Focus time: deep work hours and shallow work hours. A weekday heat map
    colors each weekday by its average solo work time. The weekday with the
    most solo work time is highlighted as the most productive day.
+
+   Tempoloom decision: the stats page shows a "Time by category" panel with
+   the buckets of the category table (deep and shallow work apart, time away
+   as "Time away"), next to the earlier time breakdown. Time away counts the
+   work hours it covers. Breaks are all buffers except travel and airport
+   buffers, which count as travel. The chosen range stays in the page
+   address (`/stats?from=&to=`), so a reload keeps it.
 5. Work-life balance: hours of personal habits, hours of meetings that fall
    outside the user's work hours, and vacation hours.
 6. People met (personal view only): a list of people the user met in the
    range, each with the total meeting time together, sorted by time,
    largest first.
+
+   Tempoloom decision: a person counts with the full length of each meeting
+   the user attends with them (flexible meetings included); people with the
+   same time are sorted by email.
 7. Meeting breakdown: average time in team meetings, external meetings and
    one-on-ones. The weekday with the most meeting time and the weekday with
    the least are highlighted.
+
+   Tempoloom decision: the weekday with the least meeting time is chosen
+   among weekdays with work hours; on a tie, the earlier weekday.
 8. Highlights: total hours of focus time that managed events held, number
    of meetings booked through booking links, hours of break buffers between
    meetings, and hours of travel buffers.
@@ -100,6 +114,11 @@ exactly 120 minutes counts as deep work (proposal).
     patterns and routines.
 13. Fragmented focus time is solo work time in sessions shorter than
     2 hours (proposal; same threshold as shallow work).
+
+    Tempoloom decision: the insights panel shows meetings against solo work,
+    the average busy time per weekday, the days with many meetings (3 or
+    more, or 4 hours or more), solo work in pieces shorter than 2 hours, and
+    repeat events (the same series or title twice or more in the range).
 14. The user can ask assistant chat questions about their own stats (for
     example where their meeting time went last week). Chat answers use the
     same numbers as the stats view (`assistant-chat.md`).
@@ -115,6 +134,12 @@ exactly 120 minutes counts as deep work (proposal).
     time. Proposed: planned time is the managed event time that was on the
     calendar at the start of the day; actual time is the event time at the
     end of the day plus logged time.
+
+    Tempoloom decision: planned time is rebuilt from Tempoloom's change log
+    (`support-troubleshooting.md` rule 12), per kind of item; actual time is
+    the managed event time still on the calendar for that day. Only days
+    that have ended count. Logged time is not added yet: logged minutes are
+    stored per task, not per day.
 
 ## Outputs
 
