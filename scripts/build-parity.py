@@ -241,8 +241,6 @@ E2E_NOTES = {
 
 # Row id -> reason, for rows implemented in part (some behavior has E2E, some does not).
 PARTIAL = {
-    930: "Endpoints are per user, on the Booking links page, with E2E on CalDAV (\u201cbooking, reschedule and cancel send signed requests\u201d); teams and the admin role are not implemented",
-    571: "A per-user webhooks section on the Booking links page; no team settings page yet",
     934: "http on a public host is rejected in E2E; the localhost and IP-literal checks are in code but not under E2E, because the E2E server allows private receivers (WEBHOOK_ALLOW_PRIVATE)",
     936: "success on 200 and failure on 500 are E2E-proven; the 10-second timeout is not under test",
     938: "the delivery worker suspends the endpoint and the page offers Resume; not under test (needs 24 hours of failures)",
@@ -278,7 +276,6 @@ PARTIAL = {
     283: "Future managed events and external events from 90 days back are repainted; past managed events are not",
     284: "An event that cannot change color is skipped and painting never stops a run; not under E2E (Google)",
     285: "At most 2 scope changes a minute (E2E); no repaint-all button",
-    221: "Text, count, length, exact title, tag and category filters; category is E2E-proven; no filter by person",
     261: "Google out-of-office events are busy, so they block like any busy event; Google E2E pending",
     262: "Away time over 8 hours is vacation, shorter is personal commitment (unit tests); stats do not split it yet",
     263: "#tl_free opens a busy event to tasks and habits (E2E for a timed event); not under E2E for out of office",
@@ -316,7 +313,6 @@ BLOCKED = {
     594: "No benchmark data: the evidence gives no targets per role (teams-policies.md open question 3)",
     436: "Needs video conferencing integrations, which need vendor apps and test accounts",
     673: "The evidence names it only on the pricing page and gives no behavior to build (plans-feature-inventory.md open questions); org-chart data exists through SCIM managers",
-    768: "Needs a monthly habit frequency (habits-automation.md), which is not implemented, for the monthly reviews; the other executive routines exist as library entries (E2E: \u201ca habit entry fills the habit form\u2026\u201d) and as team habit templates (E2E: \u201cteam habit templates show at the top of every member's habits page\u2026\u201d)",
     928: "Needs the vendor's Zapier app and a Zapier account",
     929: "Needs the vendor's Zapier app and a Zapier account",
     591: "Needs the Slack app (a vendor developer app and a test workspace)",
@@ -325,37 +321,28 @@ BLOCKED = {
 }
 for n in [5, 6, 12, 14, 15, 16, 17, 18, 20, 21, 22, 24, 31]:
     BLOCKED[718 + n] = "A prompt entry: needs the assistant chat, which is not implemented"
-for n in [4, 9]:
-    BLOCKED[718 + n] = "Needs meeting checks, which are not implemented"
-for n in [8, 26]:
-    BLOCKED[718 + n] = "Needs a meeting load cap, which is not implemented"
-BLOCKED[718 + 2] = "Needs a buffer filter by person, which is not implemented"
-BLOCKED[718 + 27] = "Needs a buffer after a run of meetings, which is not implemented"
-BLOCKED[718 + 33] = "Needs no-meeting days for meetings and booking links, which are not implemented"
 
 # Row id -> limits, for rows implemented with unit or property tests only.
 UNIT = {
     9: "cooldown options are in the engine and settings, not in the UI", 27: "API only; no UI yet",
     55: "engine only; no drag UI yet", 58: "", 59: "booking-link side not implemented", 70: "",
     73: "several ranges per day; no copy-to-all", 90: "meetings, then buffers, then habits inside one level; unit tests only",
-    100: "", 109: "", 152: "engine only", 154: "", 156: "daily and weekly; monthly and custom not implemented",
+    100: "", 109: "", 154: "", 156: "daily and weekly; monthly and custom not implemented",
     161: "", 165: "", 178: "", 196: "", 197: "", 202: "", 203: "", 206: "", 208: "", 209: "", 219: "",
     225: "", 226: "API only",
-    228: "", 249: "tasks and habits honor it; meetings and booking links not implemented",
+    228: "",
     259: "title and description; not the RSVP note", 292: "settings field; no UI yet", 506: "API only",
     517: "status is stored; no reconnect UI yet",
     383: "set through the API; the form derives the slug from the title", 384: "several durations work; the default is the first",
     388: "", 389: "rolling days only; no fixed end date", 390: "before and after buffers; no travel or recovery buffer checks",
     392: "a free-text location only; no Meet, Zoom or Gong", 398: "busy event with the booker as guest and manage link; no conference link",
-    408: "", 411: "", 412: "the page marks preferred times; no legend yet", 415: "",
-    420: "name, email and message; no CC, questions or location choice",
-    450: "calendars of one account; several accounts not tested", 455: "toggle works; no throttle warning",
-    456: "", 457: "deletes at once; no confirmation dialog", 467: "", 468: "API only; no UI switch",
+    408: "", 412: "the page marks preferred times; no legend yet",
+    456: "", 467: "", 468: "API only; no UI switch",
     470: "", 471: "stored per policy; no UI", 472: "", 473: "the skip half is E2E-proven; free copies in details mode are not",
-    475: "", 476: "copies the details; the provider visibility is not set to private", 480: "", 490: "",
+    475: "", 476: "copies the details; the provider visibility is not set to private", 480: "",
     193: "work and personal habit hours in stats; no per-habit progress", 353: "one-to-one, group and booked meeting hours",
-    596: "personal stats only; no team tab", 604: "meetings outside work hours and personal habit hours",
-    606: "one-to-one and group split; no heaviest or lightest weekday", 607: "meetings, focus and booking counts; no breaks or travel",
+    604: "meetings outside work hours and personal habit hours",
+    607: "meetings, focus and booking counts; no breaks or travel",
     704: "phase tabs E2E-proven; reset not covered by E2E", 708: "sound on or off; one alarm sound", 712: "today's summary only",
     60: "this event or the whole series; E2E covers a single event", 61: "only main-calendar events can change", 297: "",
     298: "only main-calendar events can change", 238: "a fixed 30 minutes; no setting yet",
@@ -426,7 +413,6 @@ E2E_NOTES.update({
 PARTIAL.update({
     299: "Habit, focus time, buffer and flexible meeting automations share the list, its groups and its type filter (E2E: \u201cthe automation list shows habits, flexible meetings\u2026\u201d); the meeting overload and meeting check types come from their own streams and join the list's type table",
     301: "From the library and from the top-bar create menu (E2E: \u201ca library entry opens the shared form\u2026\u201d, \u201cthe automation list shows habits\u2026\u201d); asking the assistant chat needs the chat, which is not implemented",
-    282: "Habit, focus time, buffer and task colors override the category color (E2E: \u201ca habit writes its emoji\u2026\u201d, \u201ca task color overrides the category color\u2026\u201d); a mirroring policy color is not built on this branch",
     245: "Travel and airport buffers start public, with the travel marker (E2E: \u201ctask chunks, habits and flexible meetings get the calendar default reminder\u2026\u201d); mirroring skips every managed event, while mirroring rule 15 skips only copies, so no copy of a travel buffer exists to follow a policy",
 })
 for n in [1, 7, 10, 19, 23, 28, 29, 30]:
@@ -802,8 +788,21 @@ def status(row_id, spec_file, notes):
         return "blocked", "Not implemented yet; needs the vendor's developer app and a test account."
     return "blocked", "Not implemented yet."
 
+def check_one_map_per_row():
+    maps = {"E2E": E2E, "PARTIAL": PARTIAL, "GOOGLE_ROWS": GOOGLE_ROWS, "UNIT": UNIT, "BLOCKED": BLOCKED}
+    seen = {}
+    for name, m in maps.items():
+        for row_id in m:
+            seen.setdefault(row_id, []).append(name)
+    dups = {r: names for r, names in seen.items() if len(names) > 1}
+    if dups:
+        for r in sorted(dups):
+            print(f"row {r} is in more than one status map: {', '.join(dups[r])}", file=sys.stderr)
+        sys.exit(f"{len(dups)} rows are in more than one status map; keep each row in one map")
+
 def main():
-    files = sorted(glob.glob(f"{STAGING}/parity-[A-F]-*.md"))
+    check_one_map_per_row()
+    files =sorted(glob.glob(f"{STAGING}/parity-[A-F]-*.md"))
     rows, n = [], 0
     for f in files:
         group = re.sub(r"^parity-|\.md$", "", os.path.basename(f))
