@@ -33,12 +33,11 @@ const week = (cal: CalendarDriver) => cal.events(at(W, "00:00"), at(day(7), "00:
 const lunchDays = (l: Awaited<ReturnType<typeof week>>) =>
   titled(l, "Lunch").map((e) => local(e.start));
 
-async function category(page: Page, text: string): Promise<string> {
+async function expectCategory(page: Page, text: string, shown: string) {
   await page.locator(".ev-external", { hasText: text }).first().click();
   const drawer = page.getByTestId("event-drawer");
-  const status = (await drawer.locator(".status").nth(1).textContent()) ?? "";
+  await expect(drawer.locator(".status").nth(1)).toContainText(shown);
   await drawer.getByRole("button", { name: "Close", exact: true }).click();
-  return status;
 }
 
 async function openStats(page: Page) {
@@ -78,8 +77,8 @@ test("out-of-office time blocks habits and counts as vacation from 8 hours, else
 
   const checks = async () => {
     await openWeek(page);
-    expect(await category(page, "OOO")).toContain("Vacation");
-    expect(await category(page, "Dentist away")).toContain("Personal commitment");
+    await expectCategory(page, "OOO", "Vacation");
+    await expectCategory(page, "Dentist away", "Personal commitment");
     await openStats(page);
     const cats = page.getByTestId("cat-breakdown");
     await expect(cats.getByTestId("cat-vacation")).toHaveText("8 h");
@@ -106,7 +105,7 @@ test("out-of-office time blocks habits and counts as vacation from 8 hours, else
   await page.reload();
   await openWeek(page);
   await expect(page.locator(".ev:not(.ev-external)", { hasText: "Lunch" })).toHaveCount(5);
-  expect(await category(page, "OOO #tl_free")).toContain("Vacation");
+  await expectCategory(page, "OOO #tl_free", "Vacation");
 });
 
 test("a company holiday blocks the day once the user accepts its invitation; an unanswered one and a free holiday do not (events-out-of-office rules 9-10)", async ({

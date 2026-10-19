@@ -37,6 +37,15 @@ const MirrorSettings = lazyComponent(() => import("./mirroring.tsx").then((m) =>
 
 const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
+const MARKERS = [
+  ["free", "Free"],
+  ["busy", "Busy"],
+  ["locked", "Locked"],
+  ["conflict", "Conflict"],
+  ["done", "Done"],
+  ["partial", "Partly done"],
+] as const;
+
 export function HoursEditor({
   set,
   onSave,
@@ -471,6 +480,51 @@ export function Settings() {
           <p class="meta wide">
             Repaint all events puts every color back to these settings, also where a color was
             changed in the calendar. Outlook calendars may not show these colors.
+          </p>
+        </form>
+      </section>
+
+      <section>
+        <h2>Title markers</h2>
+        <form
+          class="form"
+          data-testid="marker-form"
+          onSubmit={(e) => {
+            e.preventDefault();
+            const f = new FormData(e.currentTarget as HTMLFormElement);
+            void act(() =>
+              api("PATCH", "/api/settings", {
+                markers: {
+                  ...Object.fromEntries(MARKERS.map(([k]) => [k, String(f.get(k)).trim()])),
+                  position: f.get("position"),
+                },
+              }),
+            );
+          }}
+        >
+          {MARKERS.map(([k, label]) => (
+            <label key={k}>
+              {label}
+              <input name={k} defaultValue={settings.markers[k]} maxLength={8} />
+            </label>
+          ))}
+          <label>
+            Marker position
+            <select name="position">
+              <option value="start" selected={settings.markers.position === "start"}>
+                Before the title
+              </option>
+              <option value="end" selected={settings.markers.position === "end"}>
+                After the title
+              </option>
+            </select>
+          </label>
+          <button type="submit" class="primary">
+            Save markers
+          </button>
+          <p class="meta wide">
+            Tempoloom puts one of these in the calendar title of habits, task chunks, meetings and
+            buffers to show their state. Leave a field empty for no marker.
           </p>
         </form>
       </section>

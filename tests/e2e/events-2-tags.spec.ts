@@ -61,14 +61,12 @@ const invitation = (
     ),
   ]);
 
-/** The planner details of an external event: "external · busy · Travel" and so on. */
-async function details(page: Page, text: string): Promise<string> {
+/** Opens an external event in the planner and waits for its details: "external · busy · Travel". */
+async function expectDetails(page: Page, text: string, shown: string) {
   await page.locator(".ev-external", { hasText: text }).first().click();
   const drawer = page.getByTestId("event-drawer");
-  await expect(drawer).toBeVisible();
-  const status = (await drawer.locator(".status").nth(1).textContent()) ?? "";
+  await expect(drawer.locator(".status").nth(1)).toContainText(shown);
   await drawer.getByRole("button", { name: "Close", exact: true }).click();
-  return status;
 }
 
 test("travel tags in the title, the description and the user's own RSVP note add travel time; #tl_flight adds airport time and #tl_trip only the travel category; a removed tag removes its buffers (events-tags rules 16-18, places 1-3, edge cases 4-5)", async ({
@@ -138,9 +136,9 @@ test("travel tags in the title, the description and the user's own RSVP note add
   // The categories show in the planner and stay after a reload.
   const categories = async () => {
     await openWeek(page);
-    expect(await details(page, "Ride Ana home")).toContain("Travel");
-    expect(await details(page, "Lisbon trip")).toContain("Flight");
-    expect(await details(page, "City tour")).toContain("Solo work");
+    await expectDetails(page, "Ride Ana home", "Travel");
+    await expectDetails(page, "Lisbon trip", "Flight");
+    await expectDetails(page, "City tour", "Solo work");
   };
   await categories();
   await page.reload();
@@ -192,7 +190,7 @@ test("a busy event titled only #tl_busy turns free and still keeps tasks out; a 
   await openWeek(page);
   await page.reload();
   await expect(page.locator(".ev-external", { hasText: "#tl_busy" })).toHaveCount(2);
-  expect(await details(page, "Hold")).toContain("busy");
+  await expectDetails(page, "Hold", "busy");
   await page.locator(".ev-external").filter({ hasNotText: "Hold" }).first().click();
   await expect(page.getByTestId("event-drawer").locator(".status").nth(1)).toContainText(
     "external · free",

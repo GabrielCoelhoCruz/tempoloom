@@ -30,16 +30,14 @@ async function setLevel(page: Page, n: number, level: string, series: boolean) {
   await expect(page.getByTestId("event-drawer")).toHaveCount(0);
 }
 
-async function levelOf(page: Page, n: number): Promise<string> {
+async function expectLevel(page: Page, n: number, level: string) {
   await page.locator(`.ev-external[data-start="${at(day(n), "09:00")}"]`).click();
   const select = page.getByTestId("external-priority").getByLabel("Priority for booking links");
-  await expect(select).toBeVisible();
-  const v = await select.inputValue();
+  await expect(select).toHaveValue(level);
   await page
     .getByTestId("event-drawer")
     .getByRole("button", { name: "Close", exact: true })
     .click();
-  return v;
 }
 
 test("a priority for one occurrence of a series changes only that one; for the whole series it changes every occurrence (rules 2, 3, 5)", async ({
@@ -77,14 +75,14 @@ test("a priority for one occurrence of a series changes only that one; for the w
   await setLevel(page, 0, "3", false);
   await eventually(offered, (o) => expect(o).toEqual([`${W} 09:00`]));
   await page.reload();
-  expect(await levelOf(page, 0)).toBe("3");
-  expect(await levelOf(page, 1)).toBe("1");
+  await expectLevel(page, 0, "3");
+  await expectLevel(page, 1, "1");
 
   // The whole series, chosen on Tuesday's standup.
   await setLevel(page, 1, "4", true);
   await eventually(offered, (o) => expect(o).toHaveLength(5));
   await page.reload();
-  for (const n of [0, 2, 4]) expect(await levelOf(page, n)).toBe("4");
+  for (const n of [0, 2, 4]) await expectLevel(page, n, "4");
   // The standup itself never moves.
   const standups = (await cal.events(at(W, "00:00"), at(day(7), "00:00"))).filter(
     (e) => e.summary === "Team standup",
