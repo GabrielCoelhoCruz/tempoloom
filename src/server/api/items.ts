@@ -50,6 +50,19 @@ const habitInput = z.object({
         period: z.literal("weekly"),
         days: z.array(z.number().int().min(1).max(7)).min(1),
       }),
+      z.object({ period: z.literal("monthly"), dayOfMonth: z.number().int().min(1).max(31) }),
+      z.object({
+        period: z.literal("monthly"),
+        nth: z.union([
+          z.literal(1),
+          z.literal(2),
+          z.literal(3),
+          z.literal(4),
+          z.literal(5),
+          z.literal("last"),
+        ]),
+        weekday: z.number().int().min(1).max(7),
+      }),
     ])
     .optional(),
   starting: z.iso.date().nullable().optional(),
@@ -58,7 +71,7 @@ const habitInput = z.object({
   reservedWords: z.array(z.string().max(100)).max(20).optional(),
 });
 
-const bufferInput = z.object({
+export const bufferInput = z.object({
   title: z.string().trim().min(1).max(255),
   enabled: z.boolean().optional(),
   level: level.optional(),
@@ -75,19 +88,23 @@ const bufferInput = z.object({
         })
         .optional(),
       participants: z
-        .object({ op: z.enum([">=", "<=", "="]), value: z.number().int().min(1) })
+        .object({ op: z.enum([">=", "<=", "=", ">", "<"]), value: z.number().int().min(1) })
         .optional(),
       length: z
-        .object({ op: z.enum([">=", "<=", "="]), minutes: z.number().int().min(1) })
+        .object({ op: z.enum([">=", "<=", "=", ">", "<"]), minutes: z.number().int().min(1) })
         .optional(),
       exactTitle: z.string().optional(),
       tags: z.array(z.string().min(1)).optional(),
       travel: z.boolean().optional(),
       flight: z.boolean().optional(),
       categories: z.array(z.enum(CATEGORIES)).min(1).optional(),
+      people: z.array(z.string().trim().min(1).max(320)).max(50).optional(),
+      runLongerThanMinutes: z.number().int().min(1).max(1440).optional(),
     })
     .optional(),
   onConflict: z.enum(["remove", "keep_as_conflict"]).optional(),
+  /** One calendar id, or null for all calendars. */
+  calendarScope: z.string().nullable().optional(),
 });
 
 const focusInput = z.object({
@@ -574,6 +591,17 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
     const user = c.get("user");
     const b = await jsonBody(c, bufferInput);
     const lvl = b.level ?? 3;
+    if (
+      b.calendarScope &&
+      !one(
+        db,
+        `SELECT 1 FROM calendars c JOIN accounts a ON a.id = c.account_id WHERE c.id = ? AND a.user_id = ?`,
+        b.calendarScope,
+        user.id,
+      )
+    ) {
+      badRequest("calendarScope", "Unknown calendar");
+    }
     const id = randomUUID();
     const t = now();
     run(
@@ -595,6 +623,9 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
       t,
       t,
     );
+    if (b.calendarScope) {
+      run(db, "UPDATE buffers SET calendar_scope = ? WHERE id = ?", b.calendarScope, id);
+    }
     changed(user.id);
     return c.json({ buffer: one(db, "SELECT * FROM buffers WHERE id = ?", id) }, 201);
   });

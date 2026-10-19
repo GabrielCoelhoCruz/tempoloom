@@ -588,6 +588,11 @@ export class CalDavProvider implements CalendarProvider {
       for (const a of ev.getAllProperties("attendee")) {
         if (mailto(a.getFirstValue()) === self) a.setParameter("partstat", partstat);
       }
+      // The note goes with the answer, as an iCalendar COMMENT of the user's copy.
+      if (change.comment !== undefined) {
+        ev.removeAllProperties("comment");
+        if (change.comment) ev.addPropertyWithValue("comment", change.comment);
+      }
     }
     ev.removeAllProperties("last-modified");
     ev.addPropertyWithValue("last-modified", toUtcTime(this.#now()));

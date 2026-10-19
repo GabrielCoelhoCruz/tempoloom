@@ -6,8 +6,10 @@ import type { WeeklyHours } from "../../scheduler/hours.ts";
 import type {
   BufferFilter,
   CurrentPlacement,
+  ExternalEvent,
   HabitItem,
   Level,
+  OverloadItem,
   Placement,
   ReportEntry,
   Snapshot,
@@ -26,6 +28,7 @@ import { all, type Db, one, run } from "../db.ts";
 import { fragmentationPreference } from "../policies/model.ts";
 import type { CalendarProvider } from "../providers/types.ts";
 import { getSettings, type Settings } from "../settings.ts";
+import { afterPush } from "./after-push.ts";
 import { categoryContext, colorFor, paintExternal } from "./categories.ts";
 import { externalEvents } from "./events.ts";
 import { attendeeOccurrences, attendeesOf, meetingItems } from "./meetings.ts";
@@ -100,8 +103,21 @@ export function loadSnapshot(
   const hours: Record<string, WeeklyHours> = Object.fromEntries(
     hoursRows.map((h) => [h.id, JSON.parse(h.weekly) as WeeklyHours]),
   );
+  const overloadRows = all<{
+    id: string;
+    title: string;
+    hours_set_id: string;
+    daily_max_minutes: number | null;
+    weekly_max_minutes: number | null;
+    heavy_day_minutes: number | null;
+    min_block_minutes: number;
+    created_at: number;
+    rules_changed_at: number;
+  }>(db, "SELECT * FROM meeting_overloads WHERE user_id = ? AND enabled = 1", userId);
+  // A weekly meeting limit and a heavy previous workday look back into the past week.
+  const lookBack = overloadRows.length > 0 ? 8 * DAY : DAY;
   const events = [
-    ...externalEvents(db, userId, now - DAY, windowEnd),
+    ...externalEvents(db, userId, now - lookBack, windowEnd),
     ...attendeeOccurrences(db, userId, now, windowEnd),
   ];
 
@@ -115,7 +131,10 @@ export function loadSnapshot(
   });
   const current = rows.filter((r) => r.end_ms > now).map(toPlacement);
   const weekStart = weekStartOf(zone, now, settings.weekStart);
-  const past = rows.filter((r) => r.end_ms <= now && r.start_ms >= weekStart).map(toPlacement);
+  // An ended habit occurrence is done for its date, also when the user moved it to an earlier week.
+  const past = rows
+    .filter((r) => r.end_ms <= now && (r.start_ms >= weekStart || r.kind === "habit"))
+    .map(toPlacement);
 
   const exclusions = new Map<string, { start: number; end: number }[]>();
   for (const x of all<{ kind: string; item_id: string; start_ms: number; end_ms: number }>(
@@ -134,6 +153,16 @@ export function loadSnapshot(
   ).map((d) => d.key);
   const notes = new Map<string, string>();
   const titles = new Map<string, string>();
+  const today = utcToLocal(zone, now).date;
+  const rescheduled = new Map<string, Partial<Record<LocalDate, number>>>();
+  for (const r of all<{ habit_id: string; date: string; minute: number }>(
+    db,
+    "SELECT habit_id, date, minute FROM habit_reschedules WHERE user_id = ? AND date >= ?",
+    userId,
+    today,
+  )) {
+    rescheduled.set(r.habit_id, { ...rescheduled.get(r.habit_id), [r.date]: r.minute });
+  }
 
   const consumed = new Map<string, number>();
   for (const r of rows) {
@@ -220,6 +249,7 @@ export function loadSnapshot(
         .map((k) => k.slice(skipPrefix.length) as LocalDate),
       exclusions: exclusions.get(`habit:${h.id}`) ?? [],
       changed: h.rules_changed_at > lastPlannedAt,
+      ...(rescheduled.has(h.id) ? { rescheduled: rescheduled.get(h.id) ?? {} } : {}),
     };
   });
 
@@ -234,6 +264,7 @@ export function loadSnapshot(
     busy: number;
     filter: string;
     on_conflict: "remove" | "keep_as_conflict";
+    calendar_scope: string | null;
     created_at: number;
     rules_changed_at: number;
   }>(db, "SELECT * FROM buffers WHERE user_id = ? AND enabled = 1", userId).map((b) => {
@@ -251,6 +282,7 @@ export function loadSnapshot(
       filter: JSON.parse(b.filter) as BufferFilter,
       onConflict: b.on_conflict,
       changed: b.rules_changed_at > lastPlannedAt,
+      calendarScope: b.calendar_scope,
     };
   });
 
@@ -264,6 +296,7 @@ export function loadSnapshot(
     min_block_minutes: number;
     max_block_minutes: number;
     busy: number;
+    mode: "proactive" | "reactive";
     created_at: number;
     rules_changed_at: number;
   }>(db, "SELECT * FROM focus_goals WHERE user_id = ? AND enabled = 1", userId).map((f) => {
@@ -282,6 +315,22 @@ export function loadSnapshot(
       busy: f.busy === 1,
       exclusions: exclusions.get(`focus:${f.id}`) ?? [],
       changed: f.rules_changed_at > lastPlannedAt,
+      mode: f.mode,
+    };
+  });
+  const overloads = overloadRows.map((o): OverloadItem => {
+    titles.set(`focus:${o.id}`, o.title);
+    return {
+      id: o.id,
+      title: o.title,
+      createdAt: o.created_at,
+      hours: o.hours_set_id,
+      dailyMaxMinutes: o.daily_max_minutes,
+      weeklyMaxMinutes: o.weekly_max_minutes,
+      heavyDayMinutes: o.heavy_day_minutes,
+      minBlockMinutes: o.min_block_minutes,
+      exclusions: exclusions.get(`focus:${o.id}`) ?? [],
+      changed: o.rules_changed_at > lastPlannedAt,
     };
   });
 
@@ -312,9 +361,52 @@ export function loadSnapshot(
     meetings: meetings.items,
     buffers,
     focus,
+    ...(overloads.length > 0 ? { overloads } : {}),
+    ...(buffers.length > 0 ? { mirrorCopies: copyAnchors(db, userId, now) } : {}),
     ...(fragmentation ? { fragmentation } : {}),
   };
   return { snapshot, rows, notes, titles };
+}
+
+/** Tempoloom's own mirror copies as their calendars show them (buffers-travel.md rule 13). */
+export function copyAnchors(db: Db, userId: string, now: number): ExternalEvent[] {
+  return all<{
+    id: string;
+    calendar_id: string;
+    source_calendar_id: string;
+    start_ms: number;
+    end_ms: number;
+    summary: string;
+    description: string;
+    location: string;
+    all_day: number;
+    busy: number;
+  }>(
+    db,
+    `SELECT m.id, m.calendar_id, p.source_calendar_id, m.start_ms, m.end_ms, e.summary, e.description,
+       e.location, e.all_day, e.busy
+     FROM managed_events m JOIN mirror_policies p ON p.id = m.source_id
+       JOIN events e ON e.calendar_id = m.calendar_id AND e.event_id = m.event_id
+     WHERE m.user_id = ? AND m.kind = 'mirror' AND m.end_ms > ?`,
+    userId,
+    now,
+  ).map((c) => ({
+    id: `mirror:${c.id}`,
+    start: c.start_ms,
+    end: c.end_ms,
+    allDay: c.all_day === 1,
+    busy: c.busy === 1,
+    title: c.summary,
+    description: c.description,
+    selfResponse: null,
+    organizerSelf: true,
+    attendeeCount: 0,
+    location: c.location,
+    eventType: "default",
+    bookedViaLink: false,
+    calendarId: c.calendar_id,
+    mirrorSource: c.source_calendar_id,
+  }));
 }
 
 export function titleFor(settings: Settings, base: string, p: Placement): string {
@@ -495,6 +587,7 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
     now,
     snapshot.windowEnd,
   );
+  await afterPush(db, userId, settings, (accountId) => ctx.provider(accountId), now);
   run(
     db,
     `INSERT INTO plan_reports (user_id, report, planned_at) VALUES (?, ?, ?)

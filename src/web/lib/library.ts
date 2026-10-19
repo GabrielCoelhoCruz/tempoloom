@@ -44,7 +44,15 @@ export interface BufferPreset {
     travel?: boolean;
     flight?: boolean;
     categories?: Category[];
+    people?: string[];
+    runLongerThanMinutes?: number;
   };
+}
+
+export interface MeetingOverloadPreset {
+  dailyMaxHours?: number;
+  weeklyMaxHours?: number;
+  heavyDayHours?: number;
 }
 
 export interface FocusPreset {
@@ -70,7 +78,9 @@ export type LibraryEntry = {
   summary: string;
 } & (
   | { kind: "habit"; preset: HabitPreset }
-  | { kind: "buffer"; preset: BufferPreset }
+  /** `form`: the entry opens the buffer form, because the user must add something (edge case 1). */
+  | { kind: "buffer"; preset: BufferPreset; form?: boolean }
+  | { kind: "meeting_overload"; preset: MeetingOverloadPreset }
   | { kind: "focus_time"; preset: FocusPreset }
   | { kind: "flexible_meeting"; preset: MeetingPreset }
   | { kind: "booking_link"; preset: LinkPreset }
@@ -81,7 +91,6 @@ export type LibraryEntry = {
 
 const NEEDS_ASSISTANT = "Needs the assistant chat, which Tempoloom does not have yet.";
 const NEEDS_CHECKS = "Needs meeting checks, which Tempoloom does not have yet.";
-const NEEDS_CAP = "Needs a meeting load cap, which Tempoloom does not have yet.";
 const prompt = (slug: string, name: string, summary: string): LibraryEntry => ({
   slug,
   name,
@@ -111,8 +120,9 @@ export const LIBRARY: LibraryEntry[] = [
     name: "Prep before executive meetings",
     group: "buffers",
     summary: "15 min before meetings with chosen people. P2.",
-    kind: "unavailable",
-    reason: "Needs a buffer filter by person, which Tempoloom does not have yet.",
+    kind: "buffer",
+    form: true,
+    preset: { side: "before", minutesBefore: 15, level: 2, busy: true, filter: { people: [] } },
   },
   {
     slug: "prep-interviews",
@@ -150,8 +160,8 @@ export const LIBRARY: LibraryEntry[] = [
     name: "Recovery day after heavy meeting days",
     group: "other",
     summary: "After 5 h of meetings, cap the next workday at 2 h.",
-    kind: "unavailable",
-    reason: NEEDS_CAP,
+    kind: "meeting_overload",
+    preset: { dailyMaxHours: 2, heavyDayHours: 5 },
   },
   {
     slug: "flag-meeting-problems",
@@ -233,16 +243,22 @@ export const LIBRARY: LibraryEntry[] = [
     name: "Meeting load cap",
     group: "other",
     summary: "At most 20 h of meetings a week and 5 h a day.",
-    kind: "unavailable",
-    reason: NEEDS_CAP,
+    kind: "meeting_overload",
+    preset: { dailyMaxHours: 5, weeklyMaxHours: 20 },
   },
   {
     slug: "breaks-meeting-runs",
     name: "Breaks after meeting runs",
     group: "buffers",
     summary: "15 min after back-to-back meetings longer than 90 min.",
-    kind: "unavailable",
-    reason: "Needs a buffer after a run of meetings, which Tempoloom does not have yet.",
+    kind: "buffer",
+    preset: {
+      side: "after",
+      minutesAfter: 15,
+      level: 3,
+      busy: true,
+      filter: { participants: { op: ">=", value: 2 }, runLongerThanMinutes: 90 },
+    },
   },
   {
     slug: "travel-meetings",

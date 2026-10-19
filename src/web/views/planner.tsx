@@ -6,6 +6,7 @@ import { addDays, localToUtc, utcToLocal, weekdayOf } from "../../shared/time.ts
 import { api } from "../lib/api.ts";
 import { CATEGORY_LABELS } from "../lib/categories.ts";
 import { formatWhen } from "../lib/format.ts";
+import { lazyComponent } from "../lib/lazy.ts";
 import { useLive } from "../lib/live.ts";
 import { planNow, zone } from "../lib/state.ts";
 import { WeekView } from "./week.tsx";
@@ -20,6 +21,20 @@ const REASONS: Record<string, string> = {
   "no-space-priority": "higher-priority items use the free time",
   "after-due": "part of the work ends after the due date",
 };
+
+// Event actions, the running event's tasks and focus progress load on demand.
+const EventActions = lazyComponent<{
+  event: PlannerEvent;
+  zone: string;
+  run: (fn: () => Promise<unknown>) => void;
+  close: () => void;
+}>(() => import("./planner-extras.tsx").then((m) => m.EventActions));
+const CurrentTasks = lazyComponent(() =>
+  import("./planner-extras.tsx").then((m) => m.CurrentTasks),
+);
+const FocusProgress = lazyComponent<{ week: string }>(() =>
+  import("./planner-extras.tsx").then((m) => m.FocusProgress),
+);
 
 function mondayOf(z: string, t: number): string {
   const d = utcToLocal(z, t).date;
@@ -123,6 +138,8 @@ export function Planner() {
           Plan now
         </button>
       </div>
+      <FocusProgress week={weekStart} />
+      <CurrentTasks />
       <WeekView
         days={days}
         zone={z}
@@ -277,6 +294,13 @@ export function Planner() {
               )}
             </div>
           )}
+          <EventActions
+            key={selected.id}
+            event={selected}
+            zone={z}
+            run={(fn) => void run(fn)}
+            close={() => setSelected(null)}
+          />
           <button type="button" onClick={() => setSelected(null)}>
             Close
           </button>

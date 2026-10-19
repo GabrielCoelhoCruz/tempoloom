@@ -176,7 +176,13 @@ export class GoogleProvider implements CalendarProvider {
     if (answer) {
       const current = await this.#api.getEvent(calendarId, eventId).catch(mapError);
       patch.attendees = (current.attendees ?? []).map((a) =>
-        a.self ? { ...a, responseStatus: answer } : a,
+        a.self
+          ? {
+              ...a,
+              responseStatus: answer,
+              ...(change.comment !== undefined ? { comment: change.comment } : {}),
+            }
+          : a,
       );
     }
     // The organizer hears about a changed answer; nobody hears about other edits.

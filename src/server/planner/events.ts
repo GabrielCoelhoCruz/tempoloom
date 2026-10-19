@@ -52,6 +52,8 @@ export function externalEvents(db: Db, userId: string, from: number, to: number)
         eventType: e.event_type,
         bookedViaLink: props.tl_booking === "1",
         category: externalCategory(ctx, e),
+        calendarId: e.calendar_id,
+        attendees: JSON.parse(e.attendees) as string[],
       },
     ];
   });
