@@ -86,6 +86,35 @@ export function recoveryMinutes(db: Db, userId: string, meeting: ExternalEvent):
   return longest;
 }
 
+/**
+ * The person's travel time for a booked meeting at an address: the longest
+ * sides of their enabled travel buffer automations that match it (rule 10).
+ */
+export function travelMinutes(
+  db: Db,
+  userId: string,
+  meeting: ExternalEvent,
+): { travelBeforeMinutes: number; travelAfterMinutes: number } {
+  let before = 0;
+  let after = 0;
+  for (const b of all<{
+    side: string;
+    minutes_before: number;
+    minutes_after: number;
+    filter: string;
+  }>(
+    db,
+    "SELECT side, minutes_before, minutes_after, filter FROM buffers WHERE user_id = ? AND enabled = 1",
+    userId,
+  )) {
+    const f = JSON.parse(b.filter) as BufferFilter;
+    if (!f.travel || !matchesFilter(f, meeting)) continue;
+    if (b.side !== "after") before = Math.max(before, b.minutes_before);
+    if (b.side !== "before") after = Math.max(after, b.minutes_after);
+  }
+  return { travelBeforeMinutes: before, travelAfterMinutes: after };
+}
+
 /** Rule 16 among the pool members who pass for the slot. */
 export function assign(
   db: Db,
@@ -146,6 +175,10 @@ export interface BookedEvent {
   end: number;
   location: string;
   bookerEmail: string;
+  /** Guests the booker added. */
+  cc?: string[];
+  /** The host's calendar for a new event; null or missing: the main calendar. */
+  calendarId?: string | null;
 }
 
 export interface Placement {
@@ -210,7 +243,11 @@ export async function writeBookingEvents(
       busy: true,
       colorId: null,
       organizer: host,
-      attendees: [booker, ...guests(false)],
+      attendees: [
+        booker,
+        ...(next.event.cc ?? []).filter((e) => e !== booker && e !== host),
+        ...guests(false),
+      ],
       optionalAttendees: guests(true),
       ...(next.event.location ? { location: next.event.location } : {}),
       privateProps: { tl_booking: "1", tl_booking_id: bookingId },
@@ -234,7 +271,16 @@ export async function writeBookingEvents(
       cacheEvent(db, prev.calendarId, ev);
       placed = { calendarId: prev.calendarId, eventId: ev.id };
     } else {
-      const target = writeCalendar(db, next.hostId);
+      const chosen = next.event.calendarId
+        ? one<{ id: string; account_id: string; provider_id: string }>(
+            db,
+            `SELECT c.id, c.account_id, c.provider_id FROM calendars c JOIN accounts a ON a.id = c.account_id
+             WHERE c.id = ? AND a.user_id = ? AND a.status = 'ok' AND c.writable = 1`,
+            next.event.calendarId,
+            next.hostId,
+          )
+        : undefined;
+      const target = chosen ?? writeCalendar(db, next.hostId);
       if (!target) throw new Error("no_calendar");
       const ev = await sync
         .pool(next.hostId)

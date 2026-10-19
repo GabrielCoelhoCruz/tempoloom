@@ -1143,4 +1143,14 @@ export const MIGRATIONS: readonly string[] = [
   `
   ALTER TABLE meeting_overloads ADD COLUMN rank INTEGER NOT NULL DEFAULT 0;
   `,
+  // 27: booking link end date, target calendar, travel buffer and location
+  // options; a booking's CC list and chosen location (booking-links.md).
+  `
+  ALTER TABLE booking_links ADD COLUMN range_end_date TEXT;
+  ALTER TABLE booking_links ADD COLUMN calendar_id TEXT;
+  ALTER TABLE booking_links ADD COLUMN use_travel_buffer INTEGER NOT NULL DEFAULT 1;
+  ALTER TABLE booking_links ADD COLUMN locations TEXT NOT NULL DEFAULT '[]';
+  ALTER TABLE bookings ADD COLUMN cc TEXT NOT NULL DEFAULT '[]';
+  ALTER TABLE bookings ADD COLUMN location TEXT;
+  `,
 ];

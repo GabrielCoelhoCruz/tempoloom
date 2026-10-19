@@ -617,7 +617,7 @@ export function Meetings() {
                       {m.enabled ? "Turn off" : "Turn on"}
                     </button>
                     {deleting === m.id ? (
-                      <div class="warning" data-testid="meeting-delete" role="group">
+                      <div class="warning" data-testid="meeting-delete">
                         Delete {m.title} and its future times?
                         {[
                           ["1", "Delete and email guests"],
