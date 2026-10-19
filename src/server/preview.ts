@@ -11,6 +11,7 @@ import { logChange } from "./change-log.ts";
 import { all, type Db, one, run, tx } from "./db.ts";
 import type { LiveHub } from "./live.ts";
 import type { Mailer } from "./mail.ts";
+import { stripMarker } from "./planner/markers.ts";
 import { loadSnapshot, writeCalendar } from "./planner/replan.ts";
 import { getSettings } from "./settings.ts";
 import { cacheEvent } from "./sync/pull.ts";
@@ -20,7 +21,8 @@ const DAY = 86_400_000;
 /** Proposed rule 11: pending changes expire after 7 days. */
 export const KEEP_DAYS = 7;
 
-export type Source = "assistant_chat" | "mcp_client" | "automation_edit" | "manual";
+export const SOURCES = ["assistant_chat", "mcp_client", "automation_edit", "manual"] as const;
+export type Source = (typeof SOURCES)[number];
 export type State = "pending" | "accepted" | "discarded" | "applied" | "failed" | "stale";
 
 /** One calendar event a staged change creates, moves or deletes. */
@@ -133,20 +135,46 @@ export function setPreviewMode(
 
 // ---------------------------------------------------------------- store
 
-/** Pending and accepted changes in the order they were staged; expired ones are deleted. */
+/**
+ * The open changes: pending and accepted, not expired. Oldest first; at one
+ * created_at, in staging order (rowid). openChanges and openChangesPage share it.
+ */
+const OPEN = `FROM staged_changes WHERE user_id = ? AND state IN ('pending', 'accepted') AND created_at >= ?`;
+const OPEN_ORDER = "ORDER BY created_at, rowid";
+
+/** The open changes, oldest first; expired ones are deleted. */
 export function openChanges(db: Db, userId: string, now: number): StagedChange[] {
+  const since = now - KEEP_DAYS * DAY;
   run(
     db,
     "DELETE FROM staged_changes WHERE user_id = ? AND state IN ('pending', 'accepted') AND created_at < ?",
     userId,
-    now - KEEP_DAYS * DAY,
+    since,
   );
-  return all<Row>(
+  return all<Row>(db, `SELECT * ${OPEN} ${OPEN_ORDER}`, userId, since).map(fromRow);
+}
+
+/**
+ * One page of the open changes, in openChanges order after the key `after`
+ * ([created_at, seq] of the last row). Expired changes are skipped here and
+ * deleted by openChanges.
+ */
+export function openChangesPage(
+  db: Db,
+  userId: string,
+  now: number,
+  after: [number, number] | undefined,
+  limit: number,
+): (StagedChange & { state: "pending" | "accepted"; seq: number })[] {
+  return all<Row & { state: "pending" | "accepted"; seq: number }>(
     db,
-    `SELECT * FROM staged_changes WHERE user_id = ? AND state IN ('pending', 'accepted')
-     ORDER BY created_at, rowid`,
+    `SELECT rowid AS seq, * ${OPEN} AND (created_at, rowid) > (?, ?) ${OPEN_ORDER} LIMIT ?`,
     userId,
-  ).map(fromRow);
+    now - KEEP_DAYS * DAY,
+    after?.[0] ?? -1,
+    after?.[1] ?? -1,
+    limit,
+  ).map((r) => ({ ...fromRow(r), state: r.state, seq: r.seq }));
 }
 
 export interface StageInput {
@@ -257,9 +285,7 @@ export const zoneOf = (db: Db, userId: string) =>
 
 /** A managed event's title without the state marker that Tempoloom puts in front. */
 export function plainTitle(db: Db, userId: string, title: string): string {
-  for (const m of Object.values(getSettings(db, userId).markers).filter(Boolean))
-    if (title.startsWith(`${m} `)) return title.slice(m.length + 1);
-  return title;
+  return stripMarker(getSettings(db, userId).markers, title);
 }
 
 // ---------------------------------------------------------------- impact

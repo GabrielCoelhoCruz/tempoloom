@@ -136,7 +136,9 @@ test("travel buffers, flights Tempoloom may edit and personal mirror copies get 
     // show the personal commitment label get the house marker.
     const labels = copies.map((c) => c.summary);
     expect(labels.filter((l) => l === "Flight")).toHaveLength(2);
-    const other = labels.filter((l) => l !== "Flight");
+    // Travel and airport buffers are copied too, with the travel label (buffers-travel outputs).
+    expect(labels.filter((l) => l === "Travel")).toHaveLength(6);
+    const other = labels.filter((l) => l !== "Flight" && l !== "Travel");
     expect(other.length).toBeGreaterThanOrEqual(1);
     for (const l of other) expect(l).toBe("🏠 Personal commitment");
   };

@@ -1,7 +1,7 @@
 // The booking link editor: settings, organizers and the round-robin pool
 // (docs/specs/booking-links.md, booking-links-team.md). Co-organizers use it
 // too; only the owner sees the URL and page fields.
-import { useState } from "preact/hooks";
+import { useEffect, useState } from "preact/hooks";
 import { ApiError, api } from "../lib/api.ts";
 import { LEVEL_NAMES } from "../lib/state.ts";
 
@@ -52,6 +52,10 @@ export interface EditableLink {
   buffer_after: number;
   max_per_day: number | null;
   location: string;
+  locations: LocationOption[];
+  range_end_date: string | null;
+  calendar_id: string | null;
+  use_travel_buffer: number;
   use_recovery_buffer: number;
   branding: string;
   questions: Question[];
@@ -73,6 +77,85 @@ export interface EditableLink {
   pool: PoolMember[];
 }
 
+export interface LocationOption {
+  kind: "address" | "phone" | "custom";
+  value: string;
+}
+
+const LOCATION_KINDS = [
+  ["address", "Address"],
+  ["phone", "Phone"],
+  ["custom", "Other (text or URL)"],
+] as const;
+
+/** Location options of a link; the default is first (booking-links.md, location option). */
+export function LocationsEditor({
+  locations,
+  onChange,
+}: {
+  locations: LocationOption[];
+  onChange: (l: LocationOption[]) => void;
+}) {
+  const set = (i: number, change: Partial<LocationOption>) =>
+    onChange(locations.map((l, j) => (j === i ? { ...l, ...change } : l)));
+  return (
+    <section class="wide" data-testid="locations">
+      <h3>Locations</h3>
+      <p class="status">
+        Bookers choose one when there are several. The default comes first. Video calls need a
+        conference integration, which Tempoloom does not have: put a meeting room URL under Other.
+      </p>
+      <div class="list">
+        {locations.map((l, i) => (
+          <div class="row actions" key={i} data-testid={`location-${i + 1}`}>
+            <label>
+              Kind
+              <select
+                value={l.kind}
+                onChange={(e) => set(i, { kind: e.currentTarget.value as LocationOption["kind"] })}
+              >
+                {LOCATION_KINDS.map(([v, label]) => (
+                  <option value={v} key={v}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Location {i + 1}
+              <input
+                value={l.value}
+                maxLength={500}
+                onInput={(e) => set(i, { value: e.currentTarget.value })}
+              />
+            </label>
+            <label class="inline">
+              <input
+                type="radio"
+                name="defaultLocation"
+                checked={i === 0}
+                onChange={() => onChange([l, ...locations.filter((_, j) => j !== i)])}
+              />
+              Default
+            </label>
+            <button type="button" onClick={() => onChange(locations.filter((_, j) => j !== i))}>
+              Remove location
+            </button>
+          </div>
+        ))}
+      </div>
+      {locations.length < 10 && (
+        <button
+          type="button"
+          onClick={() => onChange([...locations, { kind: "address", value: "" }])}
+        >
+          + Add location
+        </button>
+      )}
+    </section>
+  );
+}
+
 const BRANDINGS = [
   ["sameAsGroup", "Same as the page"],
   ["default", "Tempoloom logo"],
@@ -90,6 +173,8 @@ const ERRORS: Record<string, string> = {
   slug_taken: "That URL name is taken.",
   forbidden: "Only the owner can change the URL or the page.",
   redirect_https: "The redirect URL must start with https://.",
+  default_duration: "The default duration must be one of the durations.",
+  calendar: "Choose one of your calendars that Tempoloom can write to.",
 };
 
 const ANSWER_TYPES = [
@@ -363,6 +448,22 @@ export function LinkEditor({
   const [pool, setPool] = useState<PoolMember[]>(link.pool);
   const [questions, setQuestions] = useState<QuestionDraft[]>(() => toDrafts(link.questions));
   const [pageChoice, setPageChoice] = useState(link.page);
+  // One empty row to start with, so a link without locations shows the field.
+  const [locations, setLocations] = useState<LocationOption[]>(
+    link.locations.length > 0 ? link.locations : [{ kind: "custom", value: "" }],
+  );
+  const [calendars, setCalendars] = useState<{ id: string; name: string; email: string }[]>([]);
+  // The saved calendar stays chosen and is sent only when the owner changes it,
+  // so a save before the list loads, or when it fails to load, keeps it.
+  const [calendarId, setCalendarId] = useState(link.calendar_id ?? "");
+  useEffect(() => {
+    void api<{ calendars: { id: string; name: string; email: string; writable: number }[] }>(
+      "GET",
+      "/api/calendars",
+    )
+      .then((r) => setCalendars(r.calendars.filter((c) => c.writable)))
+      .catch(() => undefined);
+  }, []);
   // Main and hidden links share the main page URL; a group has its own (sharing rule 5).
   const urlPage = (p: string) => (p === "main" || p === "hidden" ? "" : p);
   const [error, setError] = useState<string | null>(null);
@@ -393,13 +494,19 @@ export function LinkEditor({
             .map((d) => Number(d.trim()))
             .filter((d) => d > 0),
           level: Number(f.get("level")),
+          defaultDuration: num("defaultDuration"),
           noticeMinutes: Number(f.get("notice")) * 60,
           rangeEndDays: Number(f.get("rangeEndDays")),
+          rangeEndDate: String(f.get("rangeEndDate") ?? "") || null,
           bufferBefore: Number(f.get("bufferBefore")),
           bufferAfter: Number(f.get("bufferAfter")),
           maxPerDay: num("maxPerDay"),
-          location: String(f.get("location") ?? ""),
+          locations: locations.map((l) => ({ ...l, value: l.value.trim() })).filter((l) => l.value),
           useRecoveryBuffer: f.get("useRecoveryBuffer") === "on",
+          useTravelBuffer: f.get("useTravelBuffer") === "on",
+          ...(isOwner && calendarId !== (link.calendar_id ?? "")
+            ? { calendarId: calendarId || null }
+            : {}),
           branding: String(f.get("branding")),
           questions: fromDrafts(questions),
           reminder: {
@@ -449,6 +556,17 @@ export function LinkEditor({
         <input name="durations" required defaultValue={link.durations.join(", ")} />
       </label>
       <label>
+        Default duration (minutes)
+        <input
+          name="defaultDuration"
+          type="number"
+          min={5}
+          step={5}
+          placeholder="the first one"
+          defaultValue={link.default_duration === null ? "" : String(link.default_duration)}
+        />
+      </label>
+      <label>
         Priority
         <select name="level">
           {[1, 2, 3, 4].map((l) => (
@@ -476,6 +594,10 @@ export function LinkEditor({
           max={100}
           defaultValue={String(link.range_end_days)}
         />
+      </label>
+      <label>
+        Or up to a date
+        <input name="rangeEndDate" type="date" defaultValue={link.range_end_date ?? ""} />
       </label>
       <label>
         Buffer before (minutes)
@@ -508,10 +630,6 @@ export function LinkEditor({
         />
       </label>
       <label>
-        Location
-        <input name="location" defaultValue={link.location} />
-      </label>
-      <label>
         Branding
         <select name="branding">
           {BRANDINGS.map(([value, label]) => (
@@ -521,6 +639,26 @@ export function LinkEditor({
           ))}
         </select>
       </label>
+      {isOwner && (
+        <label>
+          Calendar for booked events
+          <select
+            name="calendarId"
+            value={calendarId}
+            onChange={(e) => setCalendarId(e.currentTarget.value)}
+          >
+            <option value="">Main calendar</option>
+            {link.calendar_id && !calendars.some((c) => c.id === link.calendar_id) && (
+              <option value={link.calendar_id}>The saved calendar</option>
+            )}
+            {calendars.map((c) => (
+              <option value={c.id} key={c.id}>
+                {c.name} ({c.email})
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
       {isOwner && (
         <>
           <label>
@@ -569,7 +707,21 @@ export function LinkEditor({
           The longest recovery buffer among the people of the link stays free after each meeting.
           {several && " Turn this off to offer more times on a link with several people."}
         </p>
+        <label class="inline">
+          <input
+            name="useTravelBuffer"
+            type="checkbox"
+            defaultChecked={link.use_travel_buffer === 1}
+          />
+          Keep travel time free
+        </label>
+        <p class="status">
+          When the default location is an address, each person's travel time before and after stays
+          free.
+        </p>
       </div>
+
+      <LocationsEditor locations={locations} onChange={setLocations} />
 
       <QuestionsEditor questions={questions} onChange={setQuestions} />
 

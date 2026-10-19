@@ -157,14 +157,33 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
 
   app.get("/auth/google/start", (c) => {
     if (!deps.oauth) return c.text("Google sign-in is not configured on this server.", 503);
-    const req = buildAuthRequest(deps.oauth, c.req.query("login_hint"));
+    // A reconnect of a disconnected Google account of the signed-in user
+    // (accounts-login-emails-permissions.md rule 15): Google gets its email as the hint.
+    const reconnectId = c.req.query("reconnect");
+    let reconnect: { id: string; email: string } | undefined;
+    if (reconnectId) {
+      const token = getCookie(c, SESSION_COOKIE);
+      const found = token ? sessionIdentity(db, token, now()) : undefined;
+      reconnect =
+        found && found !== "acting_ended" && !found.actor
+          ? one<{ id: string; email: string }>(
+              db,
+              "SELECT id, email FROM accounts WHERE id = ? AND user_id = ? AND provider = 'google'",
+              reconnectId,
+              found.user.id,
+            )
+          : undefined;
+      if (!reconnect) return c.redirect("/account?reconnect_error=not_found");
+    }
+    const req = buildAuthRequest(deps.oauth, reconnect?.email ?? c.req.query("login_hint"));
     run(db, "DELETE FROM oauth_states WHERE created_at < ?", now() - STATE_TTL);
     run(
       db,
-      "INSERT INTO oauth_states (state, code_verifier, created_at) VALUES (?, ?, ?)",
+      "INSERT INTO oauth_states (state, code_verifier, created_at, reconnect_account_id) VALUES (?, ?, ?, ?)",
       req.state,
       req.codeVerifier,
       now(),
+      reconnect?.id ?? null,
     );
     return c.redirect(req.url);
   });
@@ -174,9 +193,9 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
     const { state, code, error } = c.req.query();
     if (error) return c.redirect(`/?login_error=${encodeURIComponent(error)}`);
     const saved = state
-      ? one<{ code_verifier: string; created_at: number }>(
+      ? one<{ code_verifier: string; created_at: number; reconnect_account_id: string | null }>(
           db,
-          "SELECT code_verifier, created_at FROM oauth_states WHERE state = ?",
+          "SELECT code_verifier, created_at, reconnect_account_id FROM oauth_states WHERE state = ?",
           state,
         )
       : undefined;
@@ -188,6 +207,17 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
       const tokens = await exchangeCode(deps.oauth, code, saved.code_verifier, now());
       if (!tokens.idToken) return c.redirect("/?login_error=no_identity");
       const identity = identityFromIdToken(tokens.idToken);
+      // A reconnect takes only the Google identity of that account.
+      if (
+        saved.reconnect_account_id &&
+        !one(
+          db,
+          "SELECT 1 FROM accounts WHERE id = ? AND provider = 'google' AND external_id = ?",
+          saved.reconnect_account_id,
+          identity.sub,
+        )
+      )
+        return c.redirect("/account?reconnect_error=other_identity");
       // Domains that a team registered for SSO (admin-sso-provisioning.md rules 3, 4, 9).
       const rule = otherSignIn(db, identity.email, config.TEAM_SEAT_LIMIT);
       if ("refuse" in rule) return c.redirect(`/?login_error=${rule.refuse}`);
@@ -292,6 +322,9 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
     box,
     allowPrivate: config.WEBHOOK_ALLOW_PRIVATE,
     retryBaseMs: config.WEBHOOK_RETRY_BASE_MS,
+    suspendAfterMs: config.WEBHOOK_SUSPEND_AFTER_SECONDS * 1000,
+    mailer: deps.mailer,
+    baseUrl: config.BASE_URL,
     now,
   };
   app.route(
@@ -401,11 +434,11 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
 
   app.route("/api", settingsRoutes(db, sync, now));
   app.route("/api", itemRoutes(db, sync, now));
-  app.route("/api", meetingRoutes(db, sync, now));
+  app.route("/api", meetingRoutes(db, sync, now, deps.mailer));
   app.route("/api/planner", plannerRoutes(db, sync, now));
   app.route("/api/booking", bookingRoutes(db, now, config.ONEOFF_LINK_DAYS));
   app.route("/api", webhookRoutes(db, box, config.WEBHOOK_ALLOW_PRIVATE, now));
-  app.route("/api", statsRoutes(db));
+  app.route("/api", statsRoutes(db, now));
   app.route("/api", analyticsRoutes(db, now));
   app.route("/api", policyRoutes(db, sync, now));
   app.route("/api", accountRoutes(db, box, sync, now));

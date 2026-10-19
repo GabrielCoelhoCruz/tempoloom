@@ -1143,7 +1143,52 @@ export const MIGRATIONS: readonly string[] = [
   `
   ALTER TABLE meeting_overloads ADD COLUMN rank INTEGER NOT NULL DEFAULT 0;
   `,
-  // 27: event settings of a flexible meeting (meetings-flexible.md visibility,
+  // 27: booking link end date, target calendar, travel buffer and location
+  // options; a booking's CC list and chosen location (booking-links.md).
+  // An old location text becomes one custom option, so it needs no travel
+  // time; travel time stays on by default (the spec default) and applies once
+  // the owner marks an option as an address.
+  `
+  ALTER TABLE booking_links ADD COLUMN range_end_date TEXT;
+  ALTER TABLE booking_links ADD COLUMN calendar_id TEXT;
+  ALTER TABLE booking_links ADD COLUMN use_travel_buffer INTEGER NOT NULL DEFAULT 1;
+  ALTER TABLE booking_links ADD COLUMN locations TEXT NOT NULL DEFAULT '[]';
+  ALTER TABLE bookings ADD COLUMN cc TEXT NOT NULL DEFAULT '[]';
+  ALTER TABLE bookings ADD COLUMN location TEXT;
+  UPDATE booking_links SET locations = json_array(json_object('kind', 'custom', 'value', location))
+    WHERE location <> '';
+  `,
+  // 28: the MCP list_tasks pages (assistant-mcp-server.md): due first, no due date
+  // last. The expression must stay the one in TASKS_PAGE (src/server/mcp.ts).
+  `
+  CREATE INDEX tasks_due_page ON tasks(user_id, status, COALESCE(due_at, 9000000000000000), created_at, id);
+  `,
+  // 29: a buffer length the user set in the calendar (buffers rule 14). It is
+  // on the buffer's own row, so it goes when that event goes.
+  `
+  ALTER TABLE managed_events ADD COLUMN kept_minutes INTEGER;
+  `,
+  // 30: the library entry a mirroring policy came from (automations-library.md rule 4).
+  `
+  ALTER TABLE mirror_policies ADD COLUMN template_id TEXT;
+  `,
+  // 31: the user's own RSVP note on an invitation, where tags count too (events-tags.md),
+  // and a pending "repaint all" request.
+  `
+  ALTER TABLE events ADD COLUMN rsvp_note TEXT NOT NULL DEFAULT '';
+  -- A "repaint all" request (events-categories-and-colors.md rule 12), cleared when done.
+  ALTER TABLE users ADD COLUMN repaint_requested_at INTEGER;
+  `,
+  // 32: when an admin last resumed a webhook endpoint (integrations-webhooks.md
+  // rule 15): the period of failures that suspends it counts from then. The
+  // Google account that a sign-in reconnects (accounts-login-emails-permissions.md rule 15).
+  // The no-reply choice is an account setting (noReplyCopies), not one per policy.
+  `
+  ALTER TABLE webhook_endpoints ADD COLUMN resumed_at INTEGER;
+  ALTER TABLE oauth_states ADD COLUMN reconnect_account_id TEXT;
+  ALTER TABLE mirror_policies DROP COLUMN no_reply_busy;
+  `,
+  // 33: event settings of a flexible meeting (meetings-flexible.md visibility,
   // reminders, targetCalendar).
   `
   ALTER TABLE meetings ADD COLUMN event_settings TEXT NOT NULL DEFAULT '{}';

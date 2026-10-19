@@ -3,6 +3,7 @@
 // and a preview of the chosen ranges with a link to the hours page.
 import "./parts.css";
 import { useState } from "preact/hooks";
+import type { ItemRange } from "../../shared/item-hours.ts";
 import { hhmm } from "../lib/format.ts";
 import { onLinkClick } from "../lib/router.ts";
 
@@ -44,11 +45,14 @@ export function HoursField({
   sets,
   initial = "",
   allowItem,
+  item,
 }: {
   sets: HoursChoice[];
   /** The chosen set id; "" means work hours. */
   initial?: string;
   allowItem: boolean;
+  /** The item-specific hours the fields start with, when `initial` is ITEM. */
+  item?: ItemRange;
 }) {
   const [chosen, setChosen] = useState(initial);
   const [preview, setPreview] = useState(false);
@@ -97,7 +101,7 @@ export function HoursField({
           </span>
         )}
       </span>
-      {chosen === ITEM && <ItemHoursFields />}
+      {chosen === ITEM && <ItemHoursFields initial={item} />}
     </>
   );
 }
@@ -106,11 +110,9 @@ export function HoursField({
 export function ItemHoursFields({
   initial,
 }: {
-  /** The ranges to start from; the first range of the first day sets From and To. */
-  initial?: Record<string, [number, number][]>;
+  /** The range the fields start with; none means 09:00-17:00 on no days. */
+  initial?: ItemRange | undefined;
 }) {
-  const first = Object.values(initial ?? {}).find((r) => r.length > 0)?.[0];
-  const time = (m: number) => hhmm(m % 1440);
   return (
     <fieldset class="wide item-hours" data-testid="item-hours">
       <legend>Item-specific hours</legend>
@@ -120,28 +122,18 @@ export function ItemHoursFields({
             type="checkbox"
             name="itemDays"
             value={i + 1}
-            defaultChecked={(initial?.[String(i + 1)]?.length ?? 0) > 0}
+            defaultChecked={initial?.days.includes(i + 1) ?? false}
           />
           {d}
         </label>
       ))}
       <label class="inline">
         From
-        <input
-          name="itemFrom"
-          type="time"
-          step={900}
-          defaultValue={first ? time(first[0]) : "09:00"}
-        />
+        <input name="itemFrom" type="time" step={900} defaultValue={initial?.from ?? "09:00"} />
       </label>
       <label class="inline">
         To
-        <input
-          name="itemTo"
-          type="time"
-          step={900}
-          defaultValue={first ? time(first[1]) : "17:00"}
-        />
+        <input name="itemTo" type="time" step={900} defaultValue={initial?.to ?? "17:00"} />
       </label>
     </fieldset>
   );

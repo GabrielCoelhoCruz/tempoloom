@@ -2,7 +2,12 @@
 import { randomUUID } from "node:crypto";
 import { DAY } from "../../shared/time.ts";
 import { all, type Db, one, run, tx } from "../db.ts";
-import { type CalendarProvider, ProviderError, type ProviderEvent } from "../providers/types.ts";
+import {
+  type CalendarProvider,
+  type ProviderCalendar,
+  ProviderError,
+  type ProviderEvent,
+} from "../providers/types.ts";
 
 /** Events from 12 weeks ago (the stats range) to 120 days ahead are cached. */
 const WINDOW_PAST = 84 * DAY;
@@ -50,23 +55,7 @@ export async function syncCalendarList(
   const entries = keep ? listed.map((c) => ({ ...c, primary: c.id === keep })) : listed;
   tx(db, () => {
     for (const c of entries) {
-      run(
-        db,
-        `INSERT INTO calendars (id, account_id, provider_id, name, time_zone, writable, is_primary, color, check_availability)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT (account_id, provider_id) DO UPDATE SET
-           name = excluded.name, time_zone = excluded.time_zone, writable = excluded.writable,
-           is_primary = excluded.is_primary, color = excluded.color`,
-        randomUUID(),
-        accountId,
-        c.id,
-        c.name,
-        c.timeZone,
-        c.writable ? 1 : 0,
-        c.primary ? 1 : 0,
-        c.color,
-        c.primary ? 1 : 0,
-      );
+      writeCalendar(db, accountId, c);
       if (c.primary && c.timeZone) {
         run(db, "UPDATE users SET time_zone = ? WHERE id = ?", c.timeZone, userId);
       }
@@ -82,6 +71,45 @@ export async function syncCalendarList(
   });
 }
 
+/**
+ * Makes `c` the account's only primary calendar, the one the planner writes
+ * to, and the only one checked for availability (operator pin, src/server/cli.ts).
+ * The sync keeps a primary that is still listed and adds new calendars unchecked.
+ * Call it inside the caller's transaction.
+ */
+export function pinCalendar(db: Db, accountId: string, c: ProviderCalendar): void {
+  writeCalendar(db, accountId, { ...c, primary: true });
+  run(
+    db,
+    `UPDATE calendars SET is_primary = (provider_id = ?), check_availability = (provider_id = ?)
+     WHERE account_id = ?`,
+    c.id,
+    c.id,
+    accountId,
+  );
+}
+
+/** Inserts or updates one listed calendar; a new primary calendar starts checked. */
+function writeCalendar(db: Db, accountId: string, c: ProviderCalendar): void {
+  run(
+    db,
+    `INSERT INTO calendars (id, account_id, provider_id, name, time_zone, writable, is_primary, color, check_availability)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT (account_id, provider_id) DO UPDATE SET
+       name = excluded.name, time_zone = excluded.time_zone, writable = excluded.writable,
+       is_primary = excluded.is_primary, color = excluded.color`,
+    randomUUID(),
+    accountId,
+    c.id,
+    c.name,
+    c.timeZone,
+    c.writable ? 1 : 0,
+    c.primary ? 1 : 0,
+    c.color,
+    c.primary ? 1 : 0,
+  );
+}
+
 export function cacheEvent(db: Db, calendarId: string, e: ProviderEvent): void {
   if (e.cancelled) {
     run(db, "DELETE FROM events WHERE calendar_id = ? AND event_id = ?", calendarId, e.id);
@@ -91,8 +119,8 @@ export function cacheEvent(db: Db, calendarId: string, e: ProviderEvent): void {
     db,
     `INSERT INTO events (calendar_id, event_id, summary, description, location, start_ms, end_ms,
        all_day, busy, event_type, self_response, attendee_count, organizer_self, recurring_id, color_id,
-       etag, updated_ms, private_props, attendees, responses, conference)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       etag, updated_ms, private_props, attendees, responses, conference, rsvp_note)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT (calendar_id, event_id) DO UPDATE SET
        summary = excluded.summary, description = excluded.description, location = excluded.location,
        start_ms = excluded.start_ms, end_ms = excluded.end_ms, all_day = excluded.all_day,
@@ -101,7 +129,7 @@ export function cacheEvent(db: Db, calendarId: string, e: ProviderEvent): void {
        recurring_id = excluded.recurring_id, color_id = excluded.color_id, etag = excluded.etag,
        updated_ms = excluded.updated_ms, private_props = excluded.private_props,
        attendees = excluded.attendees, responses = excluded.responses,
-       conference = excluded.conference`,
+       conference = excluded.conference, rsvp_note = excluded.rsvp_note`,
     calendarId,
     e.id,
     e.summary,
@@ -123,6 +151,7 @@ export function cacheEvent(db: Db, calendarId: string, e: ProviderEvent): void {
     JSON.stringify(e.attendees),
     JSON.stringify(e.responses ?? {}),
     e.conference ?? "",
+    e.rsvpNote ?? "",
   );
   // Alerts on Tempoloom's own events, so a copy that someone gave an alert is written again.
   if (e.privateProps.tl === "1")

@@ -26,11 +26,14 @@ interface Task {
   issue: { status: string; reason: string } | null;
 }
 
+const AWAY = "time away (all-day or out-of-office events) covers all its hours";
 const REASONS: Record<string, string> = {
   "outside-window": "starts after the planning window",
   "no-hours": "no hours in this period",
   "too-long-for-hours": "a chunk is longer than any range of its hours",
-  "all-day-block": "all-day events block every day",
+  away: AWAY,
+  // Reports stored before the rename still say "all-day-block".
+  "all-day-block": AWAY,
   "no-space-fixed": "no free time",
   "no-space-priority": "higher priorities use the free time",
   "after-due": "part ends after the due date",
@@ -86,9 +89,11 @@ export function TaskForm({
         nextUp: f.get("nextUp") === "on",
         color: text("taskColor"),
       });
-      await planNow();
+      // Clear the title before the plan runs, and only if it still holds this
+      // task: the user may have typed the next title already.
       const title = formEl.elements.namedItem("title") as HTMLInputElement | null;
-      if (title) title.value = "";
+      if (title && title.value === text("title")) title.value = "";
+      await planNow();
       await onSaved(text("title"));
     })().catch((err) => setError(errorText(err)));
   };

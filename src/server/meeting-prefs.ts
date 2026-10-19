@@ -1,7 +1,8 @@
 // Per-user meeting preferences: meeting checks and their digest
 // (automations-meeting-quality.md), meeting emails (planning-notifications.md
 // NTF-20 to NTF-30, meetings-flexible-rescheduling.md rule 35) and meeting
-// start-time intervals (meetings-start-intervals.md). Missing fields take defaults.
+// start-time intervals (meetings-start-intervals.md) and the weekly report email
+// (analytics-weekly-reports.md). Missing fields take defaults.
 import { z } from "zod";
 import { type Db, one, run } from "./db.ts";
 
@@ -34,6 +35,8 @@ export const prefsSchema = z.object({
   meetingChangeDaysAhead: z.number().int().min(0).max(30).default(7),
   atRiskDigest: z.boolean().default(true),
   newSeriesEmail: z.boolean().default(true),
+  /** The weekly report email (analytics-weekly-reports.md rules 1-2): on for a new user. */
+  weeklyReport: z.boolean().default(true),
   /** The time of the at-risk digest and the new recurring meeting email. */
   dailyTime: hhmm.default("07:00"),
   /** Library entries of kind meeting_check the user added (automations-library.md rule 4). */

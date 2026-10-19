@@ -10,14 +10,7 @@ import {
   utcToLocal,
   weekdayOf,
 } from "../shared/time.ts";
-import {
-  allDayBlocks,
-  attends,
-  blockingIntervals,
-  hasTag,
-  isFlightTitle,
-  TAG_FOCUS,
-} from "./blocking.ts";
+import { attends, awayBlocks, blockingIntervals, hasTag, TAG_FOCUS } from "./blocking.ts";
 import { hoursToTimeSet } from "./hours.ts";
 import type {
   BufferFilter,
@@ -61,7 +54,8 @@ interface Ctx {
   breakMs: number;
   /** External blocking time plus locked and started managed events. */
   fixed: TimeSet;
-  allDay: TimeSet;
+  /** Time away: busy all-day and out-of-office events (events-out-of-office.md). */
+  away: TimeSet;
   /** Free time for task and habit demands (break gaps applied). */
   freeTH: TimeSet;
   /** Free time for focus and buffer demands. */
@@ -145,7 +139,7 @@ function init(s: Snapshot): Ctx {
     end,
     breakMs,
     fixed,
-    allDay: TimeSet.from(allDayBlocks(s.events)),
+    away: TimeSet.from(awayBlocks(s.events)),
     freeTH,
     freeOther,
     hours: new Map(),
@@ -189,7 +183,7 @@ function baseReason(
   const h = hours.clip(lower, Math.min(upper, ctx.end));
   if (h.total() === 0) return "no-hours";
   if (!fits(h, minLength, ctx.step)) return "too-long-for-hours";
-  if (minus(h, ctx.allDay.intervals()).total() === 0) return "all-day-block";
+  if (minus(h, ctx.away.intervals()).total() === 0) return "away";
   return null;
 }
 
@@ -224,6 +218,14 @@ const dayStartOf = (ctx: Ctx, t: number) =>
 const nextDayStart = (ctx: Ctx, t: number) =>
   localToUtc(ctx.s.zone, addDays(utcToLocal(ctx.s.zone, t).date, 1), 0);
 
+/**
+ * A need splits into chunks within the bounds when k = ceil(need / max)
+ * chunks of the minimum fit in it. Else the rest after max-length chunks is
+ * one chunk shorter than the minimum (TSK-13).
+ */
+const splits = (need: number, r: ChunkRules) =>
+  need <= 0 || Math.ceil(need / r.max) * r.min <= need;
+
 /** SCH-90: fills free intervals in time order with chunks. Returns chunks and the unplaced rest. */
 function greedyChunks(
   ctx: Ctx,
@@ -232,6 +234,20 @@ function greedyChunks(
   r: ChunkRules,
   usedDays: Set<number>,
 ): { chunks: Interval[]; missing: number } {
+  const rest = need - (Math.ceil(need / r.max) - 1) * r.max;
+  if (!splits(need, r) && rest < need) {
+    // No split (TSK-13): place the max-length chunks first, then the rest as
+    // one short chunk in the first room that holds it. A replan keeps the
+    // full chunks and looks for the rest the same way, so the plans agree.
+    const full = greedyChunks(ctx, free, need - rest, r, usedDays);
+    if (full.missing > 0) return { chunks: full.chunks, missing: full.missing + rest };
+    const left = minus(
+      free,
+      full.chunks.map((c) => ({ start: c.start - r.gap, end: c.end + r.gap })),
+    );
+    const tail = greedyChunks(ctx, left, rest, r, usedDays);
+    return { chunks: [...full.chunks, ...tail.chunks], missing: tail.missing };
+  }
   const chunks: Interval[] = [];
   const step = ctx.step;
   for (const iv of free.intervals()) {
@@ -243,7 +259,13 @@ function greedyChunks(
       }
       const room = floorTo(iv.end - cursor, step);
       let length = Math.min(r.max, need, room);
-      if (need - length > 0 && need - length < r.min) length = need - r.min;
+      if (splits(need, r)) {
+        // Take the most that still leaves k - 1 chunks of at least the
+        // minimum, and keep the rest splittable when the room is short.
+        const k = Math.ceil(need / r.max);
+        length = Math.min(length, need - (k - 1) * r.min);
+        if (!splits(need - length, r)) length = need - Math.ceil((need - length) / r.max) * r.min;
+      }
       if (length < r.min && !(need < r.min && length === need)) break;
       if (length <= 0) break;
       chunks.push({ start: cursor, end: cursor + length });
@@ -297,7 +319,8 @@ function placeTask(ctx: Ctx, t: TaskItem): void {
       }
       const l = len(iv);
       const okLength =
-        (l >= rules.min && l <= rules.max) || (l < rules.min && l === rest && rest < rules.min);
+        ((l >= rules.min && l <= rules.max) || (l < rules.min && l === rest && rest < rules.min)) &&
+        (splits(rest - l, rules) || !splits(rest, rules));
       const day = dayStartOf(ctx, iv.start);
       if (!okLength || !local.contains(iv) || (rules.oncePerDay && usedDays.has(day))) continue;
       kept.push({ key: c.key, iv });
@@ -313,7 +336,13 @@ function placeTask(ctx: Ctx, t: TaskItem): void {
     ? []
     : mine
         .filter((c) => !ctx.fixedKeys.has(c.key))
-        .sort((a, b) => a.start - b.start || a.key.localeCompare(b.key));
+        // A short chunk (TSK-13) is the rest, so it is kept last.
+        .sort(
+          (a, b) =>
+            Number(len(a) < rules.min) - Number(len(b) < rules.min) ||
+            a.start - b.start ||
+            a.key.localeCompare(b.key),
+        );
   let result = attempt(sticky);
   const late = (r: typeof result) =>
     r.missing > 0 ||
@@ -405,23 +434,50 @@ function weekStartDate(ctx: Ctx, date: LocalDate): LocalDate {
   return addDays(date, -back);
 }
 
+const mod = (a: number, n: number) => ((a % n) + n) % n;
+
+/** Index `i` of a period counted from the anchor period is on an every-`every` cadence. */
+const onCadence = (i: number, every: number) => mod(i, every) === 0;
+
+const monthIndex = (d: LocalDate) => Number(d.slice(0, 4)) * 12 + Number(d.slice(5, 7));
+
+/**
+ * The habit's occurrences. With an interval above 1 (custom frequency), only
+ * the periods of its unit (day, week or month) on the cadence from the anchor.
+ */
 function habitOccurrences(ctx: Ctx, h: HabitItem): Occurrence[] {
+  const f = h.frequency;
+  const out = frequencyOccurrences(ctx, h);
+  const every = f.interval ?? 1;
+  if (every <= 1) return out;
+  const anchor = f.anchor ?? h.starting ?? utcToLocal(ctx.s.zone, h.createdAt).date;
+  const index = (d: LocalDate): number =>
+    f.period === "daily"
+      ? dayDiff(d, anchor)
+      : f.period === "weekly"
+        ? dayDiff(d, weekStartDate(ctx, anchor)) / 7
+        : monthIndex(d) - monthIndex(anchor);
+  return out.filter((o) => onCadence(index(o.periodStart), every));
+}
+
+function frequencyOccurrences(ctx: Ctx, h: HabitItem): Occurrence[] {
+  const frequency = h.frequency;
   const { s } = ctx;
   const first = utcToLocal(s.zone, ctx.earliest).date;
   const last = utcToLocal(s.zone, ctx.end - 1).date;
   const hasHours = (d: LocalDate) => (s.hours[h.hours]?.[weekdayOf(d)]?.length ?? 0) > 0;
   const allowed = (d: LocalDate) => !h.starting || d >= h.starting;
   const out: Occurrence[] = [];
-  if (h.frequency.period === "monthly") {
-    return monthlyOccurrences(h.frequency, first, last, hasHours, allowed);
+  if (frequency.period === "monthly") {
+    return monthlyOccurrences(frequency, first, last, hasHours, allowed);
   }
   for (let d = first; d <= last; d = addDays(d, 1)) {
     if (!allowed(d)) continue;
-    if (h.frequency.period === "daily") {
+    if (frequency.period === "daily") {
       if (hasHours(d)) out.push({ date: d, alternatives: [], periodStart: d, periodEnd: d });
       continue;
     }
-    const days = h.frequency.days;
+    const days = frequency.days;
     if (!days.includes(weekdayOf(d))) continue;
     const ws = weekStartDate(ctx, d);
     const alternatives: LocalDate[] = [];
@@ -648,7 +704,11 @@ function placeHabit(ctx: Ctx, h: HabitItem): void {
         ? "no-space-priority"
         : "no-space-fixed";
     }
-    if (h.whenUnplaceable === "keep_as_conflict") {
+    // events-out-of-office.md rule 2: on a day fully away the occurrence is skipped,
+    // never a conflict. Decision: the same holds when away time covers all of the
+    // habit's hours that day but not the whole day, because rule 12 forbids any
+    // managed item on away time and the habit has no other time that day.
+    if (h.whenUnplaceable === "keep_as_conflict" && reason !== "away") {
       const iv =
         cur && !h.changed
           ? { start: cur.start, end: cur.end }
@@ -697,9 +757,6 @@ interface Period {
   ideal: LocalDate[];
 }
 
-const monthIndex = (d: LocalDate) => Number(d.slice(0, 4)) * 12 + Number(d.slice(5, 7)) - 1;
-const mod = (a: number, n: number) => ((a % n) + n) % n;
-
 /** The day N periods count from: `starting`, or else the day the meeting was created. */
 export const meetingAnchor = (zone: string, m: { starting: LocalDate | null; createdAt: number }) =>
   m.starting ?? utcToLocal(zone, m.createdAt).date;
@@ -719,11 +776,11 @@ export function meetingPeriodStart(
   if (f.period === "daily") return addDays(date, -mod(dayDiff(date, anchor), f.everyDays ?? 1));
   if (f.period === "monthly") {
     const month = `${date.slice(0, 8)}01`;
-    return mod(monthIndex(month) - monthIndex(anchor), f.everyMonths ?? 1) === 0 ? month : null;
+    return onCadence(monthIndex(month) - monthIndex(anchor), f.everyMonths ?? 1) ? month : null;
   }
   const week = (d: LocalDate) => addDays(d, -((weekdayOf(d) - weekStart + 7) % 7));
   const ws = week(date);
-  return mod(dayDiff(ws, week(anchor)) / 7, f.everyWeeks) === 0 ? ws : null;
+  return onCadence(dayDiff(ws, week(anchor)) / 7, f.everyWeeks) ? ws : null;
 }
 
 function meetingPeriods(ctx: Ctx, m: MeetingItem): Period[] {
@@ -1019,9 +1076,12 @@ function hasPerson(e: ExternalEvent, people: string[]): boolean {
   });
 }
 
-/** buffers-travel.md rules 2 and 5. */
+/**
+ * buffers-travel.md rule 5: the flight category, which the user sets by hand or
+ * the tag or a flight title gives (categoryOf).
+ */
 export function isFlight(e: ExternalEvent): boolean {
-  return hasTag(e, "#tl_flight") || isFlightTitle(e.title);
+  return e.category === "flight";
 }
 
 export function hasAddress(e: ExternalEvent): boolean {
@@ -1029,10 +1089,21 @@ export function hasAddress(e: ExternalEvent): boolean {
   return !/^https?:\/\//i.test(loc) && (loc.match(/,/g)?.length ?? 0) >= 2;
 }
 
+/**
+ * A travel buffer goes around an event with an address or #tl_travel, but not
+ * around a flight (it gets airport time) or a #tl_trip event without
+ * #tl_travel, which is travel itself (events-tags.md rule 18).
+ */
+function wantsTravelBuffer(e: ExternalEvent): boolean {
+  if (isFlight(e)) return false;
+  if (hasTag(e, "#tl_travel")) return true;
+  return hasAddress(e) && !hasTag(e, "#tl_trip");
+}
+
 export function matchesFilter(f: BufferFilter, e: ExternalEvent): boolean {
   if (f.categories && !(e.category && f.categories.includes(e.category))) return false;
   if (f.flight && !isFlight(e)) return false;
-  if (f.travel && (isFlight(e) || !(hasAddress(e) || hasTag(e, "#tl_travel")))) return false;
+  if (f.travel && !wantsTravelBuffer(e)) return false;
   if (f.text) {
     const fields = f.text.fields.length > 0 ? f.text.fields : (["title"] as const);
     const hay = fields.map((k) => e[k].toLowerCase());
@@ -1103,10 +1174,12 @@ function placeBuffer(ctx: Ctx, b: BufferItem): void {
     for (const side of sides) {
       const key = `buffer:${b.id}:${a.id}:${side}`;
       if (ctx.fixedKeys.has(key) || ctx.dismissed.has(key)) continue;
+      // Rule 14: a length the user set for this anchor occurrence wins.
+      const kept = ctx.s.bufferLengths?.[key];
       const iv =
         side === "before"
-          ? { start: a.start - b.minutesBefore * MINUTE, end: a.start }
-          : { start: a.end, end: a.end + b.minutesAfter * MINUTE };
+          ? { start: a.start - (kept ?? b.minutesBefore) * MINUTE, end: a.start }
+          : { start: a.end, end: a.end + (kept ?? b.minutesAfter) * MINUTE };
       if (len(iv) <= 0 || iv.start < ctx.earliest || iv.end > ctx.end) continue;
       const ok = ctx.freeOther.contains(iv);
       if (!ok && b.onConflict === "remove") continue;

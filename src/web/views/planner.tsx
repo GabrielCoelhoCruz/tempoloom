@@ -24,11 +24,14 @@ const EventExtras = lazyComponent<{ event: PlannerEvent; onDone: () => void }>((
   import("./planner-now.tsx").then((m) => m.EventExtras),
 );
 
+const AWAY = "time away (all-day or out-of-office events) covers all its hours";
 const REASONS: Record<string, string> = {
   "outside-window": "starts after the scheduling window",
   "no-hours": "its hours have no time in this period",
   "too-long-for-hours": "longer than any range of its hours",
-  "all-day-block": "all-day events block every day",
+  away: AWAY,
+  // Reports stored before the rename still say "all-day-block".
+  "all-day-block": AWAY,
   "reserved-word": "an event with a reserved word exists that day",
   "no-space-fixed": "no free time between your meetings",
   "no-space-priority": "higher-priority items use the free time",
@@ -291,7 +294,7 @@ export function Planner() {
               ))}
             </select>
           </label>
-          {selected.kind === "external" && selected.levelEditable && (
+          {selected.kind === "external" && !selected.levelFixed && (
             <form
               class="form"
               data-testid="external-priority"
@@ -336,6 +339,21 @@ export function Planner() {
                 Only booking links read this. Tempoloom never moves this event.
               </p>
             </form>
+          )}
+          {selected.kind === "external" && selected.levelFixed && (
+            <div class="form" data-testid="external-priority-fixed">
+              <label>
+                Priority for booking links
+                <select disabled value="1">
+                  <option value="1">P1</option>
+                </select>
+              </label>
+              <p class="status wide">
+                {selected.levelFixed === "booking-link"
+                  ? "Meetings booked through a booking link stay P1: they are fixed."
+                  : "Events from other calendars stay P1: only events on your main calendar can change."}
+              </p>
+            </div>
           )}
           {selected.kind !== "external" && (
             <div class="actions">

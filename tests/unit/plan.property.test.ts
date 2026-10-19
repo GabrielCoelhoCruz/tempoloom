@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { blocksPlanning } from "../../src/scheduler/blocking.ts";
 import { hoursToTimeSet } from "../../src/scheduler/hours.ts";
 import type {
+  CurrentPlacement,
   ExternalEvent,
   HabitItem,
   Placement,
@@ -65,7 +66,24 @@ const taskArb = fc.record({
   extraQ: fc.integer({ min: 0, max: 8 }),
   dueDay: fc.option(fc.integer({ min: 0, max: 6 })),
   nextUp: fc.boolean(),
+  // Chunks of an earlier plan (SCH-88). Some are not valid for the task.
+  sticky: fc.array(
+    fc.record({
+      day: fc.integer({ min: 0, max: 4 }),
+      startQ: fc.integer({ min: 36, max: 64 }),
+      lenQ: fc.integer({ min: 1, max: 8 }),
+    }),
+    { maxLength: 3 },
+  ),
 });
+const toCurrent = (t: ValueOf<typeof taskArb>, i: number): CurrentPlacement[] =>
+  t.sticky.map((c, n) => ({
+    key: `task:t${i}:${n}`,
+    itemId: `t${i}`,
+    start: t0 + c.day * 1440 * MIN + c.startQ * 15 * MIN,
+    end: t0 + c.day * 1440 * MIN + (c.startQ + c.lenQ) * 15 * MIN,
+    locked: false,
+  }));
 const toTask = (t: ValueOf<typeof taskArb>, i: number): TaskItem => ({
   id: `t${i}`,
   title: `t${i}`,
@@ -110,41 +128,47 @@ const toHabit = (h: ValueOf<typeof habitArb>, i: number): HabitItem => ({
   changed: false,
 });
 
-const snapshotArb = fc
-  .record({
-    events: fc.array(event, { maxLength: 30 }),
-    tasks: fc.array(taskArb, { maxLength: 8 }),
-    habits: fc.array(habitArb, { maxLength: 3 }),
-    breakMinutes: fc.constantFrom(0, 15),
-  })
-  .map(
-    (r): Snapshot => ({
-      now,
-      zone: ZONE,
-      weekStart: 1,
-      windowEnd: end,
-      stepMinutes: 15,
-      urgencyMode: "due-date-and-work",
-      chunkCooldown: "none",
-      breakMinutes: r.breakMinutes,
-      hours: { work, lunch },
-      workHours: ["work"],
-      events: r.events.map(toEvent),
-      current: [],
-      tasks: r.tasks.map(toTask),
-      habits: r.habits.map(toHabit),
-      meetings: [],
-      buffers: [],
-      focus: [],
-    }),
-  );
+const inputArb = fc.record({
+  events: fc.array(event, { maxLength: 30 }),
+  tasks: fc.array(taskArb, { maxLength: 8 }),
+  habits: fc.array(habitArb, { maxLength: 3 }),
+  breakMinutes: fc.constantFrom(0, 15),
+});
+const snapshotArb = inputArb.map(
+  (r): Snapshot => ({
+    now,
+    zone: ZONE,
+    weekStart: 1,
+    windowEnd: end,
+    stepMinutes: 15,
+    urgencyMode: "due-date-and-work",
+    chunkCooldown: "none",
+    breakMinutes: r.breakMinutes,
+    hours: { work, lunch },
+    workHours: ["work"],
+    events: r.events.map(toEvent),
+    current: r.tasks.flatMap(toCurrent),
+    tasks: r.tasks.map(toTask),
+    habits: r.habits.map(toHabit),
+    meetings: [],
+    buffers: [],
+    focus: [],
+  }),
+);
 
 type ValueOf<A> = A extends fc.Arbitrary<infer T> ? T : never;
 const overlaps = (a: { start: number; end: number }, b: { start: number; end: number }) =>
   a.start < b.end && b.start < a.end;
 const live = (ps: Placement[]) => ps.filter((p) => !p.conflict);
+// PLAN_RUNS=3000 PLAN_SEED=<n> raise the run count and fix the seed. The
+// overlap test spends most of its time in its pairwise expect() calls (about
+// 1.3 ms per run; plan() takes about 0.2 ms), so long runs get a long timeout.
+const runs = (n: number) => ({
+  numRuns: Number(process.env.PLAN_RUNS) || n,
+  ...(process.env.PLAN_SEED ? { seed: Number(process.env.PLAN_SEED) } : {}),
+});
 
-describe("plan() invariants", () => {
+describe("plan() invariants", { timeout: process.env.PLAN_RUNS ? 300_000 : 5_000 }, () => {
   it("never overlaps blocking events or other placements, and keeps each item in its hours", () => {
     fc.assert(
       fc.property(snapshotArb, (s) => {
@@ -171,7 +195,7 @@ describe("plan() invariants", () => {
           }
         }
       }),
-      { numRuns: 150 },
+      runs(150),
     );
   });
 
@@ -183,14 +207,22 @@ describe("plan() invariants", () => {
           const chunks = placements.filter((p) => p.itemId === t.id);
           const total = chunks.reduce((a, c) => a + (c.end - c.start) / MIN, 0);
           expect(total).toBeLessThanOrEqual(t.remainingMinutes);
+          // TSK-13 applied to the rest: a chunk shorter than the minimum is
+          // allowed only when no split of the remaining work R fits the
+          // bounds (ceil(R / max) * min > R). Then there is at most one, and
+          // the chunks add up to R (TSK-12).
+          const r = t.remainingMinutes;
+          const noSplit = Math.ceil(r / t.maxChunkMinutes) * t.minChunkMinutes > r;
+          const short = chunks.filter((c) => (c.end - c.start) / MIN < t.minChunkMinutes);
+          expect(short.length).toBeLessThanOrEqual(noSplit ? 1 : 0);
+          if (short.length > 0) expect(total).toBe(r);
           for (const c of chunks) {
             const l = (c.end - c.start) / MIN;
-            const stub = l < t.minChunkMinutes && l === t.remainingMinutes;
-            expect(stub || (l >= t.minChunkMinutes && l <= t.maxChunkMinutes)).toBe(true);
+            expect(l).toBeLessThanOrEqual(t.maxChunkMinutes);
           }
         }
       }),
-      { numRuns: 150 },
+      runs(3000),
     );
   });
 
@@ -219,7 +251,7 @@ describe("plan() invariants", () => {
         });
         expect(shuffled).toEqual(first);
       }),
-      { numRuns: 100 },
+      runs(100),
     );
   });
 });

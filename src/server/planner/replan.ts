@@ -34,7 +34,7 @@ import type { CalendarProvider } from "../providers/types.ts";
 import { getSettings, type Settings } from "../settings.ts";
 import { planningZone } from "../travel.ts";
 import { afterPush } from "./after-push.ts";
-import { categoryContext, colorFor, paintExternal } from "./categories.ts";
+import { categoryContext, colorFor, externalPaints } from "./categories.ts";
 import { externalEvents } from "./events.ts";
 import {
   eventTitle,
@@ -48,6 +48,7 @@ import { recordMeetingChanges } from "./meeting-log.ts";
 import { attendeeOccurrences, attendeesOf, meetingItems } from "./meetings.ts";
 import { LABELS, mirrorCopies } from "./mirror.ts";
 import { type DesiredEvent, type ManagedRow, type PushResult, pushSchedule } from "./push.ts";
+import { type Paint, type PaintJob, repaintRequest } from "./repaint.ts";
 
 export interface ReplanContext {
   db: Db;
@@ -62,6 +63,8 @@ export interface ReplanContext {
 export interface ReplanResult {
   push: PushResult;
   report: ReportEntry[];
+  /** Colors to write after the run (events-categories-and-colors.md rule 16). */
+  paint: PaintJob;
 }
 
 interface CalendarInfo {
@@ -75,15 +78,30 @@ interface CalendarInfo {
 
 const FOOTER = "Planned by Tempoloom.";
 
-export function writeCalendar(db: Db, userId: string): CalendarInfo | undefined {
-  return one<CalendarInfo>(
-    db,
-    `SELECT c.id, c.account_id, c.provider_id, c.is_primary, c.writable, c.check_availability
-     FROM calendars c JOIN accounts a ON a.id = c.account_id
-     WHERE a.user_id = ? AND a.status = 'ok' AND c.writable = 1
-     ORDER BY a.is_main DESC, c.is_primary DESC, a.created_at, c.name LIMIT 1`,
-    userId,
+/** Where new events go: the preferred calendar when the user can write to it, else the main one. */
+export function writeCalendar(
+  db: Db,
+  userId: string,
+  preferredId?: string | null,
+): CalendarInfo | undefined {
+  const pick = (only: string | null) =>
+    one<CalendarInfo>(
+      db,
+      `SELECT c.id, c.account_id, c.provider_id, c.is_primary, c.writable, c.check_availability
+       FROM calendars c JOIN accounts a ON a.id = c.account_id
+       WHERE a.user_id = ? AND a.status = 'ok' AND c.writable = 1 AND (? IS NULL OR c.id = ?)
+       ORDER BY a.is_main DESC, c.is_primary DESC, a.created_at, c.name LIMIT 1`,
+      userId,
+      only,
+      only,
+    );
+  if (!preferredId) return pick(null);
+  const chosen = pick(preferredId);
+  if (chosen) return chosen;
+  console.warn(
+    `calendar ${preferredId} is not writable for user ${userId}; using the main calendar`,
   );
+  return pick(null);
 }
 
 function weekStartOf(zone: string, now: number, weekStart: 1 | 7): number {
@@ -410,6 +428,13 @@ export function loadSnapshot(
     current,
     past,
     dismissedKeys: dismissed,
+    bufferLengths: Object.fromEntries(
+      rows.flatMap((r) =>
+        r.kind === "buffer" && r.kept_minutes !== null && r.end_ms > now
+          ? [[r.key, r.kept_minutes]]
+          : [],
+      ),
+    ),
     tasks,
     habits,
     meetings: meetings.items,
@@ -422,8 +447,13 @@ export function loadSnapshot(
   return { snapshot, rows, notes, titles, eventSettings };
 }
 
-/** Tempoloom's own mirror copies as their calendars show them (buffers-travel.md rule 13). */
+/**
+ * Tempoloom's own mirror copies as their calendars show them (buffers-travel.md
+ * rule 13), with the category their title and description give.
+ */
 export function copyAnchors(db: Db, userId: string, now: number): ExternalEvent[] {
+  const userEmail =
+    one<{ email: string }>(db, "SELECT email FROM users WHERE id = ?", userId)?.email ?? "";
   return all<{
     id: string;
     calendar_id: string;
@@ -460,6 +490,21 @@ export function copyAnchors(db: Db, userId: string, now: number): ExternalEvent[
     bookedViaLink: false,
     calendarId: c.calendar_id,
     mirrorSource: c.source_calendar_id,
+    category: categoryOf(
+      {
+        title: c.summary,
+        description: c.description,
+        rsvpNote: "",
+        start: c.start_ms,
+        end: c.end_ms,
+        eventType: "default",
+        attendees: [],
+        managedKind: null,
+        personalCalendar: false,
+        manual: null,
+      },
+      userEmail,
+    ),
   }));
 }
 
@@ -561,16 +606,20 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
     ).map((a) => [a.id, a.email.toLowerCase()]),
   );
   const calendars = new Map(
-    all<CalendarInfo>(
+    all<CalendarInfo & { ok: number }>(
       db,
-      `SELECT c.id, c.account_id, c.provider_id, c.is_primary, c.writable, c.check_availability
+      `SELECT c.id, c.account_id, c.provider_id, c.is_primary, c.writable, c.check_availability,
+         a.status = 'ok' AS ok
        FROM calendars c JOIN accounts a ON a.id = c.account_id WHERE a.user_id = ?`,
       userId,
     ).map((c) => [c.id, c]),
   );
-  // The calendar chosen in an automation's event settings, while it can take events.
-  const chosenCalendar = (es: EventSettings | undefined) =>
-    es?.calendarId && calendars.get(es.calendarId)?.writable === 1 ? es.calendarId : undefined;
+  // A calendar chosen for an item, while its account works and it takes events.
+  const writable = (id: string | null | undefined) => {
+    const cal = id ? calendars.get(id) : undefined;
+    return cal?.writable === 1 && cal.ok === 1 ? cal.id : undefined;
+  };
+  const chosenCalendar = (es: EventSettings | undefined) => writable(es?.calendarId);
   const travelBuffers = new Set(
     snapshot.buffers.filter((b) => b.filter.travel || b.filter.flight).map((b) => b.id),
   );
@@ -578,11 +627,14 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
     const row = rowByKey.get(p.key);
     const itemKey = `${p.kind}:${p.itemId}`;
     const es = eventSettings.get(itemKey);
-    const calendarId =
-      row?.calendar_id ??
-      (p.kind === "task" ? taskCalendar.get(taskHours.get(p.itemId) ?? "") : undefined) ??
-      chosenCalendar(es) ??
-      target.id;
+    // HRS-7, HRS-12: unlocked task chunks follow the calendar of their hours
+    // set, also when it changes; they keep their times. A chunk on a calendar
+    // that cannot be written now stays, and other events stay where they are.
+    const taskCalendarId =
+      p.kind === "task" && !row?.locked && (!row || writable(row.calendar_id))
+        ? (writable(taskCalendar.get(taskHours.get(p.itemId) ?? "")) ?? target.id)
+        : undefined;
+    const calendarId = taskCalendarId ?? row?.calendar_id ?? chosenCalendar(es) ?? target.id;
     const keepUserTitle = row?.user_edited === 1;
     const itemNotes = notes.get(itemKey) ?? "";
     const travel = p.kind === "buffer" && travelBuffers.has(p.itemId);
@@ -633,6 +685,8 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
       user.time_zone,
       now,
       work ? (JSON.parse(work.weekly) as WeeklyHours) : null,
+      settings.noReplyCopies === "busy",
+      desired.filter((d) => d.kind === "buffer" && travelBuffers.has(d.sourceId)),
     ),
   );
 
@@ -677,40 +731,49 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
       userId,
     ).map((p) => [p.id, p.color_override]),
   );
-  for (const d of desired) {
-    const row = rowByKey.get(d.key);
-    const manual = row?.event_id
-      ? (cats.manual.get(`${row.calendar_id}:${row.event_id}`) ?? null)
-      : null;
-    const type = d.kind === "mirror" ? mirrorTypes.get(d.sourceId) : undefined;
+  /** The color of a managed event: its category color, or its item's own color (rule 9). */
+  const colorOf = (
+    kind: string,
+    sourceId: string,
+    text: { title: string; description: string; start: number; end: number },
+    attendees: string[],
+    manualKey: string | null,
+  ): string | null => {
+    const manual = manualKey ? (cats.manual.get(manualKey) ?? null) : null;
+    const type = kind === "mirror" ? mirrorTypes.get(sourceId) : undefined;
     const category =
       type === "travel" && !manual
         ? "travel"
         : categoryOf(
             {
-              title: d.title,
-              description: d.description,
-              start: d.start,
-              end: d.end,
+              ...text,
+              rsvpNote: "",
               eventType: "default",
-              attendees: [...(d.attendees ?? []), ...(d.optionalAttendees ?? [])],
-              managedKind: d.kind,
-              personalHabit: personalHabits.has(d.sourceId),
-              travelBuffer: travelBuffers.has(d.sourceId),
+              attendees,
+              managedKind: kind,
+              personalHabit: personalHabits.has(sourceId),
+              travelBuffer: travelBuffers.has(sourceId),
               personalCalendar: type === "personal",
               manual,
             },
             cats.userEmail,
           );
-    d.colorId =
-      (d.kind === "mirror" ? mirrorColors.get(d.sourceId) : undefined) ??
-      colorFor(settings, category);
-    // Rule 9: an item color overrides the category color.
     const own =
-      d.kind === "task"
-        ? taskColors.get(d.sourceId)
-        : eventSettings.get(`${d.kind}:${d.sourceId}`)?.color;
-    if (own && own !== "category") d.colorId = own === "calendar_default" ? null : own;
+      kind === "task" ? taskColors.get(sourceId) : eventSettings.get(`${kind}:${sourceId}`)?.color;
+    if (own && own !== "category") return own === "calendar_default" ? null : own;
+    return (
+      (kind === "mirror" ? mirrorColors.get(sourceId) : undefined) ?? colorFor(settings, category)
+    );
+  };
+  for (const d of desired) {
+    const row = rowByKey.get(d.key);
+    d.colorId = colorOf(
+      d.kind,
+      d.sourceId,
+      d,
+      [...(d.attendees ?? []), ...(d.optionalAttendees ?? [])],
+      row?.event_id ? `${row.calendar_id}:${row.event_id}` : null,
+    );
   }
 
   const push = await pushSchedule(
@@ -728,14 +791,44 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
     desired,
   );
   recordMeetingChanges(db, userId, rows, now, last);
-  await paintExternal(
+  // Rule 8: a new color also repaints managed events that ended, up to 90 days back.
+  // Rule 12, "repaint all": every managed event gets its color again, also where
+  // the user changed the color in the calendar. The run only lists the paints;
+  // the sync service writes them after the run (rule 16).
+  const requestedAt = repaintRequest(db, userId);
+  const paints: Paint[] = [];
+  for (const r of all<ManagedRow & { cached_color: string | null; attendees: string | null }>(
     db,
+    `SELECT m.*, e.color_id AS cached_color, e.attendees FROM managed_events m
+       JOIN calendars c ON c.id = m.calendar_id
+       JOIN accounts a ON a.id = c.account_id
+       LEFT JOIN events e ON e.calendar_id = m.calendar_id AND e.event_id = m.event_id
+     WHERE m.user_id = ? AND a.status = 'ok' AND c.writable = 1
+       AND m.event_id IS NOT NULL AND m.end_ms > ? AND m.end_ms <= ?`,
     userId,
-    settings,
-    (accountId) => ctx.provider(accountId),
-    now,
-    snapshot.windowEnd,
-  );
+    now - 90 * DAY,
+    requestedAt === null ? now : Number.MAX_SAFE_INTEGER,
+  )) {
+    if (!r.event_id || (r.kind === "mirror" && r.end_ms <= now)) continue;
+    const color = colorOf(
+      r.kind,
+      r.source_id,
+      { title: r.title, description: r.description, start: r.start_ms, end: r.end_ms },
+      // Only a meeting's category depends on its guests.
+      r.kind === "meeting" ? (JSON.parse(r.attendees ?? "[]") as string[]) : [],
+      `${r.calendar_id}:${r.event_id}`,
+    );
+    const current = requestedAt === null ? r.color_id : r.cached_color;
+    if ((current ?? null) === color) continue;
+    paints.push({
+      calendarId: r.calendar_id,
+      eventId: r.event_id,
+      series: false,
+      color,
+      managedId: r.id,
+    });
+  }
+  paints.push(...externalPaints(db, userId, settings, now, snapshot.windowEnd));
   await markEnded(db, userId, settings.markers, (accountId) => ctx.provider(accountId), now);
   await markFlights(db, userId, (accountId) => ctx.provider(accountId), now, snapshot.windowEnd);
   await afterPush(db, userId, (accountId) => ctx.provider(accountId), now);
@@ -747,5 +840,5 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
     JSON.stringify(result.report),
     now,
   );
-  return { push, report: result.report };
+  return { push, report: result.report, paint: { paints, requestedAt } };
 }
