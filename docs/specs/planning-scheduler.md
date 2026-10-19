@@ -370,18 +370,34 @@ Proposed defaults:
 
   ```
   need = remainingMinutes - minutes of locked future chunks
-  keep the valid sticky chunks (SCH-88) first, oldest start first, while
-  their sum <= need;
+  keep the valid sticky chunks (SCH-88) first, oldest start first (a chunk
+  shorter than minChunk last: it is the rest, TSK-13), while their
+  sum <= need;
       if the next sticky chunk would exceed need, shorten it to the rest
-      when the rest >= minChunk, else drop it
+      when the rest >= minChunk, else drop it;
+      drop a sticky chunk that would leave a rest with no split when the
+      need before it had one (TSK-13)
   need = need - kept minutes
+  if ceil(need / maxChunk) * minChunk > need and need > maxChunk:
+      # no split (TSK-13): rest = need - (ceil(need / maxChunk) - 1) * maxChunk
+      place need - rest with the loop below
+      if all of it is placed: place rest with the loop below, in the
+          free intervals minus the new chunks and their cooldown gap
+      else: rest is unplaced
+      stop
   for each free interval I in time order:
       cursor = I.start
       while need > 0 and cursor < I.end:
           room = floor_to_grid(I.end - cursor)
           len  = min(maxChunk, need, room)
-          if 0 < need - len < minChunk:
-              len = need - minChunk          # never leave a stub
+          k    = ceil(need / maxChunk)
+          if k * minChunk <= need:            # a split exists (TSK-13)
+              len = min(len, need - (k - 1) * minChunk)
+              rest = need - len
+              if ceil(rest / maxChunk) * minChunk > rest:
+                  len = need - ceil(rest / maxChunk) * minChunk
+                                             # keep the rest splittable
+          # else: need < minChunk, one short chunk of need
           if len < minChunk and not (need < minChunk and len == need):
               break                          # interval too small
           place chunk [cursor, cursor + len]

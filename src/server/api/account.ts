@@ -4,7 +4,7 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { isValidTimeZone } from "../../shared/time.ts";
-import { upsertAccount } from "../accounts.ts";
+import { type AccountRow, credentialsOf, upsertAccount } from "../accounts.ts";
 import { createApiKey, deleteApiKey, listApiKeys, regenerateApiKey } from "../api-keys.ts";
 import type { AppEnv } from "../app.ts";
 import type { SecretBox } from "../crypto.ts";
@@ -114,6 +114,60 @@ export function accountRoutes(
     // The person's own connection replaces the read-only copy from the team's grant.
     dropCoveredGrant(db, user.id);
     return c.json({ id }, 201);
+  });
+
+  /**
+   * Reconnects a disconnected CalDAV account with a new password (rule 15):
+   * the server must accept it; then the account reads and writes again.
+   */
+  r.post("/accounts/:id/reconnect", async (c) => {
+    const user = c.get("user");
+    const id = c.req.param("id");
+    const row = one<AccountRow>(
+      db,
+      "SELECT * FROM accounts WHERE id = ? AND user_id = ? AND grant_team_id IS NULL",
+      id,
+      user.id,
+    );
+    if (!row) notFound("account");
+    if (row.provider !== "caldav")
+      return c.json(
+        { error: "not_caldav", message: "Sign in with this account's provider again." },
+        400,
+      );
+    const { password } = await jsonBody(c, z.object({ password: z.string().min(1).max(1000) }));
+    const creds = credentialsOf(box, row);
+    const probe = new CalDavProvider(
+      {
+        serverUrl: row.server_url ?? "",
+        username: creds.username ?? "",
+        password,
+        email: row.email,
+        ...(creds.homeUrl ? { homeUrl: creds.homeUrl } : {}),
+      },
+      "UTC",
+    );
+    try {
+      await probe.listCalendars();
+    } catch (err) {
+      return err instanceof ProviderError && err.kind === "auth"
+        ? c.json(
+            { error: "invalid_credentials", message: "The server rejected this password." },
+            400,
+          )
+        : c.json(
+            { error: "server_unreachable", message: "Could not reach the CalDAV server." },
+            502,
+          );
+    }
+    run(
+      db,
+      "UPDATE accounts SET credentials = ?, status = 'ok' WHERE id = ?",
+      box.seal(JSON.stringify({ ...creds, password })),
+      id,
+    );
+    await sync.onConnect(user.id, id);
+    return c.json({ ok: true });
   });
 
   /**

@@ -54,6 +54,7 @@ interface EventRow {
   attendees: string;
   recurring_id: string | null;
   private_props: string;
+  rsvp_note: string;
 }
 
 interface Member {

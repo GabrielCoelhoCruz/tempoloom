@@ -53,6 +53,8 @@ export const settingsSchema = z.object({
       // events-title-emoji.md marker table: events that ended.
       done: z.string().max(8).default("✅"),
       partial: z.string().max(8).default("👍"),
+      // events-title-emoji.md settings: the state marker before or after the title.
+      position: z.enum(["start", "end"]).default("start"),
     })
     .prefault({}),
   // events-categories-and-colors.md: color settings with the proposed defaults.
@@ -70,6 +72,8 @@ export const settingsSchema = z.object({
   // r3 s3: task placement (planning-tasks.md TSK-70), in-app alerts
   // (planning-notifications.md), first-run hours review (HRS-15), profile fields.
   taskPlacement: z.enum(["chunks", "suggestions"]).default("chunks"),
+  // sync-calendar-mirroring.md account-level setting: copies of events with no reply.
+  noReplyCopies: z.enum(["free", "busy"]).default("free"),
   tabAlert: z.boolean().default(true),
   startChime: z.boolean().default(false),
   hoursReviewed: z.boolean().default(false),

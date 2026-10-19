@@ -3,23 +3,29 @@
 // automation. /automations/new/<type>[?template=<slug>] creates one,
 // /automations/edit/<type>/<id> changes one.
 import { useEffect, useState } from "preact/hooks";
+import type { HabitFrequency } from "../../scheduler/model.ts";
 import {
   defaultEventSettings,
   type EventSettings,
   readEventSettings,
   type SettingsKind,
 } from "../../shared/event-settings.ts";
+import { changedHours, fitsOneRange, itemRangeOf, type Weekly } from "../../shared/item-hours.ts";
 import { api } from "../lib/api.ts";
 import { hhmm } from "../lib/format.ts";
+import { readFrequency } from "../lib/frequency.ts";
 import { type BufferPreset, entry, freeName, type LibraryEntry } from "../lib/library.ts";
 import { navigate, path } from "../lib/router.ts";
 import { LEVEL_NAMES, planNow } from "../lib/state.ts";
 import { EventSettingsFields, eventSettingsFrom, Select } from "./event-settings.tsx";
+import { FrequencyFields } from "./habit-editor.tsx";
+import { HoursField, ITEM, itemHoursFrom } from "./hours-field.tsx";
 
 interface HoursSet {
   id: string;
   kind: string;
   name: string;
+  weekly: Record<string, [number, number][]>;
 }
 
 type Row = Record<string, unknown> & {
@@ -64,7 +70,6 @@ const isTravel = (choice: string, kept: Filter) =>
   choice === "flight" ||
   (choice === "keep" && Boolean(kept.travel || kept.flight));
 
-const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const DEFENSE: Record<string, string> = {
   adaptive: "Free until time gets short",
   "always-free": "Always free",
@@ -163,8 +168,46 @@ function FocusRules({
           defaultValue={String(n("max_block_minutes", 240))}
         />
       </label>
-      <HoursSelect hours={hours} value={row?.hours_set_id} />
+      <FocusHours row={row} hours={hours} preset={p} />
       <ShowAs busy={row ? row.busy === 1 : true} />
+    </>
+  );
+}
+
+/** The focus row's stored item-specific hours, if it has them. */
+const storedHours = (row: Row | null): Weekly | null =>
+  row?.item_hours ? (JSON.parse(String(row.item_hours)) as Weekly) : null;
+
+/** Focus hours: a set, or a one-off window (focus-time.md `hours`) as item-specific hours. */
+function FocusHours({
+  row,
+  hours,
+  preset,
+}: {
+  row: Row | null;
+  hours: HoursSet[];
+  preset: { window?: { days: number[]; from: string; to: string } } | null;
+}) {
+  const stored = storedHours(row);
+  const item = stored ? itemRangeOf(stored) : row ? undefined : preset?.window;
+  const work = hours.find((h) => h.kind === "work")?.id;
+  const initial = item ? ITEM : !row || row.hours_set_id === work ? "" : String(row.hours_set_id);
+  return (
+    <>
+      <HoursField
+        // Keyed by the list, so the choice shows once the hours sets load.
+        key={hours.length}
+        sets={hours}
+        allowItem
+        initial={initial}
+        {...(item ? { item } : {})}
+      />
+      {stored && !fitsOneRange(stored) && (
+        <p class="meta wide" data-testid="item-hours-note">
+          These hours have more than one range: the fields show the first. Saving keeps them all
+          unless you change the fields.
+        </p>
+      )}
     </>
   );
 }
@@ -199,6 +242,8 @@ function BufferRules({
   const [side, setSide] = useState(String(row?.side ?? preset?.side ?? "after"));
   const before = row ? Number(row.minutes_before) : (preset?.minutesBefore ?? 15);
   const after = row ? Number(row.minutes_after) : (preset?.minutesAfter ?? 15);
+  // buffers-travel.md: one travel length for both sides (travel_minutes).
+  const travelLength = choice === "travel" || (choice === "keep" && Boolean(kept.travel));
   return (
     <>
       <LevelSelect value={row ? Number(row.level) : (preset?.level ?? 3)} />
@@ -213,31 +258,47 @@ function BufferRules({
           ["both", "Before and after"],
         ]}
       />
-      {side !== "after" && (
+      {travelLength ? (
         <label>
-          Before the event (minutes)
+          Travel length (minutes)
           <input
-            name="minutesBefore"
+            name="travelMinutes"
             type="number"
             min={5}
             max={240}
             step={5}
-            defaultValue={String(before || 15)}
+            defaultValue={String(before || after || 30)}
           />
         </label>
-      )}
-      {side !== "before" && (
-        <label>
-          After the event (minutes)
-          <input
-            name="minutesAfter"
-            type="number"
-            min={5}
-            max={240}
-            step={5}
-            defaultValue={String(after || 15)}
-          />
-        </label>
+      ) : (
+        <>
+          {side !== "after" && (
+            <label>
+              Before the event (minutes)
+              <input
+                name="minutesBefore"
+                type="number"
+                min={5}
+                max={240}
+                step={5}
+                defaultValue={String(before || 15)}
+              />
+            </label>
+          )}
+          {side !== "before" && (
+            <label>
+              After the event (minutes)
+              <input
+                name="minutesAfter"
+                type="number"
+                min={5}
+                max={240}
+                step={5}
+                defaultValue={String(after || 15)}
+              />
+            </label>
+          )}
+        </>
       )}
       <Select
         id="filterChoice"
@@ -275,7 +336,7 @@ function BufferRules({
 }
 
 function HabitRules({ row, hours }: { row: Row; hours: HoursSet[] }) {
-  const frequency = JSON.parse(String(row.frequency)) as { period: string; days?: number[] };
+  const frequency = JSON.parse(String(row.frequency)) as HabitFrequency;
   const words = JSON.parse(String(row.reserved_words ?? "[]")) as string[];
   return (
     <>
@@ -333,22 +394,7 @@ function HabitRules({ row, hours }: { row: Row; hours: HoursSet[] }) {
         Skip days with events named (comma list)
         <input name="reservedWords" defaultValue={words.join(", ")} />
       </label>
-      <fieldset class="wide days">
-        <legend>Days (none selected: every day of its hours)</legend>
-        {DAY_NAMES.map((d, i) => (
-          <label key={d} class="inline">
-            <input
-              type="checkbox"
-              name="days"
-              value={i + 1}
-              defaultChecked={
-                frequency.period === "weekly" && (frequency.days ?? []).includes(i + 1)
-              }
-            />
-            {d}
-          </label>
-        ))}
-      </fieldset>
+      <FrequencyFields preset={frequency} />
       <label class="wide">
         Notes
         <textarea name="notes" rows={2} defaultValue={String(row.notes ?? "")} />
@@ -360,17 +406,29 @@ function HabitRules({ row, hours }: { row: Row; hours: HoursSet[] }) {
 /** Hours from a number input, as whole quarter hours in minutes. */
 const quarterHours = (v: FormDataEntryValue | null) => Math.round((Number(v) * 60) / 15) * 15;
 
-function rulesBody(kind: SettingsKind, f: FormData, kept: Filter): Record<string, unknown> {
+function rulesBody(
+  kind: SettingsKind,
+  f: FormData,
+  kept: Filter,
+  hours: HoursSet[],
+  row: Row | null,
+): Record<string, unknown> {
   const text = (k: string) => String(f.get(k) ?? "").trim();
   const num = (k: string) => Number(f.get(k));
   if (kind === "focus_time") {
+    const set = text("hoursSetId");
+    const itemHours = set === ITEM ? changedHours(storedHours(row), itemHoursFrom(f)) : undefined;
     return {
       weeklyGoalMinutes: quarterHours(f.get("weeklyGoal")),
       dailyMinMinutes: quarterHours(f.get("dailyMin")),
       dailyMaxMinutes: quarterHours(f.get("dailyMax")),
       minBlockMinutes: num("minBlock"),
       maxBlockMinutes: num("maxBlock"),
-      hoursSetId: text("hoursSetId"),
+      ...(set === ITEM
+        ? itemHours
+          ? { itemHours }
+          : {}
+        : { hoursSetId: set || hours.find((h) => h.kind === "work")?.id }),
       busy: text("busy") === "busy",
     };
   }
@@ -387,24 +445,24 @@ function rulesBody(kind: SettingsKind, f: FormData, kept: Filter): Record<string
           ? { text: { values: words, fields: ["title"] } }
           : FILTERS.find((x) => x.id === choice)?.filter;
     const side = text("side");
+    const travel = f.has("travelMinutes") ? num("travelMinutes") : null;
     return {
       level: num("level"),
       side,
-      minutesBefore: side === "after" ? 0 : num("minutesBefore"),
-      minutesAfter: side === "before" ? 0 : num("minutesAfter"),
+      minutesBefore: side === "after" ? 0 : (travel ?? num("minutesBefore")),
+      minutesAfter: side === "before" ? 0 : (travel ?? num("minutesAfter")),
       busy: text("busy") === "busy",
       filter,
       onConflict: text("onConflict"),
     };
   }
-  const days = f.getAll("days").map(Number);
   return {
     level: num("level"),
     idealTime: text("idealTime"),
     minMinutes: num("minMinutes"),
     maxMinutes: num("maxMinutes"),
     hoursSetId: text("hoursSetId"),
-    frequency: days.length ? { period: "weekly", days } : { period: "daily" },
+    frequency: readFrequency(f),
     defense: text("defense"),
     whenUnplaceable: text("whenUnplaceable"),
     starting: text("starting") || null,
@@ -473,7 +531,7 @@ export function AutomationForm() {
     try {
       const body = {
         title: String(f.get("title") ?? "").trim(),
-        ...rulesBody(kind, f, kept),
+        ...rulesBody(kind, f, kept, hours, row),
         eventSettings: eventSettingsFrom(f),
         ...(!row && template ? { templateId: template.slug } : {}),
       };
