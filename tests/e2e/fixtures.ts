@@ -253,6 +253,7 @@ async function caldavCalendar(
         {
           summary: change.summary ?? ev.summary,
           description: ev.description,
+          ...(ev.location ? { location: ev.location } : {}),
           start: change.start,
           end: change.end,
           busy: ev.busy,

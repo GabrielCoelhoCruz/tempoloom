@@ -10,14 +10,7 @@ import {
   utcToLocal,
   weekdayOf,
 } from "../shared/time.ts";
-import {
-  allDayBlocks,
-  attends,
-  blockingIntervals,
-  hasTag,
-  isFlightTitle,
-  TAG_FOCUS,
-} from "./blocking.ts";
+import { allDayBlocks, attends, blockingIntervals, hasTag, TAG_FOCUS } from "./blocking.ts";
 import { hoursToTimeSet } from "./hours.ts";
 import type {
   BufferFilter,
@@ -404,23 +397,48 @@ function weekStartDate(ctx: Ctx, date: LocalDate): LocalDate {
   return addDays(date, -back);
 }
 
+/** Index `i` of a period counted from the anchor period is on an every-`every` cadence. */
+const onCadence = (i: number, every: number) => ((i % every) + every) % every === 0;
+
+const monthIndex = (d: LocalDate) => Number(d.slice(0, 4)) * 12 + Number(d.slice(5, 7));
+
+/**
+ * The habit's occurrences. With an interval above 1 (custom frequency), only
+ * the periods of its unit (day, week or month) on the cadence from the anchor.
+ */
 function habitOccurrences(ctx: Ctx, h: HabitItem): Occurrence[] {
+  const f = h.frequency;
+  const out = frequencyOccurrences(ctx, h);
+  const every = f.interval ?? 1;
+  if (every <= 1) return out;
+  const anchor = f.anchor ?? h.starting ?? utcToLocal(ctx.s.zone, h.createdAt).date;
+  const index = (d: LocalDate): number =>
+    f.period === "daily"
+      ? dayDiff(d, anchor)
+      : f.period === "weekly"
+        ? dayDiff(d, weekStartDate(ctx, anchor)) / 7
+        : monthIndex(d) - monthIndex(anchor);
+  return out.filter((o) => onCadence(index(o.periodStart), every));
+}
+
+function frequencyOccurrences(ctx: Ctx, h: HabitItem): Occurrence[] {
+  const frequency = h.frequency;
   const { s } = ctx;
   const first = utcToLocal(s.zone, ctx.earliest).date;
   const last = utcToLocal(s.zone, ctx.end - 1).date;
   const hasHours = (d: LocalDate) => (s.hours[h.hours]?.[weekdayOf(d)]?.length ?? 0) > 0;
   const allowed = (d: LocalDate) => !h.starting || d >= h.starting;
   const out: Occurrence[] = [];
-  if (h.frequency.period === "monthly") {
-    return monthlyOccurrences(h.frequency, first, last, hasHours, allowed);
+  if (frequency.period === "monthly") {
+    return monthlyOccurrences(frequency, first, last, hasHours, allowed);
   }
   for (let d = first; d <= last; d = addDays(d, 1)) {
     if (!allowed(d)) continue;
-    if (h.frequency.period === "daily") {
+    if (frequency.period === "daily") {
       if (hasHours(d)) out.push({ date: d, alternatives: [], periodStart: d, periodEnd: d });
       continue;
     }
-    const days = h.frequency.days;
+    const days = frequency.days;
     if (!days.includes(weekdayOf(d))) continue;
     const ws = weekStartDate(ctx, d);
     const alternatives: LocalDate[] = [];
@@ -709,7 +727,7 @@ function meetingPeriods(ctx: Ctx, m: MeetingItem): Period[] {
   const { everyWeeks, idealDays } = m.frequency;
   const anchor = weekStartDate(ctx, m.starting ?? first);
   for (let ws = weekStartDate(ctx, from); ws <= last; ws = addDays(ws, 7)) {
-    if ((dayDiff(ws, anchor) / 7) % everyWeeks !== 0) continue;
+    if (!onCadence(dayDiff(ws, anchor) / 7, everyWeeks)) continue;
     const days: LocalDate[] = [];
     for (let i = 0; i < 7; i++) {
       const d = addDays(ws, i);
@@ -935,9 +953,12 @@ function hasPerson(e: ExternalEvent, people: string[]): boolean {
   });
 }
 
-/** buffers-travel.md rules 2 and 5. */
+/**
+ * buffers-travel.md rule 5: the flight category, which the user sets by hand or
+ * the tag or a flight title gives (categoryOf).
+ */
 export function isFlight(e: ExternalEvent): boolean {
-  return hasTag(e, "#tl_flight") || isFlightTitle(e.title);
+  return e.category === "flight";
 }
 
 export function hasAddress(e: ExternalEvent): boolean {
@@ -1019,10 +1040,12 @@ function placeBuffer(ctx: Ctx, b: BufferItem): void {
     for (const side of sides) {
       const key = `buffer:${b.id}:${a.id}:${side}`;
       if (ctx.fixedKeys.has(key) || ctx.dismissed.has(key)) continue;
+      // Rule 14: a length the user set for this anchor occurrence wins.
+      const kept = ctx.s.bufferLengths?.[key];
       const iv =
         side === "before"
-          ? { start: a.start - b.minutesBefore * MINUTE, end: a.start }
-          : { start: a.end, end: a.end + b.minutesAfter * MINUTE };
+          ? { start: a.start - (kept ?? b.minutesBefore) * MINUTE, end: a.start }
+          : { start: a.end, end: a.end + (kept ?? b.minutesAfter) * MINUTE };
       if (len(iv) <= 0 || iv.start < ctx.earliest || iv.end > ctx.end) continue;
       const ok = ctx.freeOther.contains(iv);
       if (!ok && b.onConflict === "remove") continue;

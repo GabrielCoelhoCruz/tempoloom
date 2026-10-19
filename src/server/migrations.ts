@@ -1163,4 +1163,9 @@ export const MIGRATIONS: readonly string[] = [
   `
   CREATE INDEX tasks_due_page ON tasks(user_id, status, COALESCE(due_at, 9000000000000000), created_at, id);
   `,
+  // 29: a buffer length the user set in the calendar (buffers rule 14). It is
+  // on the buffer's own row, so it goes when that event goes.
+  `
+  ALTER TABLE managed_events ADD COLUMN kept_minutes INTEGER;
+  `,
 ];

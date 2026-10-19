@@ -421,6 +421,13 @@ export function loadSnapshot(
     current,
     past,
     dismissedKeys: dismissed,
+    bufferLengths: Object.fromEntries(
+      rows.flatMap((r) =>
+        r.kind === "buffer" && r.kept_minutes !== null && r.end_ms > now
+          ? [[r.key, r.kept_minutes]]
+          : [],
+      ),
+    ),
     tasks,
     habits,
     meetings: meetings.items,
@@ -433,8 +440,13 @@ export function loadSnapshot(
   return { snapshot, rows, notes, titles, eventSettings };
 }
 
-/** Tempoloom's own mirror copies as their calendars show them (buffers-travel.md rule 13). */
+/**
+ * Tempoloom's own mirror copies as their calendars show them (buffers-travel.md
+ * rule 13), with the category their title and description give.
+ */
 export function copyAnchors(db: Db, userId: string, now: number): ExternalEvent[] {
+  const userEmail =
+    one<{ email: string }>(db, "SELECT email FROM users WHERE id = ?", userId)?.email ?? "";
   return all<{
     id: string;
     calendar_id: string;
@@ -471,6 +483,20 @@ export function copyAnchors(db: Db, userId: string, now: number): ExternalEvent[
     bookedViaLink: false,
     calendarId: c.calendar_id,
     mirrorSource: c.source_calendar_id,
+    category: categoryOf(
+      {
+        title: c.summary,
+        description: c.description,
+        start: c.start_ms,
+        end: c.end_ms,
+        eventType: "default",
+        attendees: [],
+        managedKind: null,
+        personalCalendar: false,
+        manual: null,
+      },
+      userEmail,
+    ),
   }));
 }
 

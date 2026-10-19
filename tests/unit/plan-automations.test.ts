@@ -19,6 +19,9 @@
 // 11. The people filter misses a domain or matches a part of an address.
 // 12. A buffer scoped to one calendar uses anchors of another calendar.
 // 13. A mirrored copy whose source is already an anchor gets a second buffer.
+// 14. A later start date (a snooze) moves the cadence of a custom frequency.
+// 15. Interval 1 is stored as a second form of the plain frequency, or a new
+//     interval does not get an anchor, or an edit moves the anchor.
 import { describe, expect, it } from "vitest";
 import type {
   BufferItem,
@@ -30,6 +33,7 @@ import type {
   Snapshot,
 } from "../../src/scheduler/model.ts";
 import { plan } from "../../src/scheduler/plan.ts";
+import { withAnchor } from "../../src/server/api/items.ts";
 import { addDays, localToUtc } from "../../src/shared/time.ts";
 
 const ZONE = "Europe/Berlin";
@@ -170,6 +174,69 @@ describe("monthly habits", () => {
       ),
     );
     expect(spans(of(late, "end"))).toEqual([]);
+  });
+});
+
+describe("custom frequency", () => {
+  const dates = (ps: Placement[]) => spans(ps).map((x) => x.slice(0, 10));
+  it("counts every N weeks, days or months from the anchor, not from the start date", () => {
+    const s = snapshot(
+      "2026-11-02T08:00",
+      {
+        habits: [
+          // Anchored on Monday 2 November; snoozed to the next week.
+          habit({
+            id: "weeks",
+            frequency: { period: "weekly", days: [2], interval: 2, anchor: "2026-11-02" },
+            starting: "2026-11-09",
+          }),
+          habit({
+            id: "days",
+            frequency: { period: "daily", interval: 3, anchor: "2026-11-02" },
+            starting: "2026-11-04",
+          }),
+          habit({
+            id: "months",
+            frequency: { period: "monthly", dayOfMonth: 3, interval: 2, anchor: "2026-10-03" },
+            starting: "2026-11-01",
+          }),
+        ],
+      },
+      9,
+    );
+    const r = plan(s);
+    expect(dates(of(r, "weeks"))).toEqual(["2026-11-17", "2026-12-01", "2026-12-15", "2026-12-29"]);
+    expect(dates(of(r, "days")).slice(0, 4)).toEqual([
+      "2026-11-05",
+      "2026-11-11",
+      "2026-11-17",
+      "2026-11-20",
+    ]);
+    // October is the anchor month: December is on the cadence, November is not.
+    expect(dates(of(r, "months"))).toEqual(["2026-12-03"]);
+  });
+
+  it("drops interval 1, anchors a new interval once, and keeps that anchor", () => {
+    const weekly = { period: "weekly" as const, days: [2] };
+    expect(withAnchor({ ...weekly, interval: 1 }, null, null, "2026-11-02")).toEqual(weekly);
+    expect(withAnchor({ ...weekly, interval: 2 }, null, null, "2026-11-02")).toEqual({
+      ...weekly,
+      interval: 2,
+      anchor: "2026-11-02",
+    });
+    expect(withAnchor({ ...weekly, interval: 2 }, null, "2026-11-09", "2026-11-02").anchor).toBe(
+      "2026-11-09",
+    );
+    const stored = { ...weekly, interval: 2, anchor: "2026-11-02" };
+    expect(withAnchor({ ...weekly, interval: 3 }, stored, "2026-11-16", "2026-11-20")).toEqual({
+      ...weekly,
+      interval: 3,
+      anchor: "2026-11-02",
+    });
+    // From plain to custom: the anchor is new.
+    expect(withAnchor({ ...weekly, interval: 2 }, weekly, "2026-11-16", "2026-11-20").anchor).toBe(
+      "2026-11-16",
+    );
   });
 });
 

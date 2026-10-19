@@ -3,6 +3,7 @@
 // automation. /automations/new/<type>[?template=<slug>] creates one,
 // /automations/edit/<type>/<id> changes one.
 import { useEffect, useState } from "preact/hooks";
+import type { HabitFrequency } from "../../scheduler/model.ts";
 import {
   defaultEventSettings,
   type EventSettings,
@@ -11,10 +12,12 @@ import {
 } from "../../shared/event-settings.ts";
 import { api } from "../lib/api.ts";
 import { hhmm } from "../lib/format.ts";
+import { readFrequency } from "../lib/frequency.ts";
 import { type BufferPreset, entry, freeName, type LibraryEntry } from "../lib/library.ts";
 import { navigate, path } from "../lib/router.ts";
 import { LEVEL_NAMES, planNow } from "../lib/state.ts";
 import { EventSettingsFields, eventSettingsFrom, Select } from "./event-settings.tsx";
+import { FrequencyFields } from "./habit-editor.tsx";
 
 interface HoursSet {
   id: string;
@@ -64,7 +67,6 @@ const isTravel = (choice: string, kept: Filter) =>
   choice === "flight" ||
   (choice === "keep" && Boolean(kept.travel || kept.flight));
 
-const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const DEFENSE: Record<string, string> = {
   adaptive: "Free until time gets short",
   "always-free": "Always free",
@@ -199,6 +201,8 @@ function BufferRules({
   const [side, setSide] = useState(String(row?.side ?? preset?.side ?? "after"));
   const before = row ? Number(row.minutes_before) : (preset?.minutesBefore ?? 15);
   const after = row ? Number(row.minutes_after) : (preset?.minutesAfter ?? 15);
+  // buffers-travel.md: one travel length for both sides (travel_minutes).
+  const travelLength = choice === "travel" || (choice === "keep" && Boolean(kept.travel));
   return (
     <>
       <LevelSelect value={row ? Number(row.level) : (preset?.level ?? 3)} />
@@ -213,31 +217,47 @@ function BufferRules({
           ["both", "Before and after"],
         ]}
       />
-      {side !== "after" && (
+      {travelLength ? (
         <label>
-          Before the event (minutes)
+          Travel length (minutes)
           <input
-            name="minutesBefore"
+            name="travelMinutes"
             type="number"
             min={5}
             max={240}
             step={5}
-            defaultValue={String(before || 15)}
+            defaultValue={String(before || after || 30)}
           />
         </label>
-      )}
-      {side !== "before" && (
-        <label>
-          After the event (minutes)
-          <input
-            name="minutesAfter"
-            type="number"
-            min={5}
-            max={240}
-            step={5}
-            defaultValue={String(after || 15)}
-          />
-        </label>
+      ) : (
+        <>
+          {side !== "after" && (
+            <label>
+              Before the event (minutes)
+              <input
+                name="minutesBefore"
+                type="number"
+                min={5}
+                max={240}
+                step={5}
+                defaultValue={String(before || 15)}
+              />
+            </label>
+          )}
+          {side !== "before" && (
+            <label>
+              After the event (minutes)
+              <input
+                name="minutesAfter"
+                type="number"
+                min={5}
+                max={240}
+                step={5}
+                defaultValue={String(after || 15)}
+              />
+            </label>
+          )}
+        </>
       )}
       <Select
         id="filterChoice"
@@ -275,7 +295,7 @@ function BufferRules({
 }
 
 function HabitRules({ row, hours }: { row: Row; hours: HoursSet[] }) {
-  const frequency = JSON.parse(String(row.frequency)) as { period: string; days?: number[] };
+  const frequency = JSON.parse(String(row.frequency)) as HabitFrequency;
   const words = JSON.parse(String(row.reserved_words ?? "[]")) as string[];
   return (
     <>
@@ -333,22 +353,7 @@ function HabitRules({ row, hours }: { row: Row; hours: HoursSet[] }) {
         Skip days with events named (comma list)
         <input name="reservedWords" defaultValue={words.join(", ")} />
       </label>
-      <fieldset class="wide days">
-        <legend>Days (none selected: every day of its hours)</legend>
-        {DAY_NAMES.map((d, i) => (
-          <label key={d} class="inline">
-            <input
-              type="checkbox"
-              name="days"
-              value={i + 1}
-              defaultChecked={
-                frequency.period === "weekly" && (frequency.days ?? []).includes(i + 1)
-              }
-            />
-            {d}
-          </label>
-        ))}
-      </fieldset>
+      <FrequencyFields preset={frequency} />
       <label class="wide">
         Notes
         <textarea name="notes" rows={2} defaultValue={String(row.notes ?? "")} />
@@ -387,24 +392,24 @@ function rulesBody(kind: SettingsKind, f: FormData, kept: Filter): Record<string
           ? { text: { values: words, fields: ["title"] } }
           : FILTERS.find((x) => x.id === choice)?.filter;
     const side = text("side");
+    const travel = f.has("travelMinutes") ? num("travelMinutes") : null;
     return {
       level: num("level"),
       side,
-      minutesBefore: side === "after" ? 0 : num("minutesBefore"),
-      minutesAfter: side === "before" ? 0 : num("minutesAfter"),
+      minutesBefore: side === "after" ? 0 : (travel ?? num("minutesBefore")),
+      minutesAfter: side === "before" ? 0 : (travel ?? num("minutesAfter")),
       busy: text("busy") === "busy",
       filter,
       onConflict: text("onConflict"),
     };
   }
-  const days = f.getAll("days").map(Number);
   return {
     level: num("level"),
     idealTime: text("idealTime"),
     minMinutes: num("minMinutes"),
     maxMinutes: num("maxMinutes"),
     hoursSetId: text("hoursSetId"),
-    frequency: days.length ? { period: "weekly", days } : { period: "daily" },
+    frequency: readFrequency(f),
     defense: text("defense"),
     whenUnplaceable: text("whenUnplaceable"),
     starting: text("starting") || null,

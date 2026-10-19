@@ -296,7 +296,6 @@ PARTIAL = StatusMap("PARTIAL", {
     262: "Away time over 8 hours is vacation, shorter is personal commitment (unit tests); stats do not split it yet",
     263: "#tl_free opens a busy event to tasks and habits (E2E for a timed event); not under E2E for out of office",
     265: "Any connected calendar that counts for availability blocks its busy events (E2E); no holiday calendar of its own",
-    242: "The planner can set any event's category to flight (E2E for the control); airport time still follows the title or #tl_flight",
     253: "#tl_busy makes any free event block tasks and habits (E2E); no quick-block action",
     254: "#tl_travel makes the travel buffer wrap an event without an address; not under E2E",
     255: "#tl_flight gives airport time and the flight category; E2E covers flight numbers in the title, not the tag",
@@ -338,22 +337,17 @@ for n in [5, 6, 12, 14, 15, 16, 17, 18, 20, 21, 22, 24, 31]:
 
 # Row id -> limits, for rows implemented with unit or property tests only.
 UNIT = StatusMap("UNIT", {
-    154: "", 156: "daily and weekly; monthly and custom not implemented",
-    161: "", 165: "", 178: "", 196: "", 197: "", 202: "", 203: "", 206: "", 208: "", 209: "", 219: "",
-    225: "", 226: "API only",
-    228: "",
     259: "title and description; not the RSVP note", 292: "settings field; no UI yet", 506: "API only",
     517: "status is stored; no reconnect UI yet",
     456: "", 467: "", 468: "API only; no UI switch",
     470: "", 471: "stored per policy; no UI", 472: "", 473: "the skip half is E2E-proven; free copies in details mode are not",
     475: "", 476: "copies the details; the provider visibility is not set to private", 480: "",
-    193: "work and personal habit hours in stats; no per-habit progress", 353: "one-to-one, group and booked meeting hours",
+    353: "one-to-one, group and booked meeting hours",
     604: "meetings outside work hours and personal habit hours",
     607: "meetings, focus and booking counts; no breaks or travel",
     704: "phase tabs E2E-proven; reset not covered by E2E", 708: "sound on or off; one alarm sound", 712: "today's summary only",
     297: "",
-    298: "only main-calendar events can change", 238: "a fixed 30 minutes; no setting yet",
-    243: "travel buffers follow their event; a manual length is not kept", 244: "",
+    298: "only main-calendar events can change",
 })
 
 GOOGLE_ROWS = StatusMap("GOOGLE_ROWS", {
@@ -862,6 +856,47 @@ BLOCKED.update({
     398: "A conference link needs Meet or Zoom, which need the vendors' developer apps and test accounts. The rest has full UI E2E on CalDAV: a busy event with the booker and CC guests invited, the chosen location and the manage links (\u201c" + T["u7_locations"] + "\u201d; \u201c" + T["b_book"] + "\u201d)",
 })
 # --- end U07 ---
+
+# --- U04: habits, focus time and buffers (first half of the partial rows) ---
+T.update({
+    "u4_hours": "a habit uses a named hours set or its own window, and a change of hours moves its events",
+    "u4_custom": "a custom frequency places a habit every N days, every N weeks on its days, or every N months",
+    "u4_move_day": "a weekly occurrence with no room on its day moves to the nearest other day of that week",
+    "u4_adaptive": "an adaptive habit is free while it has room and turns busy when the calendar fills",
+    "u4_lock": "lock and unlock one habit occurrence from the planner",
+    "u4_progress": "the stats page shows each habit's progress: done and planned occurrences and hours",
+    "u4_focus_len": "focus blocks keep the shortest and longest length and stay in their hours set",
+    "u4_focus_accept": "an accepted invitation over focus time moves it; an unanswered one does not",
+    "u4_focus_lock": "moving a focus event in the calendar locks it; a new event over it does not move it",
+    "u4_focus_order": "focus time is placed after every other item, ranks in P4, and counts as P2 for booking links",
+    "u4_focus_tag": "an event with the focus tag counts toward the weekly goal",
+    "u4_buffers": "a user keeps several buffer automations, each with its own free or busy and visibility",
+    "u4_buffer_prio": "a P1 buffer takes the time of a P3 habit; a P4 buffer gives way to it",
+    "u4_buffer_conflict": "the conflict setting keeps a buffer with the conflict marker or removes it",
+    "u4_travel_len": "the user sets the travel length; travel time is skipped where a busy event blocks it",
+    "u4_flight": "an event set to the flight category by hand gets airport time instead of travel time",
+    "u4_travel_keep": "travel buffers follow their event and keep a length the user changed",
+    "u4_buffer_lock": "a buffer moved and resized in the calendar locks there and stops following its event",
+})
+E2E.update({
+    154: ["u4_hours", "s3_item_hours"], 156: ["habit", "h_weekly", "s2_monthly", "u4_custom"],
+    161: ["u4_move_day"], 165: ["u4_adaptive"], 178: ["u4_lock"], 193: ["u4_progress", "s1_category"],
+    196: ["u4_focus_len"], 197: ["u4_focus_len"], 202: ["u4_focus_accept"], 203: ["u4_focus_lock"],
+    206: ["u4_focus_order"], 209: ["u4_focus_tag"], 219: ["u4_buffers", "u4_buffer_conflict"],
+    225: ["u4_buffer_prio"], 226: ["u4_buffer_conflict"], 228: ["u4_buffers"],
+    238: ["u4_travel_len"], 242: ["u4_flight"], 243: ["u4_travel_keep", "u4_buffer_lock"], 244: ["u4_travel_len"],
+})
+E2E_NOTES.update({
+    156: "Custom is every N days, weeks or months, set with Interval in the habit form and counted from the start date (or the save date) when the interval is first saved; a later start date keeps the cadence",
+    193: "Each habit shows its events in the range, how many have ended, and their hours; work and personal habit hours are in the time breakdown",
+    206: "On the booking side a placed focus event counts as P2: a P1 link offers its time and a P2 link does not",
+    238: "One travel length in the travel buffer's form sets both sides: 5 to 240 minutes, step 5, 30 by default",
+    243: "A length changed at the buffer's free edge is kept for that event while the event exists, and the buffer does not lock; a buffer moved off its event locks",
+})
+BLOCKED.update({
+    208: "Needs a Google Workspace account: native focus-time events exist only in Google Calendar. Their event type is counted in code, and on CalDAV the focus tag gives the same result (row 209)",
+})
+# --- end U04 ---
 
 GOOGLE_PENDING = "Google E2E pending: the service-account key is not available yet (1Password token missing)."
 
