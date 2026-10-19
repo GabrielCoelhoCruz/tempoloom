@@ -26,6 +26,7 @@ interface HoursSet {
   kind: string;
   name: string;
   weekly: Record<string, [number, number][]>;
+  task_calendar_id?: string | null;
 }
 const FocusRecommendation = lazyComponent(() =>
   import("./team-recommendations.tsx").then((m) => m.FocusRecommendation),
@@ -36,6 +37,58 @@ const CalendarSettings = lazyComponent(() =>
 const MirrorSettings = lazyComponent(() => import("./mirroring.tsx").then((m) => m.MirrorSettings));
 
 const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+/** HRS-5: the ranges of the first day with hours go to every day that is on. */
+function copyToAll(weekly: HoursSet["weekly"]): HoursSet["weekly"] {
+  const days = DAY_NAMES.map((_, i) => String(i + 1));
+  const first = days.find((d) => (weekly[d] ?? []).length > 0);
+  if (!first) return weekly;
+  const ranges = weekly[first] ?? [];
+  return Object.fromEntries(
+    days.map((d) => [
+      d,
+      (weekly[d] ?? []).length > 0 ? ranges.map((r) => [...r] as [number, number]) : [],
+    ]),
+  );
+}
+
+/** HRS-12, TSK-50: the calendar that gets the chunks of tasks in this set. */
+function TaskCalendar({
+  set,
+  calendars,
+  act,
+}: {
+  set: HoursSet;
+  calendars: { id: string; name: string; writable: number }[];
+  act: (fn: () => Promise<unknown>) => Promise<void>;
+}) {
+  return (
+    <label class="inline">
+      Calendar for task chunks
+      <select
+        value={set.task_calendar_id ?? ""}
+        onChange={(e) => {
+          const value = e.currentTarget.value;
+          void act(() =>
+            api("PUT", `/api/hours/${set.id}`, {
+              weekly: set.weekly,
+              taskCalendarId: value || null,
+            }),
+          );
+        }}
+      >
+        <option value="">Main calendar</option>
+        {calendars
+          .filter((c) => c.writable)
+          .map((c) => (
+            <option value={c.id} key={c.id}>
+              {c.name}
+            </option>
+          ))}
+      </select>
+    </label>
+  );
+}
 
 export function HoursEditor({
   set,
@@ -99,9 +152,18 @@ export function HoursEditor({
           </div>
         );
       })}
-      <button type="button" class="primary" onClick={() => void onSave(weekly)}>
-        Save {set.name.toLowerCase()}
-      </button>
+      <div class="actions">
+        <button
+          type="button"
+          title="Copy the ranges of the first day with hours to every day that is on"
+          onClick={() => setWeekly(copyToAll(weekly))}
+        >
+          Copy to all
+        </button>
+        <button type="button" class="primary" onClick={() => void onSave(weekly)}>
+          Save {set.name.toLowerCase()}
+        </button>
+      </div>
       {children}
     </div>
   );
@@ -125,7 +187,7 @@ export function Settings() {
     { id: string; title: string; weekly_goal_minutes: number; event_settings: string }[]
   >([]);
   // The buffer editor's calendar scope lists the connected calendars.
-  const [calendars, setCalendars] = useState<{ id: string; name: string }[]>([]);
+  const [calendars, setCalendars] = useState<{ id: string; name: string; writable: number }[]>([]);
   const [message, setMessage] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -134,7 +196,7 @@ export function Settings() {
       api<{ hours: HoursSet[] }>("GET", "/api/hours"),
       api<{ buffers: typeof buffers }>("GET", "/api/buffers"),
       api<{ focus: typeof focus }>("GET", "/api/focus"),
-      api<{ calendars: { id: string; name: string }[] }>("GET", "/api/calendars"),
+      api<{ calendars: { id: string; name: string; writable: number }[] }>("GET", "/api/calendars"),
     ]);
     setSettings(s.settings);
     setWindowLimit(s.windowLimit);
@@ -219,6 +281,25 @@ export function Settings() {
             </select>
           </label>
           <label>
+            Time between chunks of a task
+            <select
+              name="chunkCooldown"
+              value={settings.chunkCooldown}
+              onChange={(e) =>
+                void act(() =>
+                  api("PATCH", "/api/settings", { chunkCooldown: e.currentTarget.value }),
+                )
+              }
+            >
+              <option value="none">At least 15 minutes</option>
+              <option value="30m">30 minutes</option>
+              <option value="1h">1 hour</option>
+              <option value="2h">2 hours</option>
+              <option value="4h">4 hours</option>
+              <option value="once-per-day">Once a day</option>
+            </select>
+          </label>
+          <label>
             Urgency
             <select
               name="urgencyMode"
@@ -274,6 +355,7 @@ export function Settings() {
             set={h}
             onSave={(weekly) => act(() => api("PUT", `/api/hours/${h.id}`, { weekly }))}
           >
+            <TaskCalendar set={h} calendars={calendars} act={act} />
             {h.kind === "custom" && <DeleteHoursSet set={h} sets={hours} act={act} />}
           </HoursEditor>
         ))}

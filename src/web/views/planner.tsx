@@ -337,6 +337,19 @@ export function Planner() {
               </p>
             </form>
           )}
+          {selected.kind === "external" && !selected.levelEditable && (
+            <div class="form" data-testid="external-priority-fixed">
+              <label>
+                Priority for booking links
+                <select disabled value="1">
+                  <option value="1">P1</option>
+                </select>
+              </label>
+              <p class="status wide">
+                Events from other calendars stay P1: only events on your main calendar can change.
+              </p>
+            </div>
+          )}
           {selected.kind !== "external" && (
             <div class="actions">
               <button
