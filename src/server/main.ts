@@ -1,7 +1,7 @@
 import { serve } from "@hono/node-server";
 import { createApp } from "./app.ts";
 import { sendDueReminders } from "./booking-mail.ts";
-import { loadConfig } from "./config.ts";
+import { clockOf, loadConfig } from "./config.ts";
 import { SecretBox } from "./crypto.ts";
 import { DailyMailWorker } from "./daily-mail.ts";
 import { openDb } from "./db.ts";
@@ -13,6 +13,8 @@ import { SyncService } from "./sync/service.ts";
 import { WebhookWorker } from "./webhooks.ts";
 
 const config = loadConfig();
+// One clock for the app and its workers; tests may start it at TEST_CLOCK_START.
+const now = clockOf(config);
 const db = openDb(config.dbPath);
 const box = new SecretBox(config.SECRET_KEY);
 const oauth: OAuthClient | undefined =
@@ -32,7 +34,7 @@ const sync = new SyncService({
   box,
   oauth,
   serviceKey,
-  now: Date.now,
+  now,
   intervalMs: config.SYNC_INTERVAL_SECONDS * 1000,
   baseUrl: config.BASE_URL,
   refreshMs: config.GRANT_REFRESH_SECONDS * 1000,
@@ -47,23 +49,24 @@ const webhooks = new WebhookWorker({
   suspendAfterMs: config.WEBHOOK_SUSPEND_AFTER_SECONDS * 1000,
   mailer,
   baseUrl: config.BASE_URL,
-  now: Date.now,
+  now,
 });
 const provisioning = new ProvisionWorker({
   db,
   box,
   sync,
   perMinute: config.PROVISION_PER_MINUTE,
-  now: Date.now,
+  now,
 });
-const app = createApp({ db, config, box, oauth, sync, webhooks, mailer });
-// Meeting emails: guest updates and the daily digests, checked on the sync interval.
+const app = createApp({ db, config, box, oauth, sync, webhooks, mailer, now });
+// Meeting emails, the daily digests and the weekly report, checked on the sync interval.
 const dailyMail = new DailyMailWorker({
   db,
   mailer,
-  now: Date.now,
+  now,
   baseUrl: config.BASE_URL,
   intervalMs: config.SYNC_INTERVAL_SECONDS * 1000,
+  weeklyReports: config.WEEKLY_REPORTS === "on",
 });
 
 const server = serve({ fetch: app.fetch, port: config.PORT, hostname: config.HOST }, (info) => {
@@ -75,7 +78,7 @@ provisioning.start();
 dailyMail.start();
 // Booking reminders (booking-links.md rule 21): checked every minute.
 const reminders = setInterval(() => {
-  sendDueReminders(db, mailer, config.BASE_URL, Date.now()).catch((err) =>
+  sendDueReminders(db, mailer, config.BASE_URL, now()).catch((err) =>
     console.error("booking reminders failed", err),
   );
 }, 60_000);

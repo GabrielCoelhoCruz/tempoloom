@@ -27,7 +27,9 @@ export type Kind =
   | "personal"
   | "travel"
   | "breaks"
-  | "vacation";
+  | "vacation"
+  /** Time away shorter than 8 hours (events-out-of-office.md rule 7). */
+  | "personalCommitment";
 
 export const MEETINGS = ["oneOnOne", "teamMeetings", "externalMeetings"] as const;
 export const BUCKETS = [
@@ -38,6 +40,7 @@ export const BUCKETS = [
   "travel",
   "breaks",
   "vacation",
+  "personalCommitment",
   "free",
 ] as const;
 export type Bucket = (typeof BUCKETS)[number];
@@ -194,14 +197,21 @@ const KIND: Record<Category, Kind> = {
   external_meeting: "externalMeetings",
   solo_work: "solo",
   personal: "personal",
-  personal_commitment: "personal",
+  personal_commitment: "personalCommitment",
   travel: "travel",
   flight: "travel",
   vacation: "vacation",
 };
 
 /** Reads one member's calendar time from the cache and managed events, then computes the days. */
-export function loadMemberDays(db: Db, userId: string, from: LocalDate, to: LocalDate): Day[] {
+/** `until`: count only time before this instant. */
+export function loadMemberDays(
+  db: Db,
+  userId: string,
+  from: LocalDate,
+  to: LocalDate,
+  until?: number,
+): Day[] {
   const user = one<{ time_zone: string; email: string }>(
     db,
     "SELECT time_zone, email FROM users WHERE id = ?",
@@ -209,7 +219,7 @@ export function loadMemberDays(db: Db, userId: string, from: LocalDate, to: Loca
   );
   const zone = user?.time_zone ?? "UTC";
   const start = localToUtc(zone, from, 0);
-  const end = localToUtc(zone, addDays(to, 1), 0);
+  const end = Math.min(localToUtc(zone, addDays(to, 1), 0), until ?? Number.POSITIVE_INFINITY);
   const weekly = JSON.parse(
     one<{ weekly: string }>(
       db,
@@ -284,6 +294,7 @@ export function loadMemberDays(db: Db, userId: string, from: LocalDate, to: Loca
         {
           title: "",
           description: "",
+          rsvpNote: "",
           start: m.start_ms,
           end: m.end_ms,
           eventType: "default",
@@ -297,5 +308,9 @@ export function loadMemberDays(db: Db, userId: string, from: LocalDate, to: Loca
       spans.push({ ...at, kind: KIND[category] });
     }
   }
-  return memberDays(spans, zone, weekly, from, to);
+  const counted =
+    until === undefined
+      ? spans
+      : spans.filter((s) => s.start < until).map((s) => ({ ...s, end: Math.min(s.end, until) }));
+  return memberDays(counted, zone, weekly, from, to);
 }

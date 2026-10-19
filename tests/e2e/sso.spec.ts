@@ -28,7 +28,7 @@
 // tests/unit/oidc.test.ts: a real identity provider does not send bad tokens.
 import type { Page } from "@playwright/test";
 import { addDays } from "../../src/shared/time.ts";
-import { BACKEND, BASE_URL, EMAIL, managed, planNow, ZONE } from "./fixtures.ts";
+import { BACKEND, BASE_URL, blockUntil, EMAIL, managed, planNow, ZONE } from "./fixtures.ts";
 import { addTask, allEvents, titled, W } from "./helpers.ts";
 import { expect, type Idp, test } from "./sso-fixtures.ts";
 import { member, openTeam, role } from "./team-helpers.ts";
@@ -119,6 +119,9 @@ test("SSO only: people on the team's domain sign in through its identity provide
   await expect(pu.getByLabel("Time zone")).toHaveValue(ZONE);
   await planNow(pu);
   expect(managed(await allEvents(u.cal))).toHaveLength(0);
+  // Busy until W, so the task lands in W as one event. Placed today, it would be
+  // split (SCH-90) when less than an hour of today's work hours is left.
+  await blockUntil(u.cal, W);
   await addTask(pu, { title: "Board deck", minutes: 60, due: `${addDays(W, 4)}T17:00` });
   await expect
     .poll(async () => titled(await allEvents(u.cal), "Board deck").length, { timeout: 45_000 })

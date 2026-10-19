@@ -438,6 +438,36 @@ describe("task chunks", () => {
     for (const c of chunks) expect(c.start % (15 * MIN)).toBe(0);
   });
 
+  it("splits a 60-minute task when less than an hour of today's hours is left (SCH-90; sso.spec Board deck)", () => {
+    // The E2E adds a 60-minute task with the 30/120 default chunk bounds on a
+    // Monday. Placed at 16:05 the day has 45 minutes left, so SCH-90 gives a
+    // 30-minute chunk today (no 15-minute stub) and the rest tomorrow. Placed
+    // earlier, or with splitting off, the task is one event.
+    const MONDAY = "2026-10-19";
+    const due = at("2026-10-30", "17:00");
+    const at1605 = (over: Partial<TaskItem> = {}) =>
+      plan(
+        snapshot({
+          now: at(MONDAY, "16:05"),
+          tasks: [task({ id: "deck", startAfter: at(MONDAY, "16:05"), dueAt: due, ...over })],
+        }),
+      );
+    expect(spans(of(at1605(), "deck"))).toEqual([
+      `${MONDAY}T16:15/16:45`,
+      "2026-10-20T09:00/09:30",
+    ]);
+    expect(spans(of(at1605({ minChunkMinutes: 60, maxChunkMinutes: 60 }), "deck"))).toEqual([
+      "2026-10-20T09:00/10:00",
+    ]);
+    const earlier = plan(
+      snapshot({
+        now: at(MONDAY, "14:25"),
+        tasks: [task({ id: "deck", startAfter: at(MONDAY, "14:25"), dueAt: due })],
+      }),
+    );
+    expect(spans(of(earlier, "deck"))).toEqual([`${MONDAY}T14:30/15:30`]);
+  });
+
   it("places one chunk per day with the once-per-day cooldown", () => {
     const result = plan(
       snapshot({
@@ -686,6 +716,36 @@ describe("habits", () => {
     expect(kept.report).toContainEqual(
       expect.objectContaining({ demandKey: `habit:lunch:${thu}`, status: "conflict" }),
     );
+  });
+
+  it("skips, never keeps as a conflict, an occurrence whose hours are all away; busy time gives a conflict (events-out-of-office rules 2, 12)", () => {
+    const [wed, thu, fri] = [day(2), day(3), day(4)];
+    const result = plan(
+      snapshot({
+        hours: lunchHours,
+        habits: [lunch({ whenUnplaceable: "keep_as_conflict" })],
+        events: [
+          // Plain busy time over the habit's hours: a conflict.
+          ext(at(wed, "11:00"), at(wed, "14:30")),
+          // Out of office over the habit's hours only (not the whole day): skipped.
+          ext(at(thu, "11:00"), at(thu, "14:30"), { eventType: "outOfOffice" }),
+          // A busy all-day event: the whole day is away, skipped.
+          ext(at(fri, "00:00"), at(day(5), "00:00"), { allDay: true }),
+        ],
+      }),
+    );
+    const on = (d: string) => of(result, "lunch").filter((p) => hm(p.start).startsWith(d));
+    expect(on(wed)).toMatchObject([{ conflict: true }]);
+    expect(on(thu)).toEqual([]);
+    expect(on(fri)).toEqual([]);
+    for (const d of [thu, fri])
+      expect(result.report).toContainEqual(
+        expect.objectContaining({
+          demandKey: `habit:lunch:${d}`,
+          status: "unplaced",
+          reason: "away",
+        }),
+      );
   });
 
   it("moves a weekly occurrence to another day of the week but never a daily one", () => {

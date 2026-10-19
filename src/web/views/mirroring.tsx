@@ -16,6 +16,7 @@ import {
 import { COLORS } from "../lib/categories.ts";
 import { toLocalInput } from "../lib/format.ts";
 import { templateFromUrl } from "../lib/library.ts";
+import { onLinkClick } from "../lib/router.ts";
 import { me, planNow, zone } from "../lib/state.ts";
 
 type NoReply = UserSettings["noReplyCopies"];
@@ -217,7 +218,8 @@ const body = (f: Fields) => ({
 
 export function MirrorSettings() {
   // A library mirroring entry fills the form (automations-library.md rule 5).
-  const fromLibrary = templateFromUrl()?.kind === "calendar_mirroring";
+  const template = templateFromUrl();
+  const fromLibrary = template?.kind === "calendar_mirroring";
   const [policies, setPolicies] = useState<Policy[]>([]);
   const [reconciledAt, setReconciledAt] = useState<number | null>(null);
   const [tab, setTab] = useState<string | null>(null);
@@ -283,6 +285,15 @@ export function MirrorSettings() {
           source calendar in your calendar app.
         </li>
       </ul>
+      {fromLibrary && calendars.filter((c) => c.provider !== "ics" && c.writable).length < 2 && (
+        <p class="warning" data-testid="mirror-needs-two">
+          Mirroring needs two connected calendars, and you have one. Connect another calendar on the{" "}
+          <a href="/account" onClick={onLinkClick}>
+            Account
+          </a>{" "}
+          page, then refresh the calendar list.
+        </p>
+      )}
       <PolicyForm
         key={`new-${created}`}
         testid="mirror-form"
@@ -299,7 +310,11 @@ export function MirrorSettings() {
         }}
         onSave={(f) =>
           void act(
-            () => api("POST", "/api/mirrors", body(f)),
+            () =>
+              api("POST", "/api/mirrors", {
+                ...body(f),
+                ...(fromLibrary ? { templateId: template.slug } : {}),
+              }),
             () => setCreated((n) => n + 1),
           )
         }

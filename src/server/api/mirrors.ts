@@ -22,6 +22,8 @@ const policyInput = z.object({
   allDayMode: z.enum(["none", "busy_only", "all"]).default("none"),
   copyOutsideWorkHours: z.boolean().default(true),
   colorOverride: z.enum(COLOR_IDS).nullable().default(null),
+  /** The library entry it came from (automations-library.md rule 4). */
+  templateId: z.string().max(100).optional(),
 });
 type PolicyInput = z.infer<typeof policyInput>;
 
@@ -122,8 +124,8 @@ export function mirrorRoutes(db: Db, sync: SyncService, now: () => number): Hono
     run(
       db,
       `INSERT INTO mirror_policies (id, user_id, source_calendar_id, dest_calendar_id, calendar_type, visibility,
-         all_day_mode, copy_outside_work_hours, color_override, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         all_day_mode, copy_outside_work_hours, color_override, created_at, template_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       id,
       user.id,
       b.sourceCalendarId,
@@ -134,6 +136,7 @@ export function mirrorRoutes(db: Db, sync: SyncService, now: () => number): Hono
       b.copyOutsideWorkHours ? 1 : 0,
       b.colorOverride,
       now(),
+      b.templateId ?? null,
     );
     // Calendars in a policy count for availability (connected calendars rule 3).
     connect(b);

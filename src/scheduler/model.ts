@@ -19,6 +19,8 @@ export interface ExternalEvent {
   busy: boolean;
   title: string;
   description: string;
+  /** The user's own note with the answer to an invitation (events-tags.md "Where Tempoloom looks"). */
+  rsvpNote?: string;
   /** null: no attendee list (the user's own event). */
   selfResponse: "needsAction" | "declined" | "tentative" | "accepted" | null;
   organizerSelf: boolean;
@@ -26,7 +28,7 @@ export interface ExternalEvent {
   location: string;
   eventType: string;
   bookedViaLink: boolean;
-  /** events-categories-and-colors.md; unknown when not given. */
+  /** events-categories-and-colors.md; unknown when not given. Buffers read flights from it (buffers-travel.md rule 5). */
   category?: Category;
   /** The calendar that holds the event (buffer calendar scope). */
   calendarId?: string;
@@ -90,12 +92,18 @@ export interface HabitItem {
   work?: boolean;
 }
 
-/** habits-automation.md "Frequency"; weekday 1 is Monday. */
-export type HabitFrequency =
+/**
+ * habits-automation.md "Frequency"; weekday 1 is Monday. An `interval` above 1
+ * is the custom frequency: every N days, weeks or months, counted from
+ * `anchor`, the date set when the interval was saved. A change of the habit's
+ * start date does not move the anchor.
+ */
+export type HabitFrequency = (
   | { period: "daily" }
   | { period: "weekly"; days: number[] }
   | { period: "monthly"; dayOfMonth: number }
-  | { period: "monthly"; nth: 1 | 2 | 3 | 4 | 5 | "last"; weekday: number };
+  | { period: "monthly"; nth: 1 | 2 | 3 | 4 | 5 | "last"; weekday: number }
+) & { interval?: number; anchor?: LocalDate };
 
 /** A flexible meeting (docs/specs/meetings-flexible.md); the user is the organizer. */
 export interface MeetingItem {
@@ -226,6 +234,8 @@ export interface Snapshot {
   past?: CurrentPlacement[];
   /** Demand keys the user dismissed (deleted buffers); never placed again. */
   dismissedKeys?: string[];
+  /** Buffer demand key -> minutes the user gave that buffer in the calendar (buffers rule 14). */
+  bufferLengths?: Record<string, number>;
   tasks: TaskItem[];
   habits: HabitItem[];
   meetings: MeetingItem[];
@@ -263,7 +273,7 @@ export type ReasonCode =
   | "no-hours"
   | "no-hours-overlap"
   | "too-long-for-hours"
-  | "all-day-block"
+  | "away"
   | "reserved-word"
   | "no-space-fixed"
   | "no-space-priority"
