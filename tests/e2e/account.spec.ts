@@ -4,7 +4,7 @@
 //
 // Ways it can fail, and the test that catches each:
 // - a wrong password still adds an account                                -> accounts
-// - adding another user's calendar account moves it or its credentials    -> accounts
+// - another user's calendar account as a secondary email: see sign-in-emails.spec.ts
 // - an added account's calendars do not show, or stay after removal       -> accounts
 // - the main account can be removed; removal needs no confirmation        -> accounts
 // - the key secret is shown again after creation, or copy gives another   -> keys
@@ -60,11 +60,6 @@ test("a user adds a second CalDAV account and removes it after a confirmation; t
 
   await addCalDavAccount(page, { ...six, password: "wrong", email: extra.email });
   await expect(accountMessage(page)).toHaveText("The server rejected the user name or password.");
-  // Another Tempoloom user's calendar account is refused, not moved.
-  await addCalDavAccount(page, { ...radicale.colleague, email: COLLEAGUE_EMAIL });
-  await expect(accountMessage(page)).toHaveText(
-    "This calendar account belongs to another Tempoloom user.",
-  );
   await expect(page.getByTestId("account-list").locator("[data-account]")).toHaveCount(1);
 
   await addCalDavAccount(page, { ...six, email: extra.email });
