@@ -6,7 +6,7 @@
 // google (a Google user through OAuth, or a service account; see tests/e2e/README.md).
 import { type ChildProcess, execFileSync, spawn } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -581,13 +581,14 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
       proc.stdout?.on("data", (b: Buffer) => log.push(b.toString()));
       proc.stderr?.on("data", (b: Buffer) => log.push(b.toString()));
       for (let i = 0; i < 100; i++) {
-        if (proc.exitCode !== null) throw new Error(`Server exited:\n${log.join("")}`);
+        if (proc.exitCode !== null)
+          throw new Error(`Server exited (data: ${dataDir}):\n${log.join("")}`);
         try {
           if ((await fetch(`${BASE_URL}/healthz`)).ok) return;
         } catch {}
         await new Promise((r) => setTimeout(r, 100));
       }
-      throw new Error(`Server did not start:\n${log.join("")}`);
+      throw new Error(`Server did not start (data: ${dataDir}):\n${log.join("")}`);
     };
     const stop = async () => {
       if (!proc || proc.exitCode !== null) return;
@@ -627,7 +628,12 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
       },
     });
     await stop();
-    if (info.status !== info.expectedStatus) {
+    // Remove the data directory after the last use (restart() reuses it), so
+    // runs do not fill the temp dir. Keep it when the test failed, for analysis.
+    if (info.status === info.expectedStatus) {
+      rmSync(dataDir, { recursive: true, force: true });
+    } else {
+      console.log(`Kept the server data directory: ${dataDir}`);
       await info.attach("server.log", { body: log.join(""), contentType: "text/plain" });
     }
   },
