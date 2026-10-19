@@ -39,15 +39,25 @@ export const BACKEND: "caldav" | "google" =
   process.env.TEMPOLOOM_E2E_BACKEND === "google" ? "google" : "caldav";
 const SA_JSON = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
 // Set by scripts/google-oauth-login.ts; a Google user account wins over the service account.
-const OAUTH = process.env.GOOGLE_REFRESH_TOKEN
-  ? {
-      clientId: process.env.GOOGLE_CLIENT_ID ?? "",
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET ?? "",
-      refreshToken: process.env.GOOGLE_REFRESH_TOKEN,
-      accountEmail: process.env.GOOGLE_ACCOUNT_EMAIL ?? "",
-    }
-  : undefined;
+const OAUTH = BACKEND === "google" && process.env.GOOGLE_REFRESH_TOKEN ? oauthEnv() : undefined;
+
+function oauthEnv() {
+  const env = (name: string) => {
+    const v = process.env[name];
+    if (!v) throw new Error(`GOOGLE_REFRESH_TOKEN is set, but ${name} is not`);
+    return v;
+  };
+  return {
+    clientId: env("GOOGLE_CLIENT_ID"),
+    clientSecret: env("GOOGLE_CLIENT_SECRET"),
+    refreshToken: env("GOOGLE_REFRESH_TOKEN"),
+    accountEmail: env("GOOGLE_TEST_ACCOUNT_EMAIL"),
+  };
+}
 const GOOGLE_TEST_CALENDAR = "[tl-test] tempoloom-e2e";
+// Set on the test calendar when the driver creates it. The driver empties only
+// a calendar that the account owns and that carries this description.
+const GOOGLE_TEST_MARKER = "tempoloom-e2e: made by the E2E driver, emptied before each test";
 
 export interface AppServer {
   baseUrl: string;
@@ -296,6 +306,12 @@ async function caldavCalendar(
   };
 }
 
+/** Skips the running test: the backend cannot do what it needs. */
+function unsupported(reason: string): never {
+  base.skip(true, reason);
+  throw new Error(reason);
+}
+
 /** Google: all tests share one test calendar of the Google account. */
 async function googleDriver(): Promise<CalendarDriver> {
   let token: { value: string; exp: number } | undefined;
@@ -317,33 +333,29 @@ async function googleDriver(): Promise<CalendarDriver> {
   };
   const api = new GoogleCalendarApi({ getAccessToken: accessToken });
   // Google limits how many calendars one account may create, so all tests
-  // share one test calendar and empty it first.
-  const shared = (await api.listCalendars()).find((c) => c.summary === GOOGLE_TEST_CALENDAR);
-  const calendarId = shared?.id ?? (await api.createCalendar(GOOGLE_TEST_CALENDAR, ZONE)).id;
-  // Never empty a user's own calendar: a created calendar has a group id.
-  if (!calendarId.endsWith("@group.calendar.google.com"))
-    throw new Error(`Refusing to clear calendar ${calendarId}`);
+  // share one test calendar and empty it first. One run per account at a time:
+  // two runs on one account empty each other's calendar.
+  const marked = async () =>
+    (await api.listCalendars()).filter(
+      (c) =>
+        c.summary === GOOGLE_TEST_CALENDAR &&
+        c.accessRole === "owner" &&
+        c.description === GOOGLE_TEST_MARKER,
+    );
+  let found = await marked();
+  if (!found.length) {
+    await api.createCalendar(GOOGLE_TEST_CALENDAR, ZONE, GOOGLE_TEST_MARKER);
+    found = await marked();
+  }
+  if (found.length !== 1)
+    throw new Error(
+      `Expected one test calendar "${GOOGLE_TEST_CALENDAR}", found ${found.length}; delete the extra ones`,
+    );
+  const calendarId = (found[0] as { id: string }).id;
   // `clear` works only on a primary calendar: delete each event (a recurring
   // series as one master) instead.
-  const base = `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events`;
-  const auth = { authorization: `Bearer ${await accessToken()}` };
-  for (let pageToken = ""; ; ) {
-    const res = await fetch(`${base}?maxResults=2500${pageToken && `&pageToken=${pageToken}`}`, {
-      headers: auth,
-    });
-    if (!res.ok) throw new Error(`listing the test calendar failed: ${res.status}`);
-    const page = (await res.json()) as { items?: { id: string }[]; nextPageToken?: string };
-    for (const e of page.items ?? []) {
-      const del = await fetch(`${base}/${encodeURIComponent(e.id)}`, {
-        method: "DELETE",
-        headers: auth,
-      });
-      if (!del.ok && del.status !== 404 && del.status !== 410)
-        throw new Error(`clearing the test calendar failed: ${del.status}`);
-    }
-    if (!page.nextPageToken) break;
-    pageToken = encodeURIComponent(page.nextPageToken);
-  }
+  for (const e of (await api.listEvents(calendarId, { masters: true })).events)
+    await api.deleteEvent(calendarId, e.id);
   const provider = new GoogleProvider(api, ZONE);
   return {
     backend: "google",
@@ -387,8 +399,8 @@ async function googleDriver(): Promise<CalendarDriver> {
       });
       return ev.id;
     },
-    addInvite: () => Promise.reject(new Error("A service account cannot receive invitations")),
-    newCalendar: () => Promise.reject(new Error("Not supported for the Google backend yet")),
+    addInvite: () => unsupported("Needs an invitation from another person (CalDAV only)."),
+    newCalendar: () => unsupported("Needs a second test calendar (CalDAV only)."),
     async guests(id) {
       const ev = await api.getEvent(calendarId, id);
       return (ev.attendees ?? [])
@@ -566,12 +578,7 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
       MAIL_FROM: "Tempoloom <noreply@tempoloom.test>",
       ...(SA_JSON ? { GOOGLE_SERVICE_ACCOUNT_JSON: SA_JSON } : {}),
       ...(OAUTH
-        ? {
-            GOOGLE_CLIENT_ID: OAUTH.clientId,
-            GOOGLE_CLIENT_SECRET: OAUTH.clientSecret,
-            GOOGLE_REFRESH_TOKEN: OAUTH.refreshToken,
-            GOOGLE_ACCOUNT_EMAIL: OAUTH.accountEmail,
-          }
+        ? { GOOGLE_CLIENT_ID: OAUTH.clientId, GOOGLE_CLIENT_SECRET: OAUTH.clientSecret }
         : {}),
     };
     const start = async () => {
@@ -612,7 +619,8 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
       cli: (...args) =>
         execFileSync(process.execPath, ["src/server/cli.ts", ...args], {
           cwd: ROOT,
-          env,
+          // Only connect-google-oauth reads the refresh token; the server does not need it.
+          env: OAUTH ? { ...env, GOOGLE_REFRESH_TOKEN: OAUTH.refreshToken } : env,
           encoding: "utf8",
         }),
       query: <T>(sql: string, ...params: (string | number)[]) => {
