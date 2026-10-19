@@ -217,6 +217,14 @@ const dayStartOf = (ctx: Ctx, t: number) =>
 const nextDayStart = (ctx: Ctx, t: number) =>
   localToUtc(ctx.s.zone, addDays(utcToLocal(ctx.s.zone, t).date, 1), 0);
 
+/**
+ * A need splits into chunks within the bounds when k = ceil(need / max)
+ * chunks of the minimum fit in it. Else the rest after max-length chunks is
+ * one chunk shorter than the minimum (TSK-13).
+ */
+const splits = (need: number, r: ChunkRules) =>
+  need <= 0 || Math.ceil(need / r.max) * r.min <= need;
+
 /** SCH-90: fills free intervals in time order with chunks. Returns chunks and the unplaced rest. */
 function greedyChunks(
   ctx: Ctx,
@@ -225,6 +233,20 @@ function greedyChunks(
   r: ChunkRules,
   usedDays: Set<number>,
 ): { chunks: Interval[]; missing: number } {
+  const rest = need - (Math.ceil(need / r.max) - 1) * r.max;
+  if (!splits(need, r) && rest < need) {
+    // No split (TSK-13): place the max-length chunks first, then the rest as
+    // one short chunk in the first room that holds it. A replan keeps the
+    // full chunks and looks for the rest the same way, so the plans agree.
+    const full = greedyChunks(ctx, free, need - rest, r, usedDays);
+    if (full.missing > 0) return { chunks: full.chunks, missing: full.missing + rest };
+    const left = minus(
+      free,
+      full.chunks.map((c) => ({ start: c.start - r.gap, end: c.end + r.gap })),
+    );
+    const tail = greedyChunks(ctx, left, rest, r, usedDays);
+    return { chunks: [...full.chunks, ...tail.chunks], missing: tail.missing };
+  }
   const chunks: Interval[] = [];
   const step = ctx.step;
   for (const iv of free.intervals()) {
@@ -236,7 +258,13 @@ function greedyChunks(
       }
       const room = floorTo(iv.end - cursor, step);
       let length = Math.min(r.max, need, room);
-      if (need - length > 0 && need - length < r.min) length = need - r.min;
+      if (splits(need, r)) {
+        // Take the most that still leaves k - 1 chunks of at least the
+        // minimum, and keep the rest splittable when the room is short.
+        const k = Math.ceil(need / r.max);
+        length = Math.min(length, need - (k - 1) * r.min);
+        if (!splits(need - length, r)) length = need - Math.ceil((need - length) / r.max) * r.min;
+      }
       if (length < r.min && !(need < r.min && length === need)) break;
       if (length <= 0) break;
       chunks.push({ start: cursor, end: cursor + length });
@@ -290,7 +318,8 @@ function placeTask(ctx: Ctx, t: TaskItem): void {
       }
       const l = len(iv);
       const okLength =
-        (l >= rules.min && l <= rules.max) || (l < rules.min && l === rest && rest < rules.min);
+        ((l >= rules.min && l <= rules.max) || (l < rules.min && l === rest && rest < rules.min)) &&
+        (splits(rest - l, rules) || !splits(rest, rules));
       const day = dayStartOf(ctx, iv.start);
       if (!okLength || !local.contains(iv) || (rules.oncePerDay && usedDays.has(day))) continue;
       kept.push({ key: c.key, iv });
@@ -306,7 +335,13 @@ function placeTask(ctx: Ctx, t: TaskItem): void {
     ? []
     : mine
         .filter((c) => !ctx.fixedKeys.has(c.key))
-        .sort((a, b) => a.start - b.start || a.key.localeCompare(b.key));
+        // A short chunk (TSK-13) is the rest, so it is kept last.
+        .sort(
+          (a, b) =>
+            Number(len(a) < rules.min) - Number(len(b) < rules.min) ||
+            a.start - b.start ||
+            a.key.localeCompare(b.key),
+        );
   let result = attempt(sticky);
   const late = (r: typeof result) =>
     r.missing > 0 ||
