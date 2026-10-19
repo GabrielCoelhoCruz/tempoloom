@@ -793,4 +793,65 @@ export const MIGRATIONS: readonly string[] = [
   // round 3 s5
   // round 3 s6
   // round 3 s7
+  `
+  -- r3 s7: preview mode (staged changes), the event change log, dismissed hints
+  CREATE TABLE staged_changes (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    source TEXT NOT NULL CHECK (source IN ('assistant_chat', 'mcp_client', 'automation_edit', 'manual')),
+    -- The API key name of an MCP client.
+    client TEXT NOT NULL DEFAULT '',
+    -- request (an API call replayed at apply), event_create, event_update or event_delete.
+    kind TEXT NOT NULL,
+    target TEXT,
+    -- JSON: the target's values at staging time, for the stale check.
+    before TEXT NOT NULL DEFAULT 'null',
+    after TEXT NOT NULL,
+    -- JSON: the calendar events the change creates, moves or deletes.
+    impact TEXT NOT NULL DEFAULT '[]',
+    summary TEXT NOT NULL,
+    reason TEXT NOT NULL DEFAULT '',
+    state TEXT NOT NULL CHECK (state IN ('pending', 'accepted', 'discarded', 'applied', 'failed', 'stale')),
+    result TEXT NOT NULL DEFAULT '',
+    created_at INTEGER NOT NULL,
+    decided_at INTEGER
+  ) STRICT;
+  CREATE INDEX staged_changes_user ON staged_changes(user_id, state, created_at);
+
+  -- by_hand: the user turned preview mode on; otherwise a staged change did.
+  CREATE TABLE preview_mode (
+    user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    enabled INTEGER NOT NULL,
+    by_hand INTEGER NOT NULL,
+    changed_at INTEGER NOT NULL
+  ) STRICT;
+
+  -- Each write Tempoloom made to a calendar event (support-troubleshooting.md rule 12).
+  -- No foreign key on the calendar: entries outlive deleted events and calendars.
+  CREATE TABLE change_log (
+    id INTEGER PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    calendar_id TEXT NOT NULL,
+    event_id TEXT NOT NULL,
+    event_key TEXT NOT NULL DEFAULT '',
+    action TEXT NOT NULL CHECK (action IN ('create', 'update', 'delete')),
+    item TEXT NOT NULL DEFAULT '',
+    reason TEXT NOT NULL,
+    title TEXT NOT NULL DEFAULT '',
+    start_ms INTEGER,
+    end_ms INTEGER,
+    actor TEXT NOT NULL DEFAULT '',
+    created_at INTEGER NOT NULL
+  ) STRICT;
+  CREATE INDEX change_log_event ON change_log(user_id, calendar_id, event_id);
+  CREATE INDEX change_log_key ON change_log(user_id, event_key);
+  CREATE INDEX change_log_time ON change_log(created_at);
+
+  CREATE TABLE dismissed_hints (
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    hint TEXT NOT NULL,
+    dismissed_at INTEGER NOT NULL,
+    PRIMARY KEY (user_id, hint)
+  ) STRICT;
+  `,
 ];
