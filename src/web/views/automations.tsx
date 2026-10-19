@@ -17,6 +17,8 @@ interface Automation {
   /** P1 to P4; null for a type without priority (rule 9). */
   level: number | null;
   rank: number;
+  /** Meeting checks: a built-in check has no Remove; a locked company check has no actions. */
+  check?: { kind: "built_in" | "company"; locked: boolean };
 }
 
 /** One automation type. A new type adds one entry here and one in src/server/api/automations.ts. */
@@ -28,7 +30,12 @@ interface TypeInfo {
   fixedLevel?: number;
   setEnabled: (id: string, enabled: boolean) => Promise<unknown>;
   remove: (id: string) => Promise<unknown>;
+  /** The remove confirm text, when it is not about future events. */
+  confirm?: (name: string) => string;
 }
+
+/** Company check entries have the id `company:<check id>`; built-in checks their check id. */
+const COMPANY = "company:";
 
 const TYPES: Record<string, TypeInfo> = {
   habit: {
@@ -59,6 +66,25 @@ const TYPES: Record<string, TypeInfo> = {
     edit: () => "/meetings",
     setEnabled: (id, enabled) => api("POST", `/api/meetings/${id}/enabled`, { enabled }),
     remove: (id) => api("DELETE", `/api/meetings/${id}`),
+  },
+  meeting_overload: {
+    label: "Meeting overload",
+    plural: "Meeting overloads",
+    edit: (id) => `/settings?overload=${id}`,
+    fixedLevel: 4,
+    setEnabled: (id, enabled) => api("PATCH", `/api/meeting-overloads/${id}`, { enabled }),
+    remove: (id) => api("DELETE", `/api/meeting-overloads/${id}`),
+  },
+  meeting_check: {
+    label: "Meeting check",
+    plural: "Meeting checks",
+    edit: () => "/meeting-checks",
+    setEnabled: (id, enabled) =>
+      id.startsWith(COMPANY)
+        ? api("PATCH", `/api/company-checks/${id.slice(COMPANY.length)}`, { enabled })
+        : api("PATCH", "/api/meeting-prefs", { checks: { [id]: enabled } }),
+    remove: (id) => api("DELETE", `/api/company-checks/${id.slice(COMPANY.length)}`),
+    confirm: (name) => `Remove ${name} for every team member?`,
   },
 };
 
@@ -128,6 +154,9 @@ export function Automations() {
     const key = `${a.type}:${a.id}`;
     const index = group.findIndex((x) => same(x, a));
     const level = a.level;
+    const company = a.check?.kind === "company";
+    // Meeting quality rule 11: only team admins change a company check.
+    const actions = info && !a.check?.locked;
     return (
       <li
         class={`row automation${a.enabled ? "" : " off"}`}
@@ -164,12 +193,18 @@ export function Automations() {
             {a.name}
           </div>
           <div class="meta">
-            {info?.label ?? a.type}
+            {company ? (
+              <>
+                <span title="Set by your team admin">🔒</span> Company check
+              </>
+            ) : (
+              (info?.label ?? a.type)
+            )}
             {a.enabled ? "" : " · Off"} <PolicyMark id={a.id} />
           </div>
         </div>
         <div class="actions">
-          {info && (
+          {actions && (
             <a class="button" href={info.edit(a.id)} onClick={onLinkClick}>
               Edit
             </a>
@@ -207,12 +242,13 @@ export function Automations() {
               </button>
             </>
           )}
-          {info && (
+          {actions && (
             <button type="button" onClick={() => void act(() => info.setEnabled(a.id, !a.enabled))}>
               {a.enabled ? "Turn off" : "Turn on"}
             </button>
           )}
-          {info && !policyMarks.value[a.id] && (
+          {/* Every user keeps the built-in meeting checks: they turn off, not go. */}
+          {actions && a.check?.kind !== "built_in" && !policyMarks.value[a.id] && (
             <button type="button" class="danger" onClick={() => setConfirming(key)}>
               Remove
             </button>
@@ -220,7 +256,10 @@ export function Automations() {
         </div>
         {confirming === key && info && (
           <div class="confirm wide" role="alertdialog" aria-label={`Remove ${a.name}`}>
-            <span>Remove {a.name} and its future events? Past events stay.</span>
+            <span>
+              {info.confirm?.(a.name) ??
+                `Remove ${a.name} and its future events? Past events stay.`}
+            </span>
             <button
               type="button"
               class="danger"
@@ -245,7 +284,8 @@ export function Automations() {
       <h1>Automations</h1>
       <p>
         Higher automations get time first. Drag one to change its rank, or to another group to
-        change its priority. Focus time stays at P4 and is placed after everything else.
+        change its priority. Focus time and meeting overload stay at P4 and are placed after
+        everything else, in their order there. Meeting checks have no priority.
       </p>
       <div class="actions">
         <label class="inline" for="automation-type">

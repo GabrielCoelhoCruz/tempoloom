@@ -729,6 +729,27 @@ PARTIAL.update({
 })
 # --- end s7 ---
 
+# --- s8: automation types ---
+T.update({
+    "s8_types": "the automation list shows all six types: habits, flexible meetings and buffers in their groups, meeting overload and focus time pinned to P4, and each meeting check in Meeting quality with no priority and no Remove; the type filter has every type and keeps it after a reload",
+    "s8_overload": "a meeting overload's entry opens its form with its values and a saved edit replans its events; off removes its focus events and on brings them back; ranked below a focus goal in P4 it leaves that goal its hours first; remove asks, then deletes it and its events",
+    "s8_checks": "turning a built-in meeting check off in the list closes its issue in the Issues tab and unchecks it on the meeting checks page; on brings the issue back, also for agenda drafts, which start off; all persist after a reload",
+    "s8_company": "a company check shows locked in the list; a member gets no actions, while the admin's off and remove in the list reach the member's list and checks page",
+})
+E2E.update({
+    299: ["s8_types", "s8_overload", "s8_checks", "s8_company"],
+    304: E2E[304] + ["s8_types"],
+    308: E2E[308] + ["s8_types", "s8_overload"],
+    313: E2E[313] + ["s8_checks"],
+    318: E2E[318] + ["s8_company"],
+})
+E2E_NOTES.update({
+    299: "Meeting overload ranks in P4 with focus time; one Meeting quality entry per built-in check (turn off or on, no remove) and per company check (admins only)",
+    304: "The list is its own Automations page; the meeting checks, which have no priority, show in a Meeting quality section below the groups",
+})
+PARTIAL.pop(299, None)
+# --- end s8 ---
+
 GOOGLE_PENDING = "Google E2E pending: the service-account key is not available yet (1Password token missing)."
 
 def status(row_id, spec_file, notes):

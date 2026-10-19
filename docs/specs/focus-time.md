@@ -121,6 +121,7 @@ Its priority is also fixed at P4 (E-0070, E-0141).
 ### Scheduler interaction
 
 29. Order: the scheduler places focus events after all habits, task chunks and flexible meetings, whatever their priority (E-0078, E-0090, E-0077). Focus uses only the free time left after them.
+    Tempoloom decision: focus goals and meeting overloads then get that free time in their P4 rank order from the automation list (`automations-overview.md` rule 8). At one rank the meeting overload goes first.
 30. A habit, task chunk or flexible meeting may take time from an unlocked focus event. The focus event then moves to other free time (E-0077).
 31. Focus events never take time from any external event, booking-link meeting, locked event, habit, task chunk, flexible meeting or buffer.
 32. For booking-link availability, a placed focus event counts as P2. Only a P1 booking link may offer that time. When `offer_to_booking_links=false`, no booking link offers it (E-0077, E-0141, E-0078).

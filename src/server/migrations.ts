@@ -1147,4 +1147,8 @@ export const MIGRATIONS: readonly string[] = [
     PRIMARY KEY (user_id, hint)
   ) STRICT;
   `,
+  // r3 s8: the rank of a meeting overload inside P4 (automations-overview.md rule 8).
+  `
+  ALTER TABLE meeting_overloads ADD COLUMN rank INTEGER NOT NULL DEFAULT 0;
+  `,
 ];

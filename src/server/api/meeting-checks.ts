@@ -30,7 +30,7 @@ const conditions = z
     message: "Set at least one condition",
   });
 
-function adminTeam(db: Db, userId: string): string | null {
+export function adminTeam(db: Db, userId: string): string | null {
   return (
     one<{ team_id: string }>(
       db,
