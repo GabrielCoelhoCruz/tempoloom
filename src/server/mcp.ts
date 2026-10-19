@@ -13,7 +13,7 @@ import type { TimeSet } from "../scheduler/timeset.ts";
 import { addDays, localToUtc, utcToLocal, weekdayOf } from "../shared/time.ts";
 import { hashToken, type User } from "./accounts.ts";
 import { plannerEvents } from "./api/planner.ts";
-import { computeStats } from "./api/stats.ts";
+import { CATEGORIES, computeStats } from "./api/stats.ts";
 import { apiKeyUser } from "./api-keys.ts";
 import { all, type Db, one } from "./db.ts";
 import { externalEvents } from "./planner/events.ts";
@@ -21,6 +21,8 @@ import { openChanges, type Preview, plainTitle, when, zoneOf } from "./preview.t
 
 const DAY = 86_400_000;
 const MAX_RANGE_DAYS = 31;
+const PAGE_SIZE = 50;
+const MAX_PAGE_SIZE = 100;
 /** Protocol versions this server speaks, newest first. */
 const PROTOCOLS = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
 
@@ -52,6 +54,95 @@ function rangeOf(start: string | undefined, end: string | undefined, now: number
     throw new ToolError(`The range is too long: at most ${MAX_RANGE_DAYS} days per call`);
   return { from, to };
 }
+
+// ------------------------------------------------------------------ pages
+
+const pageInput = {
+  limit: z
+    .number()
+    .int()
+    .min(1)
+    .max(MAX_PAGE_SIZE)
+    .optional()
+    .describe(`Rows per page. Default ${PAGE_SIZE}, at most ${MAX_PAGE_SIZE}`),
+  cursor: z.string().optional().describe("next_cursor from the previous page"),
+};
+const nextCursor = z
+  .string()
+  .optional()
+  .describe("Only when more rows exist: pass it as cursor to get the next page");
+
+type Key = (string | number)[];
+const compareKeys = (a: Key, b: Key) => {
+  for (let i = 0; i < a.length; i++) {
+    const x = a[i] as string | number;
+    const y = b[i] as string | number;
+    if (x !== y) return x < y ? -1 : 1;
+  }
+  return 0;
+};
+
+/**
+ * One page of rows in the order of `key`, which must be unique per row. The
+ * cursor is the key of the last row, so a row added between two calls never
+ * repeats or shifts a row (an offset would). Opaque to clients: base64url JSON.
+ */
+function page<T>(
+  rows: T[],
+  key: (row: T) => Key,
+  keySchema: z.ZodType<Key>,
+  a: { limit?: number | undefined; cursor?: string | undefined },
+): { rows: T[]; next_cursor?: string } {
+  let after: Key | undefined;
+  if (a.cursor !== undefined) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(Buffer.from(a.cursor, "base64url").toString("utf8"));
+    } catch {}
+    const k = keySchema.safeParse(parsed);
+    if (!k.success) throw new ToolError("Invalid cursor: pass next_cursor from the previous page");
+    after = k.data;
+  }
+  const sorted = rows
+    .map((row) => ({ row, k: key(row) }))
+    .sort((x, y) => compareKeys(x.k, y.k))
+    .filter((x) => !after || compareKeys(x.k, after) > 0);
+  const limit = a.limit ?? PAGE_SIZE;
+  const out = sorted.slice(0, limit);
+  const last = out.at(-1);
+  return {
+    rows: out.map((x) => x.row),
+    ...(sorted.length > limit && last
+      ? { next_cursor: Buffer.from(JSON.stringify(last.k)).toString("base64url") }
+      : {}),
+  };
+}
+
+// --------------------------------------------------------- output schemas
+
+const AUTOMATION_TYPES = ["habit", "focus_time", "buffer", "flexible_meeting"] as const;
+const instant = z.string().describe("ISO 8601 UTC");
+const date = z.string().describe("YYYY-MM-DD");
+const stagedOutput = z.object({
+  id: z.string(),
+  state: z.string(),
+  summary: z.string(),
+  review_url: z.string(),
+  message: z.string(),
+});
+const hourFields = {
+  meeting_hours: z.number(),
+  focus_hours: z.number(),
+  task_hours: z.number(),
+  habit_hours: z.number(),
+  other_hours: z.number(),
+};
+const minutes = z.object(
+  Object.fromEntries(CATEGORIES.map((c) => [c, z.number()])) as Record<
+    (typeof CATEGORIES)[number],
+    z.ZodNumber
+  >,
+);
 
 const VIDEO =
   /https:\/\/[^\s<>"]*(zoom\.us|meet\.google\.com|teams\.microsoft\.com|whereby\.com|meet\.jit\.si)[^\s<>"]*/i;
@@ -102,7 +193,10 @@ interface Tool {
   title: string;
   description: string;
   input: z.ZodObject;
+  output: z.ZodObject;
+  /** Stages changes, or (destructive) applies them to the calendar. */
   write?: boolean;
+  destructive?: boolean;
   run: (caller: Caller, args: never) => unknown;
 }
 
@@ -110,13 +204,15 @@ export function mcpRoutes(deps: McpDeps): Hono {
   const { db, preview, now } = deps;
   const origin = new URL(deps.baseUrl).origin;
 
-  const tool = <S extends z.ZodObject>(t: {
+  const tool = <S extends z.ZodObject, O extends z.ZodObject>(t: {
     name: string;
     title: string;
     description: string;
     input: S;
+    output: O;
     write?: boolean;
-    run: (caller: Caller, args: z.infer<S>) => unknown;
+    destructive?: boolean;
+    run: (caller: Caller, args: z.infer<S>) => z.input<O> | Promise<z.input<O>>;
   }): Tool => t as unknown as Tool;
 
   const tools: Tool[] = [
@@ -128,6 +224,24 @@ export function mcpRoutes(deps: McpDeps): Hono {
       input: z.object({
         start: datetime.describe("Start of the range, ISO 8601 with an offset"),
         end: datetime.describe("End of the range, ISO 8601 with an offset"),
+      }),
+      output: z.object({
+        time_zone: z.string(),
+        events: z.array(
+          z.object({
+            id: z.string(),
+            title: z.string(),
+            start: instant,
+            end: instant,
+            managed: z.boolean().describe("Tempoloom plans this event"),
+            kind: z.string(),
+            busy: z.boolean(),
+            attendees: z.array(z.string()),
+            location: z.string(),
+            organizer_self: z.boolean(),
+            video_link: z.string().nullable(),
+          }),
+        ),
       }),
       run: ({ user }, a) => {
         const { from, to } = rangeOf(a.start, a.end, now());
@@ -145,6 +259,10 @@ export function mcpRoutes(deps: McpDeps): Hono {
         end: datetime.optional().describe("Default: 7 days after start; at most 31 days"),
         attendees: z.array(z.email()).max(20).optional(),
       }),
+      output: z.object({
+        slots: z.array(z.object({ start: instant, end: instant })),
+        unknown_attendees: z.array(z.string()).describe("Guests without an account on this server"),
+      }),
       run: ({ user }, a) => findFree(user, a),
     }),
     tool({
@@ -153,6 +271,12 @@ export function mcpRoutes(deps: McpDeps): Hono {
       description:
         "Hours of meetings, focus time, tasks, habits and other commitments per day of one week, in the user's time zone.",
       input: z.object({ week_start: z.iso.date().describe("First day of the week, YYYY-MM-DD") }),
+      output: z.object({
+        week_start: date,
+        time_zone: z.string(),
+        days: z.array(z.object({ date, meetings: z.number(), ...hourFields })),
+        totals: z.object(hourFields),
+      }),
       run: ({ user }, a) => weekSummary(user, a.week_start),
     }),
     tool({
@@ -161,6 +285,36 @@ export function mcpRoutes(deps: McpDeps): Hono {
       description:
         "Details of one event (an id from list_events), the earlier meetings with the same guests, and open tasks that look related.",
       input: z.object({ event_id: z.string().min(1) }),
+      output: z.object({
+        event: z.object({
+          id: z.string(),
+          title: z.string(),
+          start: instant,
+          end: instant,
+          attendees: z.array(z.string()),
+          organizer_self: z.boolean(),
+          location: z.string(),
+          description: z.string(),
+          video_link: z.string().nullable(),
+        }),
+        past_meetings: z.array(
+          z.object({
+            id: z.string(),
+            title: z.string(),
+            start: instant,
+            end: instant,
+            attendees: z.array(z.string()),
+          }),
+        ),
+        related_tasks: z.array(
+          z.object({
+            id: z.string(),
+            title: z.string(),
+            priority: z.number(),
+            due: instant.nullable(),
+          }),
+        ),
+      }),
       run: ({ user }, a) => meetingContext(user, a.event_id),
     }),
     tool({
@@ -168,6 +322,18 @@ export function mcpRoutes(deps: McpDeps): Hono {
       title: "Stats",
       description: "Where the user's time went between two dates: minutes per category and day.",
       input: z.object({ start_date: z.iso.date(), end_date: z.iso.date() }),
+      output: z.object({
+        from: date,
+        to: date,
+        days: z.array(z.object({ date, minutes })),
+        totals: minutes,
+        highlights: z.object({
+          meetingMinutes: z.number(),
+          focusMinutes: z.number(),
+          bookings: z.number(),
+          meetingMinutesOutsideWorkHours: z.number(),
+        }),
+      }),
       run: ({ user }, a) => {
         if (a.end_date < a.start_date) throw new ToolError("end_date is before start_date");
         if ((Date.parse(a.end_date) - Date.parse(a.start_date)) / DAY > 120)
@@ -178,78 +344,149 @@ export function mcpRoutes(deps: McpDeps): Hono {
     tool({
       name: "list_tasks",
       title: "List tasks",
-      description: "The user's tasks with priority (1 is highest), due date and state.",
-      input: z.object({ status: z.enum(["open", "done"]).optional() }),
-      run: ({ user }, a) => ({
-        tasks: all<{
-          id: string;
-          title: string;
-          level: number;
-          total_minutes: number;
-          due_at: number | null;
-          status: string;
-        }>(
-          db,
-          "SELECT * FROM tasks WHERE user_id = ? AND status = ? ORDER BY COALESCE(due_at, 9e15), created_at",
-          user.id,
-          a.status ?? "open",
-        ).map((t) => ({
-          id: t.id,
-          title: t.title,
-          priority: t.level,
-          minutes: t.total_minutes,
-          due: t.due_at === null ? null : isoOf(t.due_at),
-          status: t.status,
-        })),
+      description:
+        "The user's tasks with priority (1 is highest), due date and state, due first. One page per call.",
+      input: z.object({ status: z.enum(["open", "done"]).optional(), ...pageInput }),
+      output: z.object({
+        tasks: z.array(
+          z.object({
+            id: z.string(),
+            title: z.string(),
+            priority: z.number(),
+            minutes: z.number(),
+            due: instant.nullable(),
+            status: z.enum(["open", "done"]),
+          }),
+        ),
+        next_cursor: nextCursor,
       }),
+      run: ({ user }, a) => {
+        const p = page(
+          all<{
+            id: string;
+            title: string;
+            level: number;
+            total_minutes: number;
+            due_at: number | null;
+            status: "open" | "done";
+            created_at: number;
+          }>(
+            db,
+            "SELECT id, title, level, total_minutes, due_at, status, created_at FROM tasks WHERE user_id = ? AND status = ?",
+            user.id,
+            a.status ?? "open",
+          ),
+          (t) => [t.due_at ?? 9e15, t.created_at, t.id],
+          z.tuple([z.number(), z.number(), z.string()]),
+          a,
+        );
+        return {
+          tasks: p.rows.map((t) => ({
+            id: t.id,
+            title: t.title,
+            priority: t.level,
+            minutes: t.total_minutes,
+            due: t.due_at === null ? null : isoOf(t.due_at),
+            status: t.status,
+          })),
+          ...(p.next_cursor ? { next_cursor: p.next_cursor } : {}),
+        };
+      },
     }),
     tool({
       name: "list_automations",
       title: "List automations",
       description:
-        "Habits, focus time goals, buffers and flexible meetings, with type, priority and whether each is on.",
-      input: z.object({}),
-      run: ({ user }) => ({
-        automations: [
-          ...all<{ id: string; title: string; level: number; enabled: number }>(
-            db,
-            "SELECT id, title, level, enabled FROM habits WHERE user_id = ? ORDER BY level, rank",
-            user.id,
-          ).map((h) => ({ type: "habit", ...h, enabled: h.enabled === 1 })),
-          ...all<{ id: string; title: string; enabled: number }>(
-            db,
-            "SELECT id, title, enabled FROM focus_goals WHERE user_id = ?",
-            user.id,
-          ).map((f) => ({ type: "focus_time", ...f, level: null, enabled: f.enabled === 1 })),
-          ...all<{ id: string; title: string; level: number; enabled: number }>(
-            db,
-            "SELECT id, title, level, enabled FROM buffers WHERE user_id = ? ORDER BY level, rank",
-            user.id,
-          ).map((b) => ({ type: "buffer", ...b, enabled: b.enabled === 1 })),
-          ...all<{ id: string; title: string; level: number; enabled: number }>(
-            db,
-            "SELECT id, title, level, enabled FROM meetings WHERE user_id = ? ORDER BY level, rank",
-            user.id,
-          ).map((m) => ({ type: "flexible_meeting", ...m, enabled: m.enabled === 1 })),
-        ],
+        "Habits, focus time goals, buffers and flexible meetings, with type, priority and whether each is on. One page per call.",
+      input: z.object(pageInput),
+      output: z.object({
+        automations: z.array(
+          z.object({
+            type: z.enum(AUTOMATION_TYPES),
+            id: z.string(),
+            title: z.string(),
+            level: z.number().nullable().describe("Priority; focus time has none"),
+            enabled: z.boolean(),
+          }),
+        ),
+        next_cursor: nextCursor,
       }),
+      run: ({ user }, a) => {
+        type Row = {
+          id: string;
+          title: string;
+          level: number | null;
+          rank: number;
+          enabled: number;
+        };
+        const rows = (type: (typeof AUTOMATION_TYPES)[number], table: string, level: string) =>
+          all<Row>(
+            db,
+            `SELECT id, title, ${level} AS level, rank, enabled FROM ${table} WHERE user_id = ?`,
+            user.id,
+          ).map((r) => ({ ...r, type }));
+        const p = page(
+          [
+            ...rows("habit", "habits", "level"),
+            ...rows("focus_time", "focus_goals", "NULL"),
+            ...rows("buffer", "buffers", "level"),
+            ...rows("flexible_meeting", "meetings", "level"),
+          ],
+          (r) => [AUTOMATION_TYPES.indexOf(r.type), r.level ?? 0, r.rank, r.id],
+          z.tuple([z.number(), z.number(), z.number(), z.string()]),
+          a,
+        );
+        return {
+          automations: p.rows.map((r) => ({
+            type: r.type,
+            id: r.id,
+            title: r.title,
+            level: r.level,
+            enabled: r.enabled === 1,
+          })),
+          ...(p.next_cursor ? { next_cursor: p.next_cursor } : {}),
+        };
+      },
     }),
     tool({
       name: "list_staged_changes",
       title: "List staged changes",
       description:
-        "Changes waiting in preview mode for the user to apply, with their source and summary.",
-      input: z.object({}),
-      run: ({ user }) => ({
-        changes: openChanges(db, user.id, now()).map((c) => ({
-          id: c.id,
-          source: c.source,
-          summary: c.summary,
-          reason: c.reason,
-          state: c.state,
-          created_at: isoOf(c.createdAt),
-        })),
+        "Changes waiting in preview mode for the user to apply, with their source and summary, oldest first. One page per call.",
+      input: z.object(pageInput),
+      output: z.object({
+        changes: z.array(
+          z.object({
+            id: z.string(),
+            source: z.enum(["assistant_chat", "mcp_client", "automation_edit", "manual"]),
+            summary: z.string(),
+            reason: z.string(),
+            state: z.enum(["pending", "accepted"]),
+            created_at: instant,
+          }),
+        ),
+        next_cursor: nextCursor,
       }),
+      run: ({ user }, a) => {
+        const p = page(
+          openChanges(db, user.id, now()),
+          (c) => [c.createdAt, c.id],
+          z.tuple([z.number(), z.string()]),
+          a,
+        );
+        return {
+          changes: p.rows.map((c) => ({
+            id: c.id,
+            source: c.source,
+            summary: c.summary,
+            reason: c.reason,
+            // openChanges returns only these two states.
+            state: c.state as "pending" | "accepted",
+            created_at: isoOf(c.createdAt),
+          })),
+          ...(p.next_cursor ? { next_cursor: p.next_cursor } : {}),
+        };
+      },
     }),
     tool({
       name: "propose_create_event",
@@ -266,6 +503,7 @@ export function mcpRoutes(deps: McpDeps): Hono {
         location: z.string().max(1000).optional(),
         reason: z.string().max(1000).optional().describe("Why, in one sentence, shown to the user"),
       }),
+      output: stagedOutput,
       run: (caller, a) => {
         const start = toMs(a.start);
         const end = toMs(a.end);
@@ -306,6 +544,7 @@ export function mcpRoutes(deps: McpDeps): Hono {
         title: z.string().trim().min(1).max(255).optional(),
         reason: z.string().max(1000).optional(),
       }),
+      output: stagedOutput,
       run: (caller, a) => proposeUpdate(caller, a),
     }),
     tool({
@@ -315,6 +554,7 @@ export function mcpRoutes(deps: McpDeps): Hono {
         "Stages the deletion of an event the user organizes. Guests hear about it only when the user applies the change.",
       write: true,
       input: z.object({ event_id: z.string().min(1), reason: z.string().max(1000).optional() }),
+      output: stagedOutput,
       run: (caller, a) => {
         const ev = editable(caller.user, a.event_id);
         const zone = zoneOf(db, caller.user.id);
@@ -347,7 +587,18 @@ export function mcpRoutes(deps: McpDeps): Hono {
       description:
         "Applies changes that this or another AI tool staged, after the user confirmed them in the conversation. Changes staged in Tempoloom itself must be applied there. Each result is applied, stale (the event changed since) or failed.",
       write: true,
+      destructive: true,
       input: z.object({ ids: z.array(z.string()).min(1).max(100) }),
+      output: z.object({
+        results: z.array(
+          z.discriminatedUnion("result", [
+            z.object({ id: z.string(), result: z.literal("applied") }),
+            z.object({ id: z.string(), result: z.literal("stale"), reason: z.string() }),
+            z.object({ id: z.string(), result: z.literal("failed"), error: z.string() }),
+            z.object({ id: z.string(), result: z.literal("refused"), reason: z.string() }),
+          ]),
+        ),
+      }),
       run: async ({ user }, a) => {
         const mine = new Set(
           openChanges(db, user.id, now())
@@ -361,12 +612,12 @@ export function mcpRoutes(deps: McpDeps): Hono {
         );
         return {
           results: [
-            ...result.applied.map((r) => ({ id: r.id, result: "applied" })),
-            ...result.stale.map((r) => ({ id: r.id, result: "stale", reason: r.reason })),
-            ...result.failed.map((r) => ({ id: r.id, result: "failed", error: r.error })),
+            ...result.applied.map((r) => ({ id: r.id, result: "applied" as const })),
+            ...result.stale.map((r) => ({ id: r.id, result: "stale" as const, reason: r.reason })),
+            ...result.failed.map((r) => ({ id: r.id, result: "failed" as const, error: r.error })),
             ...refused.map((id) => ({
               id,
-              result: "refused",
+              result: "refused" as const,
               reason: "Not a pending change staged by an AI tool; apply it in Tempoloom",
             })),
           ],
@@ -737,6 +988,12 @@ export function mcpRoutes(deps: McpDeps): Hono {
 
   // ---------------------------------------------------------------- JSON-RPC
 
+  /** JSON Schema 2020-12, the MCP default, so without a $schema key. */
+  const jsonSchema = (schema: z.ZodObject) => {
+    const { $schema: _, ...rest } = z.toJSONSchema(schema) as Record<string, unknown>;
+    return rest;
+  };
+
   const visible = () => tools.filter((t) => deps.writeEnabled || !t.write);
 
   interface Message {
@@ -780,16 +1037,19 @@ export function mcpRoutes(deps: McpDeps): Hono {
       case "tools/list":
         return reply(m.id, {
           tools: visible().map((t) => {
-            const { $schema: _, ...inputSchema } = z.toJSONSchema(t.input) as Record<
-              string,
-              unknown
-            >;
             return {
               name: t.name,
               title: t.title,
               description: t.description,
-              inputSchema,
-              annotations: { readOnlyHint: !t.write, destructiveHint: false, openWorldHint: false },
+              inputSchema: jsonSchema(t.input),
+              outputSchema: jsonSchema(t.output),
+              // Staging writes nothing to the calendar; applying runs staged deletes.
+              annotations: {
+                readOnlyHint: !t.write,
+                destructiveHint: t.destructive ?? false,
+                idempotentHint: !t.write,
+                openWorldHint: false,
+              },
             };
           }),
         });
