@@ -16,10 +16,13 @@ restart.
   besides Docker.
 - `google`: Google Calendar through either a Google user with OAuth or a
   service account. All tests share the calendar `[tl-test] tempoloom-e2e`.
-  The driver creates it if needed and deletes its events before each test.
-  The driver refuses to clear a calendar without a Google group calendar ID.
-  Tests that need several users, extra calendars, or incoming invitations skip
-  on this backend. A service account cannot invite guests.
+  The driver creates it with a marker description and deletes its events
+  before each test. It empties only a calendar with that name and marker that
+  the account owns; it stops if it finds two. Run one suite per Google account
+  at a time: two runs empty each other's calendar. Tests that need several
+  users, extra calendars, or incoming invitations skip on this backend (the
+  driver skips the test when it asks for an extra calendar or an invitation).
+  A service account cannot invite guests.
 
 ## Other loopback servers
 
@@ -73,12 +76,16 @@ supports guest invitations. The same test calendar is reused on each run.
 3. Create a web OAuth client with the redirect URI
    `http://127.0.0.1:8798/auth/google/callback`.
 4. Store the downloaded client JSON in 1Password, vault `tempoloom-e2e`, item
-   `google-oauth-client`, field `client.json`.
+   `google-oauth-client`, field `client.json`. Store the test account's email
+   in the same item, field `test-account-email` (or put the address in
+   `tests/e2e/google-oauth.env.tpl` as `GOOGLE_TEST_ACCOUNT_EMAIL`).
 5. Give the read-only 1Password service account access to that item. Save its
    token as described in the service account setup above.
 6. Run the command below.
 7. Open the printed loopback URL in a browser that can reach the callback port.
    Sign in as the test user and approve all requested access once for that run.
+   The helper stops if another Google account approves, if Google has not
+   verified the account's email, or if nobody approves within 10 minutes.
 
 ```bash
 TEMPOLOOM_E2E_GOOGLE_AUTH=oauth scripts/e2e-google.sh
@@ -86,9 +93,13 @@ TEMPOLOOM_E2E_GOOGLE_AUTH=oauth scripts/e2e-google.sh
 
 The suite starts after approval. `scripts/google-oauth-login.ts` passes the
 refresh token to the test command through `GOOGLE_REFRESH_TOKEN` in its
-process environment. The helper does not print the token or save a token file.
-The application stores connected-account credentials encrypted in its test
-database, as it does for other OAuth accounts.
+process environment. The helper does not print the token or save a token file,
+and it revokes the token when the command exits, also after a failure.
+The fixtures give the token only to the operator command
+`connect-google-oauth`, which checks it with Google, reads the account from
+the ID token, and stores it encrypted in the test database, as a browser
+sign-in does. The fixtures stop if `GOOGLE_REFRESH_TOKEN` is set without
+`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` or `GOOGLE_TEST_ACCOUNT_EMAIL`.
 
 To change the callback port, set `GOOGLE_OAUTH_LOGIN_PORT` and register the
 matching redirect URI on the OAuth client. `TEMPOLOOM_E2E_ENV_TEMPLATE` can

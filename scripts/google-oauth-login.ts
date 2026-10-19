@@ -1,10 +1,13 @@
-// Runs Google's consent flow once for a test account, then runs a command with
-// the refresh token in its environment. The token is never written to disk.
+// Runs Google's consent flow once for the test account, runs a command with the
+// refresh token in its environment, then revokes the token. The token is never
+// written to disk.
 //
-//   GOOGLE_OAUTH_CLIENT_JSON='{"web":{...}}' node scripts/google-oauth-login.ts -- <command...>
+//   GOOGLE_OAUTH_CLIENT_JSON='{"web":{...}}' GOOGLE_TEST_ACCOUNT_EMAIL=tester@example.com \
+//     node scripts/google-oauth-login.ts -- <command...>
 //
 // The OAuth client must list http://127.0.0.1:<PORT>/auth/google/callback as a
-// redirect URI. Open the printed URL in a browser that reaches that port.
+// redirect URI. Open the printed URL in a browser that reaches that port, and
+// sign in as GOOGLE_TEST_ACCOUNT_EMAIL; another account stops the run.
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
 import {
@@ -12,18 +15,25 @@ import {
   exchangeCode,
   GOOGLE_SCOPES,
   identityFromIdToken,
+  revokeToken,
+  type TokenSet,
 } from "../src/server/google/oauth.ts";
 
-// The test driver creates and empties its own calendar; this scope reaches only
-// calendars this client created, never the account's other calendars.
-const TEST_SCOPE = "https://www.googleapis.com/auth/calendar.app.created";
+// The test driver creates its test calendar, which needs this scope. It does
+// not limit the driver: calendar.events (GOOGLE_SCOPES) reaches the events of
+// every calendar the account can write to. The driver's own check (owner and a
+// marker it sets at creation) keeps it to the test calendar.
+const TEST_SCOPES = ["https://www.googleapis.com/auth/calendar.app.created"];
+const CONSENT_TIMEOUT_MS = 10 * 60_000;
 
 const port = Number(process.env.GOOGLE_OAUTH_LOGIN_PORT ?? 8798);
-const command = process.argv.slice(process.argv.indexOf("--") + 1);
+const dashes = process.argv.indexOf("--");
+const command = dashes === -1 ? [] : process.argv.slice(dashes + 1);
 const raw = process.env.GOOGLE_OAUTH_CLIENT_JSON;
-if (!raw || !command.length) {
+const expected = process.env.GOOGLE_TEST_ACCOUNT_EMAIL?.trim().toLowerCase();
+if (!raw || !expected || !command.length) {
   console.error(
-    "usage: GOOGLE_OAUTH_CLIENT_JSON=... node scripts/google-oauth-login.ts -- <command...>",
+    "usage: GOOGLE_OAUTH_CLIENT_JSON=... GOOGLE_TEST_ACCOUNT_EMAIL=... node scripts/google-oauth-login.ts -- <command...>",
   );
   process.exit(2);
 }
@@ -34,46 +44,82 @@ const client = {
   clientSecret: file.web.client_secret,
   redirectUri: `http://127.0.0.1:${port}/auth/google/callback`,
 };
+const auth = buildAuthRequest(client, expected, TEST_SCOPES);
 
-const auth = buildAuthRequest(client);
-const url = new URL(auth.url);
-url.searchParams.set("scope", [...GOOGLE_SCOPES, TEST_SCOPE].join(" "));
-
-const tokens = await new Promise<Awaited<ReturnType<typeof exchangeCode>>>((resolve, reject) => {
+const tokens = await new Promise<TokenSet>((resolve, reject) => {
+  const fail = (err: Error) => {
+    clearTimeout(timer);
+    server.close();
+    reject(err);
+  };
+  const timer = setTimeout(
+    () => fail(new Error("No consent within 10 minutes")),
+    CONSENT_TIMEOUT_MS,
+  );
   const server = createServer((req, res) => {
-    const q = new URL(req.url ?? "/", client.redirectUri).searchParams;
+    const reply = (status: number, text: string) =>
+      res.writeHead(status, { "content-type": "text/plain" }).end(text);
     if (!req.url?.startsWith("/auth/google/callback")) {
-      res.writeHead(302, { location: url.toString() }).end();
+      res.writeHead(302, { location: auth.url }).end();
       return;
     }
-    const done = (text: string, err?: Error) => {
-      res.writeHead(err ? 400 : 200, { "content-type": "text/plain" }).end(text);
-      server.close();
-      if (err) reject(err);
-    };
-    if (q.get("state") !== auth.state) return done("State mismatch.", new Error("state mismatch"));
+    const q = new URL(req.url, client.redirectUri).searchParams;
+    // A stale or foreign callback is not ours: ignore it and keep waiting.
+    if (q.get("state") !== auth.state) return reply(404, "Unknown sign-in.");
     const code = q.get("code");
-    if (!code) return done("No code.", new Error(q.get("error") ?? "no code"));
+    if (!code) {
+      reply(400, "No code.");
+      return fail(new Error(`Consent failed: ${q.get("error") ?? "no code"}`));
+    }
     const granted = new Set((q.get("scope") ?? "").split(" "));
-    const missing = [...GOOGLE_SCOPES, TEST_SCOPE].filter(
+    const missing = [...GOOGLE_SCOPES, ...TEST_SCOPES].filter(
       (s) => s.startsWith("https:") && !granted.has(s),
     );
-    if (missing.length)
-      return done(`Missing access: ${missing.join(", ")}`, new Error("scopes missing"));
+    if (missing.length) {
+      reply(400, `Missing access: ${missing.join(", ")}`);
+      return fail(new Error(`Access not granted: ${missing.join(", ")}`));
+    }
     exchangeCode(client, code, auth.codeVerifier).then(
       (t) => {
-        done("Done. You can close this tab.");
+        reply(200, "Done. You can close this tab.");
+        clearTimeout(timer);
+        server.close();
         resolve(t);
       },
-      (err: Error) => done("Token exchange failed.", err),
+      (err: Error) => {
+        reply(400, "Token exchange failed.");
+        fail(err);
+      },
     );
   });
+  server.on("error", fail);
   server.listen(port, "127.0.0.1", () => {
-    console.log(`Open http://127.0.0.1:${port}/ and approve the access.`);
+    console.log(`Open http://127.0.0.1:${port}/ and approve the access as ${expected}.`);
   });
 });
-if (!tokens.refreshToken || !tokens.idToken) throw new Error("Google returned no refresh token");
-const identity = identityFromIdToken(tokens.idToken);
+
+const refreshToken = tokens.refreshToken;
+if (!refreshToken) throw new Error("Google returned no refresh token");
+let finished = false;
+/** Revokes the grant (and the refresh token with it), then exits. */
+const finish = async (code: number, why?: string): Promise<void> => {
+  if (finished) return;
+  finished = true;
+  if (why) console.error(why);
+  try {
+    await revokeToken(refreshToken);
+  } catch (err) {
+    console.error(`Revoking the refresh token failed: ${(err as Error).message}`);
+    code ||= 1;
+  }
+  process.exit(code);
+};
+
+if (!tokens.idToken) await finish(1, "Google returned no ID token");
+const identity = identityFromIdToken(tokens.idToken as string);
+if (identity.email.toLowerCase() !== expected)
+  await finish(1, `Signed in as ${identity.email}, not ${expected}; stopped.`);
+if (!identity.emailVerified) await finish(1, `Google has not verified ${identity.email}; stopped.`);
 console.log("Consent done. Running the command.");
 
 const child = spawn(command[0] as string, command.slice(1), {
@@ -82,8 +128,10 @@ const child = spawn(command[0] as string, command.slice(1), {
     ...process.env,
     GOOGLE_CLIENT_ID: client.clientId,
     GOOGLE_CLIENT_SECRET: client.clientSecret,
-    GOOGLE_REFRESH_TOKEN: tokens.refreshToken,
-    GOOGLE_ACCOUNT_EMAIL: identity.email,
+    GOOGLE_REFRESH_TOKEN: refreshToken,
   },
 });
-child.on("exit", (code) => process.exit(code ?? 1));
+// Ctrl-C reaches the child too; wait for it to exit so the token is revoked.
+for (const signal of ["SIGINT", "SIGTERM"] as const) process.on(signal, () => child.kill(signal));
+child.on("error", (err) => void finish(1, `Could not run ${command[0]}: ${err.message}`));
+child.on("exit", (code) => void finish(code ?? 1));
