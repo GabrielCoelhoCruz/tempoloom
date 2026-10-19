@@ -24,8 +24,8 @@ Evidence ids (`E-…`) refer to the private evidence index. Spec links point to
 - Rows: 963
 - done (CalDAV): 507
 - done (Google): 0
-- partial: 99
-- blocked: 357
+- partial: 98
+- blocked: 358
 
 "done (CalDAV)" means a full UI E2E test passes against a real CalDAV server (Radicale in a
 loopback container): Playwright drives the Tempoloom UI, the real API and scheduler write to the
@@ -574,7 +574,7 @@ the open questions in each spec list what is unknown.
 | 515 | Change the main email | E-0094, E-0060 | [accounts-login-emails-permissions.md#main-email](specs/accounts-login-emails-permissions.md#main-email) | done (CalDAV) | Full UI E2E passes on CalDAV (Radicale): “use as main moves the main badge, the locked main calendar and new events; the old email still signs in”. Google Calendar run pending (service-account key). |
 | 516 | Error when the email is main in another account, with fix | E-0094 | [accounts-login-emails-permissions.md#main-email](specs/accounts-login-emails-permissions.md#main-email) | done (CalDAV) | Full UI E2E passes on CalDAV (Radicale): “an email that is main in another account cannot become main; after that account is deleted the retry works”. Google Calendar run pending (service-account key). |
 | 517 | Disconnected status and reconnect | E-0094 | [accounts-login-emails-permissions.md#disconnected-emails](specs/accounts-login-emails-permissions.md#disconnected-emails) | partial | Disconnect, paused policies and reconnect have full UI E2E on CalDAV (“an account whose login stops working shows Disconnected, pauses its policies and nothing else; reconnect resumes them”): the server rejects the stored password and the user types a new one; a Google account reconnects through Google sign-in with the account's email as the hint and refuses another identity (unit tests). Items that write to a calendar of the disconnected account show no error state yet (rule 16): their events stay as they are. |
-| 518 | Google permissions asked per feature (incremental consent) | E-0079 | [accounts-login-emails-permissions.md#provider-permissions](specs/accounts-login-emails-permissions.md#provider-permissions) | partial | All calendar scopes are asked at sign-in; incremental consent not implemented. Google E2E pending. Reference note: scope list not captured. |
+| 518 | Google permissions asked per feature (incremental consent) | E-0079 | [accounts-login-emails-permissions.md#provider-permissions](specs/accounts-login-emails-permissions.md#provider-permissions) | blocked | Needs a Google OAuth client and a Google test account to prove it: incremental consent shows only on Google's consent screen. Today Google sign-in asks for calendar scopes up front, with include_granted_scopes. Reference note: scope list not captured. |
 | 519 | Workspace admin approves the app for the domain | E-0029 | [accounts-login-emails-permissions.md#provider-permissions](specs/accounts-login-emails-permissions.md#provider-permissions) | blocked | Needs a Google Workspace domain and a super admin. |
 | 520 | Microsoft admin approval help flow | E-0220 | [accounts-login-emails-permissions.md#provider-permissions](specs/accounts-login-emails-permissions.md#provider-permissions) | blocked | Needs a Microsoft 365 account and a Microsoft Graph calendar provider, which is not built. |
 | 521 | On-premises Exchange rejected | E-0211 | [accounts-login-emails-permissions.md#provider-permissions](specs/accounts-login-emails-permissions.md#provider-permissions) | blocked | Needs a Microsoft 365 account and a Microsoft Graph calendar provider, which is not built. Reference note: not supported in reference. |

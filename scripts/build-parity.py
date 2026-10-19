@@ -351,7 +351,6 @@ UNIT = StatusMap("UNIT", {
 
 GOOGLE_ROWS = StatusMap("GOOGLE_ROWS", {
     638: "Google sign-in is implemented and follows the team's SSO rules; Google E2E pending (needs a Google OAuth client and account). Microsoft sign-in is not implemented: it needs an app registration and a Microsoft Graph provider.",
-    518: "All calendar scopes are asked at sign-in; incremental consent not implemented. Google E2E pending.",
 })
 
 # Round 3 rows. Each block adds rows with T.update, E2E.update, E2E_NOTES.update,
@@ -795,6 +794,9 @@ PARTIAL[517] = ("Disconnect, paused policies and reconnect have full UI E2E on C
                 "the server rejects the stored password and the user types a new one; a Google account reconnects through Google sign-in "
                 "with the account's email as the hint and refuses another identity (unit tests). Items that write to a calendar of the "
                 "disconnected account show no error state yet (rule 16): their events stay as they are")
+# Same status as row 147 (incremental consent): both need a Google account to prove.
+BLOCKED[518] = ("Needs a Google OAuth client and a Google test account to prove it: incremental consent shows only on "
+                "Google's consent screen. Today Google sign-in asks for calendar scopes up front, with include_granted_scopes")
 # --- end U08 ---
 
 # --- U03: core planning ---
