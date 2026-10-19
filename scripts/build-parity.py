@@ -265,9 +265,6 @@ E2E_NOTES = {
 
 # Row id -> reason, for rows implemented in part (some behavior has E2E, some does not).
 PARTIAL = StatusMap("PARTIAL", {
-    934: "http on a public host is rejected in E2E; the localhost and IP-literal checks are in code but not under E2E, because the E2E server allows private receivers (WEBHOOK_ALLOW_PRIVATE)",
-    936: "success on 200 and failure on 500 are E2E-proven; the 10-second timeout is not under test",
-    938: "the delivery worker suspends the endpoint and the page offers Resume; not under test (needs 24 hours of failures)",
     320: "A meeting is created from a form, with E2E on CalDAV; each occurrence is its own event, not an instance of one recurring series",
     322: "Availability of attendees who are users here is E2E-proven on CalDAV; the Google free/busy query for other emails is not implemented",
     324: "Optional guests are written with the optional role and never limit the time (E2E); the E2E optional guest is not a user here",
@@ -286,31 +283,7 @@ PARTIAL = StatusMap("PARTIAL", {
     349: "The list is grouped by priority; no drag to reorder",
     350: "No limit in code; not under test",
     356: "Changed rules or hours place future occurrences again (engine change flag); unit tests only",
-    764: "E2E adds Lunch at 12:00 on each workday from the library; the 11:30 to 14:00 window is not set",
-    759: "E2E checks the prefilled form (personal hours, three days); the habit is not saved in that test",
-    278: "The category is computed again from the cached attendees on each run; not under E2E",
-    283: "Future managed events and external events from 90 days back are repainted; past managed events are not",
-    284: "An event that cannot change color is skipped and painting never stops a run; not under E2E (Google)",
-    285: "At most 2 scope changes a minute (E2E); no repaint-all button",
-    261: "Google out-of-office events are busy, so they block like any busy event; Google E2E pending",
-    262: "Away time over 8 hours is vacation, shorter is personal commitment (unit tests); stats do not split it yet",
-    263: "#tl_free opens a busy event to tasks and habits (E2E for a timed event); not under E2E for out of office",
-    265: "Any connected calendar that counts for availability blocks its busy events (E2E); no holiday calendar of its own",
-    242: "The planner can set any event's category to flight (E2E for the control); airport time still follows the title or #tl_flight",
-    253: "#tl_busy makes any free event block tasks and habits (E2E); no quick-block action",
-    254: "#tl_travel makes the travel buffer wrap an event without an address; not under E2E",
-    255: "#tl_flight gives airport time and the flight category; E2E covers flight numbers in the title, not the tag",
-    256: "#tl_trip gives the travel category (unit tests); no buffer is added",
-    257: "#tl_focus counts an event as focus in stats; not under test",
 })
-
-# Library entries (automations-library.md): row = 718 + entry number.
-LIB_FORM = [11, 32, 34, 35, 36, 37, 38, 39, 40, 42, 43, 44, 45]
-LIB_DIRECT = [1, 7, 10, 19, 23, 28, 29, 30]
-for n in LIB_FORM:
-    PARTIAL.setdefault(718 + n, "The library opens the form of its kind with the preset; not under E2E")
-for n in LIB_DIRECT:
-    PARTIAL.setdefault(718 + n, "The library adds it with the preset (no form of its own yet); not under E2E")
 
 # Row id -> reason, for rows that cannot work yet because a feature they build on is missing.
 BLOCKED = StatusMap("BLOCKED", {
@@ -338,29 +311,10 @@ for n in [5, 6, 12, 14, 15, 16, 17, 18, 20, 21, 22, 24, 31]:
 
 # Row id -> limits, for rows implemented with unit or property tests only.
 UNIT = StatusMap("UNIT", {
-    154: "", 156: "daily and weekly; monthly and custom not implemented",
-    161: "", 165: "", 178: "", 196: "", 197: "", 202: "", 203: "", 206: "", 208: "", 209: "", 219: "",
-    225: "", 226: "API only",
-    228: "",
-    259: "title and description; not the RSVP note", 292: "settings field; no UI yet", 506: "API only",
-    517: "status is stored; no reconnect UI yet",
-    456: "", 467: "", 468: "API only; no UI switch",
-    470: "", 471: "stored per policy; no UI", 472: "", 473: "the skip half is E2E-proven; free copies in details mode are not",
-    475: "", 476: "copies the details; the provider visibility is not set to private", 480: "",
-    193: "work and personal habit hours in stats; no per-habit progress", 353: "one-to-one, group and booked meeting hours",
-    604: "meetings outside work hours and personal habit hours",
-    607: "meetings, focus and booking counts; no breaks or travel",
-    704: "phase tabs E2E-proven; reset not covered by E2E", 708: "sound on or off; one alarm sound", 712: "today's summary only",
-    297: "",
-    298: "only main-calendar events can change", 238: "a fixed 30 minutes; no setting yet",
-    243: "travel buffers follow their event; a manual length is not kept", 244: "",
+    353: "one-to-one, group and booked meeting hours",
 })
 
 GOOGLE_ROWS = StatusMap("GOOGLE_ROWS", {
-    638: "Google sign-in is implemented and follows the team's SSO rules; Google E2E pending (needs a Google OAuth client and account). Microsoft sign-in is not implemented: it needs an app registration and a Microsoft Graph provider.",
-    510: "Google sign-in (OAuth with PKCE) and Google Calendar sync are implemented; Google E2E pending: needs a service-account key, and the consent screen needs a one-time check by a person. Microsoft is not implemented.",
-    513: "Google and CalDAV accounts can be connected; a second CalDAV account is added in the UI with CalDAV E2E (\u201ca user adds a second CalDAV account and removes it after a confirmation\u201d); Microsoft is not implemented. Google E2E pending.",
-    518: "All calendar scopes are asked at sign-in; incremental consent not implemented. Google E2E pending.",
 })
 
 # Round 3 rows. Each block adds rows with T.update, E2E.update, E2E_NOTES.update,
@@ -419,10 +373,7 @@ E2E_NOTES.update({
 })
 PARTIAL.update({
     301: "From the library and from the top-bar create menu (E2E: \u201ca library entry opens the shared form\u2026\u201d, \u201cthe automation list shows habits\u2026\u201d); asking the assistant chat needs the chat, which is not implemented",
-    245: "Travel and airport buffers start public, with the travel marker (E2E: \u201ctask chunks, habits and flexible meetings get the calendar default reminder\u2026\u201d); mirroring skips every managed event, while mirroring rule 15 skips only copies, so no copy of a travel buffer exists to follow a policy",
 })
-for n in [1, 7, 10, 19, 23, 28, 29, 30]:
-    PARTIAL[718 + n] = "The library opens the shared automation form with the preset; not under E2E"
 # --- end s1 ---
 
 # --- s2: habit actions, focus and buffers ---
@@ -627,9 +578,6 @@ E2E_NOTES.update({
     751: "The series is 'No meetings #tl_free' on the user's main calendar; removing it deletes the series",
     772: "Issues come from the meeting checks; recommendations come from the planner's report and days with 6 hours or more of meetings",
 })
-PARTIAL.update({
-    317: "The daily digest by email, at a time the user sets, has full UI E2E on CalDAV (\u201clibrary entry 'Flag meeting problems' turns on the checks and an email digest of open, not ignored, issues at the chosen time, once a day\u201d); the chat app channel needs a chat vendor app (Slack), which Tempoloom does not have",
-})
 # --- end s5 ---
 
 # --- s6: booking links ---
@@ -713,8 +661,6 @@ E2E_NOTES.update({
 })
 PARTIAL.update({
     700: "The account page gives the server URL and the API key steps for any MCP client (E2E: \u201can MCP client with an API key reads\u2026\u201d checks the URL); no guide per product (ChatGPT, Claude, Cursor), which integrations-ai-tools.md owns",
-    610: "Planned time (the calendar when each day began, from Tempoloom's change log) and actual time (what stayed) show on the stats page; unit tests only, because an E2E run cannot pass a day boundary; logged time is not added",
-    634: "The facts (busiest meeting day, longest focus session, booked meetings, breaks, people met) show on the stats page for any range (E2E: \u201cstats split deep and shallow work\u2026\u201d); the weekly report email itself is not built",
 })
 # --- end s7 ---
 
@@ -737,6 +683,60 @@ E2E_NOTES.update({
     304: "The list is its own Automations page; the meeting checks, which have no priority, show in a Meeting quality section below the groups",
 })
 # --- end s8 ---
+
+# --- U09: library entries, stats panels, tools ---
+T.update({
+    "u9_lib_habits1": "library habit entries 11, 35, 36, 43, 45, 46 add habits with their presets: wrap-up at the end of work hours, Lunch inside 11:30 to 14:00",
+    "u9_lib_habits2": "library habit entries 40, 41, 42, 44 add habits with their presets: walk, exercise in personal hours, coding at P2, email at P4",
+    "u9_lib_buffers": "library buffer entries 1, 10, 19 add buffers after large meetings, around flights and after long meetings only",
+    "u9_lib_external": "library buffer entries 28, 29, 30 anchor on external meetings: travel only at an address, prep before, debrief after",
+    "u9_lib_focus": "library focus entries 7 and 23 place their weekly goal inside the 09:00 to 12:00 window, and the window stays on edit",
+    "u9_lib_meetings": "library entries 32, 34 and 37: flexible meetings repeat at their period with the guests, and the priority link offers time over P3 and P4 habits",
+    "u9_lib_mirror": "library mirroring entries 38 and 39 copy busy time only between job calendars, both ways, never copying a copy",
+    "u9_timer": "the pomodoro timer plays the chosen alarm, resets a running session without counting it, and shows the stats view with streak, completion rate and a chart",
+    "u9_planned": "planned time is the calendar when the day began and actual time is what stayed; only ended days count",
+    "u9_weekly": "the weekly report goes out once in the first work hour of the last workday, with the week's totals and the calendar facts of the stats page; the user can turn it off",
+    "u9_balance": "stats show work-life balance (personal habits, meetings outside work hours, time away) and highlights (focus held, link bookings, breaks, travel) for a chosen range",
+})
+E2E.update({
+    719: ["u9_lib_buffers"], 728: ["u9_lib_buffers"], 737: ["u9_lib_buffers"],
+    746: ["u9_lib_external"], 747: ["u9_lib_external"], 748: ["u9_lib_external"],
+    753: ["u9_lib_habits1"], 754: ["u9_lib_habits1"], 761: ["u9_lib_habits1"],
+    763: ["u9_lib_habits1"], 764: ["u9_lib_habits1", "lib_habit"],
+    758: ["u9_lib_habits2"], 759: ["u9_lib_habits2", "lib_habit"], 760: ["u9_lib_habits2"],
+    762: ["u9_lib_habits2"],
+    752: ["u9_lib_meetings"], 755: ["u9_lib_meetings"],
+    604: ["u9_balance"], 607: ["u9_balance", "s7_stats"],
+    704: ["u9_timer", "x_timer"], 708: ["u9_timer"], 712: ["u9_timer"],
+    610: ["u9_planned"], 634: ["u9_weekly", "s7_stats"],
+})
+E2E_NOTES.update({
+    764: "The 11:30 to 14:00 window is item-specific hours on workdays",
+    746: "An external meeting with an address: the buffer filter is the external meeting category and an address",
+    737: "A meeting has at least one other attendee; a meeting of exactly 60 min with exactly one other person gets the break",
+    604: "Time away is the work hours that out-of-office time covers",
+    610: "The test sets the server clock (TEST_CLOCK_START, test mode only) so that a day begins and ends; time logged with the task timer is a past event of its task (rule 15), so it counts in actual time once (rule 16 decision)",
+    634: "Up to 4 facts that apply, in the stats page's order, as colored blocks under the totals; with 5 kinds of facts the fifth does not show; the report counts the week up to the send time; the operator command weekly-reports --now runs one tick of the server's email worker, and one test lets the server's own clock (TEST_CLOCK_START) reach the send hour",
+    704: "The timer page changes no calendar event, so the test checks that the calendar stays empty",
+    708: "Three alarm sounds made in the browser (Bell, Chime, Digital); the choice stays in this browser",
+    712: "The stats come from the session log in this browser; the chart groups by day, week or month",
+    607: "Focus time held is the time of focus events; work habits and tasks that count toward the goal are not added",
+})
+BLOCKED[638] = (
+    "Google sign-in is built and follows the team's SSO rules; its E2E needs a Google OAuth client "
+    "and a Google test account. Microsoft sign-in is not built: it needs a Microsoft app "
+    "registration and a Microsoft 365 account to build and test a Microsoft Graph provider"
+)
+# Rows whose entry covers only part of its preset (review of PR 10).
+PARTIAL.update({
+    725: "The entry adds 8 h of weekly focus in a 09:00 to 12:00 window on workdays (E2E: \u201clibrary focus entries 7 and 23 place their weekly goal inside the 09:00 to 12:00 window, and the window stays on edit\u201d). Focus time has no ideal time (focus-time.md), so the mornings are hard hours: with busy mornings no focus goes to the afternoon, where the preset's ideal time would allow it",
+    741: "The entry adds 10 h of weekly focus in a 09:00 to 12:00 window on workdays that the user can change (E2E: \u201clibrary focus entries 7 and 23 place their weekly goal inside the 09:00 to 12:00 window, and the window stays on edit\u201d). Focus time has no ideal time (focus-time.md), so the window is hard hours, not an ideal window",
+    729: "The entry adds the habit at P3, 30 min on workdays (E2E: \u201clibrary habit entries 11, 35, 36, 43, 45, 46 add habits with their presets: wrap-up at the end of work hours, Lunch inside 11:30 to 14:00\u201d). A habit has one ideal time, read from the latest end of work hours when the form opens; a day whose work hours end earlier keeps that time, not its own last 30 min",
+    750: "The entry fills a flexible meeting every 2 weeks, 30 min, P2, that needs at least one guest (E2E: \u201clibrary entries 32, 34 and 37: flexible meetings repeat at their period with the guests, and the priority link offers time over P3 and P4 habits\u201d). It does not check that the guests are external",
+    756: "The entry fills the mirroring form with busy-only copies (E2E: \u201clibrary mirroring entries 38 and 39 copy busy time only between job calendars, both ways, never copying a copy\u201d). It adds no two-way behavior: the user adds one policy in each direction",
+    757: "The entry fills the mirroring form with busy-only copies (E2E: \u201clibrary mirroring entries 38 and 39 copy busy time only between job calendars, both ways, never copying a copy\u201d). It adds no mesh of calendars: the user adds one policy for each pair",
+})
+# --- end U09 ---
 
 # --- merge: rows that need the work of more than one stream ---
 E2E.update({282: ["s1_habit_es", "s1_task_color", "s4_labels"]})
@@ -766,6 +766,48 @@ BLOCKED[344] = "Needs the vendor apps of third-party agenda tools (Docs notes, L
 for n in [664, 665, 666, 667, 668]:
     BLOCKED[n] = "The pricing page names it and gives no behavior to build (plans-feature-inventory.md open questions); it also needs meeting notes, transcripts or a room provider"
 # --- end merge ---
+
+# --- U08: mirroring copy rules, accounts and webhook delivery ---
+T.update({
+    "u8_answers": "the owner's answer and role decide a copy's free/busy; the no-reply setting applies to every policy; details copy free events",
+    "u8_allday": "all-day events: none by default, then busy ones, then all; a copy of an all-day event is all-day",
+    "u8_hours": "copy only during work hours: events fully outside are skipped, an overlapping one is copied in full; the checkbox is saved",
+    "u8_privacy": "privacy: busy-only copies say Busy with no details; private details copies keep the details, are marked private, and copy free events as free",
+    "u8_type": "the calendar type of a policy sets the label and the category color of its copies",
+    "u8_resync": "turning a policy off and on runs a full re-sync: a drifted copy and changes made while it was off are all put right",
+    "u8_taskcal": "tasks on personal hours go to that set's task calendar; work-hours tasks stay on the main calendar",
+    "u8_reconnect": "an account whose login stops working shows Disconnected, pauses its policies and nothing else; reconnect resumes them",
+    "u8_urls": "with private receivers off, http, localhost and IP hosts are refused and a public https host is kept; the operator setting allows loopback",
+    "u8_timeout": "an answer after 10 seconds is a failure and is cut at 10 seconds; only 200, 201, 202 and 204 count as success",
+    "u8_suspend": "an endpoint that fails for the whole period is suspended, gets no new requests and its admins get an email; Resume sends the waiting request",
+})
+E2E.update({
+    456: ["u8_resync"], 467: ["u8_allday"], 468: ["u8_hours"], 470: ["u8_answers"],
+    471: ["u8_answers"], 472: ["u8_answers"], 473: ["m_follow", "u8_answers", "u8_privacy"],
+    475: ["u8_privacy"], 476: ["u8_privacy"], 480: ["u8_type"], 506: ["u8_taskcal"],
+    934: ["u8_urls"], 936: ["u8_timeout"], 938: ["u8_suspend"],
+})
+E2E_NOTES.update({
+    471: "One setting on the Settings page for every policy, stored with the account settings",
+    473: "Label and busy-only copies skip free events; details copies are free",
+    476: "Copies get the private class (CalDAV CLASS:PRIVATE, Google visibility private)",
+    506: "Each hours set has a calendar for task chunks on the Settings page",
+    934: "The E2E server runs with private receivers off for this test (WEBHOOK_ALLOW_PRIVATE)",
+    938: "The 24-hour period is a setting (WEBHOOK_SUSPEND_AFTER_SECONDS), 4 seconds in the test",
+})
+BLOCKED[510] = ("Needs a Microsoft 365 account and a Microsoft Graph provider, which is not built; "
+                "Google sign-in (OAuth with PKCE) and Google Calendar sync are built, and their E2E needs a Google service-account key")
+BLOCKED[513] = ("Needs a Microsoft 365 account and a Microsoft Graph provider, which is not built; a second CalDAV account "
+                "is added with CalDAV E2E (\u201ca user adds a second CalDAV account and removes it after a confirmation\u201d), "
+                "and Google accounts connect through Google sign-in (Google E2E needs a Google account)")
+PARTIAL[517] = ("Disconnect, paused policies and reconnect have full UI E2E on CalDAV (\u201c" + T["u8_reconnect"] + "\u201d): "
+                "the server rejects the stored password and the user types a new one; a Google account reconnects through Google sign-in "
+                "with the account's email as the hint and refuses another identity (unit tests). Items that write to a calendar of the "
+                "disconnected account show no error state yet (rule 16): their events stay as they are")
+# Same status as row 147 (incremental consent): both need a Google account to prove.
+BLOCKED[518] = ("Needs a Google OAuth client and a Google test account to prove it: incremental consent shows only on "
+                "Google's consent screen. Today Google sign-in asks for calendar scopes up front, with include_granted_scopes")
+# --- end U08 ---
 
 # --- U03: core planning ---
 T.update({
@@ -862,6 +904,103 @@ BLOCKED.update({
     398: "A conference link needs Meet or Zoom, which need the vendors' developer apps and test accounts. The rest has full UI E2E on CalDAV: a busy event with the booker and CC guests invited, the chosen location and the manage links (\u201c" + T["u7_locations"] + "\u201d; \u201c" + T["b_book"] + "\u201d)",
 })
 # --- end U07 ---
+
+# --- U04: habits, focus time and buffers (first half of the partial rows) ---
+T.update({
+    "u4_hours": "a habit uses a named hours set or its own window, and a change of hours moves its events",
+    "u4_custom": "a custom frequency places a habit every N days, every N weeks on its days, or every N months",
+    "u4_move_day": "a weekly occurrence with no room on its day moves to the nearest other day of that week",
+    "u4_adaptive": "an adaptive habit is free while it has room and turns busy when the calendar fills",
+    "u4_lock": "lock and unlock one habit occurrence from the planner",
+    "u4_progress": "the stats page shows each habit's progress: done and planned occurrences and hours",
+    "u4_focus_len": "focus blocks keep the shortest and longest length and stay in their hours set",
+    "u4_focus_accept": "an accepted invitation over focus time moves it; an unanswered one does not",
+    "u4_focus_lock": "moving a focus event in the calendar locks it; a new event over it does not move it",
+    "u4_focus_order": "focus time is placed after every other item, ranks in P4, and counts as P2 for booking links",
+    "u4_focus_tag": "an event with the focus tag counts toward the weekly goal",
+    "u4_buffers": "a user keeps several buffer automations, each with its own free or busy and visibility",
+    "u4_buffer_prio": "a P1 buffer takes the time of a P3 habit; a P4 buffer gives way to it",
+    "u4_buffer_conflict": "the conflict setting keeps a buffer with the conflict marker or removes it",
+    "u4_travel_len": "the user sets the travel length; travel time is skipped where a busy event blocks it",
+    "u4_flight": "an event set to the flight category by hand gets airport time instead of travel time",
+    "u4_travel_keep": "travel buffers follow their event and keep a length the user changed",
+    "u4_buffer_lock": "a buffer moved and resized in the calendar locks there and stops following its event",
+})
+E2E.update({
+    154: ["u4_hours", "s3_item_hours"], 156: ["habit", "h_weekly", "s2_monthly", "u4_custom"],
+    161: ["u4_move_day"], 165: ["u4_adaptive"], 178: ["u4_lock"], 193: ["u4_progress", "s1_category"],
+    196: ["u4_focus_len"], 197: ["u4_focus_len"], 202: ["u4_focus_accept"], 203: ["u4_focus_lock"],
+    206: ["u4_focus_order"], 209: ["u4_focus_tag"], 219: ["u4_buffers", "u4_buffer_conflict"],
+    225: ["u4_buffer_prio"], 226: ["u4_buffer_conflict"], 228: ["u4_buffers"],
+    238: ["u4_travel_len"], 242: ["u4_flight"], 243: ["u4_travel_keep", "u4_buffer_lock"], 244: ["u4_travel_len"],
+})
+E2E_NOTES.update({
+    156: "Custom is every N days, weeks or months, set with Interval in the habit form and counted from the start date (or the save date) when the interval is first saved; a later start date keeps the cadence",
+    193: "Each habit shows its events in the range, how many have ended, and their hours; work and personal habit hours are in the time breakdown",
+    206: "On the booking side a placed focus event counts as P2: a P1 link offers its time and a P2 link does not",
+    238: "One travel length in the travel buffer's form sets both sides: 5 to 240 minutes, step 5, 30 by default",
+    243: "A length changed at the buffer's free edge is kept for that event while the event exists, and the buffer does not lock; a buffer moved off its event locks",
+})
+BLOCKED.update({
+    208: "Needs a Google Workspace account: native focus-time events exist only in Google Calendar. Their event type is counted in code, and on CalDAV the focus tag gives the same result (row 209)",
+})
+# --- end U04 ---
+
+# --- U05: event tags, time away, colors, markers and external priority ---
+T.update({
+    "u5_tags": "travel tags in the title, the description and the user's own RSVP note add travel time; #tl_flight adds airport time and #tl_trip only the travel category, also at an address; a removed tag removes its buffers",
+    "u5_quick": "a busy event titled only #tl_busy turns free and still keeps tasks out; a longer title stays busy",
+    "u5_focus": "an event tagged #tl_focus counts toward the weekly focus goal, so less focus time is placed",
+    "u5_away": "out-of-office time blocks habits and tasks and counts as vacation from 8 hours, else as a personal commitment; #tl_free in its title lets habits and tasks back",
+    "u5_away_conflict": "a habit that keeps conflicts is skipped on time away and kept as a conflict on plain busy time",
+    "u5_holiday": "a company holiday blocks the day once the user answers yes or maybe to its invitation; an unanswered one and a free holiday do not",
+    "u5_guests": "a meeting gets a new category and color when its guests change in the calendar",
+    "u5_repaint": "a new category color repaints events that ended too; Repaint all events puts back colors changed in the calendar, at most twice a minute",
+    "u5_markers": "chosen markers after the title replace the defaults on new and changed events; the planner shows plain titles; back before the title rewrites them",
+    "u5_series": "a priority for one occurrence of a series changes only that one; for the whole series it changes every occurrence",
+    "u5_fixed": "an event of another connected calendar, which a copy mirrors to the main calendar, shows a fixed P1 with the reason",
+    "u5_copies": "copies of travel buffers on mirrored calendars show what each policy shows, while the main calendar keeps them with the travel marker",
+})
+E2E.update({
+    245: ["s1_kinds", "u5_copies"],
+    253: ["u5_quick"],
+    254: ["u5_tags"],
+    255: ["u5_tags"],
+    256: ["u5_tags"],
+    257: ["u5_focus"],
+    259: ["u5_tags"],
+    262: ["u5_away"],
+    263: ["u5_away"],
+    278: ["u5_guests"],
+    283: ["c_paint", "u5_repaint"],
+    285: ["c_paint", "u5_repaint"],
+    292: ["u5_markers"],
+    297: ["u5_series"],
+    298: ["u5_fixed"],
+})
+E2E_NOTES.update({
+    245: "A travel buffer is the one managed event that mirroring copies, so its copy follows the policy",
+    253: "Quick block: the event turns free within one run",
+    259: "On CalDAV the RSVP note is the X-RESPONSE-COMMENT of the user's own attendee line; a COMMENT on the event is the organizer's text and is not read (edge case 5)",
+    262: "Exactly 8 hours is vacation; stats show personal commitments on their own line",
+    285: "Repaint all events is a button in the Colors section; it counts toward the same limit of 2 a minute",
+    292: "Settings, Title markers: one field for each state marker and a position before or after the title",
+    298: "The planner shows a mirrored copy as its source event, so one control covers both",
+})
+PARTIAL[261] = (
+    "Out-of-office events are read from the Google event type outOfOffice and, on CalDAV, from "
+    "X-MICROSOFT-CDO-BUSYSTATUS:OOF, as Outlook-style clients write it. Full UI E2E passes on CalDAV (Radicale) "
+    f"only: \u201c{T['u5_away']}\u201d; \u201c{T['u5_away_conflict']}\u201d. "
+    "Limit: the Google event type has no E2E; the Google Calendar run is pending (service-account key)"
+)
+PARTIAL[265] = (
+    f"Full UI E2E passes on CalDAV (Radicale): \u201c{T['u5_holiday']}\u201d. "
+    "Limit: an invitation that lists only a mailing list, not the user, blocks before the user answers, "
+    "because Tempoloom cannot see the user's own answer; holiday feeds are row 266. Google Calendar run pending (service-account key)"
+)
+BLOCKED[284] = "Needs a Google Calendar account: the events that cannot change color (made from mail, birthdays) exist only in Google Calendar; a CalDAV server lets the owner change every event. Painting skips refused events and never stops a run (code)"
+BLOCKED[317] = "The chat app channel needs the Slack app (a vendor developer app and a test workspace); the daily digest by email, at a time the user sets, has full UI E2E on CalDAV (\u201clibrary entry 'Flag meeting problems' turns on the checks and an email digest of open, not ignored, issues at the chosen time, once a day\u201d)"
+# --- end U05 ---
 
 GOOGLE_PENDING = "Google E2E pending: the service-account key is not available yet (1Password token missing)."
 

@@ -366,7 +366,7 @@ describe("MCP output schemas", () => {
     expect(schema).toMatchObject({ additionalProperties: false });
     const validate = new Ajv2020({ strict: false }).compile(schema);
     const args = { start_date: "2026-10-12", end_date: "2026-10-18" };
-    const real = stats.computeStats(s.db, s.user.id, args.start_date, args.end_date);
+    const real = stats.computeStats(s.db, s.user.id, args.start_date, args.end_date, T0);
 
     vi.mocked(stats.computeStats).mockReturnValueOnce({
       ...real,

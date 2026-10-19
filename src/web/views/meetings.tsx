@@ -108,10 +108,13 @@ const DEFENSE: Record<string, string> = {
   busy: "Always busy",
   free: "Always free",
 };
+const AWAY = "time away (all-day or out-of-office events) fills the period";
 const REASONS: Record<string, string> = {
   "no-hours-overlap": "no time inside everyone's meeting hours",
   "no-space-fixed": "no free time in the period",
-  "all-day-block": "busy all-day events fill the period",
+  away: AWAY,
+  // Reports stored before the rename still say "all-day-block".
+  "all-day-block": AWAY,
   "no-space-priority": "higher-priority items take all free time",
   "no-hours": "no meeting hours in the period",
   "outside-window": "outside the planning window",
