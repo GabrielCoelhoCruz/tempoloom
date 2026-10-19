@@ -100,6 +100,16 @@ and can be tied to focus time and habit events through saved task searches.
 - **NXT-45.** The user can also assign a task search to the meeting overload
   automation. Its events exist only when the meeting limit is reached, so the
   list may never show (E-0192).
+- Tempoloom decision for NXT-40 to NXT-45: a task search has a name, a
+  keyword that the task title must contain (case-insensitive; empty matches
+  every task) and an optional "due within N days". It searches open Tempoloom
+  tasks; integration sources, projects and labels come with the task
+  integrations. Matching tasks are listed in the tasks page order (due date,
+  then creation). The user assigns a search in the habit editor, the focus
+  options, the meeting overload form, and the details panel of any event of
+  the automation, where the user can also create a search. While a habit or
+  focus event with a search runs, the planner shows a "Now:" panel with the
+  matching tasks. An empty result shows "No open task matches <name>."
 
 ### Work blocks on request (current reference)
 

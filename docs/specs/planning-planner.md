@@ -66,6 +66,10 @@ assistant chat.
 
   Sources: E-0132 (tasks), E-0130 (habits), E-0081 (make a habit, current),
   E-0192 (task search, current). Legacy evidence for the task and habit rows.
+  Tempoloom decision: the details panel offers, on a habit event, Lock or
+  Unlock, Skip, Reschedule (a time of day), Edit habit and a task search, and
+  "Done" on an ended one; on a focus event, Lock or Unlock and a task search;
+  on a recurring external event with no other attendees, "Make a habit".
 - **PLN-12.** The user can drag and drop any managed event and drag its edge
   to change its length. This locks the event (legacy evidence, E-0139;
   `planning-locks.md` LCK-20, LCK-21).

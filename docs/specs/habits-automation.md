@@ -63,6 +63,10 @@ Defense modes (E-0196, E-0081):
 Frequency values are observed (E-0082, legacy evidence). The current help page
 names the same idea as "can move within" days and hours (E-0081).
 
+Tempoloom decision: `day_of_month` 29 to 31 in a shorter month selects the
+month's last day. `nth_weekday` with `n=5` selects nothing in a month without
+a fifth such weekday; `last` always selects the month's last such weekday.
+
 ## Behavior
 
 ### Creation and editing
@@ -75,6 +79,7 @@ names the same idea as "can move within" days and hours (E-0081).
 6. The user can open the habit editor from a habit event in the planner and from the automation list (E-0082).
 7. The automation list has a search box that filters habits by title (legacy evidence, E-0082).
 8. The user can turn a recurring external event into a habit from the planner ("make a habit"). The form opens pre-filled with the series title, length, weekdays and start time as `ideal_time`. This works only when the user is the only attendee. For a series with other attendees, the planner offers a flexible meeting instead (E-0081).
+   Tempoloom decision: the planner's details panel of a recurring event has a "Make a habit" button when no attendee other than the user's own addresses is on the event. It opens the habit editor with the title, the start time as `ideal_time`, the length rounded up to the next 15 minutes as both `duration_min` and `duration_max`, and the weekdays of the series' occurrences that Tempoloom has read. Saving creates an ordinary habit. The original series stays as it is (edge case 8). For a series with other attendees, the panel says so and links to flexible meetings.
 
 ### Placement
 
@@ -88,6 +93,7 @@ names the same idea as "can move within" days and hours (E-0081).
     - `adaptive`: Proposed default: act as `always-free` while the occurrence is free and as `always-busy` once it is busy.
 14. For a weekly habit, when an ideal day has no legal slot, Tempoloom may move that occurrence to another day of the same week that `hours` allows and that holds no other occurrence of this habit (E-0081 "move within days"; legacy E-0130 "another day").
 15. For a daily habit, an occurrence never moves to another day. Proposed: a monthly or custom habit may move up to 6 days later within the same period (open question 3).
+    Tempoloom decision: a monthly occurrence moves only to later days of the same month, at most 6 days after its date, and only to days that `hours` allows.
 16. When the user lists `avoid_duplicate_keywords`, Tempoloom skips the occurrence on a day where an external event overlaps the habit's window on that day and its title contains one of the keywords (case-insensitive substring match). Managed events never count for this check (E-0082).
 17. When no legal slot exists, `when_unplaceable` applies:
     - `keep_as_conflict`: Tempoloom keeps or creates the event at the best slot inside the window, even though it overlaps another event, and prefixes the title with "⚠️" (E-0082).
@@ -111,6 +117,7 @@ names the same idea as "can move within" days and hours (E-0081).
 28. Skip: Tempoloom removes the occurrence and places no replacement for that date (E-0081, E-0130).
 29. Deleting the event in Google Calendar asks for another time. Tempoloom places the occurrence again at another legal slot, never at the deleted slot. If that day has no other slot, rule 14 applies (E-0081, E-0130). To drop the occurrence, the user uses Skip.
 30. Reschedule: the user picks a target time. Tempoloom places the occurrence at the legal slot nearest to that time on the same day (E-0130, E-0181).
+    Tempoloom decision: the user picks a time of day in the planner's details panel. The chosen time replaces `ideal_time` for that one date, so later runs keep the occurrence there while the slot stays legal; a tie goes to the earlier start. Rescheduling a locked occurrence unlocks it. Other dates do not change.
 31. Snooze: the user picks a "not before" time. Tempoloom places the occurrence at the first legal slot at or after that time on the same day (E-0181). Proposed snooze choices: 15 minutes, 30 minutes, 1 hour, 2 hours, later today.
 32. Log work: on a past date, the user drags or clicks a time range, picks a habit, and confirms. Tempoloom records the time against the habit and writes a past event for it (legacy evidence, E-0082, E-0130).
 33. Start mode (legacy evidence, E-0048). A user-level setting chooses one of:
@@ -159,6 +166,7 @@ These rules tell `planning-scheduler.md` how habits take part in each run. They 
   - Attendees: `guests`, written without sending notifications.
   - Location and reminders from the habit.
 - Planner: the habit appears in the automation sidebar, in its priority group and rank. Each occurrence shows its state. Unplaced occurrences show in a list with the reason.
+- Tempoloom decision for the done marker: with the default start mode, an occurrence is done when its end passes. The next run writes the done marker in place of the state marker; the lock and conflict states end with the occurrence. An occurrence that the user moved to a time that has passed is done for its date, and no other occurrence is placed for that date. Occurrences that ended more than 7 days before the run keep their title. The planner's details panel shows "Done" on an ended occurrence.
 - Decline responses with a note, when auto-decline is on.
 
 ## Edge cases
