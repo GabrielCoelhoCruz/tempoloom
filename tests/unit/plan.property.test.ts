@@ -183,10 +183,19 @@ describe("plan() invariants", () => {
           const chunks = placements.filter((p) => p.itemId === t.id);
           const total = chunks.reduce((a, c) => a + (c.end - c.start) / MIN, 0);
           expect(total).toBeLessThanOrEqual(t.remainingMinutes);
+          // TSK-13: a chunk shorter than the minimum is the rest of the work.
+          // It is the last chunk, at most one, and the chunks then add up to
+          // the remaining work (TSK-12).
+          const last = Math.max(...chunks.map((c) => c.start));
+          const short = chunks.filter((c) => (c.end - c.start) / MIN < t.minChunkMinutes);
+          expect(short.length).toBeLessThanOrEqual(1);
+          for (const c of short) {
+            expect(c.start).toBe(last);
+            expect(total).toBe(t.remainingMinutes);
+          }
           for (const c of chunks) {
             const l = (c.end - c.start) / MIN;
-            const stub = l < t.minChunkMinutes && l === t.remainingMinutes;
-            expect(stub || (l >= t.minChunkMinutes && l <= t.maxChunkMinutes)).toBe(true);
+            expect(l).toBeLessThanOrEqual(t.maxChunkMinutes);
           }
         }
       }),

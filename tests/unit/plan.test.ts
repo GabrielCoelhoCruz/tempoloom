@@ -438,6 +438,20 @@ describe("task chunks", () => {
     for (const c of chunks) expect(c.start % (15 * MIN)).toBe(0);
   });
 
+  it("places a short last chunk when no split fits the bounds (TSK-13)", () => {
+    // 90 minutes with chunks of exactly 60: no split into 60-minute chunks
+    // exists, so the rest after one 60-minute chunk is a 30-minute chunk.
+    const result = plan(
+      snapshot({
+        tasks: [task({ id: "t", remainingMinutes: 90, minChunkMinutes: 60, maxChunkMinutes: 60 })],
+      }),
+    );
+    expect(spans(of(result, "t"))).toEqual([`${MON}T09:00/10:00`, `${MON}T10:15/10:45`]);
+    expect(result.report).not.toContainEqual(
+      expect.objectContaining({ itemId: "t", status: "unplaced" }),
+    );
+  });
+
   it("places one chunk per day with the once-per-day cooldown", () => {
     const result = plan(
       snapshot({

@@ -242,7 +242,12 @@ function greedyChunks(
       }
       const room = floorTo(iv.end - cursor, step);
       let length = Math.min(r.max, need, room);
-      if (need - length > 0 && need - length < r.min) length = need - r.min;
+      // Never leave a rest shorter than the minimum, unless no chunk sizes
+      // within the bounds add up to the need (need > max and need < 2 * min).
+      // Then the rest becomes one short last chunk (TSK-13).
+      if (need - length > 0 && need - length < r.min && (need <= r.max || need >= 2 * r.min)) {
+        length = need - r.min;
+      }
       if (length < r.min && !(need < r.min && length === need)) break;
       if (length <= 0) break;
       chunks.push({ start: cursor, end: cursor + length });
