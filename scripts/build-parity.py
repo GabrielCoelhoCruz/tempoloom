@@ -380,6 +380,52 @@ GOOGLE_ROWS = {
 # --- end s2 ---
 
 # --- s3: tasks, planner, time zones and tools ---
+T.update({
+    "s3_another": "the New task form opened with the key C stays open with Create another and closes without it; every task gets its event",
+    "s3_suggest": "suggestions-only placement removes task events, lists Suggested now and At risk in scheduler order, and places chunks again when switched back",
+    "s3_nextup": "the planner's next-up task is the one in progress, else the earliest chunk, else the first in scheduler order",
+    "s3_focus_tasks": "with suggestions only, a focus time block lists the tasks to work on and tasks get no events",
+    "s3_blocks": "Block time shows work blocks as a preview; Discard writes nothing; a moved block and Apply write locked events that stay",
+    "s3_timer": "the task timer survives a reload, keeps going or discards, and logs edited minutes as a past event on the chosen calendar only on Log time",
+    "s3_logged": "time logged with the timer on a task and on a habit is a past event and counts in stats",
+    "s3_delete_hours": "deleting a custom hours set in use asks for a replacement and moves its task there; an unused set goes after a confirmation",
+    "s3_item_hours": "a habit with item-specific hours is placed in them; tasks and other hours menus never offer them",
+    "s3_preview": "the hours menu of the task and habit forms previews the chosen ranges and links to the hours page",
+    "s3_review": "a new user is asked once to review hours; a change there moves events; the banner stays gone after reload and restart",
+    "s3_utc": "a browser that reports UTC gets a warning and never changes the home zone; the hours page names the zone and an active trip",
+    "s3_join": "the planner shows the current or next meeting and joins it in one click from its location or description link",
+    "s3_alert": "an event start flashes the tab title and plays the chime only when it is on; with both off nothing happens",
+    "s3_blocked": "a chime that the browser blocks shows a hint",
+    "s3_conflict": "overlapping external events are outlined and listed with a suggested time; neither event moves",
+    "s3_markdown": "task notes keep their markdown in the calendar, render in the planner with app links while unsafe links stay text, and the planner link opens the task",
+    "s3_timer_link": "a timer link in the focus time description and in habit notes reaches every event and renders as a link",
+    "s3_profile": "the profile shows account fields read-only and keeps job title, company, size and use case after reload and restart",
+    "s3_travel": "a travel zone places habits in its local time on its dates; several entries are allowed, overlaps and reversed dates are refused; delete returns home",
+    "s3_travel_book": "a booking link offers times in the travel zone on travel days",
+    "s3_travel_prompt": "the planner prompts for a travel zone when the browser is elsewhere, shows two time columns, and ends the trip back home",
+    "s3_bg_audio": "background audio plays the chosen track in work sessions only and keeps its settings after reload",
+    "s3_mini": "the mini window shows the running timer and pauses it",
+})
+E2E.update({
+    3: ["s3_another"], 30: ["s3_suggest", "s3_focus_tasks"], 39: ["s3_timer"], 45: ["s3_nextup"],
+    46: ["s3_suggest", "s3_focus_tasks"], 51: ["s3_blocks"], 68: ["s3_conflict"], 75: ["s3_delete_hours"],
+    77: ["s3_preview"], 79: ["s3_review"], 80: ["s3_utc"], 124: ["s3_join"], 131: ["s3_alert"],
+    132: ["s3_alert", "s3_blocked"], 137: ["s3_markdown"], 138: ["s3_markdown"],
+    139: ["s3_markdown", "s3_timer_link"], 146: ["s3_profile"], 271: ["s3_travel"],
+    272: ["s3_travel_book"], 273: ["s3_travel_prompt", "s3_utc"], 274: ["s3_travel_prompt"],
+    611: ["s3_logged"], 709: ["s3_bg_audio"], 710: ["s3_mini"], 713: ["s3_timer_link"],
+    771: ["s3_focus_tasks"],
+})
+E2E_NOTES.update({
+    51: "Without the assistant chat, the request is a Block time button on a suggested task",
+    611: "Time is logged by hand with the timer, on tasks and habits; the legacy form on a past planner slot (rows 37, 38) is not built",
+    710: "The E2E browser has no Document Picture-in-Picture, so the test proves the popup window that Tempoloom opens instead; the picture-in-picture path is not under E2E",
+    124: "Join uses the first link in the event's location or description; no conference vendor app",
+})
+PARTIAL.update({
+    76: "Habits have item-specific hours (E2E on CalDAV: \u201ca habit with item-specific hours is placed in them\u2026\u201d); focus time, flexible meetings and booking links do not offer them yet",
+    78: "The hours page shows the zone that hours apply in, and an active trip (E2E on CalDAV: \u201ca browser that reports UTC gets a warning\u2026\u201d); reading the zone from the Google Calendar setting needs a Google account",
+})
 # --- end s3 ---
 
 # --- s4: mirroring, accounts and instance limits ---

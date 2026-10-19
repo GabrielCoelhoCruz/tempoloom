@@ -48,6 +48,10 @@ assistant chat.
 - **PLN-7.** The planner shows what is next and lets the user join the
   current or next meeting with one click, using the meeting's conference link
   (E-0010).
+  Tempoloom decision: the line above the week shows the meeting in progress,
+  else the next one in the coming 7 days (timed, not declined, not all day),
+  with its time. "Join" opens the first `http` or `https` link of the
+  location, else of the description, in a new tab. No vendor app is needed.
 
 ### Event interaction
 

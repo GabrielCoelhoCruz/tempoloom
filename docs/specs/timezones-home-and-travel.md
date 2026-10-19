@@ -24,18 +24,28 @@ range contains T's date, else `home_tz`. Proposed: the date of T is read in
 `home_tz`, a travel range starts at 00:00 of `start_date` in the travel zone
 and ends at 24:00 of `end_date` in the travel zone (open question 2).
 
+Tempoloom decision: the instants decide. A trip runs from 00:00 of
+`start_date` to 24:00 of `end_date`, both in the travel zone; the active zone
+at an instant is the zone of the trip that holds it, else `home_tz`. Local
+times jump at those instants, as at a daylight saving change: the day a trip
+starts ends when the trip starts, and hours stop there. Adding, deleting or
+ending an entry places all unlocked future managed events again.
+
 ## Behavior
 
 1. Tempoloom reads hours sets (work, personal, meeting, custom and one-off windows) as local times in the active zone (E-0107). Example: work hours 09:00 to 17:00 mean 09:00 to 17:00 in Tokyo while a Tokyo travel entry is active.
 2. Habits, task chunks, flexible meetings and focus events are placed in the active zone of their date (E-0107).
 3. Booking links offer availability in the active zone of each date. During a travel range, the offered times follow the travel zone (E-0107).
+   Tempoloom decision: the organizer's hours, day limits and the booking range use the active zone; the booking page still shows the times in the visitor's zone.
 4. After `end_date`, scheduling returns to `home_tz`. Managed events after the trip are placed by home hours (E-0107).
 5. The user can change `home_tz` in settings. The next scheduler run re-places unlocked future managed events (E-0107).
 6. The user can add, edit and delete travel entries in the hours settings (E-0107).
 7. Two travel entries must not overlap. Save fails with a field error. Proposed.
 8. When the browser reports a zone that differs from the active zone, the planner shows a prompt to add a travel entry for the browser zone (E-0107).
 9. When a travel entry is active and the browser reports `home_tz`, the planner shows a prompt to end the travel entry early (E-0107). Ending early sets `end_date` to yesterday, or deletes the entry if it has not started.
+   Tempoloom decision: the prompts show above the week. "Add travel time zone" adds an entry for the browser zone from today to a chosen date (default 6 days later). "End trip" sets `end_date` to yesterday, or deletes the entry when that date is before `start_date`. "Not now" hides a prompt for that pair of zones until the tab closes.
 10. When the browser zone differs from the active zone, or a travel entry is active, the planner shows two time columns: the browser zone and the active zone (E-0107).
+    Tempoloom decision: the week stays in `home_tz`. The second column shows the hours of the other zone: the travel zone while a trip is active, else the browser zone. Each column head names its city. The second column reads the hours of today, or of the first day shown.
 11. When the browser reports UTC and `home_tz` is not UTC, the prompt in rule 8 says that an extension or a privacy option in the browser can make it report a wrong zone. Proposed (E-0222 lists this cause).
 12. The settings page lists active and future travel entries first, so that a forgotten entry is easy to find (E-0222 lists a stale entry as a cause of wrong hours). Proposed.
 

@@ -89,6 +89,16 @@ Restart (legacy evidence, E-0132).
   task, and pick the calendar that gets the logged event (E-0192).
 - **PRG-32.** Tempoloom shows the calendar change that the timer creates as a
   preview, and writes it only after the user applies it (E-0192).
+  Tempoloom decision: one timer runs at a time per user, on a task or a
+  habit. The server keeps it, so it survives a reload and shows in every tab.
+  "Start timer" is on open task rows, in "Suggested now" and in the details
+  of a task or habit event; "Stop" opens the dialog. The dialog proposes the
+  whole minutes since the start (at least 1). The preview is a line in the
+  dialog that names the event, its times and the calendar. "Log time" writes
+  one past, locked, busy event that ends at the stop time (down to the
+  minute), on the chosen calendar (default: the calendar of the task's hours
+  set, else the main calendar). Its minutes count as consumed work (PRG-1).
+  "Keep going" closes the dialog; "Discard" ends the timer with no event.
 
 ### Tasks whose time is used
 

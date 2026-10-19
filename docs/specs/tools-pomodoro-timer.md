@@ -85,8 +85,15 @@ history in browser local storage on that device.
     while running; Pause keeps the remaining time.
 13. A mini window action opens a small always-visible timer (browser
     picture-in-picture where supported).
+    Tempoloom decision: the "Mini window" button opens a Document
+    Picture-in-Picture window where the browser offers it, else a small
+    popup window. It shows the phase, the time left and Start or Pause, and
+    controls the same timer.
 14. With `background_audio` on, the chosen track plays during work sessions
     (proposal: work sessions only).
+    Tempoloom decision: two tracks, White noise and Brown noise, made in the
+    browser (no audio files). A track plays while a work session runs and
+    stops on pause, reset and breaks. The settings stay in this browser.
 
 ### Tasks
 
@@ -119,6 +126,8 @@ history in browser local storage on that device.
     template of a focus time, task or habit automation. Every managed event
     from that automation then carries the link. Markdown link text works
     where event descriptions support markdown (`planning-event-content.md`).
+    Tempoloom decision: focus time has a "Description" in its row in
+    Settings; the notes of tasks and habits are their descriptions.
 
 ## Outputs
 

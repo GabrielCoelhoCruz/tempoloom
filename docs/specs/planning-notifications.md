@@ -50,9 +50,17 @@ E-0051).
 
 - **NTF-1.** With `tabAlert` on, when an event starts, the browser tab title
   of the open Tempoloom page flashes the event name (E-0125).
+  Tempoloom decision: at the start of a timed event that the user attends,
+  or of a managed event, the tab title shows "▶ " and the event name, and
+  changes back and forth every second for 30 seconds. Each start alerts once
+  per tab, also after a reload. Both settings are under "Alerts" in Settings.
 - **NTF-2.** With `startChime` on, the open Tempoloom page plays a short
   sound when the next event starts. The browser may need permission to play
   sound; Tempoloom shows a hint when playback is blocked (E-0125).
+  Tempoloom decision: the chime is two short notes made in the browser (no
+  audio file). When the browser blocks sound, a hint asks the user to click
+  the page, and the next click allows it. With several tabs, the tab focused
+  last plays it (edge case 1).
 - **NTF-3.** In-app alerts work only while a Tempoloom page is open.
   Proposed default.
 

@@ -111,6 +111,10 @@ exactly 120 minutes counts as deep work (proposal).
     spec (`planning-task-progress.md`). In legacy evidence, the user logs time by clicking an empty slot
     in the planner and picking a task or habit, and "mark done" on an event
     records its time.
+    Tempoloom decision: time logged with the task timer
+    (`planning-task-progress.md` PRG-30 to PRG-32) is a past managed event of
+    its task or habit, so it counts in the tasks, work habits or personal
+    habits bucket like any other event of that item.
 16. Marketing pages also list "planned versus actual" and per-event-type
     time. Proposed: planned time is the managed event time that was on the
     calendar at the start of the day; actual time is the event time at the
