@@ -10,6 +10,7 @@ import {
   local,
   managed,
   testWeek,
+  visitorContexts,
   ZONE,
 } from "./fixtures.ts";
 
@@ -138,6 +139,7 @@ export async function addLink(
 /** A signed-out visitor in a separate browser context. */
 export async function visitor(browser: Browser): Promise<Page> {
   const ctx = await browser.newContext({ timezoneId: ZONE, locale: "en-GB", baseURL: BASE_URL });
+  visitorContexts.push(ctx);
   return ctx.newPage();
 }
 

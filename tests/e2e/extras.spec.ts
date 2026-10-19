@@ -1,15 +1,11 @@
 // External event priority for booking links, and travel and airport buffers.
-import type { Browser, Page } from "@playwright/test";
+import type { Page } from "@playwright/test";
 import { addDays } from "../../src/shared/time.ts";
-import { at, BASE_URL, blockUntil, eventually, expect, local, test, ZONE } from "./fixtures.ts";
-import { openWeek, titled, W } from "./helpers.ts";
+import { at, blockUntil, eventually, expect, local, test } from "./fixtures.ts";
+import { openWeek, titled, visitor, W } from "./helpers.ts";
 
 const day = (n: number) => addDays(W, n);
 
-async function visitor(browser: Browser): Promise<Page> {
-  const ctx = await browser.newContext({ timezoneId: ZONE, locale: "en-GB", baseURL: BASE_URL });
-  return ctx.newPage();
-}
 const slot = (p: Page, t: number) => p.locator(`[data-testid="times"] button[data-start="${t}"]`);
 
 test("a lowered external event is offered only by higher-priority booking links (events-external-priority rules 1-5, 9)", async ({

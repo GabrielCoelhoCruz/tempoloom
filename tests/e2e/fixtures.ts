@@ -374,7 +374,11 @@ export interface Mailbox {
   count(to: string): Promise<number>;
 }
 
+/** Browser contexts that helpers open for signed-out visitors; closed after each test. */
+export const visitorContexts: BrowserContext[] = [];
+
 type TestFixtures = {
+  closeVisitors: undefined;
   app: AppServer;
   cal: CalendarDriver;
   signIn: () => Promise<void>;
@@ -412,6 +416,14 @@ async function signInAs(
 }
 
 export const test = base.extend<TestFixtures, WorkerFixtures>({
+  closeVisitors: [
+    async ({}, use) => {
+      await use(undefined);
+      for (const c of visitorContexts.splice(0)) await c.close();
+    },
+    { auto: true },
+  ],
+
   radicale: [
     async ({}, use) => {
       if (BACKEND !== "caldav") {
