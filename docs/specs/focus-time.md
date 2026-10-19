@@ -36,6 +36,12 @@ other managed items, and are strongly protected once placed.
 The focus goal automation has no priority field. Its priority is fixed at P4
 (E-0077, E-0141).
 
+Tempoloom decision: as for habits, the focus goal's target calendar is set at
+creation only, its emoji goes before the title, and its color follows the
+color rule unless the user picks one. A new focus goal is public with no
+reminders. Focus events show no free or busy marker, only the lock marker
+(answers open question 2 of `events-title-emoji.md`).
+
 ### Meeting overload automation
 
 | Field | Type | Default | Allowed values and notes |

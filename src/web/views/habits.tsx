@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "preact/hooks";
+import { defaultEventSettings, readEventSettings } from "../../shared/event-settings.ts";
 import { api } from "../lib/api.ts";
 import { duration, hhmm } from "../lib/format.ts";
 import { lazyComponent } from "../lib/lazy.ts";
@@ -6,6 +7,7 @@ import { freeName, templateFromUrl } from "../lib/library.ts";
 import { useLive } from "../lib/live.ts";
 import { loadPolicyMarks, PolicyMark, policyMarks } from "../lib/policy-marks.tsx";
 import { LEVEL_NAMES, planNow } from "../lib/state.ts";
+import { EventSettingsFields, eventSettingsFrom } from "./event-settings.tsx";
 
 interface Habit {
   id: string;
@@ -17,6 +19,7 @@ interface Habit {
   max_minutes: number;
   frequency: string;
   defense: string;
+  event_settings: string;
 }
 
 interface HoursSet {
@@ -34,6 +37,11 @@ const DEFENSE: Record<string, string> = {
   adaptive: "Free until time gets short",
   "always-free": "Always free",
   "always-busy": "Always busy",
+};
+
+const withEmoji = (h: Habit) => {
+  const { emoji } = readEventSettings(h.event_settings, defaultEventSettings("habit"));
+  return emoji ? `${emoji} ${h.title}` : h.title;
 };
 
 export function Habits() {
@@ -93,9 +101,13 @@ export function Habits() {
         ...(text("starting") ? { starting: text("starting") } : {}),
         ...(text("notes") ? { notes: text("notes") } : {}),
         ...(text("hoursSetId") ? { hoursSetId: text("hoursSetId") } : {}),
+        eventSettings: eventSettingsFrom(f),
+        ...(preset && template ? { templateId: template.slug } : {}),
       });
       const title = formEl.elements.namedItem("title") as HTMLInputElement | null;
       if (title) title.value = "";
+      // The template is used: the next habit starts from a blank form.
+      if (template) history.replaceState(null, "", "/habits");
     });
   };
 
@@ -224,6 +236,14 @@ export function Habits() {
           Notes
           <textarea name="notes" rows={2} />
         </label>
+        <EventSettingsFields
+          key={habits.length}
+          kind="habit"
+          initial={{
+            ...defaultEventSettings("habit", { personal: preset?.hours === "personal" }),
+            emoji: template?.emoji ?? "",
+          }}
+        />
         <button type="submit" class="primary">
           Add habit
         </button>
@@ -239,7 +259,7 @@ export function Habits() {
           return (
             <div class="row" key={h.id} data-testid="habit-row" data-habit-title={h.title}>
               <div>
-                <div>{h.title}</div>
+                <div>{withEmoji(h)}</div>
                 <div class="meta">
                   {LEVEL_NAMES[h.level]} · ideal {hhmm(h.ideal_minute)} · {duration(h.min_minutes)}{" "}
                   to {duration(h.max_minutes)} ·{" "}

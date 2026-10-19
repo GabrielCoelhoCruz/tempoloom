@@ -121,7 +121,7 @@ test("travel buffers, flights Tempoloom may edit and personal mirror copies get 
   await mirror.getByLabel("Copy events from").selectOption({ label: "Work" });
   await mirror.getByLabel("To").selectOption({ label: "Yoga" });
   await mirror.getByLabel("Copies show").selectOption({ label: "A label only" });
-  await mirror.getByLabel("Label").selectOption({ label: "Personal commitment" });
+  // The label stays at its first choice, "Personal commitment".
   await mirror.getByRole("button", { name: "Add mirroring" }).click();
 
   const read = async () => ({ mine: await week(cal), copies: managed(await week(yoga)) });

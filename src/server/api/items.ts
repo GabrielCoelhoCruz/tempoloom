@@ -5,8 +5,10 @@ import { HTTPException } from "hono/http-exception";
 import { z } from "zod";
 import { CATEGORIES } from "../../scheduler/categories.ts";
 import type { WeeklyHours } from "../../scheduler/hours.ts";
+import { defaultEventSettings, readEventSettings } from "../../shared/event-settings.ts";
 import type { AppEnv } from "../app.ts";
 import { all, type Db, one, run, tx } from "../db.ts";
+import { editedEventSettings, eventSettingsInput, newEventSettings } from "../event-settings.ts";
 import { jsonBody, notFound } from "../http.ts";
 import { getSettings } from "../settings.ts";
 import type { SyncService } from "../sync/service.ts";
@@ -56,6 +58,9 @@ const habitInput = z.object({
   defense: z.enum(["adaptive", "always-free", "always-busy"]).optional(),
   whenUnplaceable: z.enum(["remove", "keep_as_conflict"]).optional(),
   reservedWords: z.array(z.string().max(100)).max(20).optional(),
+  eventSettings: eventSettingsInput.optional(),
+  /** The library entry it came from (automations-library.md rule 4). */
+  templateId: z.string().max(100).optional(),
 });
 
 const bufferInput = z.object({
@@ -88,6 +93,8 @@ const bufferInput = z.object({
     })
     .optional(),
   onConflict: z.enum(["remove", "keep_as_conflict"]).optional(),
+  eventSettings: eventSettingsInput.optional(),
+  templateId: z.string().max(100).optional(),
 });
 
 const focusInput = z.object({
@@ -100,6 +107,8 @@ const focusInput = z.object({
   minBlockMinutes: minutes.optional(),
   maxBlockMinutes: minutes.optional(),
   busy: z.boolean().optional(),
+  eventSettings: eventSettingsInput.optional(),
+  templateId: z.string().max(100).optional(),
 });
 
 export function badRequest(field: string, message: string): never {
@@ -167,6 +176,13 @@ export interface TaskRow {
 export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<AppEnv> {
   const r = new Hono<AppEnv>();
   const changed = (userId: string) => sync.request(userId);
+  const personalHours = (userId: string, hours: string) =>
+    one<{ kind: string }>(
+      db,
+      "SELECT kind FROM hours_sets WHERE id = ? AND user_id = ?",
+      hours,
+      userId,
+    )?.kind === "personal";
 
   // ---------------------------------------------------------------- tasks
   r.get("/tasks", (c) => {
@@ -436,11 +452,15 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
     const lvl = body.level ?? 3;
     const id = randomUUID();
     const t = now();
+    const es = newEventSettings(db, user.id, "habit", body.eventSettings, {
+      personal: personalHours(user.id, hours),
+    });
     run(
       db,
       `INSERT INTO habits (id, user_id, title, notes, enabled, level, rank, hours_set_id, ideal_minute, min_minutes,
-         max_minutes, frequency, starting, defense, when_unplaceable, reserved_words, created_at, rules_changed_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         max_minutes, frequency, starting, defense, when_unplaceable, reserved_words, created_at, rules_changed_at,
+         event_settings, template_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       id,
       user.id,
       body.title,
@@ -459,6 +479,8 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
       JSON.stringify(body.reservedWords ?? []),
       t,
       t,
+      JSON.stringify(es),
+      body.templateId ?? null,
     );
     changed(user.id);
     return c.json({ habit: habitRow(id) }, 201);
@@ -472,6 +494,7 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
       notes: string;
       enabled: number;
       level: number;
+      rank: number;
       hours_set_id: string;
       ideal_minute: number;
       min_minutes: number;
@@ -481,6 +504,7 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
       defense: string;
       when_unplaceable: string;
       reserved_words: string;
+      event_settings: string;
     }>(db, "SELECT * FROM habits WHERE id = ? AND user_id = ?", id, user.id);
     if (!cur) notFound("habit");
     const body = await jsonBody(c, habitInput.partial());
@@ -499,11 +523,18 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
       },
       hours,
     );
+    const es = editedEventSettings(
+      readEventSettings(
+        cur.event_settings,
+        defaultEventSettings("habit", { personal: personalHours(user.id, cur.hours_set_id) }),
+      ),
+      body.eventSettings,
+    );
     run(
       db,
       `UPDATE habits SET title = ?, notes = ?, enabled = ?, level = ?, hours_set_id = ?, ideal_minute = ?, min_minutes = ?,
          max_minutes = ?, frequency = ?, starting = ?, defense = ?, when_unplaceable = ?, reserved_words = ?,
-         rules_changed_at = ? WHERE id = ?`,
+         rules_changed_at = ?, event_settings = ?, rank = ? WHERE id = ?`,
       body.title ?? cur.title,
       body.notes ?? cur.notes,
       body.enabled === undefined ? cur.enabled : body.enabled ? 1 : 0,
@@ -518,6 +549,11 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
       body.whenUnplaceable ?? cur.when_unplaceable,
       body.reservedWords ? JSON.stringify(body.reservedWords) : cur.reserved_words,
       now(),
+      JSON.stringify(es),
+      // A new priority puts the habit at the end of its new group (automations-overview rule 7).
+      body.level !== undefined && body.level !== cur.level
+        ? nextRank(db, "habits", user.id, body.level)
+        : cur.rank,
       id,
     );
     changed(user.id);
@@ -576,10 +612,14 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
     const lvl = b.level ?? 3;
     const id = randomUUID();
     const t = now();
+    const es = newEventSettings(db, user.id, "buffer", b.eventSettings, {
+      travel: Boolean(b.filter?.travel || b.filter?.flight),
+    });
     run(
       db,
       `INSERT INTO buffers (id, user_id, title, enabled, level, rank, side, minutes_before, minutes_after, busy, filter,
-         on_conflict, created_at, rules_changed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         on_conflict, created_at, rules_changed_at, event_settings, template_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       id,
       user.id,
       b.title,
@@ -594,9 +634,54 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
       b.onConflict ?? "remove",
       t,
       t,
+      JSON.stringify(es),
+      b.templateId ?? null,
     );
     changed(user.id);
     return c.json({ buffer: one(db, "SELECT * FROM buffers WHERE id = ?", id) }, 201);
+  });
+
+  r.patch("/buffers/:id", async (c) => {
+    const user = c.get("user");
+    const cur = one<BufferRow>(
+      db,
+      "SELECT * FROM buffers WHERE id = ? AND user_id = ?",
+      c.req.param("id"),
+      user.id,
+    );
+    if (!cur) notFound("buffer");
+    const b = await jsonBody(c, bufferInput.partial());
+    const filter = b.filter ?? (JSON.parse(cur.filter) as NonNullable<typeof b.filter>);
+    const es = editedEventSettings(
+      readEventSettings(
+        cur.event_settings,
+        defaultEventSettings("buffer", { travel: Boolean(filter.travel || filter.flight) }),
+      ),
+      b.eventSettings,
+    );
+    const side = b.side ?? cur.side;
+    run(
+      db,
+      `UPDATE buffers SET title = ?, enabled = ?, level = ?, rank = ?, side = ?, minutes_before = ?, minutes_after = ?,
+         busy = ?, filter = ?, on_conflict = ?, event_settings = ?, rules_changed_at = ? WHERE id = ?`,
+      b.title ?? cur.title,
+      b.enabled === undefined ? cur.enabled : b.enabled ? 1 : 0,
+      b.level ?? cur.level,
+      b.level !== undefined && b.level !== cur.level
+        ? nextRank(db, "buffers", user.id, b.level)
+        : cur.rank,
+      side,
+      side === "after" ? 0 : (b.minutesBefore ?? (cur.minutes_before || 15)),
+      side === "before" ? 0 : (b.minutesAfter ?? (cur.minutes_after || 15)),
+      b.busy === undefined ? cur.busy : b.busy ? 1 : 0,
+      JSON.stringify(filter),
+      b.onConflict ?? cur.on_conflict,
+      JSON.stringify(es),
+      now(),
+      cur.id,
+    );
+    changed(user.id);
+    return c.json({ buffer: one(db, "SELECT * FROM buffers WHERE id = ?", cur.id) });
   });
 
   r.delete("/buffers/:id", (c) => {
@@ -619,11 +704,13 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
     if (min > max) badRequest("minBlockMinutes", "Minimum block is longer than maximum block");
     const id = randomUUID();
     const t = now();
+    const es = newEventSettings(db, user.id, "focus_time", f.eventSettings);
     run(
       db,
       `INSERT INTO focus_goals (id, user_id, title, enabled, hours_set_id, weekly_goal_minutes, daily_min_minutes,
-         daily_max_minutes, min_block_minutes, max_block_minutes, busy, created_at, rules_changed_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         daily_max_minutes, min_block_minutes, max_block_minutes, busy, created_at, rules_changed_at,
+         event_settings, template_id, rank)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       id,
       user.id,
       f.title ?? "Focus time",
@@ -637,9 +724,55 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
       f.busy === false ? 0 : 1,
       t,
       t,
+      JSON.stringify(es),
+      f.templateId ?? null,
+      (one<{ r: number | null }>(
+        db,
+        "SELECT MAX(rank) AS r FROM focus_goals WHERE user_id = ?",
+        user.id,
+      )?.r ?? -1) + 1,
     );
     changed(user.id);
     return c.json({ focus: one(db, "SELECT * FROM focus_goals WHERE id = ?", id) }, 201);
+  });
+
+  r.patch("/focus/:id", async (c) => {
+    const user = c.get("user");
+    const cur = one<FocusRow>(
+      db,
+      "SELECT * FROM focus_goals WHERE id = ? AND user_id = ?",
+      c.req.param("id"),
+      user.id,
+    );
+    if (!cur) notFound("focus goal");
+    const f = await jsonBody(c, focusInput.partial());
+    const min = f.minBlockMinutes ?? cur.min_block_minutes;
+    const max = f.maxBlockMinutes ?? cur.max_block_minutes;
+    if (min > max) badRequest("minBlockMinutes", "Minimum block is longer than maximum block");
+    const es = editedEventSettings(
+      readEventSettings(cur.event_settings, defaultEventSettings("focus_time")),
+      f.eventSettings,
+    );
+    run(
+      db,
+      `UPDATE focus_goals SET title = ?, enabled = ?, hours_set_id = ?, weekly_goal_minutes = ?, daily_min_minutes = ?,
+         daily_max_minutes = ?, min_block_minutes = ?, max_block_minutes = ?, busy = ?, event_settings = ?,
+         rules_changed_at = ? WHERE id = ?`,
+      f.title ?? cur.title,
+      f.enabled === undefined ? cur.enabled : f.enabled ? 1 : 0,
+      f.hoursSetId ? hoursSetId(db, user.id, f.hoursSetId, "work") : cur.hours_set_id,
+      f.weeklyGoalMinutes ?? cur.weekly_goal_minutes,
+      f.dailyMinMinutes ?? cur.daily_min_minutes,
+      f.dailyMaxMinutes ?? cur.daily_max_minutes,
+      min,
+      max,
+      f.busy === undefined ? cur.busy : f.busy ? 1 : 0,
+      JSON.stringify(es),
+      now(),
+      cur.id,
+    );
+    changed(user.id);
+    return c.json({ focus: one(db, "SELECT * FROM focus_goals WHERE id = ?", cur.id) });
   });
 
   r.delete("/focus/:id", (c) => {
@@ -650,4 +783,33 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
   });
 
   return r;
+}
+
+interface BufferRow {
+  id: string;
+  title: string;
+  enabled: number;
+  level: number;
+  rank: number;
+  side: "before" | "after" | "both";
+  minutes_before: number;
+  minutes_after: number;
+  busy: number;
+  filter: string;
+  on_conflict: "remove" | "keep_as_conflict";
+  event_settings: string;
+}
+
+interface FocusRow {
+  id: string;
+  title: string;
+  enabled: number;
+  hours_set_id: string;
+  weekly_goal_minutes: number;
+  daily_min_minutes: number;
+  daily_max_minutes: number;
+  min_block_minutes: number;
+  max_block_minutes: number;
+  busy: number;
+  event_settings: string;
 }

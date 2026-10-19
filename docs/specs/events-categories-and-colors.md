@@ -70,6 +70,7 @@ personal_commitment 8 (Graphite).
 7. With `color_scope=all_events`, Tempoloom also sets the color on external events on the user's writable calendars (E-0047).
 8. When the user changes a category color or the scope, Tempoloom repaints past and future events that the rule covers (E-0047). Proposed range: the past 90 days and the whole scheduling window.
 9. An item color overrides the category color: a habit color, a task color, or a mirroring policy color (E-0047).
+   Tempoloom decision: habits, focus time and buffers have a Color field: "Category color" (the color rule), "Calendar color", or one of the 11 colors.
 10. Tempoloom never tries to change the color of events that Google does not allow it to change: events generated from mail (such as hotel or flight reservations) and birthday events (E-0047). It skips them without error.
 11. Changing `color_scope` repaints many events. Tempoloom accepts at most 2 scope changes per minute per user; a third change in the same minute is rejected with a message to wait (E-0135 says more than two toggles in a minute cause issues).
 12. Reset: the user sets every category to `calendar_default`, waits for the repaint, and sets the colors again. Proposed: Tempoloom offers a "repaint all" button that does the same in one step (E-0135).

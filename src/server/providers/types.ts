@@ -53,10 +53,20 @@ export interface EventWrite {
   organizer?: string;
   /** An all-day event on these local dates (end exclusive); `start` and `end` are then not written. */
   allDayDates?: { start: string; end: string };
+  /**
+   * Calendar reminders (planning-notifications.md NTF-10, NTF-11): the
+   * calendar's default ones, or alerts this many minutes before the start.
+   * Missing: no reminders.
+   */
+  reminders?: { useDefault: true } | { minutes: number[] };
+  /** Who sees the details (planning-event-content.md CNT-24). Missing: the calendar's default. */
+  visibility?: "default" | "public" | "private";
 }
 
 /** A change to an event someone else may organize; every other field stays as it is. */
 export interface ExternalChange {
+  /** A new title (events-title-emoji.md rules 5 and 8). */
+  summary?: string;
   /** The user's own answer to the invitation. */
   selfResponse?: ResponseStatus;
   description?: string;
@@ -119,7 +129,7 @@ export interface CalendarProvider {
     etag: string | null,
   ): Promise<ProviderEvent>;
   /**
-   * Changes the user's answer, the description or the end of one event
+   * Changes the title, the user's answer, the description or the end of one event
    * (teams-policies.md rules 15-17). With an etag, fails with precondition_failed
    * if the event changed.
    */

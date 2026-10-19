@@ -78,6 +78,8 @@ export interface HabitItem {
   skips: LocalDate[];
   exclusions: Interval[];
   changed: boolean;
+  /** Category work or personal (habits concepts); missing: it counts as work when its hours are work hours. */
+  work?: boolean;
 }
 
 /** A flexible meeting (docs/specs/meetings-flexible.md); the user is the organizer. */

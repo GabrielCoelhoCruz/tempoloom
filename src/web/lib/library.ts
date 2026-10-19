@@ -68,6 +68,8 @@ export type LibraryEntry = {
   name: string;
   group: LibraryGroup;
   summary: string;
+  /** An emoji the entry puts before the title; the form can remove it (events-title-emoji.md rule 4). */
+  emoji?: string;
 } & (
   | { kind: "habit"; preset: HabitPreset }
   | { kind: "buffer"; preset: BufferPreset }
@@ -95,6 +97,7 @@ export const LIBRARY: LibraryEntry[] = [
   {
     slug: "recovery-large-meetings",
     name: "Recovery after large meetings",
+    emoji: "☕",
     group: "buffers",
     summary: "15 min after meetings with 6 or more people. P3, busy.",
     kind: "buffer",
@@ -117,6 +120,7 @@ export const LIBRARY: LibraryEntry[] = [
   {
     slug: "prep-interviews",
     name: "Prep before interviews",
+    emoji: "📝",
     group: "buffers",
     summary: 'Prep 15 min before events with "interview" in the title. P2.',
     kind: "buffer",
@@ -140,6 +144,7 @@ export const LIBRARY: LibraryEntry[] = [
   {
     slug: "executive-focus",
     name: "Executive weekly focus",
+    emoji: "🎯",
     group: "focus_time",
     summary: "8 h of focus time each week.",
     kind: "focus_time",
@@ -172,6 +177,7 @@ export const LIBRARY: LibraryEntry[] = [
   {
     slug: "wrap-up",
     name: "End-of-day wrap-up",
+    emoji: "🌇",
     group: "habits",
     summary: "30 min, Monday to Friday, at 16:30. P3.",
     kind: "habit",
@@ -203,6 +209,7 @@ export const LIBRARY: LibraryEntry[] = [
   {
     slug: "break-long-meetings",
     name: "Break after long meetings",
+    emoji: "☕",
     group: "buffers",
     summary: "10 min after meetings of 60 min or more.",
     kind: "buffer",
@@ -214,6 +221,7 @@ export const LIBRARY: LibraryEntry[] = [
   {
     slug: "peak-energy-focus",
     name: "Peak-energy focus",
+    emoji: "⚡",
     group: "focus_time",
     summary: "10 h of focus time each week.",
     kind: "focus_time",
@@ -223,6 +231,7 @@ export const LIBRARY: LibraryEntry[] = [
   {
     slug: "deep-work",
     name: "Deep work protection",
+    emoji: "🎯",
     group: "focus_time",
     summary: "10 h of focus time each week, in blocks of 2 h or more.",
     kind: "focus_time",
@@ -307,6 +316,7 @@ export const LIBRARY: LibraryEntry[] = [
   {
     slug: "writing",
     name: "Weekly writing time",
+    emoji: "✍️",
     group: "habits",
     summary: "60 min on Monday, Wednesday and Friday. P3.",
     kind: "habit",
@@ -315,6 +325,7 @@ export const LIBRARY: LibraryEntry[] = [
   {
     slug: "reading",
     name: "Weekly reading time",
+    emoji: "📚",
     group: "habits",
     summary: "45 min on Tuesday and Thursday. P4.",
     kind: "habit",
@@ -347,6 +358,7 @@ export const LIBRARY: LibraryEntry[] = [
   {
     slug: "daily-walk",
     name: "Daily walk",
+    emoji: "🚶",
     group: "habits",
     summary: "30 min, Monday to Friday, at 12:30.",
     kind: "habit",
@@ -355,6 +367,7 @@ export const LIBRARY: LibraryEntry[] = [
   {
     slug: "exercise",
     name: "Exercise",
+    emoji: "🏋️",
     group: "habits",
     summary: "60 min on Monday, Wednesday and Friday, in personal hours.",
     kind: "habit",
@@ -363,6 +376,7 @@ export const LIBRARY: LibraryEntry[] = [
   {
     slug: "coding",
     name: "Coding time",
+    emoji: "💻",
     group: "habits",
     summary: "120 min, Monday to Thursday. P2.",
     kind: "habit",
@@ -371,6 +385,7 @@ export const LIBRARY: LibraryEntry[] = [
   {
     slug: "weekly-planning",
     name: "Weekly planning",
+    emoji: "🗓️",
     group: "habits",
     summary: "60 min each Monday at 09:00.",
     kind: "habit",
@@ -379,6 +394,7 @@ export const LIBRARY: LibraryEntry[] = [
   {
     slug: "email",
     name: "Email catch-up",
+    emoji: "📧",
     group: "habits",
     summary: "30 min, Monday to Friday, at 16:00. P4.",
     kind: "habit",
@@ -387,6 +403,7 @@ export const LIBRARY: LibraryEntry[] = [
   {
     slug: "meditation",
     name: "Meditation",
+    emoji: "🧘",
     group: "habits",
     summary: "15 min every day, in personal hours.",
     kind: "habit",
@@ -395,6 +412,7 @@ export const LIBRARY: LibraryEntry[] = [
   {
     slug: "lunch",
     name: "Lunch",
+    emoji: "🍱",
     group: "habits",
     summary: "60 min on workdays at 12:00.",
     kind: "habit",

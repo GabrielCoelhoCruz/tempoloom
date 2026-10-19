@@ -20,6 +20,8 @@ export interface DesiredEvent {
   attendees?: string[];
   optionalAttendees?: string[];
   organizer?: string;
+  reminders?: EventWrite["reminders"];
+  visibility?: EventWrite["visibility"];
 }
 
 export interface ManagedRow {
@@ -42,15 +44,52 @@ export interface ManagedRow {
   extra: string;
 }
 
-/** Guests and location as stored in `managed_events.extra`. */
+/** Guests, location, reminders and visibility as stored in `managed_events.extra`. */
 const extraOf = (d: DesiredEvent) =>
-  d.attendees || d.optionalAttendees || d.location
+  d.attendees || d.optionalAttendees || d.location || d.reminders || d.visibility
     ? JSON.stringify({
         location: d.location ?? "",
         attendees: d.attendees ?? [],
         optional: d.optionalAttendees ?? [],
+        ...(d.organizer ? { organizer: d.organizer } : {}),
+        ...(d.reminders ? { reminders: d.reminders } : {}),
+        ...(d.visibility ? { visibility: d.visibility } : {}),
       })
     : "";
+
+/**
+ * The write of a managed event as it is stored, with a new time, title or
+ * status: for changes outside a plan run, such as a drag in the planner.
+ */
+export function rowWrite(
+  userId: string,
+  row: ManagedRow,
+  change: { start: number; end: number; title: string; busy: boolean },
+): EventWrite {
+  const x = (row.extra ? JSON.parse(row.extra) : {}) as {
+    location?: string;
+    attendees?: string[];
+    optional?: string[];
+    organizer?: string;
+    reminders?: DesiredEvent["reminders"];
+    visibility?: DesiredEvent["visibility"];
+  };
+  return write(userId, {
+    key: row.key,
+    kind: row.kind,
+    sourceId: row.source_id,
+    calendarId: row.calendar_id,
+    ...change,
+    description: row.description,
+    colorId: row.color_id,
+    ...(x.location ? { location: x.location } : {}),
+    ...(x.attendees?.length ? { attendees: x.attendees } : {}),
+    ...(x.optional?.length ? { optionalAttendees: x.optional } : {}),
+    ...(x.organizer ? { organizer: x.organizer } : {}),
+    ...(x.reminders ? { reminders: x.reminders } : {}),
+    ...(x.visibility ? { visibility: x.visibility } : {}),
+  });
+}
 
 export interface PushContext {
   db: Db;
@@ -84,6 +123,8 @@ function write(userId: string, d: DesiredEvent): EventWrite {
     ...(d.attendees ? { attendees: d.attendees } : {}),
     ...(d.optionalAttendees ? { optionalAttendees: d.optionalAttendees } : {}),
     ...(d.organizer ? { organizer: d.organizer } : {}),
+    ...(d.reminders ? { reminders: d.reminders } : {}),
+    ...(d.visibility ? { visibility: d.visibility } : {}),
   };
 }
 
