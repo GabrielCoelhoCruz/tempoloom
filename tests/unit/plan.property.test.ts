@@ -3,7 +3,7 @@
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 import { blocksPlanning } from "../../src/scheduler/blocking.ts";
-import { hoursToTimeSet } from "../../src/scheduler/hours.ts";
+import { hoursToTimeSet, type WeeklyHours } from "../../src/scheduler/hours.ts";
 import type {
   CurrentPlacement,
   ExternalEvent,
@@ -34,6 +34,16 @@ const lunch = {
   4: [[660, 840]],
   5: [[660, 840]],
 } as const;
+// Task hours that cross midnight (night) or have no gaps (always): a chunk
+// can end at 24:00 and the next day starts at once (TSK-14).
+const everyDay = (ranges: [number, number][]) =>
+  Object.fromEntries([1, 2, 3, 4, 5, 6, 7].map((d) => [d, ranges])) as WeeklyHours;
+const night = everyDay([
+  [0, 240],
+  [1200, 1440],
+]);
+const always = everyDay([[0, 1440]]);
+const TASK_HOURS = { day: work, night, always } as const;
 
 const event = fc.record({
   day: fc.integer({ min: 0, max: 6 }),
@@ -66,6 +76,7 @@ const taskArb = fc.record({
   extraQ: fc.integer({ min: 0, max: 8 }),
   dueDay: fc.option(fc.integer({ min: 0, max: 6 })),
   nextUp: fc.boolean(),
+  startQ: fc.integer({ min: 0, max: 191 }),
   // Chunks of an earlier plan (SCH-88). Some are not valid for the task.
   // Some are locked (SCH-57): the plan keeps them as they are.
   sticky: fc.array(
@@ -93,7 +104,7 @@ const toTask = (t: ValueOf<typeof taskArb>, i: number): TaskItem => ({
   remainingMinutes: t.remainingQ * 15,
   minChunkMinutes: t.minQ * 15,
   maxChunkMinutes: (t.minQ + t.extraQ) * 15,
-  startAfter: t0,
+  startAfter: t0 + t.startQ * 15 * MIN,
   dueAt: t.dueDay === null ? null : t0 + t.dueDay * 1440 * MIN + 17 * 60 * MIN,
   hours: "work",
   nextUpRank: t.nextUp ? i : null,
@@ -135,6 +146,7 @@ const inputArb = fc.record({
   tasks: fc.array(taskArb, { maxLength: 8 }),
   habits: fc.array(habitArb, { maxLength: 3 }),
   breakMinutes: fc.constantFrom(0, 15),
+  taskHours: fc.constantFrom<(keyof typeof TASK_HOURS)[]>("day", "day", "night", "always"),
   chunkCooldown: fc.constantFrom<Snapshot["chunkCooldown"][]>(
     "none",
     "once-per-day",
@@ -154,7 +166,7 @@ const snapshotArb = inputArb.map(
     urgencyMode: "due-date-and-work",
     chunkCooldown: r.chunkCooldown,
     breakMinutes: r.breakMinutes,
-    hours: { work, lunch },
+    hours: { work: TASK_HOURS[r.taskHours], lunch },
     workHours: ["work"],
     events: r.events.map(toEvent),
     current: r.tasks.flatMap(toCurrent),
@@ -196,7 +208,7 @@ describe("plan() invariants", { timeout: process.env.PLAN_RUNS ? 300_000 : 5_000
       fc.property(snapshotArb, (s) => {
         const { placements } = plan(s);
         const blocking = s.events.filter(blocksPlanning);
-        const workSet = hoursToTimeSet(work, ZONE, now, end);
+        const workSet = hoursToTimeSet(s.hours.work ?? {}, ZONE, now, end);
         const lunchSet = hoursToTimeSet(lunch, ZONE, now, end);
         const ps = live(placements);
         for (const p of ps) {
@@ -248,16 +260,11 @@ describe("plan() invariants", { timeout: process.env.PLAN_RUNS ? 300_000 : 5_000
               }
             }
           }
-          if (lockedTotal > 0) {
-            for (const c of chunks)
-              expect(c.end - c.start).toBeLessThanOrEqual(t.maxChunkMinutes * MIN);
-            continue;
-          }
           // TSK-13 applied to the rest: a chunk shorter than the minimum is
-          // allowed only when no split of the remaining work R fits the
-          // bounds (ceil(R / max) * min > R). Then there is at most one, and
-          // the chunks add up to R (TSK-12).
-          const r = t.remainingMinutes;
+          // allowed only when no split of the remaining work R (the work not
+          // in locked chunks) fits the bounds (ceil(R / max) * min > R). Then
+          // there is at most one, and the chunks add up to R (TSK-12).
+          const r = Math.max(0, t.remainingMinutes - lockedTotal);
           const noSplit = Math.ceil(r / t.maxChunkMinutes) * t.minChunkMinutes > r;
           const short = chunks.filter((c) => (c.end - c.start) / MIN < t.minChunkMinutes);
           expect(short.length).toBeLessThanOrEqual(noSplit ? 1 : 0);

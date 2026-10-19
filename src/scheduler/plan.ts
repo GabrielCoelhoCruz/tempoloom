@@ -250,7 +250,7 @@ function greedyChunks(
   const chunks: Interval[] = [];
   const step = ctx.step;
   // TSK-14: the next chunk starts no earlier than the last end plus the
-  // cooldown, also in a later free interval.
+  // cooldown, also in a later free interval or on the next day.
   let floor = -Infinity;
   for (const iv of free.intervals()) {
     let cursor = ceilTo(Math.max(iv.start, floor), step);
@@ -272,13 +272,9 @@ function greedyChunks(
       if (length <= 0) break;
       chunks.push({ start: cursor, end: cursor + length });
       need -= length;
-      if (r.oncePerDay) {
-        usedDays.add(dayStartOf(ctx, cursor));
-        cursor = ceilTo(nextDayStart(ctx, cursor), step);
-      } else {
-        floor = cursor + length + r.gap;
-        cursor = ceilTo(floor, step);
-      }
+      floor = cursor + length + r.gap;
+      if (r.oncePerDay) usedDays.add(dayStartOf(ctx, cursor));
+      cursor = ceilTo(r.oncePerDay ? Math.max(floor, nextDayStart(ctx, cursor)) : floor, step);
     }
     if (need <= 0) break;
   }
@@ -1392,13 +1388,18 @@ function setStatus(ctx: Ctx): void {
       gap: COOLDOWN[s.chunkCooldown],
       oncePerDay: s.chunkCooldown === "once-per-day",
     };
+    // Once-per-day: the days of locked and started chunks stay used.
+    const fixedDays = ctx.placements
+      .filter((p) => p.kind === "task" && p.itemId === id && ctx.fixedKeys.has(p.key))
+      .filter((p) => p.end > s.now)
+      .map((p) => dayStartOf(ctx, p.start));
     for (const c of chunks) {
       const alt = greedyChunks(
         ctx,
         minus(seen.clip(ctx.earliest, due), [c]),
         need,
         rules,
-        new Set(),
+        new Set(fixedDays),
       );
       c.busy = alt.missing > 0;
     }
