@@ -16,14 +16,26 @@ import { badRequest } from "./items.ts";
 import { adminTeam } from "./meeting-checks.ts";
 
 /**
+ * Every automation type, in the scheduler's order inside one priority and rank
+ * (planning-scheduler.md); meeting checks, without a table, last.
+ */
+export const AUTOMATION_TYPES = [
+  "flexible_meeting",
+  "buffer",
+  "habit",
+  "meeting_overload",
+  "focus_time",
+  "meeting_check",
+] as const;
+export type AutomationType = (typeof AUTOMATION_TYPES)[number];
+
+/**
  * One automation type with a table. A new type adds one entry here and one in
  * src/web/views/automations.tsx. Meeting checks have no table; see meetingCheckEntries.
  */
 export interface ListedType {
-  type: string;
+  type: Exclude<AutomationType, "meeting_check">;
   table: string;
-  /** The scheduler's order inside one priority and rank (planning-scheduler.md). */
-  order: number;
   /** A fixed priority, such as P4 for focus time (rule 8); null: no priority, its own section (rule 9). */
   fixedLevel?: number | null;
   /** The table has the `event_settings` and `template_id` columns. */
@@ -31,23 +43,22 @@ export interface ListedType {
 }
 
 export const LISTED_TYPES: ListedType[] = [
-  { type: "flexible_meeting", table: "meetings", order: 0, settings: false },
-  { type: "buffer", table: "buffers", order: 1, settings: true },
-  { type: "habit", table: "habits", order: 2, settings: true },
+  { type: "flexible_meeting", table: "meetings", settings: false },
+  { type: "buffer", table: "buffers", settings: true },
+  { type: "habit", table: "habits", settings: true },
   // Rule 15: both focus automations are placed after every other request, in
   // their P4 order; at one rank the meeting overload goes first.
   {
     type: "meeting_overload",
     table: "meeting_overloads",
-    order: 3,
     fixedLevel: 4,
     settings: false,
   },
-  { type: "focus_time", table: "focus_goals", order: 4, fixedLevel: 4, settings: true },
+  { type: "focus_time", table: "focus_goals", fixedLevel: 4, settings: true },
 ];
 
 export interface ListedAutomation {
-  type: string;
+  type: AutomationType;
   id: string;
   name: string;
   emoji: string;
@@ -69,7 +80,7 @@ function meetingCheckEntries(db: Db, userId: string): ListedAutomation[] {
   const on = getPrefs(db, userId).checks;
   const locked = adminTeam(db, userId) === null;
   const entry = (id: string, name: string, enabled: boolean, rank: number) => ({
-    type: "meeting_check",
+    type: "meeting_check" as const,
     id,
     name,
     emoji: "",
@@ -94,9 +105,30 @@ function meetingCheckEntries(db: Db, userId: string): ListedAutomation[] {
 const levelOf = (t: ListedType) =>
   t.fixedLevel === undefined ? "level" : t.fixedLevel === null ? "NULL" : String(t.fixedLevel);
 
-/** All automations in list order: priority, rank, then the scheduler's type order and age; meeting checks last. */
+/** The sort key of the automation list, unique per automation. */
+export type ListKey = [level: number, rank: number, type: number, createdAt: number, id: string];
+
+/** Rules 6-9: priority (none last), rank, the scheduler's type order, age, then id. */
+export const listKey = (a: ListedAutomation): ListKey => [
+  a.level ?? 9,
+  a.rank,
+  AUTOMATION_TYPES.indexOf(a.type),
+  a.createdAt,
+  a.id,
+];
+
+export function compareListKeys(a: ListKey, b: ListKey): number {
+  for (let i = 0; i < a.length; i++) {
+    const x = a[i] as string | number;
+    const y = b[i] as string | number;
+    if (x !== y) return x < y ? -1 : 1;
+  }
+  return 0;
+}
+
+/** All automations in list order (listKey); meeting checks, without priority, last. */
 export function listAutomations(db: Db, userId: string): ListedAutomation[] {
-  const out: (ListedAutomation & { order: number })[] = [];
+  const out: ListedAutomation[] = [];
   for (const t of LISTED_TYPES) {
     const rows = all<{
       id: string;
@@ -126,21 +158,12 @@ export function listAutomations(db: Db, userId: string): ListedAutomation[] {
         rank: r.rank,
         templateId: r.template_id,
         createdAt: r.created_at,
-        order: t.order,
       });
     }
   }
-  const ranked = out
-    .sort(
-      (a, b) =>
-        (a.level ?? 9) - (b.level ?? 9) ||
-        a.rank - b.rank ||
-        a.order - b.order ||
-        a.createdAt - b.createdAt ||
-        a.id.localeCompare(b.id),
-    )
-    .map(({ order: _, ...a }) => a);
-  return [...ranked, ...meetingCheckEntries(db, userId)];
+  return [...out, ...meetingCheckEntries(db, userId)].sort((a, b) =>
+    compareListKeys(listKey(a), listKey(b)),
+  );
 }
 
 const orderInput = z.object({

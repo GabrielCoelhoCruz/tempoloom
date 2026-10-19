@@ -12,18 +12,28 @@ import type { ExternalEvent } from "../scheduler/model.ts";
 import type { TimeSet } from "../scheduler/timeset.ts";
 import { addDays, localToUtc, utcToLocal, weekdayOf } from "../shared/time.ts";
 import { hashToken, type User } from "./accounts.ts";
-import { listAutomations } from "./api/automations.ts";
+import { AUTOMATION_TYPES, compareListKeys, listAutomations, listKey } from "./api/automations.ts";
 import { plannerEvents } from "./api/planner.ts";
 import { CATEGORIES, computeStats } from "./api/stats.ts";
 import { apiKeyUser } from "./api-keys.ts";
 import { all, type Db, one } from "./db.ts";
 import { externalEvents } from "./planner/events.ts";
-import { openChanges, type Preview, plainTitle, when, zoneOf } from "./preview.ts";
+import {
+  openChanges,
+  openChangesPage,
+  type Preview,
+  plainTitle,
+  SOURCES,
+  when,
+  zoneOf,
+} from "./preview.ts";
 
 const DAY = 86_400_000;
 const MAX_RANGE_DAYS = 31;
 const PAGE_SIZE = 50;
 const MAX_PAGE_SIZE = 100;
+/** The sort key of a task without a due date: after every due date. */
+const NO_DUE = 9e15;
 /** Protocol versions this server speaks, newest first. */
 const PROTOCOLS = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
 
@@ -73,62 +83,48 @@ const nextCursor = z
   .optional()
   .describe("Only when more rows exist: pass it as cursor to get the next page");
 
-type Key = (string | number)[];
-const compareKeys = (a: Key, b: Key) => {
-  for (let i = 0; i < a.length; i++) {
-    const x = a[i] as string | number;
-    const y = b[i] as string | number;
-    if (x !== y) return x < y ? -1 : 1;
-  }
-  return 0;
-};
-
 /**
- * One page of rows in the order of `key`, which must be unique per row. The
- * cursor is the key of the last row, so a row added between two calls never
- * repeats or shifts a row (an offset would). Opaque to clients: base64url JSON.
+ * Keyset pages: the cursor holds the sort key of the last row, so a row added
+ * between two calls never repeats or shifts a row (an offset would). It also
+ * holds the tool and its filter, so a cursor of another list is refused.
+ * Opaque to clients: base64url JSON.
  */
-function page<T>(
+function cursorKey<K>(
+  tool: string,
+  filter: string,
+  keySchema: z.ZodType<K>,
+  cursor: string | undefined,
+): K | undefined {
+  if (cursor === undefined) return undefined;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
+  } catch {}
+  const c = z.object({ t: z.literal(tool), f: z.literal(filter), k: keySchema }).safeParse(parsed);
+  if (!c.success)
+    throw new ToolError(`Invalid cursor: pass next_cursor from the previous ${tool} page`);
+  return c.data.k;
+}
+
+/** Cuts the extra row that a query of limit + 1 rows returns, and names the next page. */
+function cut<T>(
   rows: T[],
-  key: (row: T) => Key,
-  keySchema: z.ZodType<Key>,
-  a: { limit?: number | undefined; cursor?: string | undefined },
+  limit: number,
+  tool: string,
+  filter: string,
+  key: (row: T) => unknown,
 ): { rows: T[]; next_cursor?: string } {
-  let after: Key | undefined;
-  if (a.cursor !== undefined) {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(Buffer.from(a.cursor, "base64url").toString("utf8"));
-    } catch {}
-    const k = keySchema.safeParse(parsed);
-    if (!k.success) throw new ToolError("Invalid cursor: pass next_cursor from the previous page");
-    after = k.data;
-  }
-  const sorted = rows
-    .map((row) => ({ row, k: key(row) }))
-    .sort((x, y) => compareKeys(x.k, y.k))
-    .filter((x) => !after || compareKeys(x.k, after) > 0);
-  const limit = a.limit ?? PAGE_SIZE;
-  const out = sorted.slice(0, limit);
-  const last = out.at(-1);
+  if (rows.length <= limit) return { rows };
+  const page = rows.slice(0, limit);
+  const k = key(page[limit - 1] as T);
   return {
-    rows: out.map((x) => x.row),
-    ...(sorted.length > limit && last
-      ? { next_cursor: Buffer.from(JSON.stringify(last.k)).toString("base64url") }
-      : {}),
+    rows: page,
+    next_cursor: Buffer.from(JSON.stringify({ t: tool, f: filter, k })).toString("base64url"),
   };
 }
 
 // --------------------------------------------------------- output schemas
 
-const AUTOMATION_TYPES = [
-  "flexible_meeting",
-  "buffer",
-  "habit",
-  "meeting_overload",
-  "focus_time",
-  "meeting_check",
-] as const;
 const instant = z.string().describe("ISO 8601 UTC");
 const date = z.string().describe("YYYY-MM-DD");
 const stagedOutput = z.object({
@@ -196,15 +192,16 @@ function reviewUrl(baseUrl: string, zone: string, t: number): string {
   return new URL(`/?week=${addDays(d, 1 - weekdayOf(d))}`, baseUrl).toString();
 }
 
+/** read: no change; stage: stages a change, no calendar write; apply: writes staged changes, deletes too. */
+type Effect = "read" | "stage" | "apply";
+
 interface Tool {
   name: string;
   title: string;
   description: string;
   input: z.ZodObject;
   output: z.ZodObject;
-  /** Stages changes, or (destructive) applies them to the calendar. */
-  write?: boolean;
-  destructive?: boolean;
+  effect: Effect;
   run: (caller: Caller, args: never) => unknown;
 }
 
@@ -218,14 +215,14 @@ export function mcpRoutes(deps: McpDeps): Hono {
     description: string;
     input: S;
     output: O;
-    write?: boolean;
-    destructive?: boolean;
+    effect: Effect;
     run: (caller: Caller, args: z.infer<S>) => z.input<O> | Promise<z.input<O>>;
   }): Tool => t as unknown as Tool;
 
   const tools: Tool[] = [
     tool({
       name: "list_events",
+      effect: "read",
       title: "List events",
       description:
         "Events on the user's calendars between start and end (at most 31 days): title, time, guests, location, video link, and whether Tempoloom plans the event.",
@@ -258,6 +255,7 @@ export function mcpRoutes(deps: McpDeps): Hono {
     }),
     tool({
       name: "find_free_time",
+      effect: "read",
       title: "Find free time",
       description:
         "Free slots of the given length inside the user's meeting hours where the user, and guests who use this Tempoloom server, have no busy event. Earliest first. Tasks, habits and focus time that Tempoloom plans do not count as busy: Tempoloom moves them.",
@@ -275,6 +273,7 @@ export function mcpRoutes(deps: McpDeps): Hono {
     }),
     tool({
       name: "get_week_summary",
+      effect: "read",
       title: "Week summary",
       description:
         "Hours of meetings, focus time, tasks, habits and other commitments per day of one week, in the user's time zone.",
@@ -289,6 +288,7 @@ export function mcpRoutes(deps: McpDeps): Hono {
     }),
     tool({
       name: "get_meeting_context",
+      effect: "read",
       title: "Meeting preparation",
       description:
         "Details of one event (an id from list_events), the earlier meetings with the same guests, and open tasks that look related.",
@@ -327,6 +327,7 @@ export function mcpRoutes(deps: McpDeps): Hono {
     }),
     tool({
       name: "get_stats",
+      effect: "read",
       title: "Stats",
       description: "Where the user's time went between two dates: minutes per category and day.",
       input: z.object({ start_date: z.iso.date(), end_date: z.iso.date() }),
@@ -351,6 +352,7 @@ export function mcpRoutes(deps: McpDeps): Hono {
     }),
     tool({
       name: "list_tasks",
+      effect: "read",
       title: "List tasks",
       description:
         "The user's tasks with priority (1 is highest), due date and state, due first. One page per call.",
@@ -369,25 +371,38 @@ export function mcpRoutes(deps: McpDeps): Hono {
         next_cursor: nextCursor,
       }),
       run: ({ user }, a) => {
-        const p = page(
-          all<{
-            id: string;
-            title: string;
-            level: number;
-            total_minutes: number;
-            due_at: number | null;
-            status: "open" | "done";
-            created_at: number;
-          }>(
-            db,
-            "SELECT id, title, level, total_minutes, due_at, status, created_at FROM tasks WHERE user_id = ? AND status = ?",
-            user.id,
-            a.status ?? "open",
-          ),
-          (t) => [t.due_at ?? 9e15, t.created_at, t.id],
+        const status = a.status ?? "open";
+        const limit = a.limit ?? PAGE_SIZE;
+        // Due first, tasks without a due date last: due_at NULL sorts as NO_DUE.
+        const after = cursorKey(
+          "list_tasks",
+          status,
           z.tuple([z.number(), z.number(), z.string()]),
-          a,
+          a.cursor,
         );
+        const rows = all<{
+          id: string;
+          title: string;
+          level: number;
+          total_minutes: number;
+          due_at: number | null;
+          status: "open" | "done";
+          created_at: number;
+        }>(
+          db,
+          `SELECT id, title, level, total_minutes, due_at, status, created_at FROM tasks
+           WHERE user_id = ? AND status = ? AND (COALESCE(due_at, ${NO_DUE}), created_at, id) > (?, ?, ?)
+           ORDER BY COALESCE(due_at, ${NO_DUE}), created_at, id LIMIT ?`,
+          user.id,
+          status,
+          ...(after ?? [-1, -1, ""]),
+          limit + 1,
+        );
+        const p = cut(rows, limit, "list_tasks", status, (t) => [
+          t.due_at ?? NO_DUE,
+          t.created_at,
+          t.id,
+        ]);
         return {
           tasks: p.rows.map((t) => ({
             id: t.id,
@@ -397,12 +412,13 @@ export function mcpRoutes(deps: McpDeps): Hono {
             due: t.due_at === null ? null : isoOf(t.due_at),
             status: t.status,
           })),
-          ...(p.next_cursor ? { next_cursor: p.next_cursor } : {}),
+          next_cursor: p.next_cursor,
         };
       },
     }),
     tool({
       name: "list_automations",
+      effect: "read",
       title: "List automations",
       description:
         "Flexible meetings, buffers, habits, meeting overloads, focus time goals and meeting checks, with type, priority and whether each is on, in the order of the automation list. One page per call.",
@@ -420,33 +436,33 @@ export function mcpRoutes(deps: McpDeps): Hono {
         next_cursor: nextCursor,
       }),
       run: ({ user }, a) => {
-        // The list order (automations-overview.md): priority, rank, type, age; meeting checks last.
-        const p = page(
-          listAutomations(db, user.id),
-          (r) => [
-            r.level ?? 9,
-            r.rank,
-            AUTOMATION_TYPES.indexOf(r.type as (typeof AUTOMATION_TYPES)[number]),
-            r.createdAt,
-            r.id,
-          ],
+        const limit = a.limit ?? PAGE_SIZE;
+        const after = cursorKey(
+          "list_automations",
+          "",
           z.tuple([z.number(), z.number(), z.number(), z.number(), z.string()]),
-          a,
+          a.cursor,
         );
+        // listAutomations is in listKey order: the order of the automation list.
+        const rows = listAutomations(db, user.id).filter(
+          (r) => !after || compareListKeys(listKey(r), after) > 0,
+        );
+        const p = cut(rows.slice(0, limit + 1), limit, "list_automations", "", listKey);
         return {
           automations: p.rows.map((r) => ({
-            type: r.type as (typeof AUTOMATION_TYPES)[number],
+            type: r.type,
             id: r.id,
             title: r.name,
             level: r.level,
             enabled: r.enabled,
           })),
-          ...(p.next_cursor ? { next_cursor: p.next_cursor } : {}),
+          next_cursor: p.next_cursor,
         };
       },
     }),
     tool({
       name: "list_staged_changes",
+      effect: "read",
       title: "List staged changes",
       description:
         "Changes waiting in preview mode for the user to apply, with their source and summary, oldest first. One page per call.",
@@ -455,7 +471,7 @@ export function mcpRoutes(deps: McpDeps): Hono {
         changes: z.array(
           z.object({
             id: z.string(),
-            source: z.enum(["assistant_chat", "mcp_client", "automation_edit", "manual"]),
+            source: z.enum(SOURCES),
             summary: z.string(),
             reason: z.string(),
             state: z.enum(["pending", "accepted"]),
@@ -465,11 +481,19 @@ export function mcpRoutes(deps: McpDeps): Hono {
         next_cursor: nextCursor,
       }),
       run: ({ user }, a) => {
-        const p = page(
-          openChanges(db, user.id, now()),
-          (c) => [c.createdAt, c.id],
+        const limit = a.limit ?? PAGE_SIZE;
+        const after = cursorKey(
+          "list_staged_changes",
+          "",
           z.tuple([z.number(), z.string()]),
-          a,
+          a.cursor,
+        );
+        const p = cut(
+          openChangesPage(db, user.id, now(), after, limit + 1),
+          limit,
+          "list_staged_changes",
+          "",
+          (c) => [c.createdAt, c.id],
         );
         return {
           changes: p.rows.map((c) => ({
@@ -477,11 +501,10 @@ export function mcpRoutes(deps: McpDeps): Hono {
             source: c.source,
             summary: c.summary,
             reason: c.reason,
-            // openChanges returns only these two states.
-            state: c.state as "pending" | "accepted",
+            state: c.state,
             created_at: isoOf(c.createdAt),
           })),
-          ...(p.next_cursor ? { next_cursor: p.next_cursor } : {}),
+          next_cursor: p.next_cursor,
         };
       },
     }),
@@ -490,7 +513,7 @@ export function mcpRoutes(deps: McpDeps): Hono {
       title: "Propose a new event",
       description:
         "Stages a new event in Tempoloom's preview mode. Nothing is written and no guest is invited until the user applies the change in Tempoloom, or confirms it and you call apply_staged_changes.",
-      write: true,
+      effect: "stage",
       input: z.object({
         title: z.string().trim().min(1).max(255),
         start: datetime,
@@ -533,7 +556,7 @@ export function mcpRoutes(deps: McpDeps): Hono {
       title: "Propose a change to an event",
       description:
         "Stages a new time or title for an event the user organizes (an id from list_events). For events that Tempoloom plans, only the start can change. Nothing changes until the user applies it.",
-      write: true,
+      effect: "stage",
       input: z.object({
         event_id: z.string().min(1),
         start: datetime.optional(),
@@ -549,7 +572,7 @@ export function mcpRoutes(deps: McpDeps): Hono {
       title: "Propose to delete an event",
       description:
         "Stages the deletion of an event the user organizes. Guests hear about it only when the user applies the change.",
-      write: true,
+      effect: "stage",
       input: z.object({ event_id: z.string().min(1), reason: z.string().max(1000).optional() }),
       output: stagedOutput,
       run: (caller, a) => {
@@ -583,8 +606,7 @@ export function mcpRoutes(deps: McpDeps): Hono {
       title: "Apply staged changes",
       description:
         "Applies changes that this or another AI tool staged, after the user confirmed them in the conversation. Changes staged in Tempoloom itself must be applied there. Each result is applied, stale (the event changed since) or failed.",
-      write: true,
-      destructive: true,
+      effect: "apply",
       input: z.object({ ids: z.array(z.string()).min(1).max(100) }),
       output: z.object({
         results: z.array(
@@ -985,13 +1007,17 @@ export function mcpRoutes(deps: McpDeps): Hono {
 
   // ---------------------------------------------------------------- JSON-RPC
 
-  /** JSON Schema 2020-12, the MCP default, so without a $schema key. */
-  const jsonSchema = (schema: z.ZodObject) => {
-    const { $schema: _, ...rest } = z.toJSONSchema(schema) as Record<string, unknown>;
+  /**
+   * JSON Schema 2020-12, the MCP default, so without a $schema key. An input
+   * schema accepts what parses (unknown keys are dropped); an output schema
+   * describes what parse returns (no other keys).
+   */
+  const jsonSchema = (schema: z.ZodObject, io: "input" | "output") => {
+    const { $schema: _, ...rest } = z.toJSONSchema(schema, { io }) as Record<string, unknown>;
     return rest;
   };
 
-  const visible = () => tools.filter((t) => deps.writeEnabled || !t.write);
+  const visible = () => tools.filter((t) => deps.writeEnabled || t.effect === "read");
 
   interface Message {
     jsonrpc?: unknown;
@@ -1038,13 +1064,13 @@ export function mcpRoutes(deps: McpDeps): Hono {
               name: t.name,
               title: t.title,
               description: t.description,
-              inputSchema: jsonSchema(t.input),
-              outputSchema: jsonSchema(t.output),
+              inputSchema: jsonSchema(t.input, "input"),
+              outputSchema: jsonSchema(t.output, "output"),
               // Staging writes nothing to the calendar; applying runs staged deletes.
               annotations: {
-                readOnlyHint: !t.write,
-                destructiveHint: t.destructive ?? false,
-                idempotentHint: !t.write,
+                readOnlyHint: t.effect === "read",
+                destructiveHint: t.effect === "apply",
+                idempotentHint: t.effect === "read",
                 openWorldHint: false,
               },
             };
@@ -1054,7 +1080,7 @@ export function mcpRoutes(deps: McpDeps): Hono {
         const name = typeof params.name === "string" ? params.name : "";
         const t = tools.find((x) => x.name === name);
         if (!t) return fail(m.id, -32602, `Unknown tool: ${name}`);
-        if (t.write && !deps.writeEnabled)
+        if (t.effect !== "read" && !deps.writeEnabled)
           return fail(
             m.id,
             -32602,
@@ -1071,7 +1097,17 @@ export function mcpRoutes(deps: McpDeps): Hono {
           });
         }
         try {
-          const data = (await t.run(caller, args.data as never)) as Record<string, unknown>;
+          // The result must match the outputSchema that tools/list gave: parse
+          // drops other keys, and a wrong type is a server failure, not a result.
+          const out = t.output.safeParse(await t.run(caller, args.data as never));
+          if (!out.success) {
+            console.error(`MCP tool ${name} returned a result outside its outputSchema`, out.error);
+            return reply(m.id, {
+              content: [{ type: "text", text: "The tool failed on the server" }],
+              isError: true,
+            });
+          }
+          const data = out.data;
           return reply(m.id, {
             content: [{ type: "text", text: JSON.stringify(data) }],
             structuredContent: data,

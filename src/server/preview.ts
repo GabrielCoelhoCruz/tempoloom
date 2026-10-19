@@ -20,7 +20,8 @@ const DAY = 86_400_000;
 /** Proposed rule 11: pending changes expire after 7 days. */
 export const KEEP_DAYS = 7;
 
-export type Source = "assistant_chat" | "mcp_client" | "automation_edit" | "manual";
+export const SOURCES = ["assistant_chat", "mcp_client", "automation_edit", "manual"] as const;
+export type Source = (typeof SOURCES)[number];
 export type State = "pending" | "accepted" | "discarded" | "applied" | "failed" | "stale";
 
 /** One calendar event a staged change creates, moves or deletes. */
@@ -147,6 +148,30 @@ export function openChanges(db: Db, userId: string, now: number): StagedChange[]
      ORDER BY created_at, rowid`,
     userId,
   ).map(fromRow);
+}
+
+/**
+ * One page of the open changes, oldest first, in (created_at, id) order after
+ * the key `after`. Expired changes are skipped here and deleted by openChanges.
+ */
+export function openChangesPage(
+  db: Db,
+  userId: string,
+  now: number,
+  after: [number, string] | undefined,
+  limit: number,
+): (StagedChange & { state: "pending" | "accepted" })[] {
+  return all<Row & { state: "pending" | "accepted" }>(
+    db,
+    `SELECT * FROM staged_changes WHERE user_id = ? AND state IN ('pending', 'accepted')
+       AND created_at >= ? AND (created_at, id) > (?, ?)
+     ORDER BY created_at, id LIMIT ?`,
+    userId,
+    now - KEEP_DAYS * DAY,
+    after?.[0] ?? -1,
+    after?.[1] ?? "",
+    limit,
+  ).map((r) => ({ ...fromRow(r), state: r.state }));
 }
 
 export interface StageInput {

@@ -10,17 +10,30 @@
 // 3. A tool has no outputSchema, or its structuredContent does not match it.
 // 4. A list tool returns every row in one response.
 // 5. Two pages skip or repeat a row, also when a row is added between the calls.
-// 6. A bad cursor or a limit above the maximum is accepted.
+// 6. A bad cursor, a cursor of another list or filter, or a limit above the
+//    maximum is accepted.
+// 7. A tool's run returns a key or a type that its outputSchema does not have,
+//    and tools/call sends it on as structuredContent.
+// 8. list_automations pages in another order than the automation list.
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { Hono } from "hono";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ensureUser } from "../../src/server/accounts.ts";
+import { listAutomations } from "../../src/server/api/automations.ts";
+import * as stats from "../../src/server/api/stats.ts";
 import { createApiKey } from "../../src/server/api-keys.ts";
 import type { AppEnv } from "../../src/server/app.ts";
-import { one, openDb, run } from "../../src/server/db.ts";
+import { all, one, openDb, run } from "../../src/server/db.ts";
 import { mcpRoutes } from "../../src/server/mcp.ts";
 import { CHECK_IDS } from "../../src/server/meeting-prefs.ts";
 import { createPreview, type PreviewDeps } from "../../src/server/preview.ts";
+
+// get_stats returns computeStats as is: a test can make it return a bad result.
+vi.mock(import("../../src/server/api/stats.ts"), async (original) => {
+  const real = await original();
+  return { ...real, computeStats: vi.fn(real.computeStats) };
+});
+afterEach(() => vi.mocked(stats.computeStats).mockClear());
 
 const T0 = Date.parse("2026-10-19T08:00:00Z");
 const HOUR = 3_600_000;
@@ -340,6 +353,39 @@ describe("MCP output schemas", () => {
     expect(rename.id).toBeTruthy();
     expect([...checked].sort()).toEqual(tools.map((t) => t.name).sort());
   });
+
+  it("never sends a structuredContent outside the outputSchema: an extra key is dropped, a wrong type is a tool error", async () => {
+    const s = setup();
+    const tools = await s.listTools();
+    const schema = tools.find((t) => t.name === "get_stats")?.outputSchema ?? {};
+    expect(schema).toMatchObject({ additionalProperties: false });
+    const validate = new Ajv2020({ strict: false }).compile(schema);
+    const args = { start_date: "2026-10-12", end_date: "2026-10-18" };
+    const real = stats.computeStats(s.db, s.user.id, args.start_date, args.end_date);
+
+    vi.mocked(stats.computeStats).mockReturnValueOnce({
+      ...real,
+      secret: "not in the schema",
+    } as typeof real);
+    const extra = await s.call("get_stats", args);
+    expect(extra.isError).toBeFalsy();
+    expect(extra.structuredContent).not.toHaveProperty("secret");
+    expect(validate(extra.structuredContent), JSON.stringify(validate.errors)).toBe(true);
+    expect(JSON.parse(extra.content[0]?.text ?? "")).toEqual(extra.structuredContent);
+
+    vi.mocked(stats.computeStats).mockReturnValueOnce({
+      ...real,
+      from: 20261012,
+    } as unknown as typeof real);
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const wrong = await s.call("get_stats", args);
+    error.mockRestore();
+    expect(wrong).toEqual({
+      content: [{ type: "text", text: "The tool failed on the server" }],
+      isError: true,
+    });
+    expect(stats.computeStats).toHaveBeenCalledTimes(3);
+  });
 });
 
 describe("MCP list pages", () => {
@@ -363,9 +409,9 @@ describe("MCP list pages", () => {
   it("list_automations returns every automation exactly once over its pages", async () => {
     const s = setup();
     seedAutomations(s);
-    const all = await pages(s, "list_automations", "automations", { limit: 2 });
-    expect(all.map((p) => p.length)).toEqual([2, 2, 2, 2, 2, 2, 1]);
-    expect(all.flat().sort()).toEqual(
+    const got = await pages(s, "list_automations", "automations", { limit: 2 });
+    expect(got.map((p) => p.length)).toEqual([2, 2, 2, 2, 2, 2, 1]);
+    expect(got.flat().sort()).toEqual(
       [
         "buffer-0",
         "focus-0",
@@ -378,6 +424,38 @@ describe("MCP list pages", () => {
         ...CHECK_IDS,
       ].sort(),
     );
+  });
+
+  it("list_automations pages, put together, are the automation list in its order", async () => {
+    const s = setup();
+    seedAutomations(s);
+    // Equal priority, rank and age: the type order and the id decide; ids
+    // differ in case, where a locale order and a code point order disagree.
+    run(s.db, "UPDATE habits SET level = 2, rank = 0");
+    run(s.db, "UPDATE habits SET id = 'Habit-1' WHERE id = 'habit-1'");
+    run(s.db, "UPDATE buffers SET rank = 0");
+    run(s.db, "UPDATE meetings SET rank = 0");
+    const expected = listAutomations(s.db, s.user.id).map((a) => a.id);
+    for (const limit of [1, 2, 3, 100])
+      expect(
+        (await pages(s, "list_automations", "automations", { limit })).flat(),
+        `limit ${limit}`,
+      ).toEqual(expected);
+  });
+
+  it("list_tasks pages more than 100 done tasks in due order, each once", async () => {
+    const s = setup();
+    for (let i = 0; i < 130; i++)
+      addTask(s, `d${String(i).padStart(3, "0")}`, i % 3 ? T0 + (i % 7) * DAY : null, T0 + (i % 5));
+    addTask(s, "open-1", T0, T0);
+    run(s.db, "UPDATE tasks SET status = 'done' WHERE id LIKE 'd%'");
+    const got = await pages(s, "list_tasks", "tasks", { status: "done", limit: 100 });
+    expect(got.map((p) => p.length)).toEqual([100, 30]);
+    const expected = all<{ id: string }>(
+      s.db,
+      "SELECT id FROM tasks WHERE status = 'done' ORDER BY due_at IS NULL, due_at, created_at, id",
+    ).map((r) => r.id);
+    expect(got.flat()).toEqual(expected);
   });
 
   it("list_automations lists the meeting overload at P4 and the meeting checks last, without priority", async () => {
@@ -406,9 +484,9 @@ describe("MCP list pages", () => {
       });
     const ids: string[] = [];
     for (let i = 0; i < 5; i++) ids.push((await stage(i)).id);
-    const all = await pages(s, "list_staged_changes", "changes", { limit: 2 });
-    expect(all.map((p) => p.length)).toEqual([2, 2, 1]);
-    expect(all.flat().sort()).toEqual([...ids].sort());
+    const got = await pages(s, "list_staged_changes", "changes", { limit: 2 });
+    expect(got.map((p) => p.length)).toEqual([2, 2, 1]);
+    expect(got.flat().sort()).toEqual([...ids].sort());
 
     const first = await s.tool<{ changes: { id: string }[]; next_cursor: string }>(
       "list_staged_changes",
@@ -438,6 +516,16 @@ describe("MCP list pages", () => {
     for (const name of ["list_tasks", "list_automations", "list_staged_changes"]) {
       expect((await s.call(name, { limit: 101 })).isError, `${name} limit`).toBe(true);
       expect((await s.call(name, { cursor: "not-a-cursor" })).isError, `${name} cursor`).toBe(true);
+    }
+    // A cursor belongs to one list and one filter.
+    for (const [name, args] of [
+      ["list_tasks", { status: "done" }],
+      ["list_automations", {}],
+      ["list_staged_changes", {}],
+    ] as const) {
+      const r = await s.call(name, { ...args, cursor: first.next_cursor });
+      expect(r.isError, name).toBe(true);
+      expect(r.content[0]?.text, name).toMatch(/Invalid cursor/);
     }
   });
 });
