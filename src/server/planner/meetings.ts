@@ -291,7 +291,10 @@ export function attendeeOccurrences(
   }));
 }
 
-/** Organizers whose meetings this user joins, and attendees (users here) of this user's meetings. */
+/**
+ * Organizers whose meetings this user joins, and attendees (users here) of this
+ * user's meetings, matched as instanceUser matches attendees.
+ */
 export function meetingPeers(
   db: Db,
   userId: string,
@@ -301,14 +304,15 @@ export function meetingPeers(
     db,
     `SELECT DISTINCT m.user_id FROM meetings m JOIN meeting_attendees a ON a.meeting_id = m.id
      WHERE a.email = ? AND m.user_id <> ? AND m.enabled = 1`,
-    email ?? "",
+    (email ?? "").toLowerCase(),
     userId,
   ).map((r) => r.user_id);
   const attendees = all<{ id: string }>(
     db,
     `SELECT DISTINCT u.id FROM meetings m JOIN meeting_attendees a ON a.meeting_id = m.id
        JOIN users u ON u.email = a.email
-     WHERE m.user_id = ? AND u.id <> ?`,
+     WHERE m.user_id = ? AND u.id <> ?
+       AND EXISTS (SELECT 1 FROM accounts x WHERE x.user_id = u.id AND x.status = 'ok')`,
     userId,
     userId,
   ).map((r) => r.id);

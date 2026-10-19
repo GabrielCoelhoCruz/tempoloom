@@ -683,7 +683,7 @@ test("adaptive defense writes busy within 12 hours and free later; always busy a
   check(await read());
 });
 
-test("a series every 3 weeks fills the form as custom every 3 weeks, keeps its instances when saved, and cannot take a monthly frequency (rules 1, 10)", async ({
+test("a series every 3 weeks fills the form as custom every 3 weeks, keeps its instances when saved, and cannot take a monthly frequency or a start date, when added or edited (rules 1, 10)", async ({
   page,
   cal,
   signIn,
@@ -704,11 +704,22 @@ test("a series every 3 weeks fills the form as custom every 3 weeks, keeps its i
   await expect(pick.locator("option", { hasText: "Triweekly" })).toHaveCount(1, {
     timeout: 60_000,
   });
+  // A new meeting offers every month; a series does not, nor a start date of its own.
+  const often = form.getByLabel("How often");
+  await expect(often.locator("option", { hasText: "Every month" })).toHaveCount(1);
+  await expect(form.getByLabel("Starting")).toBeVisible();
   await pick.selectOption({ label: "Triweekly" });
+  const seriesOnly = async () => {
+    await expect(often.locator("option", { hasText: "Every month" })).toHaveCount(0);
+    await expect(often.locator("option", { hasText: "Every day" })).toHaveCount(1);
+    await expect(form.getByLabel("Unit").locator("option")).toHaveText(["Weeks"]);
+    await expect(form.getByLabel("Starting")).toHaveCount(0);
+  };
   await expect(form.getByLabel("How often")).toHaveValue("custom");
   await expect(form.getByLabel("Repeat every")).toHaveValue("3");
   await expect(form.getByLabel("Unit")).toHaveValue("weeks");
   await expect(form.getByLabel("Tue", { exact: true })).toBeChecked();
+  await seriesOnly();
 
   // A series repeats daily or every N weeks: the API refuses a monthly frequency for it.
   const refused = await page.evaluate(async (title) => {
@@ -747,6 +758,10 @@ test("a series every 3 weeks fills the form as custom every 3 weeks, keeps its i
   );
   await page.reload();
   await expect(row(page, "Triweekly")).toContainText("every 3 weeks, ideally Tue");
+  // The edit form of the adopted series offers the same frequencies only.
+  await row(page, "Triweekly").getByRole("button", { name: "Edit" }).click();
+  await expect(form.getByLabel("Repeat every")).toHaveValue("3");
+  await seriesOnly();
 });
 
 test("no limit on meetings per organizer, and stats count flexible meetings as one-to-one or group time next to booked meetings (rule 36; analytics summary)", async ({

@@ -10,6 +10,9 @@
 //    or counts its periods from "now" instead of the creation day.
 // 3. A change of an attendee's meeting hours or time zone does not place the
 //    meeting again; a change of a set the attendee's meetings do not use does.
+// 4. An edit of a meeting that manages a series sets a monthly or every-N-days
+//    frequency, or moves its start date: its periods stop matching the series'
+//    instances and the push deletes them (rules 1, 10).
 import { Hono } from "hono";
 import { describe, expect, it } from "vitest";
 import { ensureUser, type User } from "../../src/server/accounts.ts";
@@ -45,7 +48,15 @@ function setup() {
     if (!res.ok) throw new Error(`${method} ${path}: ${res.status} ${await res.text()}`);
     return res.json() as Promise<Record<string, unknown>>;
   };
-  return { db, owner, clock, call };
+  const status = async (method: string, path: string, body: unknown) =>
+    (
+      await app.request(`/api${path}`, {
+        method,
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      })
+    ).status;
+  return { db, owner, clock, call, status };
 }
 
 const sync1 = (title: string, over: Record<string, unknown> = {}) => ({
@@ -91,6 +102,38 @@ describe("meeting edits", () => {
     clock.t = T0 + 7 * DAY;
     const later = await call("POST", `/meetings/preview?id=${made.id}`, fortnight);
     expect(iso(later)[0]?.slice(0, 10)).toBe("2026-11-03");
+  });
+});
+
+describe("series edits", () => {
+  it("refuses a monthly or every-N-days frequency for a series and keeps its start date", async () => {
+    const { db, call, status } = setup();
+    const { id } = (await call("POST", "/meetings", sync1("Standup"))) as { id: string };
+    // As POST with `series` leaves it: the series' calendar and id, periods from its first week.
+    run(
+      db,
+      "UPDATE meetings SET series_calendar_id = 'cal', series_event_id = 'ser', starting = '2026-10-19' WHERE id = ?",
+      id,
+    );
+    const starting = () =>
+      one<{ s: string | null }>(db, "SELECT starting AS s FROM meetings WHERE id = ?", id)?.s;
+    const frequency = () =>
+      one<{ f: string }>(db, "SELECT frequency AS f FROM meetings WHERE id = ?", id)?.f;
+    const monthly = sync1("Standup", { frequency: { period: "monthly", dayOfMonth: 1 } });
+    const every3 = sync1("Standup", { frequency: { period: "daily", everyDays: 3 } });
+    expect(await status("PUT", `/meetings/${id}`, monthly)).toBe(400);
+    expect(await status("PUT", `/meetings/${id}`, every3)).toBe(400);
+    expect(JSON.parse(frequency() ?? "{}")).toMatchObject({ period: "weekly" });
+    // A typed or cleared start date does not move the series' periods.
+    await call("PUT", `/meetings/${id}`, sync1("Standup", { starting: "2026-11-30" }));
+    expect(starting()).toBe("2026-10-19");
+    await call("PUT", `/meetings/${id}`, sync1("Standup", { starting: null }));
+    expect(starting()).toBe("2026-10-19");
+    // Every day stays allowed; a meeting without a series takes any frequency.
+    await call("PUT", `/meetings/${id}`, sync1("Standup", { frequency: { period: "daily" } }));
+    expect(starting()).toBe("2026-10-19");
+    const plain = (await call("POST", "/meetings", sync1("Plain"))) as { id: string };
+    expect(await status("PUT", `/meetings/${plain.id}`, monthly)).toBe(200);
   });
 });
 

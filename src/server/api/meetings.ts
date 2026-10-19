@@ -255,6 +255,22 @@ function weekStartOf(db: Db, userId: string, date: LocalDate): LocalDate {
   return addDays(date, -((weekdayOf(date) - weekStart + 7) % 7));
 }
 
+/**
+ * A series repeats every day or every N weeks (rule 1); its periods count from
+ * its first instance (rule 10). Another frequency or start date would give its
+ * instances other period keys, and the push would delete them.
+ */
+function seriesRules(
+  db: Db,
+  userId: string,
+  f: MeetingInput["frequency"],
+  firstDate: LocalDate | null,
+): LocalDate | null {
+  if (f.period === "monthly" || (f.period === "daily" && (f.everyDays ?? 1) > 1))
+    badRequest("frequency", "A recurring meeting can repeat every day or every N weeks");
+  return f.period === "weekly" && firstDate ? weekStartOf(db, userId, firstDate) : firstDate;
+}
+
 function seriesTarget(db: Db, m: MeetingRow) {
   return one<{ account_id: string; provider_id: string }>(
     db,
@@ -389,6 +405,8 @@ export function meetingRoutes(db: Db, sync: SyncService, now: () => number): Hon
       row.rules_changed_at = rulesChangedAt(db, old, row, attendees, body, t);
       row.series_event_id = old.series_event_id;
       row.series_calendar_id = old.series_calendar_id;
+      if (old.series_event_id)
+        row.starting = seriesRules(db, user.id, body.frequency, old.starting);
     }
     const zone =
       one<{ time_zone: string }>(db, "SELECT time_zone FROM users WHERE id = ?", user.id)
@@ -455,12 +473,7 @@ export function meetingRoutes(db: Db, sync: SyncService, now: () => number): Hon
     };
     if (series) {
       // An adopted series keeps its id; its instances are placed from the next sync on.
-      // Its periods count from its first instance, as the series repeats (rule 10).
-      const f = body.frequency;
-      if (f.period === "monthly" || (f.period === "daily" && (f.everyDays ?? 1) > 1))
-        badRequest("frequency", "A recurring meeting can repeat every day or every N weeks");
-      row.starting =
-        f.period === "weekly" ? weekStartOf(db, user.id, series.firstDate) : series.firstDate;
+      row.starting = seriesRules(db, user.id, body.frequency, series.firstDate);
       await sync.exclusive(user.id, async (pool) => {
         await markSeries(db, pool, row, user.id);
         tx(db, create);
@@ -478,6 +491,7 @@ export function meetingRoutes(db: Db, sync: SyncService, now: () => number): Hon
     const body = await jsonBody(c, meetingInput);
     const t = now();
     const { row, attendees } = rowFrom(db, user.id, old.id, body, t, old.rank);
+    if (old.series_event_id) row.starting = seriesRules(db, user.id, body.frequency, old.starting);
     const rulesChanged = rulesChangedAt(db, old, row, attendees, body, t);
     tx(db, () => {
       if (body.hoursMode === "itemSpecific" && body.itemHours)
