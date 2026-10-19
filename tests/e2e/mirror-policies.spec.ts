@@ -133,7 +133,7 @@ test("the policy list filters by account; an edit rewrites and moves the copies;
   );
   const moved = await eventually(
     () => week(side),
-    (l) => expect(copies(l).map((e) => e.summary)).toEqual(["Dentist", "Personal commitment"]),
+    (l) => expect(copies(l).map((e) => e.summary)).toEqual(["Dentist", "🏠 Personal commitment"]),
   );
   expect(copies(moved)[0]?.description).toContain("Bring the card");
   await page.reload();
