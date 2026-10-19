@@ -29,6 +29,7 @@ import { eventsFromObject } from "../../src/server/providers/caldav.ts";
 import { getSettings } from "../../src/server/settings.ts";
 import { cacheEvent } from "../../src/server/sync/pull.ts";
 import type { SyncService } from "../../src/server/sync/service.ts";
+import { localToUtc } from "../../src/shared/time.ts";
 
 const DAY = 86_400_000;
 const T0 = Date.parse("2026-10-19T08:00:00Z"); // a Monday
@@ -329,6 +330,66 @@ describe("series adoption", () => {
     const twice = withSeries("FREQ=WEEKLY;BYDAY=TU,TH");
     expect(await twice.list()).toEqual([]);
   });
+
+  // Google instance ids carry the recurrence id as a UTC time; in Los Angeles a
+  // 16:30 instance is 23:30Z in summer and 00:30Z the next UTC day in winter.
+  // The clocks go back on 2026-11-01, inside the pull window.
+  it.each([
+    { series: "weekly", step: 7, everyWeeks: 1, ids: true },
+    { series: "daily", step: 1, everyWeeks: "daily", ids: true },
+    { series: "weekly", step: 7, everyWeeks: 1, ids: false },
+  ])(
+    "reads a $series 16:30 Los Angeles series across a DST change (recurrence ids: $ids)",
+    async ({ step, everyWeeks, ids }) => {
+      const s = setup();
+      run(s.db, "UPDATE users SET time_zone = 'America/Los_Angeles' WHERE id = ?", s.owner.id);
+      run(
+        s.db,
+        `INSERT INTO accounts (id, user_id, provider, external_id, email, credentials, created_at)
+         VALUES ('acc', ?, 'google', 'owner', 'owner@example.com', '', ?)`,
+        s.owner.id,
+        T0,
+      );
+      run(
+        s.db,
+        "INSERT INTO calendars (id, account_id, provider_id, name, is_primary) VALUES ('cal', 'acc', 'cal', 'Work', 1)",
+      );
+      for (let day = 0; day < 28; day += step) {
+        const date = Date.UTC(2026, 9, 20 + day);
+        const start = localToUtc(
+          "America/Los_Angeles",
+          new Date(date).toISOString().slice(0, 10),
+          990,
+        );
+        const rid = new Date(start).toISOString().replace(/[-:]|\.\d+/g, "");
+        cacheEvent(s.db, "cal", {
+          id: ids ? `standup_${rid}` : `standup-${day}`,
+          cancelled: false,
+          etag: null,
+          summary: "Standup",
+          description: "",
+          location: "",
+          start,
+          end: start + 30 * 60_000,
+          allDay: false,
+          busy: true,
+          eventType: "default",
+          selfResponse: "accepted",
+          attendeeCount: 2,
+          attendees: ["owner@example.com", "dana@example.com"],
+          organizerSelf: true,
+          recurringId: "standup",
+          colorId: null,
+          updated: null,
+          privateProps: {},
+        });
+      }
+      const { series } = (await s.call("GET", "/meetings/series")) as {
+        series: { everyWeeks: number | "daily"; idealTime: string }[];
+      };
+      expect(series.map((x) => [x.everyWeeks, x.idealTime])).toEqual([[everyWeeks, "16:30"]]);
+    },
+  );
 });
 
 describe("attendee hours", () => {

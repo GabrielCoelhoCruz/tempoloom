@@ -1,7 +1,7 @@
 // Recurring meetings the user organizes that can become flexible meetings
 // (meetings-flexible.md rules 1 and 3; planning-notifications.md NTF-30).
 import { createHash } from "node:crypto";
-import { type LocalDate, utcToLocal, weekdayOf } from "../shared/time.ts";
+import { diffDays, type LocalDate, utcToLocal, weekdayOf } from "../shared/time.ts";
 import { all, type Db, one } from "./db.ts";
 
 export interface Series {
@@ -29,31 +29,40 @@ export const seriesKey = (calendarId: string, seriesId: string) =>
 const pad = (n: number) => String(n).padStart(2, "0");
 
 /**
- * The date of an instance as the series recurrence rule makes it: the date in
- * its recurrence id (CalDAV `<url>#<id>`, Google `<series>_<id>`). A moved
- * instance keeps it. The planner counts the instances' periods from the same date.
+ * The local date of an instance as the series recurrence rule makes it: the
+ * date in its recurrence id (CalDAV `<url>#<id>`, Google `<series>_<id>`). A
+ * moved instance keeps it. A UTC recurrence id (`...T003000Z`) becomes a date
+ * in the user's zone, so a meeting near UTC midnight keeps its day across a
+ * DST change; a date or floating time is already local. Without a recurrence
+ * id, the local date of the instance's start. The planner counts the
+ * instances' periods from the same date.
  */
-function ruleDay(eventId: string): number | null {
+function ruleDate(zone: string, eventId: string, startMs: number): LocalDate {
   const m =
-    /#(\d{4})-?(\d{2})-?(\d{2})/.exec(eventId) ??
-    /_(\d{4})(\d{2})(\d{2})(?:T\d{6}Z?)?$/.exec(eventId);
-  return m ? Date.parse(`${m[1]}-${m[2]}-${m[3]}T00:00:00Z`) / 86_400_000 : null;
+    /#(\d{4})-?(\d{2})-?(\d{2})(?:T(\d{2}):?(\d{2}):?(\d{2})(Z)?)?/.exec(eventId) ??
+    /_(\d{4})(\d{2})(\d{2})(?:T(\d{2})(\d{2})(\d{2})(Z)?)?$/.exec(eventId);
+  if (!m) return utcToLocal(zone, startMs).date;
+  const [, y, mo, d, h, mi, sec, z] = m;
+  if (!z) return `${y}-${mo}-${d}`;
+  return utcToLocal(zone, Date.parse(`${y}-${mo}-${d}T${h}:${mi}:${sec}Z`)).date;
 }
 
 /**
  * The frequency of a series from its recurrence rule (rule 1): the cache keeps
- * the instances the rule makes for a year, and their smallest step is the
- * rule's FREQ and INTERVAL; a cancelled instance only makes one step longer.
- * Null when the rule repeats neither every day nor every N weeks (two days a
- * week, monthly): a meeting cannot keep one instance in each of its periods.
- * An id without a recurrence id falls back to the instance's start day; with
- * one instance only, the series counts as weekly.
+ * the instances the rule makes in the pull window (120 days), and their
+ * smallest step in local days is the rule's FREQ and INTERVAL; a cancelled
+ * instance only makes one step longer. Null when the rule repeats neither
+ * every day nor every N weeks (monthly, or weekly on two days that are not
+ * next to each other): a meeting cannot keep one instance in each of its
+ * periods. Two adjacent days a week (MO,TU) read as daily; the user then sets
+ * the days on the form. With one instance only, the series counts as weekly.
  */
-function seriesFrequency(list: { event_id: string; start_ms: number }[]): number | "daily" | null {
-  const days = [
-    ...new Set(list.map((r) => ruleDay(r.event_id) ?? Math.floor(r.start_ms / 86_400_000))),
-  ].sort((a, b) => a - b);
-  const steps = days.slice(1).map((d, i) => d - (days[i] ?? d));
+function seriesFrequency(
+  zone: string,
+  list: { event_id: string; start_ms: number }[],
+): number | "daily" | null {
+  const dates = [...new Set(list.map((r) => ruleDate(zone, r.event_id, r.start_ms)))].sort();
+  const steps = dates.slice(1).map((d, i) => diffDays(dates[i] ?? d, d));
   if (steps.length === 0) return 1;
   const step = Math.min(...steps);
   if (step === 1) return "daily";
@@ -107,7 +116,7 @@ export function adoptableSeries(db: Db, userId: string, now: number): Series[] {
   for (const list of groups.values()) {
     const [first] = list;
     if (!first) continue;
-    const everyWeeks = seriesFrequency(list);
+    const everyWeeks = seriesFrequency(user.time_zone, list);
     if (everyWeeks === null) continue;
     const attendees = (JSON.parse(first.attendees) as string[]).filter(
       (e) => e !== user.email.toLowerCase(),
