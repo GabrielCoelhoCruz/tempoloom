@@ -6,7 +6,7 @@ import type { AppEnv } from "../app.ts";
 import { all, type Db, one, run } from "../db.ts";
 import { jsonBody, notFound } from "../http.ts";
 import { instanceLimit, limitMessage } from "../limits.ts";
-import { requestRepaint } from "../planner/categories.ts";
+import { requestRepaint } from "../planner/repaint.ts";
 import { getSettings, updateSettings } from "../settings.ts";
 import type { SyncService } from "../sync/service.ts";
 
@@ -37,7 +37,7 @@ export function settingsRoutes(db: Db, sync: SyncService, now: () => number): Ho
         429,
       );
     scopeChanges.set(user.id, [...recent, now()]);
-    requestRepaint(user.id);
+    requestRepaint(db, user.id, now());
     sync.request(user.id);
     return c.json({ ok: true });
   });

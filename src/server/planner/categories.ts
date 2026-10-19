@@ -1,10 +1,9 @@
 // Categories and colors of events (docs/specs/events-categories-and-colors.md).
 import { type Category, categoryOf } from "../../scheduler/categories.ts";
-import { all, type Db, one, run } from "../db.ts";
-import type { CalendarProvider } from "../providers/types.ts";
+import { all, type Db, one } from "../db.ts";
 import type { Settings } from "../settings.ts";
-import { cacheEvent } from "../sync/pull.ts";
 import { MANAGED_PROP } from "./push.ts";
+import type { Paint } from "./repaint.ts";
 
 const DAY = 86_400_000;
 
@@ -63,7 +62,7 @@ export interface CachedEvent {
   event_type: string;
   attendees: string;
   recurring_id: string | null;
-  rsvp_note?: string;
+  rsvp_note: string;
 }
 
 /** The category of an external event from the cache. */
@@ -72,7 +71,7 @@ export function externalCategory(ctx: CategoryContext, e: CachedEvent): Category
     {
       title: e.summary,
       description: e.description,
-      rsvpNote: e.rsvp_note ?? "",
+      rsvpNote: e.rsvp_note,
       start: e.start_ms,
       end: e.end_ms,
       eventType: e.event_type,
@@ -94,18 +93,6 @@ export function externalCategory(ctx: CategoryContext, e: CachedEvent): Category
     : category;
 }
 
-const repaints = new Set<string>();
-
-/** Rule 12: the user asked to repaint every event; the next run does it once. */
-export function requestRepaint(userId: string): void {
-  repaints.add(userId);
-}
-
-/** True once after requestRepaint. */
-export function takeRepaint(userId: string): boolean {
-  return repaints.delete(userId);
-}
-
 /** The color id a category gets, or null for the calendar's own color. */
 export function colorFor(settings: Settings, category: Category): string | null {
   const c = settings.categoryColors[category];
@@ -113,31 +100,22 @@ export function colorFor(settings: Settings, category: Category): string | null 
 }
 
 /**
- * Rule 7: with the scope "all events", paints external events on the user's
- * writable calendars, from 90 days back to the end of the window. Only the
- * color changes. Events the server refuses are skipped (rule 10).
+ * Rule 7: with the scope "all events", the external events on the user's
+ * writable calendars, from 90 days back to the end of the window, whose color
+ * is not their category color. A series is painted once, as a whole.
  */
-export async function paintExternal(
+export function externalPaints(
   db: Db,
   userId: string,
   settings: Settings,
-  provider: (accountId: string) => CalendarProvider,
   now: number,
   windowEnd: number,
-): Promise<number> {
-  if (settings.colorScope !== "all_events") return 0;
+): Paint[] {
+  if (settings.colorScope !== "all_events") return [];
   const ctx = categoryContext(db, userId);
-  const rows = all<
-    CachedEvent & {
-      color_id: string | null;
-      etag: string | null;
-      private_props: string;
-      account_id: string;
-      provider_id: string;
-    }
-  >(
+  const rows = all<CachedEvent & { color_id: string | null; private_props: string }>(
     db,
-    `SELECT e.*, c.account_id, c.provider_id FROM events e
+    `SELECT e.* FROM events e
        JOIN calendars c ON c.id = e.calendar_id JOIN accounts a ON a.id = c.account_id
      WHERE a.user_id = ? AND a.status = 'ok' AND c.writable = 1 AND e.end_ms > ? AND e.start_ms < ?
      ORDER BY e.start_ms`,
@@ -146,36 +124,16 @@ export async function paintExternal(
     windowEnd,
   );
   const done = new Set<string>();
-  let painted = 0;
+  const out: Paint[] = [];
   for (const e of rows) {
     const props = JSON.parse(e.private_props) as Record<string, string>;
     if (props[MANAGED_PROP] === "1" || props.tl_booking === "1") continue;
     const color = colorFor(settings, externalCategory(ctx, e));
     if ((e.color_id ?? null) === color) continue;
-    // A series is painted once, as a whole.
     const target = e.recurring_id ?? e.event_id;
     if (done.has(`${e.calendar_id}:${target}`)) continue;
     done.add(`${e.calendar_id}:${target}`);
-    try {
-      const ev = await provider(e.account_id).setColor(
-        e.provider_id,
-        target,
-        color,
-        e.recurring_id ? null : e.etag,
-      );
-      if (e.recurring_id) {
-        run(
-          db,
-          "UPDATE events SET color_id = ? WHERE calendar_id = ? AND recurring_id = ?",
-          color,
-          e.calendar_id,
-          e.recurring_id,
-        );
-      } else cacheEvent(db, e.calendar_id, ev);
-      painted++;
-    } catch {
-      // Rule 10: some events cannot change color; painting never stops a run (rule 16).
-    }
+    out.push({ calendarId: e.calendar_id, eventId: target, series: !!e.recurring_id, color });
   }
-  return painted;
+  return out;
 }

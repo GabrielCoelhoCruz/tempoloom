@@ -4,6 +4,7 @@ import { enforceCalendarLimit } from "../limits.ts";
 import { oooOwnersOf, syncOutOfOffice } from "../ooo.ts";
 import { observeMeetings } from "../planner/meeting-log.ts";
 import { meetingPeers } from "../planner/meetings.ts";
+import { finishPaint, type PaintJob, writePaint } from "../planner/repaint.ts";
 import { replanUser } from "../planner/replan.ts";
 import { enforceAgendas } from "../policies/agendas.ts";
 import { applyPolicies } from "../policies/apply.ts";
@@ -22,6 +23,8 @@ export interface SyncServiceDeps extends ProviderDeps {
 }
 
 const DEBOUNCE_MS = 300;
+/** Color writes per step of a repaint job; runs asked for meanwhile go between steps. */
+const PAINT_STEP = 20;
 const CALENDAR_LIST_EVERY_MS = 10 * 60_000;
 const REFRESH_MS = 86_400_000;
 const MIRROR_RECONCILE_MS = 12 * 3_600_000;
@@ -31,6 +34,8 @@ export class SyncService {
   readonly #tail = new Map<string, Promise<void>>();
   readonly #queued = new Map<string, Promise<void>>();
   readonly #timers = new Map<string, NodeJS.Timeout>();
+  /** The newest repaint job per user; an older job stops when a newer one starts. */
+  readonly #paintJobs = new Map<string, PaintJob>();
   #interval: NodeJS.Timeout | undefined;
   #stopped = false;
   readonly #listeners = new Set<(userId: string) => void>();
@@ -181,6 +186,34 @@ export class SyncService {
     }
   }
 
+  /**
+   * Writes the colors a run listed (events-categories-and-colors.md rule 16):
+   * a background job, queued after the run in steps, so a run asked for while
+   * it paints goes before the next step and is never delayed by a whole repaint.
+   */
+  #paint(userId: string, job: PaintJob): void {
+    if (job.paints.length === 0 && job.requestedAt === null) return;
+    this.#paintJobs.set(userId, job);
+    const pool = this.#pool(userId);
+    const ctx = { db: this.#deps.db, provider: (id: string) => pool.get(id) };
+    let done = true;
+    const step = (from: number) =>
+      void this.#enqueue(userId, async () => {
+        if (this.#stopped || this.#paintJobs.get(userId) !== job) return;
+        try {
+          for (const p of job.paints.slice(from, from + PAINT_STEP))
+            if (!(await writePaint(ctx, p))) done = false;
+        } catch (err) {
+          done = false;
+          this.#log(`repaint failed for user ${userId}`, err);
+        }
+        if (from + PAINT_STEP < job.paints.length) return step(from + PAINT_STEP);
+        this.#paintJobs.delete(userId);
+        finishPaint(this.#deps.db, userId, job, done);
+      });
+    step(0);
+  }
+
   async #run(userId: string): Promise<void> {
     const { db } = this.#deps;
     try {
@@ -311,6 +344,7 @@ export class SyncService {
       );
       if (fullMirror)
         run(db, "UPDATE users SET mirror_reconciled_at = ? WHERE id = ?", now, userId);
+      if (result) this.#paint(userId, result.paint);
       // Team out-of-office calendars this user owns (teams-ooo-calendar.md).
       await syncOutOfOffice(db, userId, pool, this.#deps.now());
       // Flexible meetings join calendars of several users (meetings-flexible.md
