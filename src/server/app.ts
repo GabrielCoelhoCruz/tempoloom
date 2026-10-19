@@ -24,6 +24,7 @@ import { bookingRoutes, publicBookingRoutes } from "./api/booking.ts";
 import { brandingRoutes, publicBrandingRoutes } from "./api/branding.ts";
 import { delegationGuard, delegationRoutes } from "./api/delegation.ts";
 import { helpRoutes } from "./api/help.ts";
+import { insightRoutes } from "./api/insights.ts";
 import { itemRoutes } from "./api/items.ts";
 import { meetingRoutes } from "./api/meetings.ts";
 import { oooRoutes } from "./api/ooo.ts";
@@ -390,6 +391,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
     ),
   );
   app.route("/api", helpRoutes(db, config.SUPPORT_URL, now));
+  app.route("/api", insightRoutes(db, now));
   app.route(
     "/mcp",
     mcpRoutes({

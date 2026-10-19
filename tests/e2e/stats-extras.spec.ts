@@ -49,7 +49,7 @@ test("stats split solo work into deep and shallow, count breaks, travel and time
     title: "Site visit",
     start: at(day(3), "10:00"),
     end: at(day(3), "11:00"),
-    location: "Hauptstrasse 1, 10115 Berlin",
+    location: "Hauptstrasse 1, 10115 Berlin, Germany",
   });
   await outOfOffice(cal.calendarId, "Vacation", { from: day(4), to: day(5) });
 
