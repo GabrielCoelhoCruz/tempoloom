@@ -3,10 +3,13 @@ import { randomUUID } from "node:crypto";
 import { Hono } from "hono";
 import { z } from "zod";
 import { plan } from "../../scheduler/plan.ts";
+import { defaultEventSettings, readEventSettings } from "../../shared/event-settings.ts";
 import { addDays, type LocalDate, weekdayOf } from "../../shared/time.ts";
 import type { AppEnv } from "../app.ts";
 import { all, type Db, one, run } from "../db.ts";
+import { editedEventSettings, eventSettingsInput, newEventSettings } from "../event-settings.ts";
 import { jsonBody, notFound } from "../http.ts";
+import { createItemHours, dropItemHours, itemHoursSchema, saveItemHours } from "../item-hours.ts";
 import { adoptableSeries } from "../meeting-series.ts";
 import { logChange } from "../planner/meeting-log.ts";
 import {
@@ -34,25 +37,35 @@ const meetingInput = z.object({
     .array(z.object({ email: z.email(), required: z.boolean().default(true) }))
     .min(1)
     .max(50),
+  // Every N days, weeks or months, N 1 to 52 (meetings-flexible.md `frequency`).
   frequency: z.discriminatedUnion("period", [
-    z.object({ period: z.literal("daily") }),
+    z.object({ period: z.literal("daily"), everyDays: z.number().int().min(1).max(52).optional() }),
     z.object({
       period: z.literal("weekly"),
       everyWeeks: z.number().int().min(1).max(52),
       idealDays: z.array(z.number().int().min(1).max(7)).min(1).max(7),
     }),
+    z.object({
+      period: z.literal("monthly"),
+      everyMonths: z.number().int().min(1).max(52).optional(),
+      dayOfMonth: z.number().int().min(1).max(31),
+    }),
   ]),
   idealTime: hhmm,
   durationMinutes: fiveMinutes,
   shortestMinutes: fiveMinutes.optional(),
-  hoursMode: z.enum(["everyone", "organizer"]).default("everyone"),
+  /** Rule 11: `itemSpecific` uses `itemHours` only. */
+  hoursMode: z.enum(["everyone", "organizer", "itemSpecific"]).default("everyone"),
   hoursSetId: z.string().optional(),
+  itemHours: itemHoursSchema.optional(),
   starting: z.iso.date().nullable().default(null),
   level: z.number().int().min(1).max(4).default(2),
   defense: z.enum(["adaptive", "busy", "free"]).default("adaptive"),
   whenUnplaceable: z.enum(["remove", "keep_as_conflict"]).default("keep_as_conflict"),
   leadHours: z.number().int().min(0).max(168).default(12),
   autoReschedule: z.enum(["none", "conservative", "moderate", "aggressive"]).default("moderate"),
+  /** Visibility, reminders and the calendar of the occurrences (`visibility`, `reminders`, `targetCalendar`). */
+  eventSettings: eventSettingsInput.optional(),
   /** Attach the rules to this recurring series (meetings-flexible.md rule 1). */
   series: z.object({ calendarId: z.string(), seriesId: z.string() }).optional(),
 });
@@ -72,6 +85,8 @@ function rowFrom(
     .filter((a, i, list) => a.email !== email && list.findIndex((x) => x.email === a.email) === i);
   if (attendees.length === 0) badRequest("attendees", "Invite at least one other person");
   const shortest = b.shortestMinutes ?? b.durationMinutes;
+  if (b.hoursMode === "itemSpecific" && !b.itemHours)
+    badRequest("itemHours", "Choose the days and times of the item-specific hours");
   if (shortest > b.durationMinutes)
     badRequest("shortestMinutes", "The shortest length must not be above the duration");
   const [h, m] = b.idealTime.split(":").map(Number) as [number, number];
@@ -90,7 +105,8 @@ function rowFrom(
       ideal_minute: h * 60 + m,
       duration_minutes: b.durationMinutes,
       shortest_minutes: shortest,
-      hours_mode: b.hoursMode,
+      // Item-specific hours are a private hours set of the meeting, used alone.
+      hours_mode: b.hoursMode === "everyone" ? "everyone" : "organizer",
       hours_set_id: hoursSetId(db, userId, b.hoursSetId, "meeting"),
       starting: b.starting,
       defense: b.defense,
@@ -101,6 +117,7 @@ function rowFrom(
       auto_reschedule: b.autoReschedule,
       series_calendar_id: b.series?.calendarId ?? null,
       series_event_id: b.series?.seriesId ?? null,
+      event_settings: JSON.stringify(newEventSettings(db, userId, "meeting", b.eventSettings)),
     },
   };
 }
@@ -126,6 +143,7 @@ function save(db: Db, row: MeetingRow, attendees: Attendee[], insert: boolean): 
     "auto_reschedule",
     "series_calendar_id",
     "series_event_id",
+    "event_settings",
   ] as const;
   const values = cols.map((k) => row[k]);
   if (insert) {
@@ -241,6 +259,13 @@ export function meetingRoutes(db: Db, sync: SyncService, now: () => number): Hon
     ).map((m) => ({
       ...m,
       frequency: JSON.parse(m.frequency) as unknown,
+      item_hours:
+        one<{ weekly: string }>(
+          db,
+          "SELECT weekly FROM hours_sets WHERE id = ? AND item_specific = 1",
+          m.hours_set_id,
+        )?.weekly ?? null,
+      event_settings: readEventSettings(m.event_settings, defaultEventSettings("meeting")),
       attendees: attendeesOf(db, m.id).map((a) => ({ ...a, ...person(db, a.email) })),
       occurrences: all<{
         id: string;
@@ -306,6 +331,10 @@ export function meetingRoutes(db: Db, sync: SyncService, now: () => number): Hon
         user.id,
       )?.planned_at ?? 0;
     const { snapshot } = loadSnapshot(db, user.id, zone, getSettings(db, user.id), t, last);
+    if (body.hoursMode === "itemSpecific" && body.itemHours) {
+      row.hours_set_id = "preview-hours";
+      snapshot.hours = { ...snapshot.hours, [row.hours_set_id]: body.itemHours };
+    }
     const item = meetingItem(db, user.id, row, attendees, t, snapshot.windowEnd, last, new Map());
     const result = plan({ ...snapshot, meetings: [...snapshot.meetings, item] });
     const before = new Map(snapshot.current.map((p) => [p.key, p]));
@@ -341,6 +370,8 @@ export function meetingRoutes(db: Db, sync: SyncService, now: () => number): Hon
       now(),
       nextRank(db, "meetings", user.id, body.level),
     );
+    if (body.hoursMode === "itemSpecific" && body.itemHours)
+      row.hours_set_id = createItemHours(db, user.id, row.title, body.itemHours);
     if (series) {
       // An adopted series keeps its id; its instances are placed from the next sync on.
       const everyWeeks = body.frequency.period === "weekly" ? body.frequency.everyWeeks : 1;
@@ -361,6 +392,8 @@ export function meetingRoutes(db: Db, sync: SyncService, now: () => number): Hon
     const old = own(c.req.param("id"), user.id);
     const body = await jsonBody(c, meetingInput);
     const { row, attendees } = rowFrom(db, user.id, old.id, body, now(), old.rank);
+    if (body.hoursMode === "itemSpecific" && body.itemHours)
+      row.hours_set_id = saveItemHours(db, user.id, old.hours_set_id, row.title, body.itemHours);
     save(
       db,
       {
@@ -368,10 +401,18 @@ export function meetingRoutes(db: Db, sync: SyncService, now: () => number): Hon
         created_at: old.created_at,
         series_calendar_id: old.series_calendar_id,
         series_event_id: old.series_event_id,
+        // The calendar is set at creation only (`targetCalendar`).
+        event_settings: JSON.stringify(
+          editedEventSettings(
+            readEventSettings(old.event_settings, defaultEventSettings("meeting")),
+            body.eventSettings,
+          ),
+        ),
       },
       attendees,
       false,
     );
+    if (row.hours_set_id !== old.hours_set_id) dropItemHours(db, old.hours_set_id);
     changed(user.id);
     return c.json({ ok: true });
   });
@@ -497,6 +538,7 @@ export function meetingRoutes(db: Db, sync: SyncService, now: () => number): Hon
     await sync.exclusive(user.id, async (pool) => {
       if (m.series_event_id) await releaseSeries(db, pool, m);
       run(db, "DELETE FROM meetings WHERE id = ?", m.id);
+      dropItemHours(db, m.hours_set_id);
     });
     sync.request(user.id);
     for (const id of peers) sync.request(id);

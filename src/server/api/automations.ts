@@ -183,8 +183,20 @@ export function automationRoutes(db: Db, sync: SyncService): Hono<AppEnv> {
           run(db, `UPDATE ${t.table} SET rank = ? WHERE id = ?`, rank, id);
           return;
         }
+        if (t.table === "meetings") {
+          // A meeting whose rank or priority changed is placed again (meetings-flexible.md
+          // edge case 9: the lower rank wins a slot that two meetings want).
+          run(
+            db,
+            `UPDATE meetings SET rules_changed_at = ? WHERE id = ? AND (level <> ? OR rank <> ?)`,
+            Date.now(),
+            id,
+            body.level,
+            rank,
+          );
+          meetings = true;
+        }
         run(db, `UPDATE ${t.table} SET level = ?, rank = ? WHERE id = ?`, body.level, rank, id);
-        if (t.table === "meetings") meetings = true;
       });
     });
     // Rule 18: a new order is a saved change; the attendees' plans hold the meeting too.

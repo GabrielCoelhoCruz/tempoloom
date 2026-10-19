@@ -696,25 +696,58 @@ interface Period {
   ideal: LocalDate[];
 }
 
+const monthIndex = (d: LocalDate) => Number(d.slice(0, 4)) * 12 + Number(d.slice(5, 7)) - 1;
+
+/**
+ * Rule 10 and the period terms: one period per N days, weeks or months,
+ * counted from `starting` or else from the day the meeting was created, so the
+ * periods stay the same from one run to the next.
+ */
 function meetingPeriods(ctx: Ctx, m: MeetingItem): Period[] {
   const { s } = ctx;
   const first = utcToLocal(s.zone, ctx.earliest).date;
   const last = utcToLocal(s.zone, ctx.end - 1).date;
   const from = m.starting && m.starting > first ? m.starting : first;
-  const out: Period[] = [];
-  if (m.frequency.period === "daily") {
-    for (let d = from; d <= last; d = addDays(d, 1)) out.push({ start: d, days: [d], ideal: [d] });
-    return out;
-  }
-  const { everyWeeks, idealDays } = m.frequency;
-  const anchor = weekStartDate(ctx, m.starting ?? first);
-  for (let ws = weekStartDate(ctx, from); ws <= last; ws = addDays(ws, 7)) {
-    if ((dayDiff(ws, anchor) / 7) % everyWeeks !== 0) continue;
+  const anchorDate = m.starting ?? utcToLocal(s.zone, m.createdAt).date;
+  const inRange = (start: LocalDate, n: number) => {
     const days: LocalDate[] = [];
-    for (let i = 0; i < 7; i++) {
-      const d = addDays(ws, i);
+    for (let i = 0; i < n; i++) {
+      const d = addDays(start, i);
       if (d >= from && d <= last) days.push(d);
     }
+    return days;
+  };
+  const out: Period[] = [];
+  const f = m.frequency;
+  if (f.period === "daily") {
+    const every = f.everyDays ?? 1;
+    const back = (((dayDiff(from, anchorDate) % every) + every) % every) as number;
+    for (let ps = addDays(from, -back); ps <= last; ps = addDays(ps, every)) {
+      const days = inRange(ps, every);
+      if (days.length > 0) out.push({ start: ps, days, ideal: days.filter((d) => d === ps) });
+    }
+    return out;
+  }
+  if (f.period === "monthly") {
+    const every = f.everyMonths ?? 1;
+    for (let month = `${from.slice(0, 8)}01`; month <= last; ) {
+      const next = `${addDays(month, 32).slice(0, 8)}01`;
+      if ((((monthIndex(month) - monthIndex(anchorDate)) % every) + every) % every === 0) {
+        const days = inRange(month, dayDiff(next, month));
+        const ideal = monthlyDate(month, { period: "monthly", dayOfMonth: f.dayOfMonth });
+        // Rule 20: a month whose ideal day is past the planning window waits for it.
+        if (days.length > 0 && (!ideal || ideal <= last))
+          out.push({ start: month, days, ideal: days.filter((d) => d === ideal) });
+      }
+      month = next;
+    }
+    return out;
+  }
+  const { everyWeeks, idealDays } = f;
+  const anchor = weekStartDate(ctx, anchorDate);
+  for (let ws = weekStartDate(ctx, from); ws <= last; ws = addDays(ws, 7)) {
+    if ((((dayDiff(ws, anchor) / 7) % everyWeeks) + everyWeeks) % everyWeeks !== 0) continue;
+    const days = inRange(ws, 7);
     out.push({ start: ws, days, ideal: days.filter((d) => idealDays.includes(weekdayOf(d))) });
   }
   return out;

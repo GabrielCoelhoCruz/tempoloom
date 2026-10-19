@@ -26,7 +26,7 @@ export type Visibility = (typeof VISIBILITIES)[number];
 /** Calendar reminders (planning-notifications.md NTF-14): the calendar default, none, or minutes before. */
 export type Reminders = "default" | "none" | number[];
 
-export type SettingsKind = "habit" | "focus_time" | "buffer";
+export type SettingsKind = "habit" | "focus_time" | "buffer" | "meeting";
 
 export interface EventSettings {
   /** One emoji before the title, after the state marker (events-title-emoji.md rule 3). */
@@ -36,7 +36,10 @@ export interface EventSettings {
   reminders: Reminders;
   /** Habits: copied to each event. */
   location: string;
-  /** Habits and focus time: the calendar for new events, set at creation only. Null: the main calendar. */
+  /**
+   * Habits, focus time and flexible meetings: the calendar for new events, set
+   * at creation only. Null: the main calendar.
+   */
   calendarId: string | null;
   /** Focus time: the event description. */
   description: string;
@@ -59,7 +62,7 @@ export function defaultEventSettings(
     emoji: "",
     color: "category",
     visibility: kind === "focus_time" || travel ? "public" : "calendar_default",
-    reminders: kind === "habit" || travel ? "default" : "none",
+    reminders: kind === "habit" || kind === "meeting" || travel ? "default" : "none",
     location: "",
     calendarId: null,
     description: "",

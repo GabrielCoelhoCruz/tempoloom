@@ -97,25 +97,30 @@ export function HoursField({
           </span>
         )}
       </span>
-      {chosen === ITEM && (
-        <fieldset class="wide item-hours" data-testid="item-hours">
-          <legend>Item-specific hours</legend>
-          {DAYS.map((d, i) => (
-            <label class="inline" key={d}>
-              <input type="checkbox" name="itemDays" value={i + 1} />
-              {d}
-            </label>
-          ))}
-          <label class="inline">
-            From
-            <input name="itemFrom" type="time" step={900} defaultValue="09:00" />
-          </label>
-          <label class="inline">
-            To
-            <input name="itemTo" type="time" step={900} defaultValue="17:00" />
-          </label>
-        </fieldset>
-      )}
+      {chosen === ITEM && <ItemHoursFields />}
     </>
+  );
+}
+
+/** The days and one time range of item-specific hours; itemHoursFrom() reads them. */
+export function ItemHoursFields() {
+  return (
+    <fieldset class="wide item-hours" data-testid="item-hours">
+      <legend>Item-specific hours</legend>
+      {DAYS.map((d, i) => (
+        <label class="inline" key={d}>
+          <input type="checkbox" name="itemDays" value={i + 1} />
+          {d}
+        </label>
+      ))}
+      <label class="inline">
+        From
+        <input name="itemFrom" type="time" step={900} defaultValue="09:00" />
+      </label>
+      <label class="inline">
+        To
+        <input name="itemTo" type="time" step={900} defaultValue="17:00" />
+      </label>
+    </fieldset>
   );
 }

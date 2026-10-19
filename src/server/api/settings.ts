@@ -122,7 +122,7 @@ export function settingsRoutes(db: Db, sync: SyncService, now: () => number): Ho
     }
     // HRS-7: a change applies to existing events; re-place everything that uses the set.
     const t = now();
-    for (const table of ["tasks", "habits", "focus_goals"]) {
+    for (const table of ["tasks", "habits", "focus_goals", "meetings"]) {
       run(
         db,
         `UPDATE ${table} SET rules_changed_at = ? WHERE user_id = ? AND hours_set_id = ?`,
@@ -130,6 +130,20 @@ export function settingsRoutes(db: Db, sync: SyncService, now: () => number): Ho
         user.id,
         id,
       );
+    }
+    // MEET-02 rule 5: an attendee's meeting hours limit other people's meetings too.
+    const organizers = all<{ id: string; user_id: string }>(
+      db,
+      `SELECT m.id, m.user_id FROM meetings m JOIN meeting_attendees a ON a.meeting_id = m.id
+       WHERE a.email = ? AND a.required = 1 AND m.hours_mode = 'everyone' AND m.user_id <> ?
+         AND EXISTS (SELECT 1 FROM hours_sets h WHERE h.id = ? AND h.kind IN ('meeting', 'work'))`,
+      user.email,
+      user.id,
+      id,
+    );
+    for (const m of organizers) {
+      run(db, "UPDATE meetings SET rules_changed_at = ? WHERE id = ?", t, m.id);
+      sync.request(m.user_id);
     }
     sync.request(user.id);
     return c.json({ ok: true });

@@ -78,6 +78,7 @@ function instanceDate(eventId: string): LocalDate | null {
 function periodOf(m: MeetingRow, date: LocalDate, weekStart: 1 | 7): LocalDate {
   const f = JSON.parse(m.frequency) as { period: string };
   if (f.period === "daily") return date;
+  if (f.period === "monthly") return `${date.slice(0, 8)}01` as LocalDate;
   return addDays(date, -((weekdayOf(date) - weekStart + 7) % 7));
 }
 

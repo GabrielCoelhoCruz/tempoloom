@@ -89,6 +89,15 @@ export function computeStats(db: Db, userId: string, from: string, to: string) {
       ).category,
     ]),
   );
+  // A flexible meeting is a one-to-one or a group meeting by its people (organizer included).
+  const meetingPeople = new Map(
+    all<{ id: string; n: number }>(
+      db,
+      `SELECT m.id, count(a.email) + 1 AS n FROM meetings m
+         LEFT JOIN meeting_attendees a ON a.meeting_id = m.id WHERE m.user_id = ? GROUP BY m.id`,
+      userId,
+    ).map((m) => [m.id, m.n]),
+  );
   for (const m of all<{ kind: string; source_id: string; start_ms: number; end_ms: number }>(
     db,
     "SELECT kind, source_id, start_ms, end_ms FROM managed_events WHERE user_id = ? AND kind <> 'mirror' AND end_ms > ? AND start_ms < ?",
@@ -97,15 +106,19 @@ export function computeStats(db: Db, userId: string, from: string, to: string) {
     end,
   )) {
     const cat: Category =
-      m.kind === "task"
-        ? "tasks"
-        : m.kind === "habit"
-          ? habitKind.get(m.source_id) === "personal"
-            ? "personalHabits"
-            : "workHabits"
-          : m.kind === "focus"
-            ? "focus"
-            : "buffers";
+      m.kind === "meeting"
+        ? (meetingPeople.get(m.source_id) ?? 2) >= 3
+          ? "groupMeetings"
+          : "oneOnOne"
+        : m.kind === "task"
+          ? "tasks"
+          : m.kind === "habit"
+            ? habitKind.get(m.source_id) === "personal"
+              ? "personalHabits"
+              : "workHabits"
+            : m.kind === "focus"
+              ? "focus"
+              : "buffers";
     spans.push({ cat, start: m.start_ms, end: m.end_ms });
   }
 

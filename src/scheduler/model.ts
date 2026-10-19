@@ -97,6 +97,17 @@ export type HabitFrequency =
   | { period: "monthly"; dayOfMonth: number }
   | { period: "monthly"; nth: 1 | 2 | 3 | 4 | 5 | "last"; weekday: number };
 
+/**
+ * How often a flexible meeting happens (meetings-flexible.md `frequency`).
+ * Daily: one per N days. Weekly: one per N weeks. Monthly: one per N months,
+ * ideally on a day of the month. N counts from `starting`, or from the day the
+ * meeting was created.
+ */
+export type MeetingFrequency =
+  | { period: "daily"; everyDays?: number }
+  | { period: "weekly"; everyWeeks: number; idealDays: number[] }
+  | { period: "monthly"; everyMonths?: number; dayOfMonth: number };
+
 /** A flexible meeting (docs/specs/meetings-flexible.md); the user is the organizer. */
 export interface MeetingItem {
   id: string;
@@ -111,8 +122,7 @@ export interface MeetingItem {
   /** Time when a required attendee is busy (rule 13). */
   attendeeBusy: Interval[];
   idealMinute: number;
-  /** Daily: one per day. Weekly: one per N weeks, counted from `starting`. */
-  frequency: { period: "daily" } | { period: "weekly"; everyWeeks: number; idealDays: number[] };
+  frequency: MeetingFrequency;
   durationMinutes: number;
   /** The shortest length the meeting may shrink to (rule 17). */
   shortestMinutes: number;

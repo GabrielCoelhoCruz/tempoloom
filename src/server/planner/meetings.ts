@@ -34,6 +34,8 @@ export interface MeetingRow {
   auto_reschedule: AutoReschedule;
   series_calendar_id: string | null;
   series_event_id: string | null;
+  /** JSON event settings: visibility, reminders, calendar (src/shared/event-settings.ts). */
+  event_settings: string;
 }
 
 /** MEET-02 rule 9: automatic moves per rolling 24 hours. */

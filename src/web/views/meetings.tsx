@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useState } from "preact/hooks";
+import { defaultEventSettings, type EventSettings } from "../../shared/event-settings.ts";
 import { api } from "../lib/api.ts";
 import { duration, formatWhen, hhmm } from "../lib/format.ts";
 import { freeName, templateFromUrl } from "../lib/library.ts";
 import { useLive } from "../lib/live.ts";
 import { LEVEL_NAMES, planNow, zone } from "../lib/state.ts";
+import { EventSettingsFields, eventSettingsFrom } from "./event-settings.tsx";
+import { describeWeekly, ItemHoursFields, itemHoursFrom } from "./hours-field.tsx";
 
 interface Person {
   email: string;
@@ -21,8 +24,11 @@ interface Meeting {
   duration_minutes: number;
   shortest_minutes: number;
   hours_mode: string;
+  starting: string | null;
   defense: string;
-  frequency: { period: "daily" } | { period: "weekly"; everyWeeks: number; idealDays: number[] };
+  frequency: Frequency;
+  item_hours: string | null;
+  event_settings: EventSettings;
   attendees: (Person & { required: boolean })[];
   occurrences: { id: string; key: string; start_ms: number; end_ms: number; locked: number }[];
   problems: {
@@ -34,6 +40,26 @@ interface Meeting {
   changes: Change[];
   series_event_id: string | null;
 }
+
+type Frequency =
+  | { period: "daily"; everyDays?: number }
+  | { period: "weekly"; everyWeeks: number; idealDays: number[] }
+  | { period: "monthly"; everyMonths?: number; dayOfMonth: number };
+
+/** "every 2 weeks, ideally Tue", "every month, ideally on day 15". */
+function describeFrequency(f: Frequency): string {
+  const every = (n: number, unit: string) => (n === 1 ? `every ${unit}` : `every ${n} ${unit}s`);
+  if (f.period === "daily") return every(f.everyDays ?? 1, "day");
+  if (f.period === "monthly")
+    return `${every(f.everyMonths ?? 1, "month")}, ideally on day ${f.dayOfMonth}`;
+  return `${every(f.everyWeeks, "week")}, ideally ${f.idealDays.map((d) => DAY_NAMES[d - 1]).join(", ")}`;
+}
+
+const VISIBILITY: Record<string, string> = {
+  calendar_default: "calendar default visibility",
+  public: "public",
+  private: "private",
+};
 
 interface Change {
   id: number;
@@ -144,6 +170,10 @@ export function Meetings() {
   const [series, setSeries] = useState<Series[]>([]);
   // The recurring meeting the form was filled from (meetings-flexible.md rule 1).
   const [seed, setSeed] = useState<Series | null>(null);
+  const [every, setEvery] = useState("1");
+  const [unit, setUnit] = useState("weeks");
+  const [hoursMode, setHoursMode] = useState("everyone");
+  const [saved, setSaved] = useState(0);
 
   const load = useCallback(async () => {
     setMeetings((await api<{ meetings: Meeting[] }>("GET", "/api/meetings")).meetings);
@@ -167,6 +197,7 @@ export function Meetings() {
   }, [loadSeries]);
   const pick = (x: Series | null) => {
     setSeed(x);
+    setEvery("1");
     setPreview(null);
     if (x) void lookup(x.attendees.join(", "));
     else setPeople([]);
@@ -201,22 +232,33 @@ export function Meetings() {
   const body = (form: HTMLFormElement) => {
     const f = new FormData(form);
     const text = (k: string) => String(f.get(k) ?? "").trim();
-    const every = text("every");
     const days = f.getAll("days").map(Number);
+    const n = Number(f.get("everyN") || 1);
+    const monthDay = Number(f.get("dayOfMonth") || 1);
+    const how = text("every") === "custom" ? text("everyUnit") : text("every");
+    const frequency =
+      how === "daily" || how === "days"
+        ? { period: "daily", everyDays: how === "days" ? n : 1 }
+        : how === "monthly" || how === "months"
+          ? { period: "monthly", everyMonths: how === "months" ? n : 1, dayOfMonth: monthDay }
+          : {
+              period: "weekly",
+              everyWeeks: how === "weeks" ? n : Number(how),
+              idealDays: days.length ? days : [2],
+            };
     return {
       title: text("title"),
       attendees: [
         ...emails(text("guests")).map((email) => ({ email, required: true })),
         ...emails(text("optional")).map((email) => ({ email, required: false })),
       ],
-      frequency:
-        every === "daily"
-          ? { period: "daily" }
-          : { period: "weekly", everyWeeks: Number(every), idealDays: days.length ? days : [2] },
+      frequency,
       idealTime: text("idealTime"),
       durationMinutes: Number(f.get("duration")),
       shortestMinutes: Number(f.get("shortest") || f.get("duration")),
       hoursMode: text("hoursMode"),
+      ...(text("hoursMode") === "itemSpecific" ? { itemHours: itemHoursFrom(f) } : {}),
+      eventSettings: eventSettingsFrom(f),
       level: Number(f.get("level")),
       defense: text("defense"),
       whenUnplaceable: text("whenUnplaceable"),
@@ -239,16 +281,26 @@ export function Meetings() {
       <form
         class="form"
         data-testid="meeting-form"
-        key={seed ? `series-${seed.key}` : template ? `${template.slug}-${meetings.length}` : "new"}
+        // A new key after each save draws a fresh form: reset() would pick the first
+        // option of each select, because Preact sets `selected` as a property only.
+        key={
+          seed
+            ? `series-${seed.key}`
+            : template
+              ? `${template.slug}-${meetings.length}`
+              : `new-${saved}`
+        }
         onSubmit={(e) => {
           e.preventDefault();
           const form = e.currentTarget as HTMLFormElement;
           void act(async () => {
             await api("POST", "/api/meetings", body(form));
-            form.reset();
+            setSaved((n) => n + 1);
             setPeople([]);
             setPreview(null);
             setSeed(null);
+            setEvery("1");
+            setHoursMode("everyone");
             await loadSeries();
           });
         }}
@@ -311,7 +363,7 @@ export function Meetings() {
         </label>
         <label>
           How often
-          <select name="every">
+          <select name="every" onChange={(e) => setEvery(e.currentTarget.value)}>
             <option value="1">Every week</option>
             <option value="2" selected={seed ? seed.everyWeeks === 2 : preset?.everyWeeks === 2}>
               Every 2 weeks
@@ -322,8 +374,36 @@ export function Meetings() {
             <option value="daily" selected={seed?.everyWeeks === "daily"}>
               Every day
             </option>
+            <option value="monthly">Every month</option>
+            <option value="custom">Custom</option>
           </select>
         </label>
+        {every === "custom" && (
+          <>
+            <label>
+              Repeat every
+              <input name="everyN" type="number" min={1} max={52} defaultValue="2" required />
+            </label>
+            <label>
+              Unit
+              <select
+                name="everyUnit"
+                value={unit}
+                onChange={(e) => setUnit(e.currentTarget.value)}
+              >
+                <option value="days">Days</option>
+                <option value="weeks">Weeks</option>
+                <option value="months">Months</option>
+              </select>
+            </label>
+          </>
+        )}
+        {(every === "monthly" || (every === "custom" && unit === "months")) && (
+          <label>
+            Day of the month
+            <input name="dayOfMonth" type="number" min={1} max={31} defaultValue="1" required />
+          </label>
+        )}
         <label>
           Ideal time
           <input
@@ -364,11 +444,17 @@ export function Meetings() {
         </label>
         <label>
           Hours
-          <select name="hoursMode">
+          <select
+            name="hoursMode"
+            value={hoursMode}
+            onChange={(e) => setHoursMode(e.currentTarget.value)}
+          >
             <option value="everyone">Everyone's meeting hours</option>
             <option value="organizer">My meeting hours only</option>
+            <option value="itemSpecific">Item-specific hours</option>
           </select>
         </label>
+        {hoursMode === "itemSpecific" && <ItemHoursFields />}
         <label>
           Show as
           <select name="defense">
@@ -431,6 +517,7 @@ export function Meetings() {
             defaultValue={seed?.description ?? ""}
           />
         </label>
+        <EventSettingsFields kind="meeting" initial={defaultEventSettings("meeting")} />
         <div class="actions wide">
           <button
             type="button"
@@ -485,14 +572,27 @@ export function Meetings() {
                       {m.title} {m.enabled ? null : <span class="badge">off</span>}
                     </div>
                     <div class="meta">
-                      {m.frequency.period === "daily"
-                        ? "every day"
-                        : `every ${m.frequency.everyWeeks === 1 ? "week" : `${m.frequency.everyWeeks} weeks`}, ideally ${m.frequency.idealDays.map((d) => DAY_NAMES[d - 1]).join(", ")}`}{" "}
-                      at {hhmm(m.ideal_minute)} · {duration(m.duration_minutes)}
+                      {describeFrequency(m.frequency)} at {hhmm(m.ideal_minute)} ·{" "}
+                      {duration(m.duration_minutes)}
                       {m.shortest_minutes < m.duration_minutes
                         ? ` (or ${duration(m.shortest_minutes)})`
                         : ""}{" "}
                       · {DEFENSE[m.defense] ?? m.defense}
+                    </div>
+                    <div class="meta" data-testid="meeting-settings">
+                      {m.item_hours
+                        ? `Item-specific hours: ${describeWeekly(JSON.parse(m.item_hours))}`
+                        : m.hours_mode === "organizer"
+                          ? "My meeting hours only"
+                          : "Everyone's meeting hours"}
+                      {m.starting ? ` · starting ${m.starting}` : ""} ·{" "}
+                      {VISIBILITY[m.event_settings.visibility]} ·{" "}
+                      {m.event_settings.reminders === "default"
+                        ? "calendar default reminders"
+                        : m.event_settings.reminders === "none"
+                          ? "no reminders"
+                          : `reminder ${m.event_settings.reminders.join(", ")} min before`}
+                      {m.event_settings.calendarId ? " · own calendar" : ""}
                     </div>
                     <ul class="meta" data-testid="meeting-attendees">
                       {m.attendees.map((a) => (

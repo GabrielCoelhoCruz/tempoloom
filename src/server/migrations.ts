@@ -1143,4 +1143,9 @@ export const MIGRATIONS: readonly string[] = [
   `
   ALTER TABLE meeting_overloads ADD COLUMN rank INTEGER NOT NULL DEFAULT 0;
   `,
+  // 27: event settings of a flexible meeting (meetings-flexible.md visibility,
+  // reminders, targetCalendar).
+  `
+  ALTER TABLE meetings ADD COLUMN event_settings TEXT NOT NULL DEFAULT '{}';
+  `,
 ];

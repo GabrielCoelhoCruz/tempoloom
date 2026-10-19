@@ -389,6 +389,10 @@ export function loadSnapshot(
   for (const m of meetings.rows) {
     notes.set(`meeting:${m.id}`, m.description);
     titles.set(`meeting:${m.id}`, m.title);
+    eventSettings.set(
+      `meeting:${m.id}`,
+      readEventSettings(m.event_settings, defaultEventSettings("meeting")),
+    );
   }
 
   const snapshot: Snapshot = {

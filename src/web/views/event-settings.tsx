@@ -12,6 +12,7 @@ interface Calendar {
   name: string;
   is_primary: number;
   writable: number;
+  email: string;
 }
 
 /** The fields of the form, as the API takes them. Fields the form does not show are left out. */
@@ -52,13 +53,16 @@ export function EventSettingsFields({
     Array.isArray(initial.reminders) ? "custom" : initial.reminders,
   );
   const [calendars, setCalendars] = useState<Calendar[]>([]);
-  const chooseCalendar = kind === "habit" || kind === "focus_time";
+  const chooseCalendar = kind === "habit" || kind === "focus_time" || kind === "meeting";
   useEffect(() => {
     if (!chooseCalendar) return;
+    // A flexible meeting goes to the main calendar of any account (`targetCalendar`).
     void api<{ calendars: Calendar[] }>("GET", "/api/calendars").then((c) =>
-      setCalendars(c.calendars.filter((x) => x.writable === 1)),
+      setCalendars(
+        c.calendars.filter((x) => x.writable === 1 && (kind !== "meeting" || x.is_primary === 1)),
+      ),
     );
-  }, [chooseCalendar]);
+  }, [chooseCalendar, kind]);
 
   return (
     <fieldset class="wide form" data-testid="event-settings">
@@ -147,7 +151,10 @@ export function EventSettingsFields({
             disabled={editing}
             options={[
               ["", "Main calendar"],
-              ...calendars.map((c): [string, string] => [c.id, c.name]),
+              ...calendars.map((c): [string, string] => [
+                c.id,
+                kind === "meeting" ? `${c.name} (${c.email})` : c.name,
+              ]),
             ]}
           />
           {editing && <span class="meta">Set when the automation was created.</span>}
