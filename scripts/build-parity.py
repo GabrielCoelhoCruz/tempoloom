@@ -389,6 +389,47 @@ GOOGLE_ROWS = {
 # --- end s5 ---
 
 # --- s6: booking links ---
+T.update({
+    "s6_questions": "screening questions keep their order, type and required flag; the page and the API refuse a missing answer or a choice outside the list; the answers reach the event",
+    "s6_redirect": "after booking, the confirmation shows and the browser opens the https redirect page 7 seconds later; an http URL is refused",
+    "s6_emails": "booking, reschedule and cancel email the booker and the organizer, each in their own time zone, with reschedule and cancel links for the booker only",
+    "s6_mail_brand": "booking emails carry the link's branding: the team logo linked to the homepage, or no logo",
+    "s6_reminder": "the reminder email reaches the booker once at its time with the message; a booking made before the setting gets it, a cancelled one never",
+    "s6_zone": "the time zone picker lists the browser's and the calendar's zone first and converts the times; the zone and the 12- or 24-hour format survive a reload",
+    "s6_params": "URL parameters choose the zone, duration, day and time; each duration lists its own times; invalid or unoffered values are ignored",
+    "s6_overlay": "a signed-in booker overlays their own events next to the times; the organizer's events never show; signed-out bookers get no switch",
+    "s6_inspect": "organizers inspect every time with a dot per failed check, its person, their own event titles and setting links; inspecting changes nothing and others never see it",
+    "s6_cards": "link cards show title, durations and priority, sit under their page, copy and open the URL, and change the priority so the booking page follows",
+    "s6_groups": "a link group gets its own booking page with its links, refuses a slug in use, and a booker books from it",
+    "s6_groups_edit": "editing a group or moving a link warns before URLs break, old URLs stop working, and deleting a group moves or deletes its links",
+    "s6_oneoff": "a one-off link has its own settings and prefilled invitee, stays unlisted, leaves the source unchanged, counts against its limits, and its creator edits it from its URL",
+    "s6_expiry": "a one-off link shows its 30-day expiry date and, once expired, an expired page with no times and refused bookings",
+    "s6_times": "shared times take up to 5 dates and offered times, as buttons or text with merged ranges and links that open that time, and the last template is kept",
+    "s6_share": "the share menu copies the URL and opens an email draft and the LinkedIn, X and Facebook share pages with it",
+    "s6_embed": "script, object, iframe and URL embeds load the branded booking page on another site; the script sizes its frame; an embedded booking reaches the calendar",
+    "s6_embed_redirect": "embed redirect modes: none stays, top page moves the whole page, frame moves only the frame, and the last mode is remembered",
+})
+E2E.update({
+    393: ["s6_questions"], 394: ["s6_reminder"], 395: ["s6_redirect"], 396: ["s6_cards", "s6_share"],
+    401: ["s6_emails"], 413: ["s6_inspect"], 416: ["s6_zone"], 417: ["s6_zone"],
+    418: ["s6_params", "s6_times"], 419: ["s6_overlay"], 424: ["bp_brand", "s6_mail_brand", "s6_embed"],
+    437: ["s6_groups"], 438: ["s6_groups_edit"], 440: ["s6_oneoff", "s6_expiry"], 441: ["s6_times"],
+    442: ["s6_times"], 443: ["s6_share"], 444: ["s6_embed"], 445: ["s6_embed_redirect"],
+    411: ["s6_params"], 415: ["s6_params"], 423: ["bp_brand", "s6_mail_brand", "s6_embed"],
+})
+E2E_NOTES.update({
+    394: "The server sends due reminders every minute; the test runs the same check at chosen times with the operator CLI (booking-reminders --now)",
+    401: "Emails need SMTP_URL; without it the calendar invitation is the only notice",
+    413: "Each day lists the starts from the first start to the last end of the people's hours; start minutes are not a booking-link check, so no time fails on startInterval",
+    419: "The overlay lists the booker's events of all their connected calendars under each date and marks the times that overlap them",
+    423: "Branding applies to booking pages, booking emails and embeds; a new link group copies the team default and has its own branding setting",
+    424: "Logo, banner and homepage link on booking pages, in booking emails and in embeds",
+    440: "The lifetime is an instance setting (ONEOFF_LINK_DAYS, default 30); the test checks the 30-day date, then restarts the server with 0 days to show the expired page",
+    443: "LinkedIn, X and Facebook through their public share URLs; no vendor API",
+})
+PARTIAL.update({
+    420: "Name, email, message and screening questions are E2E-proven on CalDAV (\u201cscreening questions keep their order\u2026\u201d); no CC list or location choice",
+})
 # --- end s6 ---
 
 # --- s7: preview mode, MCP, stats and support ---
