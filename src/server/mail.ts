@@ -6,6 +6,8 @@ export interface Message {
   to: string;
   subject: string;
   text: string;
+  /** An iCalendar invitation (iMIP), for example a meeting update. */
+  icalEvent?: { method: string; content: string };
 }
 
 export interface Mailer {

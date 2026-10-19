@@ -791,6 +791,92 @@ export const MIGRATIONS: readonly string[] = [
   // round 3 s3
   // round 3 s4
   // round 3 s5
+  `
+  -- r3 s5: meeting checks, meeting change log and emails, start-time intervals,
+  -- adopted series and the weekly no-meeting day.
+  -- Per-user meeting preferences (JSON, defaults in src/server/meeting-prefs.ts).
+  CREATE TABLE meeting_prefs (
+    user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    prefs TEXT NOT NULL DEFAULT '{}'
+  ) STRICT;
+
+  -- An ignored meeting issue: one event, or every event of a series.
+  CREATE TABLE meeting_issue_ignores (
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    check_id TEXT NOT NULL,
+    scope TEXT NOT NULL CHECK (scope IN ('event', 'series')),
+    target TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (user_id, check_id, scope, target)
+  ) STRICT;
+
+  -- Company meeting checks set by team admins (automations-meeting-quality.md rules 8-12).
+  CREATE TABLE company_checks (
+    id TEXT PRIMARY KEY,
+    team_id TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    conditions TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    created_at INTEGER NOT NULL
+  ) STRICT;
+  CREATE INDEX company_checks_team ON company_checks(team_id);
+
+  -- The change log of flexible meeting occurrences (meetings-flexible-rescheduling.md
+  -- rules 31-32). new_start is NULL while a decline waits for its move. notify:
+  -- 0 no guest email, 1 email due, 2 email sent.
+  CREATE TABLE meeting_changes (
+    id INTEGER PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    meeting_id TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+    occurrence_key TEXT NOT NULL,
+    at INTEGER NOT NULL,
+    old_start INTEGER,
+    old_end INTEGER,
+    new_start INTEGER,
+    new_end INTEGER,
+    actor TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    detail TEXT NOT NULL DEFAULT '',
+    notify INTEGER NOT NULL DEFAULT 0
+  ) STRICT;
+  CREATE INDEX meeting_changes_meeting ON meeting_changes(meeting_id, at);
+  CREATE INDEX meeting_changes_notify ON meeting_changes(notify) WHERE notify = 1;
+
+  -- When each daily email of a user is due next (checks digest, at-risk digest).
+  CREATE TABLE daily_mail (
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,
+    next_at INTEGER NOT NULL,
+    PRIMARY KEY (user_id, kind)
+  ) STRICT;
+
+  -- Recurring series already offered as flexible meetings by email (NTF-30).
+  CREATE TABLE series_offers (
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    series_id TEXT NOT NULL,
+    offered_at INTEGER NOT NULL,
+    PRIMARY KEY (user_id, series_id)
+  ) STRICT;
+
+  -- The weekly no-meeting day: a weekly all-day busy #tl_free series Tempoloom wrote.
+  CREATE TABLE no_meeting_days (
+    user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    weekday INTEGER NOT NULL CHECK (weekday BETWEEN 1 AND 7),
+    calendar_id TEXT NOT NULL REFERENCES calendars(id) ON DELETE CASCADE,
+    event_id TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  ) STRICT;
+
+  -- none, conservative (1), moderate (3) or aggressive (5) automatic moves per 24 hours.
+  ALTER TABLE meetings ADD COLUMN auto_reschedule TEXT NOT NULL DEFAULT 'moderate';
+  -- An adopted series (meetings-flexible.md rule 1): its calendar and event id.
+  ALTER TABLE meetings ADD COLUMN series_calendar_id TEXT;
+  ALTER TABLE meetings ADD COLUMN series_event_id TEXT;
+
+  -- Each guest's answer (JSON email -> status) and the conference link of an event.
+  ALTER TABLE events ADD COLUMN responses TEXT NOT NULL DEFAULT '{}';
+  ALTER TABLE events ADD COLUMN conference TEXT NOT NULL DEFAULT '';
+  `,
   // round 3 s6
   // round 3 s7
 ];

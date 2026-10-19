@@ -1,6 +1,7 @@
 // Runs calendar sync and planning for each user, one run at a time per user.
 import { all, one, run } from "../db.ts";
 import { oooOwnersOf, syncOutOfOffice } from "../ooo.ts";
+import { observeMeetings } from "../planner/meeting-log.ts";
 import { meetingPeers } from "../planner/meetings.ts";
 import { replanUser } from "../planner/replan.ts";
 import { enforceAgendas } from "../policies/agendas.ts";
@@ -236,6 +237,13 @@ export class SyncService {
         );
         return;
       }
+      // Flexible meetings: the organizer's edits and guests' declines (MEET-02 rules 2, 31).
+      observeMeetings(
+        db,
+        userId,
+        calendars.map((c) => c.id),
+        now,
+      );
       applyCalendarEdits(
         db,
         userId,

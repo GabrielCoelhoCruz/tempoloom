@@ -8,6 +8,7 @@ import { lazyComponent } from "../lib/lazy.ts";
 import { templateFromUrl } from "../lib/library.ts";
 import { loadPolicyMarks, PolicyMark, policyMarks } from "../lib/policy-marks.tsx";
 import { loadMe, me, planNow } from "../lib/state.ts";
+import { MeetingSettings } from "./meeting-settings.tsx";
 
 interface HoursSet {
   id: string;
@@ -599,6 +600,7 @@ export function Settings() {
           ))
         )}
       </section>
+      <MeetingSettings />
     </div>
   );
 }

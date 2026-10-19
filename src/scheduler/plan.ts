@@ -661,6 +661,14 @@ function meetingPeriods(ctx: Ctx, m: MeetingItem): Period[] {
  * time. A fragmentation policy ranks the added fragmented time before the
  * distance, within the member's flexibility.
  */
+/** MEET-03 rule 2: a start whose local minute of the hour is in the set. */
+function startAllowed(ctx: Ctx, m: MeetingItem, date: LocalDate): (t: number) => boolean {
+  if (!m.startMinutes || m.startMinutes.length === 4) return () => true;
+  const allowed = new Set(m.startMinutes);
+  const dayStart = localToUtc(ctx.s.zone, date, 0);
+  return (t) => allowed.has(Math.floor((t - dayStart) / MINUTE) % 60);
+}
+
 function searchMeeting(
   ctx: Ctx,
   m: MeetingItem,
@@ -672,9 +680,11 @@ function searchMeeting(
     let best: { t: number; ideal: boolean; dist: number; cost: number } | null = null;
     for (const { date, free, ideal, window } of frees) {
       const target = localToUtc(ctx.s.zone, date, m.idealMinute);
+      const allowed = startAllowed(ctx, m, date);
       for (const iv of free.intervals()) {
         const added = frag ? fragmentCost(window, frag.minBlockMinutes * MINUTE, iv) : null;
         for (let t = ceilTo(iv.start, ctx.step); t + l * MINUTE <= iv.end; t += ctx.step) {
+          if (!allowed(t)) continue;
           const dist = Math.abs(t - target);
           const cost = added ? (dist > shift ? OUT_OF_SHIFT : added(t, l * MINUTE)) : 0;
           if (
@@ -693,14 +703,39 @@ function searchMeeting(
   return null;
 }
 
+/** MEET-02 rule 11: up to 3 other starts for a flagged occurrence, best first. */
+function suggestMeeting(
+  ctx: Ctx,
+  m: MeetingItem,
+  frees: { date: LocalDate; free: TimeSet; ideal: boolean }[],
+): Interval[] {
+  for (let l = m.durationMinutes; l >= m.shortestMinutes; l -= 5) {
+    const found: { t: number; ideal: boolean; dist: number }[] = [];
+    for (const { date, free, ideal } of frees) {
+      const target = localToUtc(ctx.s.zone, date, m.idealMinute);
+      const allowed = startAllowed(ctx, m, date);
+      for (const iv of free.intervals())
+        for (let t = ceilTo(iv.start, ctx.step); t + l * MINUTE <= iv.end; t += ctx.step)
+          if (allowed(t)) found.push({ t, ideal, dist: Math.abs(t - target) });
+    }
+    if (found.length === 0) continue;
+    found.sort((a, b) => Number(b.ideal) - Number(a.ideal) || a.dist - b.dist || a.t - b.t);
+    return found.slice(0, 3).map((f) => ({ start: f.t, end: f.t + l * MINUTE }));
+  }
+  return [];
+}
+
 function placeMeeting(ctx: Ctx, m: MeetingItem): void {
   const { s } = ctx;
   const done = new Set((s.past ?? []).map((p) => p.key));
   const attendeeWindow = m.attendeeWindow ? TimeSet.from(m.attendeeWindow) : null;
   const required = m.durationMinutes;
+  const periods = m.periods ? new Set(m.periods) : null;
+  let movesLeft = m.movesLeft ?? Number.POSITIVE_INFINITY;
   for (const period of meetingPeriods(ctx, m)) {
     const key = `meeting:${m.id}:${period.start}`;
     if (done.has(key) || ctx.fixedKeys.has(key) || ctx.dismissed.has(key)) continue;
+    if (periods && !periods.has(period.start)) continue;
     const own = period.days.map((d) => dayWindow(ctx, m.hours, d));
     if (own.every((w) => w.total() === 0)) continue;
     const windows = attendeeWindow ? own.map((w) => w.intersect(attendeeWindow)) : own;
@@ -719,15 +754,44 @@ function placeMeeting(ctx: Ctx, m: MeetingItem): void {
       if (okLen && frees.some((f) => f.free.contains(cur)))
         chosen = { start: cur.start, end: cur.end };
     }
-    if (!chosen) {
-      // MEET-02 rule 8: an automatic move keeps the lead time.
-      const lead = cur ? ctx.earliest + m.leadMinutes * MINUTE : ctx.earliest;
-      chosen = searchMeeting(
-        ctx,
-        m,
-        frees.map((f) => ({ ...f, free: f.free.clip(lead, ctx.end) })),
-      );
+    // MEET-02 rule 8: an automatic move keeps the lead time.
+    const lead = cur ? ctx.earliest + m.leadMinutes * MINUTE : ctx.earliest;
+    const found = chosen
+      ? null
+      : searchMeeting(
+          ctx,
+          m,
+          frees.map((f) => ({ ...f, free: f.free.clip(lead, ctx.end) })),
+        );
+    if (found && cur && !m.changed && movesLeft <= 0) {
+      // MEET-02 rules 9-11: a move is possible but none is left; keep the time, flag it, suggest others.
+      occupy(ctx, cur, "meeting");
+      ctx.placements.push({
+        key,
+        kind: "meeting",
+        itemId: m.id,
+        start: cur.start,
+        end: cur.end,
+        busy: true,
+        locked: false,
+        conflict: true,
+        afterDue: false,
+      });
+      report(ctx, {
+        itemKind: "meeting",
+        itemId: m.id,
+        demandKey: key,
+        requiredMinutes: required,
+        placedMinutes: 0,
+        status: "conflict",
+        reason: m.moveLimit === 0 ? "policy-none" : "budget-reached",
+        suggestions: suggestMeeting(ctx, m, frees),
+      });
+      continue;
     }
+    if (!chosen) chosen = found;
+    if (chosen && cur && !m.changed && (chosen.start !== cur.start || chosen.end !== cur.end))
+      movesLeft--;
     if (chosen) {
       const day = frees.find((f) => f.free.contains(chosen))?.free ?? TimeSet.empty();
       ctx.habitSeen.set(key, minus(day, [chosen]));

@@ -36,6 +36,8 @@ export interface Person {
   items: CalendarItem[];
   /** Minutes after a booked meeting that this person's recovery buffer needs (0: none or off). */
   recoveryMinutes: number;
+  /** Minutes of the hour this person's meetings may start at, in `zone` (meetings-start-intervals.md rule 3). */
+  startMinutes?: number[];
 }
 
 /** One event of the organizer, classified as in the spec's class table. */
@@ -81,6 +83,14 @@ interface Checked {
   blocking: Interval[];
   all: Interval[];
   recovery: number;
+  /** True when a start's local minute of the hour is allowed. */
+  startOk: (t: number) => boolean;
+}
+
+function startCheck(p: Person): (t: number) => boolean {
+  if (!p.startMinutes || p.startMinutes.length === 4) return () => true;
+  const allowed = new Set(p.startMinutes);
+  return (t) => allowed.has(utcToLocal(p.zone, t).minuteOfDay % 60);
 }
 
 const overlaps = (list: Interval[], s: number, e: number) =>
@@ -119,6 +129,7 @@ export function teamOffers(
       blocking: relevant.filter(blocks),
       all: relevant,
       recovery: p.recoveryMinutes,
+      startOk: startCheck(p),
     };
   };
   const req = required.map(check);
@@ -154,6 +165,7 @@ export function teamOffers(
     const before = s - rules.bufferBeforeMinutes * MINUTE;
     // The recovery buffer after the slot uses the longest one among the people (rule 10).
     const passes = (p: Checked, recovery: number) =>
+      p.startOk(s) &&
       p.hours.contains({ start: s, end: e }) &&
       !overlaps(p.blocking, before, e + Math.max(rules.bufferAfterMinutes, recovery) * MINUTE);
     const clear = (p: Checked) => !overlaps(p.all, s, e);

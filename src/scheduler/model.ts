@@ -106,6 +106,14 @@ export interface MeetingItem {
   leadMinutes: number;
   exclusions: Interval[];
   changed: boolean;
+  /** Automatic moves allowed per 24 hours (MEET-02 rule 9); 0: never. Unset: no limit. */
+  moveLimit?: number;
+  /** Automatic moves left now in the rolling 24 hours. */
+  movesLeft?: number;
+  /** Minutes of the hour a new start may use, in `zone` (meetings-start-intervals.md). */
+  startMinutes?: number[];
+  /** An adopted series: only these periods (start dates) have an instance to place. */
+  periods?: LocalDate[];
 }
 
 export interface BufferFilter {
@@ -212,7 +220,9 @@ export type ReasonCode =
   | "reserved-word"
   | "no-space-fixed"
   | "no-space-priority"
-  | "after-due";
+  | "after-due"
+  | "budget-reached"
+  | "policy-none";
 
 export interface ReportEntry {
   itemKind: PlacementKind;
@@ -223,6 +233,8 @@ export interface ReportEntry {
   missingMinutes: number;
   status: "unplaced" | "partial" | "after-due" | "conflict";
   reason: ReasonCode;
+  /** A flagged meeting occurrence: up to 3 other times (MEET-02 rule 11). */
+  suggestions?: Interval[];
 }
 
 export interface Plan {
