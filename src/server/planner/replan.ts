@@ -407,11 +407,11 @@ export function loadSnapshot(
     past,
     dismissedKeys: dismissed,
     bufferLengths: Object.fromEntries(
-      all<{ key: string; minutes: number }>(
-        db,
-        "SELECT key, minutes FROM buffer_lengths WHERE user_id = ?",
-        userId,
-      ).map((r) => [r.key, r.minutes]),
+      rows.flatMap((r) =>
+        r.kind === "buffer" && r.kept_minutes !== null && r.end_ms > now
+          ? [[r.key, r.kept_minutes]]
+          : [],
+      ),
     ),
     tasks,
     habits,

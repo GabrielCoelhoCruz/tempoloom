@@ -24,7 +24,9 @@ function exclude(db: Db, userId: string, kind: string, itemId: string, start: nu
 
 /**
  * Applies the user's calendar edits to managed events of the given calendars:
- * a moved or resized event locks at its new time (CED-1, CED-2); a moved task
+ * a moved or resized event locks at its new time (CED-1, CED-2), except a
+ * buffer resized at its free edge, which keeps the new length and still
+ * follows its anchor (buffers rule 14); a moved task
  * chunk leaves an exclusion at its old time (CED-10); a deleted event leaves an
  * exclusion or a dismissed key by kind (CED-20, CED-24, CED-25); a title edit
  * of a non-task event locks it (CED-40).
@@ -104,23 +106,26 @@ export function applyCalendarEdits(
       const moved = cached.start_ms !== row.start_ms || cached.end_ms !== row.end_ms;
       const retitled = row.kind !== "task" && cached.summary !== row.title;
       if (!moved && !retitled) continue;
-      const resized = cached.end_ms - cached.start_ms !== row.end_ms - row.start_ms;
-      if (row.kind === "buffer" && resized && !retitled && cached.end_ms > cached.start_ms) {
-        // Buffers rule 14: keep the new length; the buffer still follows its anchor.
+      // Buffers rule 14: a new length with the anchored edge in place (the end of
+      // a before-buffer, the start of an after-buffer) is kept on the row, and
+      // the buffer still follows its anchor. Any other move locks (CED-1, CED-2).
+      const anchoredEdge = row.key.endsWith(":before")
+        ? cached.end_ms === row.end_ms
+        : cached.start_ms === row.start_ms;
+      if (
+        row.kind === "buffer" &&
+        moved &&
+        anchoredEdge &&
+        !retitled &&
+        cached.end_ms > cached.start_ms
+      ) {
         run(
           db,
-          `INSERT INTO buffer_lengths (user_id, key, minutes) VALUES (?, ?, ?)
-           ON CONFLICT (user_id, key) DO UPDATE SET minutes = excluded.minutes`,
-          userId,
-          row.key,
-          Math.round((cached.end_ms - cached.start_ms) / 60_000),
-        );
-        run(
-          db,
-          "UPDATE managed_events SET start_ms = ?, end_ms = ?, etag = ? WHERE id = ?",
+          "UPDATE managed_events SET start_ms = ?, end_ms = ?, etag = ?, kept_minutes = ? WHERE id = ?",
           cached.start_ms,
           cached.end_ms,
           cached.etag,
+          Math.round((cached.end_ms - cached.start_ms) / 60_000),
           row.id,
         );
         summary.moved++;

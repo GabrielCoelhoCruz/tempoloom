@@ -17,6 +17,9 @@
 //                                                          -> buffer spans after the change and a reload
 // - a resized travel buffer is put back, or stops following its event
 //                                                          -> 45-minute buffer after the move
+// - a kept length outlives its event, or overrides the form for other events
+//                                                          -> 40-minute buffers after the side change
+// - a buffer moved and resized snaps back to its event     -> the user's time, locked, after the call moves
 import { addDays } from "../../src/shared/time.ts";
 import { day, openSettings, span, week } from "./automation-helpers.ts";
 import {
@@ -29,7 +32,7 @@ import {
   rawEvent,
   save,
 } from "./automation-list-helpers.ts";
-import { at, BACKEND, blockUntil, eventually, expect, test } from "./fixtures.ts";
+import { at, BACKEND, blockUntil, eventually, expect, planNow, test } from "./fixtures.ts";
 import { addHabit, openEvent, openWeek, titled, W } from "./helpers.ts";
 
 const ADDRESS = "1 Oak Ave, Springfield, IL 62701";
@@ -153,7 +156,7 @@ test("a P1 buffer takes the time of a P3 habit; a P4 buffer gives way to it (rul
   };
   await eventually(() => week(cal), check);
   await page.reload();
-  await page.waitForTimeout(6000);
+  await planNow(page);
   check(await week(cal));
   const shown = await edit(page, "Recovery");
   await expect(shown.getByLabel("Priority").locator("option:checked")).toHaveText("P4 low");
@@ -208,7 +211,7 @@ test("the conflict setting keeps a buffer with the conflict marker or removes it
     },
   );
   await page.reload();
-  await page.waitForTimeout(6000);
+  await planNow(page);
   const after = await week(cal);
   expect(titled(after, "Prep")[0]?.summary).toBe("⚠️ Prep");
   expect(titled(after, "Recovery")).toHaveLength(0);
@@ -262,7 +265,7 @@ test("the user sets the travel length; travel time is skipped where a busy event
     expect(e.summary).toBe("🚌 Travel");
   }
   await page.reload();
-  await page.waitForTimeout(6000);
+  await planNow(page);
   expect(titled(await week(cal), "Travel").map(span)).toEqual([
     `${tue} 12:15-13:00`,
     `${tue} 14:00-14:45`,
@@ -310,7 +313,7 @@ test("an event set to the flight category by hand gets airport time instead of t
   await page.reload();
   await page.locator(".ev-external", { hasText: "To Lisbon" }).click();
   await expect(page.getByTestId("event-category")).toHaveValue("flight");
-  await page.waitForTimeout(6000);
+  await planNow(page);
   expect(titled(await week(cal), "Airport").map(span)).toEqual([
     `${wed} 08:00-10:00`,
     `${wed} 12:00-13:00`,
@@ -342,7 +345,7 @@ test("travel buffers follow their event and keep a length the user changed (trav
   if (!first) throw new Error("no travel buffer");
   // The user gives the way there 15 more minutes in the calendar.
   await cal.update(first.id, { start: at(tue, "12:15"), end: at(tue, "13:00") });
-  await page.waitForTimeout(6500);
+  await planNow(page);
   const kept = await week(cal);
   expect(titled(kept, "Travel").map(span)).toEqual([`${tue} 12:15-13:00`, `${tue} 14:00-14:30`]);
   expect(titled(kept, "Travel")[0]?.summary).toBe("🚌 Travel");
@@ -354,7 +357,7 @@ test("travel buffers follow their event and keep a length the user changed (trav
       expect(titled(l, "Travel").map(span)).toEqual([`${tue} 13:15-14:00`, `${tue} 15:00-15:30`]),
   );
   await page.reload();
-  await page.waitForTimeout(6000);
+  await planNow(page);
   expect(titled(await week(cal), "Travel").map(span)).toEqual([
     `${tue} 13:15-14:00`,
     `${tue} 15:00-15:30`,
@@ -362,4 +365,74 @@ test("travel buffers follow their event and keep a length the user changed (trav
   await openWeek(page, addDays(W, 0));
   await openEvent(page, "Travel");
   await expect(page.getByTestId("event-drawer")).not.toContainText("locked");
+
+  // A new length in the form: the kept buffer keeps 45 minutes, the other takes 40.
+  const longer = await edit(page, "Travel");
+  await longer.getByLabel("Before the event (minutes)").fill("40");
+  await longer.getByLabel("After the event (minutes)").fill("40");
+  await save(longer);
+  await eventually(
+    () => week(cal),
+    (l) =>
+      expect(titled(l, "Travel").map(span)).toEqual([`${tue} 13:15-14:00`, `${tue} 15:00-15:40`]),
+  );
+  // The kept length goes with its event: after the side is off and on again, 40 minutes.
+  const after = await edit(page, "Travel");
+  await after.getByLabel("Side").selectOption({ label: "After" });
+  await save(after);
+  await eventually(
+    () => week(cal),
+    (l) => expect(titled(l, "Travel").map(span)).toEqual([`${tue} 15:00-15:40`]),
+  );
+  const both = await edit(page, "Travel");
+  await both.getByLabel("Side").selectOption({ label: "Before and after" });
+  await both.getByLabel("Before the event (minutes)").fill("40");
+  await save(both);
+  await eventually(
+    () => week(cal),
+    (l) =>
+      expect(titled(l, "Travel").map(span)).toEqual([`${tue} 13:20-14:00`, `${tue} 15:00-15:40`]),
+  );
+});
+
+test("a buffer moved and resized in the calendar locks there and stops following its event (CED-1, CED-2; buffers rule 14)", async ({
+  page,
+  cal,
+  signIn,
+}) => {
+  await blockUntil(cal, W);
+  const tue = day(1);
+  const call = await cal.addEvent({
+    title: "Customer call",
+    start: at(tue, "10:00"),
+    end: at(tue, "11:00"),
+    attendees: ["ana@example.com"],
+  });
+  await signIn();
+  const rec = await create(page, "Buffer");
+  await rec.getByLabel("Title").fill("Recovery");
+  await rec.getByLabel("Side").selectOption({ label: "After" });
+  await rec.getByLabel("After the event (minutes)").fill("15");
+  await rec.getByLabel("Which events").selectOption({ label: "Meetings with other people" });
+  await save(rec);
+  const evs = await eventually(
+    () => week(cal),
+    (l) => expect(titled(l, "Recovery").map(span)).toEqual([`${tue} 11:00-11:15`]),
+  );
+  const [buffer] = titled(evs, "Recovery");
+  if (!buffer) throw new Error("no buffer");
+  // Both edges move: the start, which holds it to the call, is no longer in place.
+  await cal.update(buffer.id, { start: at(tue, "11:30"), end: at(tue, "12:00") });
+  await planNow(page);
+  expect(titled(await week(cal), "Recovery").map(span)).toEqual([`${tue} 11:30-12:00`]);
+  await openWeek(page);
+  await openEvent(page, "Recovery");
+  await expect(page.getByTestId("event-drawer")).toContainText("locked");
+  // The call moves; the locked buffer stays where the user put it.
+  await cal.update(call, { start: at(tue, "14:00"), end: at(tue, "15:00") });
+  await planNow(page);
+  expect(titled(await week(cal), "Recovery").map(span)).toEqual([`${tue} 11:30-12:00`]);
+  await page.reload();
+  await planNow(page);
+  expect(titled(await week(cal), "Recovery").map(span)).toEqual([`${tue} 11:30-12:00`]);
 });
