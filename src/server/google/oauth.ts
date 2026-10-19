@@ -25,10 +25,15 @@ export interface AuthRequest {
 
 const AUTH_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";
+const REVOKE_ENDPOINT = "https://oauth2.googleapis.com/revoke";
 
 const base64url = (buf: Buffer) => buf.toString("base64url");
 
-export function buildAuthRequest(client: OAuthClient, loginHint?: string): AuthRequest {
+export function buildAuthRequest(
+  client: OAuthClient,
+  loginHint?: string,
+  extraScopes: readonly string[] = [],
+): AuthRequest {
   const state = base64url(randomBytes(24));
   const codeVerifier = base64url(randomBytes(48));
   const challenge = base64url(createHash("sha256").update(codeVerifier).digest());
@@ -36,7 +41,7 @@ export function buildAuthRequest(client: OAuthClient, loginHint?: string): AuthR
     client_id: client.clientId,
     redirect_uri: client.redirectUri,
     response_type: "code",
-    scope: GOOGLE_SCOPES.join(" "),
+    scope: [...GOOGLE_SCOPES, ...extraScopes].join(" "),
     access_type: "offline",
     include_granted_scopes: "true",
     prompt: "consent",
@@ -61,6 +66,8 @@ export interface GoogleIdentity {
   email: string;
   name: string;
   picture?: string;
+  /** Google confirmed that the user owns the email. */
+  emailVerified: boolean;
 }
 
 interface TokenResponse {
@@ -141,6 +148,16 @@ export function refreshAccessToken(
   );
 }
 
+/** Revokes a refresh or access token, and with it the user's grant to this client. */
+export async function revokeToken(token: string): Promise<void> {
+  const res = await fetch(REVOKE_ENDPOINT, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ token }),
+  });
+  if (!res.ok) throw new OAuthError(`http_${res.status}`, "Token revocation failed");
+}
+
 /**
  * Reads the identity claims from an ID token that came straight from Google's
  * token endpoint over TLS. Per Google's guidance, the signature check is not
@@ -161,5 +178,6 @@ export function identityFromIdToken(idToken: string): GoogleIdentity {
     email: claims.email,
     name: typeof claims.name === "string" ? claims.name : claims.email,
     ...(typeof claims.picture === "string" ? { picture: claims.picture } : {}),
+    emailVerified: claims.email_verified === true || claims.email_verified === "true",
   };
 }
