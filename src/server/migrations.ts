@@ -1166,8 +1166,10 @@ export const MIGRATIONS: readonly string[] = [
   // 29: when an admin last resumed a webhook endpoint (integrations-webhooks.md
   // rule 15): the period of failures that suspends it counts from then. The
   // Google account that a sign-in reconnects (accounts-login-emails-permissions.md rule 15).
+  // The no-reply choice is an account setting (noReplyCopies), not one per policy.
   `
   ALTER TABLE webhook_endpoints ADD COLUMN resumed_at INTEGER;
   ALTER TABLE oauth_states ADD COLUMN reconnect_account_id TEXT;
+  ALTER TABLE mirror_policies DROP COLUMN no_reply_busy;
   `,
 ];
