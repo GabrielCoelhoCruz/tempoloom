@@ -337,6 +337,19 @@ export function Planner() {
               </p>
             </form>
           )}
+          {selected.kind === "external" && !selected.levelEditable && (
+            <div class="form" data-testid="fixed-priority">
+              <label>
+                Priority for booking links
+                <select disabled>
+                  <option>P1</option>
+                </select>
+              </label>
+              <p class="status wide">
+                Events from other calendars, their mirrored copies and booked meetings stay P1.
+              </p>
+            </div>
+          )}
           {selected.kind !== "external" && (
             <div class="actions">
               <button
