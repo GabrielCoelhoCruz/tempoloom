@@ -8,6 +8,7 @@ import { jsonBody, notFound } from "../http.ts";
 import { instanceLimit, limitMessage } from "../limits.ts";
 import { getSettings, updateSettings } from "../settings.ts";
 import type { SyncService } from "../sync/service.ts";
+import { badRequest } from "./items.ts";
 
 const range = z
   .tuple([z.number().int().min(0).max(1439), z.number().int().min(1).max(1440)])
@@ -100,36 +101,57 @@ export function settingsRoutes(db: Db, sync: SyncService, now: () => number): Ho
   r.put("/hours/:id", async (c) => {
     const user = c.get("user");
     const id = c.req.param("id");
-    if (!one(db, "SELECT 1 FROM hours_sets WHERE id = ? AND user_id = ?", id, user.id))
-      notFound("hours set");
+    const set = one<{ weekly: string; name: string }>(
+      db,
+      "SELECT weekly, name FROM hours_sets WHERE id = ? AND user_id = ?",
+      id,
+      user.id,
+    );
+    if (!set) notFound("hours set");
     const body = await jsonBody(
       c,
       z.object({
         name: z.string().trim().min(1).max(100).optional(),
-        weekly,
+        weekly: weekly.optional(),
         taskCalendarId: z.string().nullable().optional(),
       }),
     );
+    // HRS-12: task chunks go to a calendar of this user that takes events.
+    if (
+      body.taskCalendarId &&
+      !one(
+        db,
+        `SELECT 1 FROM calendars c JOIN accounts a ON a.id = c.account_id
+         WHERE c.id = ? AND a.user_id = ? AND c.writable = 1`,
+        body.taskCalendarId,
+        user.id,
+      )
+    )
+      badRequest("taskCalendarId", "Unknown calendar, or a calendar that takes no events");
+    const nextWeekly = body.weekly ? JSON.stringify(body.weekly) : set.weekly;
     run(
       db,
-      "UPDATE hours_sets SET weekly = ?, name = COALESCE(?, name) WHERE id = ?",
-      JSON.stringify(body.weekly),
-      body.name ?? null,
+      "UPDATE hours_sets SET weekly = ?, name = ? WHERE id = ?",
+      nextWeekly,
+      body.name ?? set.name,
       id,
     );
     if (body.taskCalendarId !== undefined) {
       run(db, "UPDATE hours_sets SET task_calendar_id = ? WHERE id = ?", body.taskCalendarId, id);
     }
-    // HRS-7: a change applies to existing events; re-place everything that uses the set.
-    const t = now();
-    for (const table of ["tasks", "habits", "focus_goals"]) {
-      run(
-        db,
-        `UPDATE ${table} SET rules_changed_at = ? WHERE user_id = ? AND hours_set_id = ?`,
-        t,
-        user.id,
-        id,
-      );
+    // HRS-7: a change of ranges applies to existing events; re-place everything
+    // that uses the set. A new name or task calendar places nothing again.
+    if (nextWeekly !== set.weekly) {
+      const t = now();
+      for (const table of ["tasks", "habits", "focus_goals"]) {
+        run(
+          db,
+          `UPDATE ${table} SET rules_changed_at = ? WHERE user_id = ? AND hours_set_id = ?`,
+          t,
+          user.id,
+          id,
+        );
+      }
     }
     sync.request(user.id);
     return c.json({ ok: true });

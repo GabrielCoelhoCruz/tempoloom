@@ -38,17 +38,14 @@ const MirrorSettings = lazyComponent(() => import("./mirroring.tsx").then((m) =>
 
 const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
-/** HRS-5: the ranges of the first day with hours go to every day that is on. */
+/** HRS-5: the ranges of the first day in the list, Monday, go to every day that is on. */
 function copyToAll(weekly: HoursSet["weekly"]): HoursSet["weekly"] {
-  const days = DAY_NAMES.map((_, i) => String(i + 1));
-  const first = days.find((d) => (weekly[d] ?? []).length > 0);
-  if (!first) return weekly;
-  const ranges = weekly[first] ?? [];
+  const ranges = weekly["1"] ?? [];
   return Object.fromEntries(
-    days.map((d) => [
-      d,
-      (weekly[d] ?? []).length > 0 ? ranges.map((r) => [...r] as [number, number]) : [],
-    ]),
+    DAY_NAMES.map((_, i) => {
+      const d = String(i + 1);
+      return [d, (weekly[d] ?? []).length > 0 ? ranges.map((r) => [...r] as [number, number]) : []];
+    }),
   );
 }
 
@@ -69,12 +66,7 @@ function TaskCalendar({
         value={set.task_calendar_id ?? ""}
         onChange={(e) => {
           const value = e.currentTarget.value;
-          void act(() =>
-            api("PUT", `/api/hours/${set.id}`, {
-              weekly: set.weekly,
-              taskCalendarId: value || null,
-            }),
-          );
+          void act(() => api("PUT", `/api/hours/${set.id}`, { taskCalendarId: value || null }));
         }}
       >
         <option value="">Main calendar</option>
@@ -155,8 +147,14 @@ export function HoursEditor({
       <div class="actions">
         <button
           type="button"
-          title="Copy the ranges of the first day with hours to every day that is on"
-          onClick={() => setWeekly(copyToAll(weekly))}
+          title="Copy the ranges of Monday to every day that is on, and save"
+          disabled={(weekly["1"] ?? []).length === 0}
+          onClick={() => {
+            // HRS-6: the copy is saved at once.
+            const copied = copyToAll(weekly);
+            setWeekly(copied);
+            void onSave(copied);
+          }}
         >
           Copy to all
         </button>

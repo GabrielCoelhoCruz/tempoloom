@@ -51,9 +51,11 @@ export function taskTimeRoutes(
   /** Task chunks go to the calendar of their hours set (TSK-50); the rest to the main calendar. */
   const defaultCalendar = (userId: string, kind: Kind, it: Item) =>
     (kind === "task"
-      ? one<{ task_calendar_id: string | null }>(
+      ? one<{ task_calendar_id: string }>(
           db,
-          "SELECT task_calendar_id FROM hours_sets WHERE id = ?",
+          `SELECT h.task_calendar_id FROM hours_sets h
+           JOIN calendars c ON c.id = h.task_calendar_id AND c.writable = 1
+           WHERE h.id = ?`,
           it.hours_set_id,
         )?.task_calendar_id
       : null) ?? writeCalendar(db, userId)?.id;

@@ -553,8 +553,9 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
     ).map((c) => [c.id, c]),
   );
   // The calendar chosen in an automation's event settings, while it can take events.
-  const chosenCalendar = (es: EventSettings | undefined) =>
-    es?.calendarId && calendars.get(es.calendarId)?.writable === 1 ? es.calendarId : undefined;
+  const writable = (id: string | null | undefined) =>
+    id && calendars.get(id)?.writable === 1 ? id : undefined;
+  const chosenCalendar = (es: EventSettings | undefined) => writable(es?.calendarId);
   const travelBuffers = new Set(
     snapshot.buffers.filter((b) => b.filter.travel || b.filter.flight).map((b) => b.id),
   );
@@ -564,7 +565,7 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
     const es = eventSettings.get(itemKey);
     const calendarId =
       row?.calendar_id ??
-      (p.kind === "task" ? taskCalendar.get(taskHours.get(p.itemId) ?? "") : undefined) ??
+      (p.kind === "task" ? writable(taskCalendar.get(taskHours.get(p.itemId) ?? "")) : undefined) ??
       chosenCalendar(es) ??
       target.id;
     const keepUserTitle = row?.user_edited === 1;
