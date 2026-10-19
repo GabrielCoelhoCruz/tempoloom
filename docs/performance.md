@@ -9,7 +9,7 @@ and the hardware. Re-run the commands after a change that can affect speed.
 - Memory: 31 GB
 - Node.js 24.21.0, Google Chrome 155.0.8059.79 (headless, through Playwright)
 - Server and browser on the same host (loopback network)
-- Measured on 2026-10-19 on the code of commit `e23a14d` (first measured at `06f0e59`; see History)
+- Measured on 2026-10-19 on the code of commit `a715aae` (first measured at `06f0e59`; see History)
 - The host is shared: medians of the same build move by about 4 ms between runs.
   Compare builds in one session, alternating them (see "Comparing two builds").
 
@@ -17,29 +17,36 @@ and the hardware. Re-run the commands after a change that can affect speed.
 
 | Metric | Median | p95 | Notes |
 |---|---|---|---|
-| Scheduler solve, realistic two-week plan, first plan | 1.64 ms | 2.8 ms | 200 runs after 20 warm-up runs |
-| Scheduler solve, same plan with existing placements (steady state) | 1.64 ms | 3.2 ms | stickiness path |
+| Scheduler solve, realistic two-week plan, first plan | 1.60 to 1.70 ms | 3.0 to 3.4 ms | 300 runs after 20 warm-up runs, three rounds |
+| Scheduler solve, same plan with existing placements (steady state) | 1.60 to 1.72 ms | 2.2 to 3.1 ms | stickiness path |
 | Scheduler solve, first call in a fresh process | 12 to 14 ms | | one call; includes time-zone formatter setup |
-| Cold page load: first contentful paint | 76 ms | 88 ms | new browser context, empty cache, 15 runs |
-| Cold page load: planner ready (week grid shows its events) | 90 ms | 115 ms | 53 events in the viewed week |
-| Data transferred on cold load | 23 KB | | HTML, JS, CSS and API JSON, compressed (brotli or gzip, as the browser asks) |
-| Client code on cold load | 17.9 KB JS + 2.7 KB CSS | | gzip; the entry and the shared base chunk; every page other than the planner loads on first use |
-| Interaction latency (Event Timing, input to next paint) | ≤ 16 ms | ≤ 24 ms | 146 events; almost all at the API's 16 ms reporting floor |
-| Open an event's details (click to panel visible) | 37 ms | 40 ms | wall time seen by the test driver, includes its own overhead |
-| Switch week (click to new week's events drawn) | 67 ms | 67 ms | includes the API request |
+| Cold page load: first contentful paint | 76 to 80 ms | 88 to 92 ms | new browser context, empty cache, 30 runs, three rounds |
+| Cold page load: planner ready (week grid shows its events) | 90 to 96 ms | 102 to 113 ms | 53 events in the viewed week |
+| Data transferred until the planner is ready | 25 KB | | HTML, JS, CSS and API JSON, compressed (brotli or gzip, as the browser asks) |
+| Client code on cold load | 19.3 KB JS + 3.3 KB CSS | | gzip; the entry and the shared base chunk. Other pages, the sign-in page and the planner's side parts load on first use |
+| Interaction latency (Event Timing, input to next paint) | ≤ 16 ms | ≤ 24 ms | about 150 events; almost all at the API's 16 ms reporting floor |
+| Open an event's details (click to panel visible) | 36 to 37 ms | 58 to 127 ms | wall time seen by the test driver, includes its own overhead; the tail is the first click while the side parts load |
+| Switch week (click to new week's events drawn) | 66 to 67 ms | 67 to 89 ms | includes the API request |
 
 ### Comparing two builds
 
-On 2026-10-19 the start of the team work (`69696a6`) and `e23a14d` were measured
-in one session, alternating, two rounds of 15 cold loads each:
+On 2026-10-19 the end of the team work (`4eb705b`) and `a715aae` (round 3:
+185 more parity rows done) were measured in one session, alternating, three
+rounds of 30 cold loads and three rounds of 300 scheduler runs each. The
+values are the medians of each round:
 
-| Build | First contentful paint | Planner ready | Transferred | Scheduler, first plan |
+| Build | First contentful paint | Planner ready | Transferred until ready | Scheduler, first plan |
 |---|---|---|---|---|
-| `69696a6` (before team features) | 76 ms, 76 ms | 87 ms, 87 ms | 33 KB | 1.52 to 1.67 ms |
-| `e23a14d` (team features) | 76 ms, 72 ms | 88 ms, 90 ms | 23 KB | 1.62 to 1.65 ms |
+| `4eb705b` (before round 3) | 80, 80, 80 ms | 92, 92, 93 ms | 23 KB | 1.66, 1.55, 1.62 ms |
+| `a715aae` (round 3) | 80, 80, 76 ms | 94, 96, 90 ms | 25 KB | 1.60, 1.70, 1.65 ms |
 
-The team pages (team, policies, analytics, account) and the other pages load
-on first use, so the planner's cold load does not carry them.
+The first merge of round 3 drew the planner's new side parts (the now line,
+hints, preview panel, focus progress, issues panel) with the week. That cost
+15 ms of planner ready and 18 KB, because their code and nine small API
+requests ran beside the week's own request. They now render once the week's
+events are drawn and the browser is idle (`settled` in `src/web/lib/lazy.ts`).
+Grouping them into one chunk made it worse: the chunk became part of the
+first load. The sign-in page left the entry chunk at the same time.
 
 ### What "realistic two-week plan" means
 
@@ -73,6 +80,7 @@ seeded database and stops it at the end. It needs Google Chrome installed
 | `ed4db11` | Compressed responses; the client is compressed once at start | 29 KB transferred; FCP 72 ms. Compressing per request cost about 8 ms of FCP, so static files are compressed once |
 | `69696a6` | Automation library, categories and colors (measured again on 2026-10-19) | 33 KB transferred; FCP 76 ms, planner ready 87 ms in that session |
 | `e23a14d` | Team features; every page other than the planner loads on first use, with one shared base chunk | 23 KB transferred; FCP and planner ready equal to `69696a6` within 3 ms. Splitting pages into more chunks without the base chunk cost about 8 ms of FCP |
+| `a715aae` | Round 3 features; the planner's side parts render after its first data; the sign-in page loads on demand | 25 KB until the planner is ready; FCP and planner ready equal to `4eb705b` within 2 ms; the first click on an event can wait for the side parts (details p95 up to 127 ms) |
 
 ## Notes on method
 
