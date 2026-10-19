@@ -20,13 +20,13 @@ import {
 } from "./blocking.ts";
 import { hoursToTimeSet } from "./hours.ts";
 import type {
-  BaseFrequency,
   BufferFilter,
   BufferItem,
   Comparison,
   CurrentPlacement,
   ExternalEvent,
   FocusItem,
+  HabitFrequency,
   HabitItem,
   Level,
   MeetingItem,
@@ -404,28 +404,32 @@ function weekStartDate(ctx: Ctx, date: LocalDate): LocalDate {
   return addDays(date, -back);
 }
 
+/** Index `i` of a period counted from the anchor period is on an every-`every` cadence. */
+const onCadence = (i: number, every: number) => ((i % every) + every) % every === 0;
+
+const monthIndex = (d: LocalDate) => Number(d.slice(0, 4)) * 12 + Number(d.slice(5, 7));
+
 /**
- * A custom frequency keeps the periods of its unit (day, week or month) whose
- * distance from the period of the start date is a multiple of the interval.
+ * The habit's occurrences. With an interval above 1 (custom frequency), only
+ * the periods of its unit (day, week or month) on the cadence from the anchor.
  */
 function habitOccurrences(ctx: Ctx, h: HabitItem): Occurrence[] {
   const f = h.frequency;
-  if (f.period !== "custom") return baseOccurrences(ctx, h, f);
-  const startDate = h.starting ?? utcToLocal(ctx.s.zone, h.createdAt).date;
-  const index = (d: LocalDate): number => {
-    if (f.of.period === "daily") return dayDiff(d, startDate);
-    if (f.of.period === "weekly") return dayDiff(d, weekStartDate(ctx, startDate)) / 7;
-    const months = (x: LocalDate) => Number(x.slice(0, 4)) * 12 + Number(x.slice(5, 7));
-    return months(d) - months(startDate);
-  };
-  const every = Math.max(1, f.interval);
-  return baseOccurrences(ctx, h, f.of).filter((o) => {
-    const i = index(o.periodStart);
-    return i >= 0 && i % every === 0;
-  });
+  const out = frequencyOccurrences(ctx, h);
+  const every = f.interval ?? 1;
+  if (every <= 1) return out;
+  const anchor = f.anchor ?? h.starting ?? utcToLocal(ctx.s.zone, h.createdAt).date;
+  const index = (d: LocalDate): number =>
+    f.period === "daily"
+      ? dayDiff(d, anchor)
+      : f.period === "weekly"
+        ? dayDiff(d, weekStartDate(ctx, anchor)) / 7
+        : monthIndex(d) - monthIndex(anchor);
+  return out.filter((o) => onCadence(index(o.periodStart), every));
 }
 
-function baseOccurrences(ctx: Ctx, h: HabitItem, frequency: BaseFrequency): Occurrence[] {
+function frequencyOccurrences(ctx: Ctx, h: HabitItem): Occurrence[] {
+  const frequency = h.frequency;
   const { s } = ctx;
   const first = utcToLocal(s.zone, ctx.earliest).date;
   const last = utcToLocal(s.zone, ctx.end - 1).date;
@@ -458,7 +462,7 @@ function baseOccurrences(ctx: Ctx, h: HabitItem, frequency: BaseFrequency): Occu
   return out;
 }
 
-type MonthlyFrequency = Extract<BaseFrequency, { period: "monthly" }>;
+type MonthlyFrequency = Extract<HabitFrequency, { period: "monthly" }>;
 
 /**
  * The date a monthly habit selects in the month of `month` (YYYY-MM-01), or
@@ -730,7 +734,7 @@ function meetingPeriods(ctx: Ctx, m: MeetingItem): Period[] {
   const { everyWeeks, idealDays } = m.frequency;
   const anchor = weekStartDate(ctx, m.starting ?? first);
   for (let ws = weekStartDate(ctx, from); ws <= last; ws = addDays(ws, 7)) {
-    if ((dayDiff(ws, anchor) / 7) % everyWeeks !== 0) continue;
+    if (!onCadence(dayDiff(ws, anchor) / 7, everyWeeks)) continue;
     const days: LocalDate[] = [];
     for (let i = 0; i < 7; i++) {
       const d = addDays(ws, i);

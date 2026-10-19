@@ -1,150 +1,112 @@
 // Edit a habit, or make one from a recurring event (habits-automation.md
-// rules 5, 6, 8), and the monthly frequency fields (habits "Frequency").
+// rules 5, 6, 8), and the frequency fields (habits "Frequency").
 import { useEffect, useState } from "preact/hooks";
-import type { BaseFrequency, HabitFrequency } from "../../scheduler/model.ts";
+import type { HabitFrequency } from "../../scheduler/model.ts";
 import { api } from "../lib/api.ts";
 import { hhmm } from "../lib/format.ts";
+import { DAY_NAMES, MAX_INTERVAL, ORDINALS, readFrequency, WEEKDAYS } from "../lib/frequency.ts";
 import { LEVEL_NAMES, planNow } from "../lib/state.ts";
 import { TaskSearchPicker } from "./task-search-picker.tsx";
 
-const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-const WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
-const ORDINALS: Record<string, string> = {
-  "1": "1st",
-  "2": "2nd",
-  "3": "3rd",
-  "4": "4th",
-  "5": "5th",
-  last: "last",
-};
 const DEFENSE: Record<string, string> = {
   adaptive: "Free until time gets short",
   "always-free": "Always free",
   "always-busy": "Always busy",
 };
 
-/** "daily", "Tue, Thu", "monthly on day 15", "monthly on the 2nd Friday" or "every 2 weeks on Tue". */
-export function frequencyText(f: HabitFrequency): string {
-  if (f.period === "custom") {
-    const b = f.of;
-    if (b.period === "daily") return `every ${f.interval} days`;
-    if (b.period === "weekly") return `every ${f.interval} weeks on ${frequencyText(b)}`;
-    return `every ${f.interval} months, ${frequencyText(b).replace("monthly ", "")}`;
-  }
-  if (f.period === "daily") return "daily";
-  if (f.period === "weekly") return f.days.map((d) => DAY_NAMES[d - 1]).join(", ");
-  if ("dayOfMonth" in f) return `monthly on day ${f.dayOfMonth}`;
-  return `monthly on the ${ORDINALS[String(f.nth)]} ${WEEKDAYS[f.weekday - 1]}`;
-}
-
-/** The base frequency of a habit: a custom one repeats it every N periods. */
-export const baseOf = (f: HabitFrequency): BaseFrequency => (f.period === "custom" ? f.of : f);
-
-/** The weekdays a weekly or custom weekly frequency uses. */
-export const daysOf = (f: HabitFrequency): number[] => {
-  const b = baseOf(f);
-  return b.period === "weekly" ? b.days : [];
-};
-
-/** The frequency the habit form holds: monthly fields first, then the chosen days, then the interval. */
-export function readFrequency(f: FormData): HabitFrequency {
-  const repeat = String(f.get("repeat") ?? "");
-  const days = f.getAll("days").map(Number);
-  const base: BaseFrequency =
-    repeat === "day"
-      ? { period: "monthly", dayOfMonth: Number(f.get("dayOfMonth")) }
-      : repeat === "nth"
-        ? {
-            period: "monthly",
-            nth:
-              String(f.get("nth")) === "last"
-                ? "last"
-                : (Number(f.get("nth")) as 1 | 2 | 3 | 4 | 5),
-            weekday: Number(f.get("weekday")),
-          }
-        : days.length
-          ? { period: "weekly", days }
-          : { period: "daily" };
-  const interval = Math.max(1, Math.round(Number(f.get("interval") ?? 1) || 1));
-  return interval > 1 ? { period: "custom", interval, of: base } : base;
-}
-
-/** Repeat choice with the fields of a monthly habit. */
-export function MonthlyFields({ preset }: { preset?: HabitFrequency | undefined }) {
-  const base = preset ? baseOf(preset) : null;
-  const monthly = base?.period === "monthly" ? base : null;
+/** Day checkboxes, the repeat choice with the fields of a monthly habit, and the interval. */
+export function FrequencyFields({ preset }: { preset?: HabitFrequency | undefined }) {
+  const monthly = preset?.period === "monthly" ? preset : null;
+  const days = preset?.period === "weekly" ? preset.days : [];
   const [repeat, setRepeat] = useState(monthly ? ("dayOfMonth" in monthly ? "day" : "nth") : "");
   const [nth, setNth] = useState(monthly && "nth" in monthly ? String(monthly.nth) : "1");
   const [weekday, setWeekday] = useState(
     monthly && "weekday" in monthly ? String(monthly.weekday) : "1",
   );
   return (
-    <fieldset class="wide days">
-      <legend>Frequency</legend>
-      <label>
-        Repeat
-        <select name="repeat" value={repeat} onChange={(e) => setRepeat(e.currentTarget.value)}>
-          <option value="">Every day or on the chosen days</option>
-          <option value="day">Monthly on a day</option>
-          <option value="nth">Monthly on a weekday</option>
-        </select>
-      </label>
-      <label>
-        Interval
-        <input
-          name="interval"
-          type="number"
-          min={1}
-          max={52}
-          step={1}
-          defaultValue={String(preset?.period === "custom" ? preset.interval : 1)}
-        />
-        <span class="meta">
-          1 is every period; 2 is every other day, week or month from the start date
-        </span>
-      </label>
-      {repeat === "day" && (
+    <>
+      <fieldset class="wide days">
+        <legend>Days (none selected: every day of its hours)</legend>
+        {DAY_NAMES.map((n, i) => (
+          <label key={n} class="inline">
+            <input
+              type="checkbox"
+              name="days"
+              value={i + 1}
+              defaultChecked={days.includes(i + 1)}
+            />
+            {n}
+          </label>
+        ))}
+      </fieldset>
+      <fieldset class="wide days">
+        <legend>Frequency</legend>
         <label>
-          Day of month
+          Repeat
+          <select name="repeat" value={repeat} onChange={(e) => setRepeat(e.currentTarget.value)}>
+            <option value="">Every day or on the chosen days</option>
+            <option value="day">Monthly on a day</option>
+            <option value="nth">Monthly on a weekday</option>
+          </select>
+        </label>
+        <label>
+          Interval
           <input
-            name="dayOfMonth"
+            name="interval"
             type="number"
             min={1}
-            max={31}
-            required
-            defaultValue={monthly && "dayOfMonth" in monthly ? String(monthly.dayOfMonth) : ""}
+            max={MAX_INTERVAL}
+            step={1}
+            defaultValue={String(preset?.interval ?? 1)}
           />
+          <span class="meta">
+            1 is every period; 2 is every other day, week or month, counted from the start date when
+            you first set it
+          </span>
         </label>
-      )}
-      {repeat === "nth" && (
-        <>
+        {repeat === "day" && (
           <label>
-            Week of month
-            <select name="nth" value={nth} onChange={(e) => setNth(e.currentTarget.value)}>
-              {Object.entries(ORDINALS).map(([v, l]) => (
-                <option value={v} key={v}>
-                  {l === "last" ? "Last" : l}
-                </option>
-              ))}
-            </select>
+            Day of month
+            <input
+              name="dayOfMonth"
+              type="number"
+              min={1}
+              max={31}
+              required
+              defaultValue={monthly && "dayOfMonth" in monthly ? String(monthly.dayOfMonth) : ""}
+            />
           </label>
-          <label>
-            Day of the week
-            <select
-              name="weekday"
-              value={weekday}
-              onChange={(e) => setWeekday(e.currentTarget.value)}
-            >
-              {WEEKDAYS.map((w, i) => (
-                <option value={i + 1} key={w}>
-                  {w}
-                </option>
-              ))}
-            </select>
-          </label>
-        </>
-      )}
-    </fieldset>
+        )}
+        {repeat === "nth" && (
+          <>
+            <label>
+              Week of month
+              <select name="nth" value={nth} onChange={(e) => setNth(e.currentTarget.value)}>
+                {Object.entries(ORDINALS).map(([v, l]) => (
+                  <option value={v} key={v}>
+                    {l === "last" ? "Last" : l}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Day of the week
+              <select
+                name="weekday"
+                value={weekday}
+                onChange={(e) => setWeekday(e.currentTarget.value)}
+              >
+                {WEEKDAYS.map((w, i) => (
+                  <option value={i + 1} key={w}>
+                    {w}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </>
+        )}
+      </fieldset>
+    </>
   );
 }
 
@@ -345,21 +307,7 @@ export function HabitEditor({ target, onClose }: { target: EditorTarget; onClose
               <option value="remove">Remove that day</option>
             </select>
           </label>
-          <fieldset class="wide days">
-            <legend>Days (none selected: every day of its hours)</legend>
-            {DAY_NAMES.map((n, i) => (
-              <label key={n} class="inline">
-                <input
-                  type="checkbox"
-                  name="days"
-                  value={i + 1}
-                  defaultChecked={daysOf(draft.frequency).includes(i + 1)}
-                />
-                {n}
-              </label>
-            ))}
-          </fieldset>
-          <MonthlyFields preset={draft.frequency} />
+          <FrequencyFields preset={draft.frequency} />
           <label class="wide">
             Notes
             <textarea name="notes" rows={2} defaultValue={draft.notes} />

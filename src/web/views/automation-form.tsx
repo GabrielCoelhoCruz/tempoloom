@@ -12,11 +12,12 @@ import {
 } from "../../shared/event-settings.ts";
 import { api } from "../lib/api.ts";
 import { hhmm } from "../lib/format.ts";
+import { readFrequency } from "../lib/frequency.ts";
 import { type BufferPreset, entry, freeName, type LibraryEntry } from "../lib/library.ts";
 import { navigate, path } from "../lib/router.ts";
 import { LEVEL_NAMES, planNow } from "../lib/state.ts";
 import { EventSettingsFields, eventSettingsFrom, Select } from "./event-settings.tsx";
-import { daysOf, MonthlyFields, readFrequency } from "./habit-editor.tsx";
+import { FrequencyFields } from "./habit-editor.tsx";
 
 interface HoursSet {
   id: string;
@@ -66,7 +67,6 @@ const isTravel = (choice: string, kept: Filter) =>
   choice === "flight" ||
   (choice === "keep" && Boolean(kept.travel || kept.flight));
 
-const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const DEFENSE: Record<string, string> = {
   adaptive: "Free until time gets short",
   "always-free": "Always free",
@@ -335,21 +335,7 @@ function HabitRules({ row, hours }: { row: Row; hours: HoursSet[] }) {
         Skip days with events named (comma list)
         <input name="reservedWords" defaultValue={words.join(", ")} />
       </label>
-      <fieldset class="wide days">
-        <legend>Days (none selected: every day of its hours)</legend>
-        {DAY_NAMES.map((d, i) => (
-          <label key={d} class="inline">
-            <input
-              type="checkbox"
-              name="days"
-              value={i + 1}
-              defaultChecked={daysOf(frequency).includes(i + 1)}
-            />
-            {d}
-          </label>
-        ))}
-      </fieldset>
-      <MonthlyFields preset={frequency} />
+      <FrequencyFields preset={frequency} />
       <label class="wide">
         Notes
         <textarea name="notes" rows={2} defaultValue={String(row.notes ?? "")} />

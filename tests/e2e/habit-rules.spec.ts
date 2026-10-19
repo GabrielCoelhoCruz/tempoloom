@@ -9,6 +9,7 @@
 // - "every 2 days" or "every 2 weeks" places every day or every week
 //                                                          -> exact event dates
 // - the custom frequency is lost on reload or on an edit    -> list text after reload and edit
+// - a later start date (a snooze) moves the cadence          -> the week-3 date after the change
 // - a weekly occurrence with no room is dropped or moved to a day of another week
 //                                                          -> the Monday event
 // - an adaptive habit is busy while it has room, or stays free when it has none
@@ -19,7 +20,7 @@
 import { addDays, weekdayOf } from "../../src/shared/time.ts";
 import { day, openSettings, span, week } from "./automation-helpers.ts";
 import { edit, save } from "./automation-list-helpers.ts";
-import { at, blockUntil, eventually, expect, local, managed, test } from "./fixtures.ts";
+import { at, blockUntil, eventually, expect, local, managed, planNow, test } from "./fixtures.ts";
 import { addHabit, inHours, MIN, openEvent, openWeek, titled, W } from "./helpers.ts";
 
 const dates = (evs: { start: number }[]) => evs.map((e) => local(e.start).slice(0, 10));
@@ -150,6 +151,15 @@ test("a custom frequency places a habit every N days, every N weeks on its days,
   });
   await page.getByRole("link", { name: "Habits" }).click();
   await expect(page.locator('[data-habit-title="Retro"]')).toContainText("every 2 weeks on Tue");
+
+  // A later start date (a snooze) keeps the cadence: the next one is in week 3, not week 2.
+  const snooze = await edit(page, "Retro");
+  await snooze.getByLabel("Starting").fill(day(7));
+  await save(snooze);
+  await eventually(
+    () => cal.events(at(W, "00:00"), at(addDays(W, 21), "00:00")),
+    (l) => expect(dates(titled(l, "Retro"))).toEqual([day(15)]),
+  );
 });
 
 test("a weekly occurrence with no room on its day moves to the nearest other day of that week (rule 14)", async ({
@@ -167,7 +177,7 @@ test("a weekly occurrence with no room on its day moves to the nearest other day
   );
   expect(titled(evs, "Review").map(span)).toEqual([`${W} 15:00-16:00`]);
   await page.reload();
-  await page.waitForTimeout(6000);
+  await planNow(page);
   expect(titled(await week(cal), "Review").map(span)).toEqual([`${W} 15:00-16:00`]);
   // The next week has room on Tuesday again.
   const next = await cal.events(at(day(7), "00:00"), at(day(14), "00:00"));
@@ -209,7 +219,7 @@ test("an adaptive habit is free while it has room and turns busy when the calend
     expect(e.busy).toBe(false);
   }
   await page.reload();
-  await page.waitForTimeout(6000);
+  await planNow(page);
   const w = titled(await week(cal), "Lunch").find((e) => local(e.start).startsWith(wed));
   expect(w?.summary).toBe("● Lunch");
 });
@@ -237,7 +247,7 @@ test("lock and unlock one habit occurrence from the planner (rule 26, LCK-10)", 
   expect(titled(locked, "Stretch")[0]?.busy).toBe(true);
   // A meeting over the locked occurrence does not move it.
   await cal.addEvent({ title: "Clash", start: at0, end: at0 + 30 * MIN });
-  await page.waitForTimeout(6500);
+  await planNow(page);
   expect(titled(await week(cal), "Stretch")[0]?.start).toBe(at0);
   await page.reload();
   await openEvent(page, "Stretch");
