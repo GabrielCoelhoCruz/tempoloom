@@ -57,6 +57,15 @@ export function Habits() {
   const template = templateFromUrl();
   const preset = template?.kind === "habit" ? template.preset : null;
   const personal = hours.find((h) => h.kind === "personal")?.id;
+  // Entry 11: the last `minutes` of work hours, from the latest end on any day.
+  const workEnd = Math.max(
+    0,
+    ...Object.values(hours.find((h) => h.kind === "work")?.weekly ?? {}).flatMap((r) =>
+      r.map(([, e]) => e),
+    ),
+  );
+  const idealTime =
+    preset?.idealAtEnd && workEnd > 0 ? hhmm(workEnd - preset.minutes) : preset?.idealTime;
   // ?edit=<id> edits a habit, ?from=<event> makes one from a recurring event (rules 6, 8).
   const [target, setTarget] = useState<EditorTarget | null>(() => {
     const q = new URLSearchParams(location.search);
@@ -165,12 +174,7 @@ export function Habits() {
         </label>
         <label>
           Ideal time
-          <input
-            name="idealTime"
-            type="time"
-            step={900}
-            defaultValue={preset?.idealTime ?? "12:00"}
-          />
+          <input name="idealTime" type="time" step={900} defaultValue={idealTime ?? "12:00"} />
         </label>
         <label>
           Shortest (minutes)
@@ -205,7 +209,8 @@ export function Habits() {
         <HoursField
           sets={hours}
           allowItem
-          initial={preset?.hours === "personal" && personal ? personal : ""}
+          initial={preset?.window ? ITEM : preset?.hours === "personal" && personal ? personal : ""}
+          {...(preset?.window ? { item: preset.window } : {})}
         />
         <label>
           Show as

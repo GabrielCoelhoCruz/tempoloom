@@ -20,6 +20,7 @@ import {
   PlacementSetting,
   TravelSettings,
 } from "./settings-extra.tsx";
+import { WeeklyReportSetting } from "./weekly-report-setting.tsx";
 
 interface HoursSet {
   id: string;
@@ -626,6 +627,7 @@ export function Settings() {
 
       <MeetingOverloadSection />
       <MeetingSettings />
+      <WeeklyReportSetting />
     </div>
   );
 }

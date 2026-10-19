@@ -61,7 +61,9 @@ test("focus blocks keep the shortest and longest length and stay in their hours 
   await form.getByLabel("Daily maximum (hours)").fill("2");
   await form.getByLabel("Shortest block (minutes)").fill("45");
   await form.getByLabel("Longest block (minutes)").fill("90");
-  await form.getByLabel("Hours", { exact: true }).selectOption({ label: "Personal hours" });
+  await form
+    .getByRole("combobox", { name: "Hours", exact: true })
+    .selectOption({ label: "Personal hours" });
   await save(form);
   const evs = await eventually(
     () => week(cal),
@@ -101,9 +103,9 @@ test("focus blocks keep the shortest and longest length and stay in their hours 
   const shown = await edit(page, "Evening focus");
   await expect(shown.getByLabel("Longest block (minutes)")).toHaveValue("60");
   await expect(shown.getByLabel("Shortest block (minutes)")).toHaveValue("45");
-  await expect(shown.getByLabel("Hours", { exact: true }).locator("option:checked")).toHaveText(
-    "Personal hours",
-  );
+  await expect(
+    shown.getByRole("combobox", { name: "Hours", exact: true }).locator("option:checked"),
+  ).toHaveText("Personal hours");
 });
 
 test("an accepted invitation over focus time moves it; an unanswered one does not (rules 18-19)", async ({

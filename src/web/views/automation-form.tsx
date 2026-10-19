@@ -10,6 +10,7 @@ import {
   readEventSettings,
   type SettingsKind,
 } from "../../shared/event-settings.ts";
+import { changedHours, fitsOneRange, itemRangeOf, type Weekly } from "../../shared/item-hours.ts";
 import { api } from "../lib/api.ts";
 import { hhmm } from "../lib/format.ts";
 import { readFrequency } from "../lib/frequency.ts";
@@ -18,11 +19,13 @@ import { navigate, path } from "../lib/router.ts";
 import { LEVEL_NAMES, planNow } from "../lib/state.ts";
 import { EventSettingsFields, eventSettingsFrom, Select } from "./event-settings.tsx";
 import { FrequencyFields } from "./habit-editor.tsx";
+import { HoursField, ITEM, itemHoursFrom } from "./hours-field.tsx";
 
 interface HoursSet {
   id: string;
   kind: string;
   name: string;
+  weekly: Record<string, [number, number][]>;
 }
 
 type Row = Record<string, unknown> & {
@@ -165,8 +168,46 @@ function FocusRules({
           defaultValue={String(n("max_block_minutes", 240))}
         />
       </label>
-      <HoursSelect hours={hours} value={row?.hours_set_id} />
+      <FocusHours row={row} hours={hours} preset={p} />
       <ShowAs busy={row ? row.busy === 1 : true} />
+    </>
+  );
+}
+
+/** The focus row's stored item-specific hours, if it has them. */
+const storedHours = (row: Row | null): Weekly | null =>
+  row?.item_hours ? (JSON.parse(String(row.item_hours)) as Weekly) : null;
+
+/** Focus hours: a set, or a one-off window (focus-time.md `hours`) as item-specific hours. */
+function FocusHours({
+  row,
+  hours,
+  preset,
+}: {
+  row: Row | null;
+  hours: HoursSet[];
+  preset: { window?: { days: number[]; from: string; to: string } } | null;
+}) {
+  const stored = storedHours(row);
+  const item = stored ? itemRangeOf(stored) : row ? undefined : preset?.window;
+  const work = hours.find((h) => h.kind === "work")?.id;
+  const initial = item ? ITEM : !row || row.hours_set_id === work ? "" : String(row.hours_set_id);
+  return (
+    <>
+      <HoursField
+        // Keyed by the list, so the choice shows once the hours sets load.
+        key={hours.length}
+        sets={hours}
+        allowItem
+        initial={initial}
+        {...(item ? { item } : {})}
+      />
+      {stored && !fitsOneRange(stored) && (
+        <p class="meta wide" data-testid="item-hours-note">
+          These hours have more than one range: the fields show the first. Saving keeps them all
+          unless you change the fields.
+        </p>
+      )}
     </>
   );
 }
@@ -365,17 +406,29 @@ function HabitRules({ row, hours }: { row: Row; hours: HoursSet[] }) {
 /** Hours from a number input, as whole quarter hours in minutes. */
 const quarterHours = (v: FormDataEntryValue | null) => Math.round((Number(v) * 60) / 15) * 15;
 
-function rulesBody(kind: SettingsKind, f: FormData, kept: Filter): Record<string, unknown> {
+function rulesBody(
+  kind: SettingsKind,
+  f: FormData,
+  kept: Filter,
+  hours: HoursSet[],
+  row: Row | null,
+): Record<string, unknown> {
   const text = (k: string) => String(f.get(k) ?? "").trim();
   const num = (k: string) => Number(f.get(k));
   if (kind === "focus_time") {
+    const set = text("hoursSetId");
+    const itemHours = set === ITEM ? changedHours(storedHours(row), itemHoursFrom(f)) : undefined;
     return {
       weeklyGoalMinutes: quarterHours(f.get("weeklyGoal")),
       dailyMinMinutes: quarterHours(f.get("dailyMin")),
       dailyMaxMinutes: quarterHours(f.get("dailyMax")),
       minBlockMinutes: num("minBlock"),
       maxBlockMinutes: num("maxBlock"),
-      hoursSetId: text("hoursSetId"),
+      ...(set === ITEM
+        ? itemHours
+          ? { itemHours }
+          : {}
+        : { hoursSetId: set || hours.find((h) => h.kind === "work")?.id }),
       busy: text("busy") === "busy",
     };
   }
@@ -478,7 +531,7 @@ export function AutomationForm() {
     try {
       const body = {
         title: String(f.get("title") ?? "").trim(),
-        ...rulesBody(kind, f, kept),
+        ...rulesBody(kind, f, kept, hours, row),
         eventSettings: eventSettingsFrom(f),
         ...(!row && template ? { templateId: template.slug } : {}),
       };

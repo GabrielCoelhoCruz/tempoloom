@@ -286,8 +286,6 @@ PARTIAL = StatusMap("PARTIAL", {
     349: "The list is grouped by priority; no drag to reorder",
     350: "No limit in code; not under test",
     356: "Changed rules or hours place future occurrences again (engine change flag); unit tests only",
-    764: "E2E adds Lunch at 12:00 on each workday from the library; the 11:30 to 14:00 window is not set",
-    759: "E2E checks the prefilled form (personal hours, three days); the habit is not saved in that test",
     278: "The category is computed again from the cached attendees on each run; not under E2E",
     283: "Future managed events and external events from 90 days back are repainted; past managed events are not",
     284: "An event that cannot change color is skipped and painting never stops a run; not under E2E (Google)",
@@ -302,14 +300,6 @@ PARTIAL = StatusMap("PARTIAL", {
     256: "#tl_trip gives the travel category (unit tests); no buffer is added",
     257: "#tl_focus counts an event as focus in stats; not under test",
 })
-
-# Library entries (automations-library.md): row = 718 + entry number.
-LIB_FORM = [11, 32, 34, 35, 36, 37, 38, 39, 40, 42, 43, 44, 45]
-LIB_DIRECT = [1, 7, 10, 19, 23, 28, 29, 30]
-for n in LIB_FORM:
-    PARTIAL.setdefault(718 + n, "The library opens the form of its kind with the preset; not under E2E")
-for n in LIB_DIRECT:
-    PARTIAL.setdefault(718 + n, "The library adds it with the preset (no form of its own yet); not under E2E")
 
 # Row id -> reason, for rows that cannot work yet because a feature they build on is missing.
 BLOCKED = StatusMap("BLOCKED", {
@@ -343,15 +333,11 @@ UNIT = StatusMap("UNIT", {
     470: "", 471: "stored per policy; no UI", 472: "", 473: "the skip half is E2E-proven; free copies in details mode are not",
     475: "", 476: "copies the details; the provider visibility is not set to private", 480: "",
     353: "one-to-one, group and booked meeting hours",
-    604: "meetings outside work hours and personal habit hours",
-    607: "meetings, focus and booking counts; no breaks or travel",
-    704: "phase tabs E2E-proven; reset not covered by E2E", 708: "sound on or off; one alarm sound", 712: "today's summary only",
     297: "",
     298: "only main-calendar events can change",
 })
 
 GOOGLE_ROWS = StatusMap("GOOGLE_ROWS", {
-    638: "Google sign-in is implemented and follows the team's SSO rules; Google E2E pending (needs a Google OAuth client and account). Microsoft sign-in is not implemented: it needs an app registration and a Microsoft Graph provider.",
     510: "Google sign-in (OAuth with PKCE) and Google Calendar sync are implemented; Google E2E pending: needs a service-account key, and the consent screen needs a one-time check by a person. Microsoft is not implemented.",
     513: "Google and CalDAV accounts can be connected; a second CalDAV account is added in the UI with CalDAV E2E (\u201ca user adds a second CalDAV account and removes it after a confirmation\u201d); Microsoft is not implemented. Google E2E pending.",
     518: "All calendar scopes are asked at sign-in; incremental consent not implemented. Google E2E pending.",
@@ -415,8 +401,6 @@ PARTIAL.update({
     301: "From the library and from the top-bar create menu (E2E: \u201ca library entry opens the shared form\u2026\u201d, \u201cthe automation list shows habits\u2026\u201d); asking the assistant chat needs the chat, which is not implemented",
     245: "Travel and airport buffers start public, with the travel marker (E2E: \u201ctask chunks, habits and flexible meetings get the calendar default reminder\u2026\u201d); mirroring skips every managed event, while mirroring rule 15 skips only copies, so no copy of a travel buffer exists to follow a policy",
 })
-for n in [1, 7, 10, 19, 23, 28, 29, 30]:
-    PARTIAL[718 + n] = "The library opens the shared automation form with the preset; not under E2E"
 # --- end s1 ---
 
 # --- s2: habit actions, focus and buffers ---
@@ -707,8 +691,6 @@ E2E_NOTES.update({
 })
 PARTIAL.update({
     700: "The account page gives the server URL and the API key steps for any MCP client (E2E: \u201can MCP client with an API key reads\u2026\u201d checks the URL); no guide per product (ChatGPT, Claude, Cursor), which integrations-ai-tools.md owns",
-    610: "Planned time (the calendar when each day began, from Tempoloom's change log) and actual time (what stayed) show on the stats page; unit tests only, because an E2E run cannot pass a day boundary; logged time is not added",
-    634: "The facts (busiest meeting day, longest focus session, booked meetings, breaks, people met) show on the stats page for any range (E2E: \u201cstats split deep and shallow work\u2026\u201d); the weekly report email itself is not built",
 })
 # --- end s7 ---
 
@@ -731,6 +713,60 @@ E2E_NOTES.update({
     304: "The list is its own Automations page; the meeting checks, which have no priority, show in a Meeting quality section below the groups",
 })
 # --- end s8 ---
+
+# --- U09: library entries, stats panels, tools ---
+T.update({
+    "u9_lib_habits1": "library habit entries 11, 35, 36, 43, 45, 46 add habits with their presets: wrap-up at the end of work hours, Lunch inside 11:30 to 14:00",
+    "u9_lib_habits2": "library habit entries 40, 41, 42, 44 add habits with their presets: walk, exercise in personal hours, coding at P2, email at P4",
+    "u9_lib_buffers": "library buffer entries 1, 10, 19 add buffers after large meetings, around flights and after long meetings only",
+    "u9_lib_external": "library buffer entries 28, 29, 30 anchor on external meetings: travel only at an address, prep before, debrief after",
+    "u9_lib_focus": "library focus entries 7 and 23 place their weekly goal inside the 09:00 to 12:00 window, and the window stays on edit",
+    "u9_lib_meetings": "library entries 32, 34 and 37: flexible meetings repeat at their period with the guests, and the priority link offers time over P3 and P4 habits",
+    "u9_lib_mirror": "library mirroring entries 38 and 39 copy busy time only between job calendars, both ways, never copying a copy",
+    "u9_timer": "the pomodoro timer plays the chosen alarm, resets a running session without counting it, and shows the stats view with streak, completion rate and a chart",
+    "u9_planned": "planned time is the calendar when the day began and actual time is what stayed; only ended days count",
+    "u9_weekly": "the weekly report goes out once in the first work hour of the last workday, with the week's totals and the calendar facts of the stats page; the user can turn it off",
+    "u9_balance": "stats show work-life balance (personal habits, meetings outside work hours, time away) and highlights (focus held, link bookings, breaks, travel) for a chosen range",
+})
+E2E.update({
+    719: ["u9_lib_buffers"], 728: ["u9_lib_buffers"], 737: ["u9_lib_buffers"],
+    746: ["u9_lib_external"], 747: ["u9_lib_external"], 748: ["u9_lib_external"],
+    753: ["u9_lib_habits1"], 754: ["u9_lib_habits1"], 761: ["u9_lib_habits1"],
+    763: ["u9_lib_habits1"], 764: ["u9_lib_habits1", "lib_habit"],
+    758: ["u9_lib_habits2"], 759: ["u9_lib_habits2", "lib_habit"], 760: ["u9_lib_habits2"],
+    762: ["u9_lib_habits2"],
+    752: ["u9_lib_meetings"], 755: ["u9_lib_meetings"],
+    604: ["u9_balance"], 607: ["u9_balance", "s7_stats"],
+    704: ["u9_timer", "x_timer"], 708: ["u9_timer"], 712: ["u9_timer"],
+    610: ["u9_planned"], 634: ["u9_weekly", "s7_stats"],
+})
+E2E_NOTES.update({
+    764: "The 11:30 to 14:00 window is item-specific hours on workdays",
+    746: "An external meeting with an address: the buffer filter is the external meeting category and an address",
+    737: "A meeting has at least one other attendee; a meeting of exactly 60 min with exactly one other person gets the break",
+    604: "Time away is the work hours that out-of-office time covers",
+    610: "The test sets the server clock (TEST_CLOCK_START, test mode only) so that a day begins and ends; time logged with the task timer is a past event of its task (rule 15), so it counts in actual time once (rule 16 decision)",
+    634: "Up to 4 facts that apply, in the stats page's order, as colored blocks under the totals; with 5 kinds of facts the fifth does not show; the report counts the week up to the send time; the operator command weekly-reports --now runs one tick of the server's email worker, and one test lets the server's own clock (TEST_CLOCK_START) reach the send hour",
+    704: "The timer page changes no calendar event, so the test checks that the calendar stays empty",
+    708: "Three alarm sounds made in the browser (Bell, Chime, Digital); the choice stays in this browser",
+    712: "The stats come from the session log in this browser; the chart groups by day, week or month",
+    607: "Focus time held is the time of focus events; work habits and tasks that count toward the goal are not added",
+})
+BLOCKED[638] = (
+    "Google sign-in is built and follows the team's SSO rules; its E2E needs a Google OAuth client "
+    "and a Google test account. Microsoft sign-in is not built: it needs a Microsoft app "
+    "registration and a Microsoft 365 account to build and test a Microsoft Graph provider"
+)
+# Rows whose entry covers only part of its preset (review of PR 10).
+PARTIAL.update({
+    725: "The entry adds 8 h of weekly focus in a 09:00 to 12:00 window on workdays (E2E: \u201clibrary focus entries 7 and 23 place their weekly goal inside the 09:00 to 12:00 window, and the window stays on edit\u201d). Focus time has no ideal time (focus-time.md), so the mornings are hard hours: with busy mornings no focus goes to the afternoon, where the preset's ideal time would allow it",
+    741: "The entry adds 10 h of weekly focus in a 09:00 to 12:00 window on workdays that the user can change (E2E: \u201clibrary focus entries 7 and 23 place their weekly goal inside the 09:00 to 12:00 window, and the window stays on edit\u201d). Focus time has no ideal time (focus-time.md), so the window is hard hours, not an ideal window",
+    729: "The entry adds the habit at P3, 30 min on workdays (E2E: \u201clibrary habit entries 11, 35, 36, 43, 45, 46 add habits with their presets: wrap-up at the end of work hours, Lunch inside 11:30 to 14:00\u201d). A habit has one ideal time, read from the latest end of work hours when the form opens; a day whose work hours end earlier keeps that time, not its own last 30 min",
+    750: "The entry fills a flexible meeting every 2 weeks, 30 min, P2, that needs at least one guest (E2E: \u201clibrary entries 32, 34 and 37: flexible meetings repeat at their period with the guests, and the priority link offers time over P3 and P4 habits\u201d). It does not check that the guests are external",
+    756: "The entry fills the mirroring form with busy-only copies (E2E: \u201clibrary mirroring entries 38 and 39 copy busy time only between job calendars, both ways, never copying a copy\u201d). It adds no two-way behavior: the user adds one policy in each direction",
+    757: "The entry fills the mirroring form with busy-only copies (E2E: \u201clibrary mirroring entries 38 and 39 copy busy time only between job calendars, both ways, never copying a copy\u201d). It adds no mesh of calendars: the user adds one policy for each pair",
+})
+# --- end U09 ---
 
 # --- merge: rows that need the work of more than one stream ---
 E2E.update({282: ["s1_habit_es", "s1_task_color", "s4_labels"]})

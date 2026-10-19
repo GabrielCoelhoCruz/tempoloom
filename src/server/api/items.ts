@@ -167,6 +167,8 @@ const focusInput = z.object({
   busy: z.boolean().optional(),
   eventSettings: eventSettingsInput.optional(),
   templateId: z.string().max(100).optional(),
+  /** A one-off window instead of a named set (focus-time.md `hours`). */
+  itemHours: itemHoursSchema.optional(),
 });
 
 export function badRequest(field: string, message: string): never {
@@ -817,7 +819,14 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
 
   // ---------------------------------------------------------------- focus
   r.get("/focus", (c) =>
-    c.json({ focus: all(db, "SELECT * FROM focus_goals WHERE user_id = ?", c.get("user").id) }),
+    c.json({
+      focus: all(
+        db,
+        `SELECT f.*, CASE WHEN s.item_specific = 1 THEN s.weekly END AS item_hours
+         FROM focus_goals f JOIN hours_sets s ON s.id = f.hours_set_id WHERE f.user_id = ?`,
+        c.get("user").id,
+      ),
+    }),
   );
 
   r.post("/focus", async (c) => {
@@ -831,6 +840,9 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
     const id = randomUUID();
     const t = now();
     const es = newEventSettings(db, user.id, "focus_time", f.eventSettings);
+    const hours = f.itemHours
+      ? createItemHours(db, user.id, f.title ?? "Focus time", f.itemHours)
+      : hoursSetId(db, user.id, f.hoursSetId, "work");
     run(
       db,
       `INSERT INTO focus_goals (id, user_id, title, enabled, hours_set_id, weekly_goal_minutes, daily_min_minutes,
@@ -841,7 +853,7 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
       user.id,
       f.title ?? "Focus time",
       f.enabled === false ? 0 : 1,
-      hoursSetId(db, user.id, f.hoursSetId, "work"),
+      hours,
       f.weeklyGoalMinutes,
       f.dailyMinMinutes ?? 0,
       f.dailyMaxMinutes ?? 240,
@@ -879,6 +891,11 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
       readEventSettings(cur.event_settings, defaultEventSettings("focus_time")),
       f.eventSettings,
     );
+    const hours = f.itemHours
+      ? saveItemHours(db, user.id, cur.hours_set_id, f.title ?? cur.title, f.itemHours)
+      : f.hoursSetId
+        ? hoursSetId(db, user.id, f.hoursSetId, "work")
+        : cur.hours_set_id;
     run(
       db,
       `UPDATE focus_goals SET title = ?, enabled = ?, hours_set_id = ?, weekly_goal_minutes = ?, daily_min_minutes = ?,
@@ -886,7 +903,7 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
          rules_changed_at = ? WHERE id = ?`,
       f.title ?? cur.title,
       f.enabled === undefined ? cur.enabled : f.enabled ? 1 : 0,
-      f.hoursSetId ? hoursSetId(db, user.id, f.hoursSetId, "work") : cur.hours_set_id,
+      hours,
       f.weeklyGoalMinutes ?? cur.weekly_goal_minutes,
       f.dailyMinMinutes ?? cur.daily_min_minutes,
       f.dailyMaxMinutes ?? cur.daily_max_minutes,
@@ -897,13 +914,21 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
       now(),
       cur.id,
     );
+    if (hours !== cur.hours_set_id) dropItemHours(db, cur.hours_set_id);
     changed(user.id);
     return c.json({ focus: one(db, "SELECT * FROM focus_goals WHERE id = ?", cur.id) });
   });
 
   r.delete("/focus/:id", (c) => {
     const user = c.get("user");
+    const own = one<{ hours_set_id: string }>(
+      db,
+      "SELECT hours_set_id FROM focus_goals WHERE id = ? AND user_id = ?",
+      c.req.param("id"),
+      user.id,
+    );
     run(db, "DELETE FROM focus_goals WHERE id = ? AND user_id = ?", c.req.param("id"), user.id);
+    if (own) dropItemHours(db, own.hours_set_id);
     changed(user.id);
     return c.body(null, 204);
   });

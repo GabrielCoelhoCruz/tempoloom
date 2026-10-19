@@ -1168,4 +1168,8 @@ export const MIGRATIONS: readonly string[] = [
   `
   ALTER TABLE managed_events ADD COLUMN kept_minutes INTEGER;
   `,
+  // 30: the library entry a mirroring policy came from (automations-library.md rule 4).
+  `
+  ALTER TABLE mirror_policies ADD COLUMN template_id TEXT;
+  `,
 ];
