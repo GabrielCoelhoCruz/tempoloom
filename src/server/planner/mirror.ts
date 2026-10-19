@@ -7,7 +7,7 @@ import { all, type Db } from "../db.ts";
 import { MIRROR_WINDOW } from "../sync/pull.ts";
 import { categoryContext } from "./categories.ts";
 import type { DesiredEvent } from "./push.ts";
-import { MANAGED_PROP } from "./push.ts";
+import { KEY_PROP, MANAGED_PROP } from "./push.ts";
 
 export const TAG_NOSYNC = "#tl_nosync";
 export const LABELS = {
@@ -83,6 +83,20 @@ export function mirrorCopies(
     userId,
   );
   let cats: ReturnType<typeof categoryContext> | undefined;
+  // buffers-travel.md outputs: travel and airport buffers are copied like the
+  // user's own events, so their copies follow the policy's visibility.
+  const travelBuffers = new Set(
+    all<{ id: string; filter: string }>(
+      db,
+      "SELECT id, filter FROM buffers WHERE user_id = ?",
+      userId,
+    )
+      .filter((b) => {
+        const f = JSON.parse(b.filter) as { travel?: boolean; flight?: boolean };
+        return f.travel || f.flight;
+      })
+      .map((b) => b.id),
+  );
   for (const p of policies) {
     // Rule 14: copies for events that end after now and start within 12 months.
     const events = all<SourceEvent>(
@@ -98,8 +112,13 @@ export function mirrorCopies(
     const work = workHours ? hoursToTimeSet(workHours, zone, now, horizon) : null;
     for (const e of events) {
       const props = JSON.parse(e.private_props) as Record<string, string>;
-      // No chaining: copies and other managed events are never copied again.
-      if (props[MANAGED_PROP] === "1") continue;
+      // No chaining: copies and other managed events are never copied again,
+      // except travel and airport buffers (keys `buffer:<id>:...`).
+      const travel =
+        props[MANAGED_PROP] === "1" &&
+        travelBuffers.has((props[KEY_PROP] ?? "").split(":")[1] ?? "") &&
+        (props[KEY_PROP] ?? "").startsWith("buffer:");
+      if (props[MANAGED_PROP] === "1" && !travel) continue;
       const tagged = { title: e.summary, description: e.description };
       if (hasTag(tagged, TAG_NOSYNC)) continue;
       const attendees = JSON.parse(e.attendees) as string[];
@@ -132,20 +151,22 @@ export function mirrorCopies(
       if (p.visibility === "busy_only") title = "Busy";
       else if (!details) {
         cats ??= categoryContext(db, userId);
-        const category = categoryOf(
-          {
-            title: e.summary,
-            description: e.description,
-            start: e.start_ms,
-            end: e.end_ms,
-            eventType: e.event_type,
-            attendees,
-            managedKind: null,
-            personalCalendar: false,
-            manual: cats.manual.get(`${e.calendar_id}:${e.event_id}`) ?? null,
-          },
-          cats.userEmail,
-        );
+        const category: Category = travel
+          ? "travel"
+          : categoryOf(
+              {
+                title: e.summary,
+                description: e.description,
+                start: e.start_ms,
+                end: e.end_ms,
+                eventType: e.event_type,
+                attendees,
+                managedKind: null,
+                personalCalendar: false,
+                manual: cats.manual.get(`${e.calendar_id}:${e.event_id}`) ?? null,
+              },
+              cats.userEmail,
+            );
         title = copyLabel(category, p.calendar_type);
       }
       out.push({
