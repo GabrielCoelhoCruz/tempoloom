@@ -74,6 +74,10 @@ Tempoloom decision: the tools as built. `tools/list` gives each tool an
 keys) and annotations. Every successful result has `structuredContent` that
 matches the `outputSchema` and the same JSON as text; a result that would not
 match is a tool error ("The tool failed on the server"), never a result.
+A stage or apply tool can fail on the server after its change was staged or
+applied. Its tool error says so and tells the client to call
+`list_staged_changes` (and, after `apply_staged_changes`, `list_events`)
+before it tries again, so a retry does not stage the change twice.
 
 | Tool | Annotations | Input | Output (`structuredContent`) |
 |---|---|---|---|
@@ -98,16 +102,21 @@ runs staged deletes. All tools have `openWorldHint` false.
 `list_automations` lists flexible meetings, buffers, habits, meeting
 overloads (always P4), focus time goals (always P4) and meeting checks, in
 the order of the automation list (`automations-overview.md`): priority,
-rank, type, age; the meeting checks, without priority, last.
+rank, type, age; the meeting checks, without priority, last: the built-in
+checks, then the company checks, oldest first.
 
 Pages: the three list tools return one page per call, in this order:
-tasks by due date (none last), then age; automations as above; staged changes by the
-time they were staged. `limit` is 50 by default and at most 100. When more
+tasks by due date (none last), then age; automations as above; staged
+changes oldest first and, at the same time, in the order they were staged:
+the order of the preview panel. `limit` is 50 by default and at most 100. When more
 rows exist, the result has `next_cursor`; the client passes it as `cursor`
 for the next page. The cursor is the sort key of the last row, so a row
 added between two calls is not repeated and does not shift the others. A
 cursor works only for the same tool and the same `status`; another cursor,
-or a `limit` above 100, gives a tool error.
+or a `limit` above 100, gives a tool error. A task page seeks in an index on
+the due key; tasks with the same due key before the cursor, such as many
+done tasks without a due date, are still read and skipped. An automation
+page reads the whole automation list of the user, which is small.
 
 ## Behavior
 
