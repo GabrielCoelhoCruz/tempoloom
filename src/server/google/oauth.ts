@@ -133,7 +133,7 @@ export function exchangeCode(
 }
 
 export function refreshAccessToken(
-  client: OAuthClient,
+  client: Pick<OAuthClient, "clientId" | "clientSecret">,
   refreshToken: string,
   now = Date.now(),
 ): Promise<TokenSet> {

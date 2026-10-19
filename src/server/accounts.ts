@@ -295,8 +295,9 @@ export function upsertGoogleLogin(
     }
     const userId = existing?.user_id ?? forUserId;
     const user = userId
-      ? (one<User>(db, "SELECT id, email, name, time_zone FROM users WHERE id = ?", userId) as User)
+      ? one<User>(db, "SELECT id, email, name, time_zone FROM users WHERE id = ?", userId)
       : ensureUser(db, identity.email, identity.name, now, teamId);
+    if (!user) throw new Error(`No user ${userId}`);
     const previous = existing
       ? (JSON.parse(box.open(existing.credentials)) as { refreshToken?: string })
       : {};

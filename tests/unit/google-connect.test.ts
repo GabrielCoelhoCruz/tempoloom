@@ -50,18 +50,22 @@ beforeEach(() => {
     requests.push(`${init?.method ?? "GET"} ${url.origin}${url.pathname}`);
     if (url.href === "https://oauth2.googleapis.com/token") {
       const body = new URLSearchParams(String(init?.body));
-      const ok =
-        body.get("refresh_token") === GOOD_TOKEN &&
-        body.get("client_id") === CLIENT.clientId &&
-        body.get("client_secret") === CLIENT.clientSecret;
-      return ok
-        ? Response.json({
-            access_token: "access-1",
-            expires_in: 3600,
-            scope: "",
-            id_token: idToken,
-          })
-        : Response.json({ error: "invalid_grant" }, { status: 400 });
+      if (
+        body.get("client_id") !== CLIENT.clientId ||
+        body.get("client_secret") !== CLIENT.clientSecret
+      )
+        return Response.json({ error: "invalid_client" }, { status: 401 });
+      if (body.get("refresh_token") !== GOOD_TOKEN)
+        return Response.json({ error: "invalid_grant" }, { status: 400 });
+      // A refresh needs no redirect URI; Google rejects one that does not match.
+      if (body.has("redirect_uri"))
+        return Response.json({ error: "redirect_uri_mismatch" }, { status: 400 });
+      return Response.json({
+        access_token: "access-1",
+        expires_in: 3600,
+        scope: "",
+        id_token: idToken,
+      });
     }
     if (url.pathname === "/calendar/v3/users/me/calendarList") {
       return Response.json({ items: LISTED });
@@ -121,7 +125,7 @@ describe("connect-google-oauth", () => {
       connectGoogleOauth(db, box, { ...CLIENT, clientSecret: "other" }, GOOD_TOKEN, {
         email: USER_EMAIL,
       }),
-    ).rejects.toThrow("invalid_grant");
+    ).rejects.toThrow("Google refused the refresh token (invalid_client)");
     expect(accounts(db)).toEqual([]);
   });
 
@@ -144,6 +148,22 @@ describe("connect-google-oauth", () => {
     );
     expect(login.accountId).toBe(c.accountId);
     expect(accounts(db)).toHaveLength(1);
+  });
+
+  it("refuses a target user that does not exist", () => {
+    const { db, box } = setup();
+    expect(() =>
+      upsertGoogleLogin(
+        db,
+        box,
+        { sub: SUB, email: GOOGLE_EMAIL, name: "T", emailVerified: true },
+        { accessToken: "a", expiresAt: Date.now() + 3_600_000, scope: "", refreshToken: "r" },
+        Date.now(),
+        undefined,
+        "no-such-user",
+      ),
+    ).toThrow("No user no-such-user");
+    expect(accounts(db)).toEqual([]);
   });
 
   it("refuses a Google account that another user holds", async () => {
