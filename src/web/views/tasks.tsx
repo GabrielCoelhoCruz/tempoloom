@@ -1,8 +1,15 @@
+import type { ComponentChildren } from "preact";
 import { useCallback, useEffect, useState } from "preact/hooks";
 import { api } from "../lib/api.ts";
 import { duration, formatWhen, fromLocalInput, toLocalInput } from "../lib/format.ts";
+import { lazyComponent } from "../lib/lazy.ts";
 import { useLive } from "../lib/live.ts";
 import { LEVEL_NAMES, me, planNow, zone } from "../lib/state.ts";
+import { type HoursChoice, HoursField } from "./hours-field.tsx";
+
+const TimerDialog = lazyComponent<{ onClose: () => void }>(() =>
+  import("./timer-dialog.tsx").then((m) => m.TimerDialog),
+);
 
 interface Task {
   id: string;
@@ -17,12 +24,6 @@ interface Task {
   issue: { status: string; reason: string } | null;
 }
 
-interface HoursSet {
-  id: string;
-  kind: string;
-  name: string;
-}
-
 const REASONS: Record<string, string> = {
   "outside-window": "starts after the planning window",
   "no-hours": "no hours in this period",
@@ -33,35 +34,34 @@ const REASONS: Record<string, string> = {
   "after-due": "part ends after the due date",
 };
 
-export function Tasks() {
+const errorText = (err: unknown) => {
+  const body = (err as { body?: { issues?: { message: string }[]; message?: string } }).body;
+  return (
+    body?.issues?.[0]?.message ??
+    body?.message ??
+    (err instanceof Error ? err.message : String(err))
+  );
+};
+
+/**
+ * The task creation form, on the tasks page and in the New task dialog
+ * (planning-tasks.md TSK-1 to TSK-6). `onSaved` gets the new task's title.
+ */
+export function TaskForm({
+  onSaved,
+  children,
+}: {
+  onSaved: (title: string) => unknown;
+  children?: ComponentChildren;
+}) {
   const z = zone();
   const d = me.value?.settings.taskDefaults;
-  const [filter, setFilter] = useState<"open" | "done">("open");
-  const [tasks, setTasks] = useState<Task[]>([]);
-  const [hours, setHours] = useState<HoursSet[]>([]);
+  const [hours, setHours] = useState<HoursChoice[]>([]);
   const [split, setSplit] = useState(d?.splitUp ?? true);
   const [error, setError] = useState<string | null>(null);
-
-  const load = useCallback(async () => {
-    setTasks((await api<{ tasks: Task[] }>("GET", `/api/tasks?status=${filter}`)).tasks);
-  }, [filter]);
-  useEffect(() => void load(), [load]);
-  useLive(load);
   useEffect(() => {
-    void api<{ hours: HoursSet[] }>("GET", "/api/hours").then((h) => setHours(h.hours));
+    void api<{ hours: HoursChoice[] }>("GET", "/api/hours").then((h) => setHours(h.hours));
   }, []);
-
-  const act = async (fn: () => Promise<unknown>) => {
-    setError(null);
-    try {
-      await fn();
-      await planNow();
-      await load();
-    } catch (err) {
-      const body = (err as { body?: { issues?: { message: string }[] } }).body;
-      setError(body?.issues?.[0]?.message ?? (err instanceof Error ? err.message : String(err)));
-    }
-  };
 
   const create = (e: Event) => {
     e.preventDefault();
@@ -69,7 +69,8 @@ export function Tasks() {
     const f = new FormData(formEl);
     const text = (k: string) => String(f.get(k) ?? "");
     const num = (k: string) => Number(f.get(k));
-    void act(async () => {
+    setError(null);
+    void (async () => {
       await api("POST", "/api/tasks", {
         title: text("title"),
         ...(text("notes") ? { notes: text("notes") } : {}),
@@ -82,14 +83,15 @@ export function Tasks() {
         ...(text("hoursSetId") ? { hoursSetId: text("hoursSetId") } : {}),
         nextUp: f.get("nextUp") === "on",
       });
+      await planNow();
       const title = formEl.elements.namedItem("title") as HTMLInputElement | null;
       if (title) title.value = "";
-    });
+      await onSaved(text("title"));
+    })().catch((err) => setError(errorText(err)));
   };
 
   return (
-    <div class="page" data-testid="tasks-page">
-      <h1>Tasks</h1>
+    <>
       <form class="form" onSubmit={create} data-testid="task-form">
         <label class="wide">
           Title
@@ -129,19 +131,7 @@ export function Tasks() {
           Start after
           <input name="startAfter" type="datetime-local" />
         </label>
-        <label>
-          Hours
-          <select name="hoursSetId">
-            <option value="">Work hours</option>
-            {hours
-              .filter((h) => h.kind !== "work")
-              .map((h) => (
-                <option value={h.id} key={h.id}>
-                  {h.name}
-                </option>
-              ))}
-          </select>
-        </label>
+        <HoursField sets={hours} allowItem={false} />
         <label>
           Split into chunks
           <select
@@ -188,11 +178,68 @@ export function Tasks() {
         <button type="submit" class="primary">
           Add task
         </button>
+        {children}
       </form>
       {error && (
         <p class="error" role="alert">
           {error}
         </p>
+      )}
+    </>
+  );
+}
+
+interface Timer {
+  kind: string;
+  itemId: string;
+}
+
+export function Tasks() {
+  const z = zone();
+  const [filter, setFilter] = useState<"open" | "done">("open");
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [timer, setTimer] = useState<Timer | null>(null);
+  const [stopping, setStopping] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    const [t, tm] = await Promise.all([
+      api<{ tasks: Task[] }>("GET", `/api/tasks?status=${filter}`),
+      api<{ timer: Timer | null }>("GET", "/api/timer"),
+    ]);
+    setTasks(t.tasks);
+    setTimer(tm.timer);
+  }, [filter]);
+  useEffect(() => void load(), [load]);
+  useLive(load);
+
+  const act = async (fn: () => Promise<unknown>) => {
+    setError(null);
+    try {
+      await fn();
+      await planNow();
+      await load();
+    } catch (err) {
+      setError(errorText(err));
+    }
+  };
+
+  return (
+    <div class="page" data-testid="tasks-page">
+      <h1>Tasks</h1>
+      <TaskForm onSaved={load} />
+      {error && (
+        <p class="error" role="alert">
+          {error}
+        </p>
+      )}
+      {stopping && (
+        <TimerDialog
+          onClose={() => {
+            setStopping(false);
+            void load();
+          }}
+        />
       )}
       <div class="toolbar" style={{ padding: "0 0 8px", border: 0 }}>
         <button type="button" aria-pressed={filter === "open"} onClick={() => setFilter("open")}>
@@ -223,6 +270,12 @@ export function Tasks() {
                 )}{" "}
                 · <span data-testid="task-state">{t.state}</span>
                 {t.scheduledMinutes > 0 ? ` · ${duration(t.scheduledMinutes)} planned` : ""}
+                {t.state !== "done" && (
+                  <>
+                    {" "}
+                    · <span data-testid="task-left">{duration(t.remainingMinutes)} left</span>
+                  </>
+                )}
                 {t.issue && (
                   <span class="badge risk" data-testid="task-issue">
                     {" "}
@@ -232,6 +285,27 @@ export function Tasks() {
               </div>
             </div>
             <div class="actions">
+              {filter === "open" &&
+                (timer?.kind === "task" && timer.itemId === t.id ? (
+                  <>
+                    <span class="badge" data-testid="timer-running">
+                      Timer running
+                    </span>
+                    <button type="button" onClick={() => setStopping(true)}>
+                      Stop
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={timer !== null}
+                    onClick={() =>
+                      void act(() => api("POST", "/api/timer", { kind: "task", itemId: t.id }))
+                    }
+                  >
+                    Start timer
+                  </button>
+                ))}
               {filter === "open" && (
                 <button
                   type="button"

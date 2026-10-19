@@ -6,6 +6,13 @@ import { freeName, templateFromUrl } from "../lib/library.ts";
 import { useLive } from "../lib/live.ts";
 import { loadPolicyMarks, PolicyMark, policyMarks } from "../lib/policy-marks.tsx";
 import { LEVEL_NAMES, planNow } from "../lib/state.ts";
+import {
+  describeWeekly,
+  type HoursChoice,
+  HoursField,
+  ITEM,
+  itemHoursFrom,
+} from "./hours-field.tsx";
 
 interface Habit {
   id: string;
@@ -17,12 +24,8 @@ interface Habit {
   max_minutes: number;
   frequency: string;
   defense: string;
-}
-
-interface HoursSet {
-  id: string;
-  kind: string;
-  name: string;
+  /** JSON weekly ranges when the habit has item-specific hours. */
+  item_hours: string | null;
 }
 
 const TeamHabitTemplates = lazyComponent(() =>
@@ -38,7 +41,7 @@ const DEFENSE: Record<string, string> = {
 
 export function Habits() {
   const [habits, setHabits] = useState<Habit[]>([]);
-  const [hours, setHours] = useState<HoursSet[]>([]);
+  const [hours, setHours] = useState<HoursChoice[]>([]);
   const [error, setError] = useState<string | null>(null);
   // A library entry fills the form (automations-library.md rule 5).
   const template = templateFromUrl();
@@ -48,7 +51,7 @@ export function Habits() {
   const load = useCallback(async () => {
     const [h, hs] = await Promise.all([
       api<{ habits: Habit[] }>("GET", "/api/habits"),
-      api<{ hours: HoursSet[] }>("GET", "/api/hours"),
+      api<{ hours: HoursChoice[] }>("GET", "/api/hours"),
     ]);
     setHabits(h.habits);
     setHours(hs.hours);
@@ -92,7 +95,11 @@ export function Habits() {
         ...(words.length ? { reservedWords: words } : {}),
         ...(text("starting") ? { starting: text("starting") } : {}),
         ...(text("notes") ? { notes: text("notes") } : {}),
-        ...(text("hoursSetId") ? { hoursSetId: text("hoursSetId") } : {}),
+        ...(text("hoursSetId") === ITEM
+          ? { itemHours: itemHoursFrom(f) }
+          : text("hoursSetId")
+            ? { hoursSetId: text("hoursSetId") }
+            : {}),
       });
       const title = formEl.elements.namedItem("title") as HTMLInputElement | null;
       if (title) title.value = "";
@@ -164,23 +171,11 @@ export function Habits() {
             ))}
           </select>
         </label>
-        <label>
-          Hours
-          <select name="hoursSetId">
-            <option value="">Work hours</option>
-            {hours
-              .filter((h) => h.kind !== "work")
-              .map((h) => (
-                <option
-                  value={h.id}
-                  key={h.id}
-                  selected={preset?.hours === "personal" && h.id === personal}
-                >
-                  {h.name}
-                </option>
-              ))}
-          </select>
-        </label>
+        <HoursField
+          sets={hours}
+          allowItem
+          initial={preset?.hours === "personal" && personal ? personal : ""}
+        />
         <label>
           Show as
           <select name="defense">
@@ -247,6 +242,9 @@ export function Habits() {
                     ? "daily"
                     : (f.days ?? []).map((d) => DAY_NAMES[d - 1]).join(", ")}{" "}
                   · {DEFENSE[h.defense] ?? h.defense}
+                  {h.item_hours
+                    ? ` · Item-specific hours: ${describeWeekly(JSON.parse(h.item_hours))}`
+                    : ""}
                   {h.enabled ? "" : " · off"} <PolicyMark id={h.id} />
                 </div>
               </div>

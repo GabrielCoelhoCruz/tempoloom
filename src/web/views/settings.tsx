@@ -1,3 +1,4 @@
+import type { ComponentChildren } from "preact";
 import { useCallback, useEffect, useState } from "preact/hooks";
 import { CATEGORIES } from "../../scheduler/categories.ts";
 import type { Settings as UserSettings } from "../../server/settings.ts";
@@ -8,6 +9,14 @@ import { lazyComponent } from "../lib/lazy.ts";
 import { templateFromUrl } from "../lib/library.ts";
 import { loadPolicyMarks, PolicyMark, policyMarks } from "../lib/policy-marks.tsx";
 import { loadMe, me, planNow } from "../lib/state.ts";
+import {
+  AlertSettings,
+  DeleteHoursSet,
+  FocusNotes,
+  HoursZoneNote,
+  PlacementSetting,
+  TravelSettings,
+} from "./settings-extra.tsx";
 
 interface HoursSet {
   id: string;
@@ -33,9 +42,11 @@ const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 export function HoursEditor({
   set,
   onSave,
+  children,
 }: {
   set: HoursSet;
   onSave: (weekly: HoursSet["weekly"]) => Promise<void>;
+  children?: ComponentChildren;
 }) {
   const [weekly, setWeekly] = useState(set.weekly);
   const update = (day: string, i: number, which: 0 | 1, value: string) => {
@@ -93,6 +104,7 @@ export function HoursEditor({
       <button type="button" class="primary" onClick={() => void onSave(weekly)}>
         Save {set.name.toLowerCase()}
       </button>
+      {children}
     </div>
   );
 }
@@ -106,9 +118,9 @@ export function Settings() {
   const [buffers, setBuffers] = useState<
     { id: string; title: string; side: string; minutes_before: number; minutes_after: number }[]
   >([]);
-  const [focus, setFocus] = useState<{ id: string; title: string; weekly_goal_minutes: number }[]>(
-    [],
-  );
+  const [focus, setFocus] = useState<
+    { id: string; title: string; weekly_goal_minutes: number; notes: string }[]
+  >([]);
   const [message, setMessage] = useState<string | null>(null);
   const [mirrors, setMirrors] = useState<
     { id: string; source_name: string; dest_name: string; visibility: string; enabled: number }[]
@@ -131,6 +143,12 @@ export function Settings() {
     await loadPolicyMarks();
   }, []);
   useEffect(() => void load(), [load]);
+  // The hours preview of item editors links here (planning-hours.md HRS-11).
+  const ready = settings !== null;
+  useEffect(() => {
+    if (ready && new URLSearchParams(location.search).get("section") === "hours")
+      document.getElementById("hours")?.scrollIntoView();
+  }, [ready]);
 
   const act = async (fn: () => Promise<unknown>, done = "Saved") => {
     setMessage(null);
@@ -234,17 +252,23 @@ export function Settings() {
               <option value="paused">Paused</option>
             </select>
           </label>
+          <PlacementSetting settings={settings} act={act} />
         </div>
       </section>
 
-      <section>
+      <AlertSettings settings={settings} act={act} />
+
+      <section id="hours">
         <h2>Hours</h2>
+        <HoursZoneNote />
         {hours.map((h) => (
           <HoursEditor
             key={h.id}
             set={h}
             onSave={(weekly) => act(() => api("PUT", `/api/hours/${h.id}`, { weekly }))}
-          />
+          >
+            {h.kind === "custom" && <DeleteHoursSet set={h} sets={hours} act={act} />}
+          </HoursEditor>
         ))}
         <form
           class="actions"
@@ -279,6 +303,8 @@ export function Settings() {
           <button type="submit">+ Custom hours</button>
         </form>
       </section>
+
+      <TravelSettings />
 
       <section>
         <h2>Calendars</h2>
@@ -586,6 +612,7 @@ export function Settings() {
               <span>
                 {f.title} · {f.weekly_goal_minutes / 60} h per week <PolicyMark id={f.id} />
               </span>
+              <FocusNotes id={f.id} notes={f.notes} act={act} />
               {!policyMarks.value[f.id] && (
                 <button
                   type="button"

@@ -21,7 +21,13 @@ interface Props {
   now: number;
   onMove?: (id: string, start: number) => void;
   onSelect?: (id: string) => void;
+  /** Event ids drawn as conflicts (events-external-priority.md rule 8). */
+  flagged?: ReadonlySet<string>;
+  /** A second time column in this zone (timezones-home-and-travel.md rule 10). */
+  extraZone?: string | null;
 }
+
+const city = (z: string) => (z.split("/").at(-1) ?? z).replace(/_/g, " ");
 
 const HOUR_PX = 48;
 const SNAP_MIN = 15;
@@ -81,7 +87,7 @@ export function layout(days: LocalDate[], zone: string, events: WeekEvent[]): Bo
 
 const drag = signal<{ id: string; dx: number; dyMin: number } | null>(null);
 
-export function WeekView({ days, zone, events, now, onMove, onSelect }: Props) {
+export function WeekView({ days, zone, events, now, onMove, onSelect, flagged, extraZone }: Props) {
   const boxes = useMemo(() => layout(days, zone, events), [days, zone, events]);
   const gridRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -91,6 +97,12 @@ export function WeekView({ days, zone, events, now, onMove, onSelect }: Props) {
   }, []);
   const nowLocal = utcToLocal(zone, now);
   const todayIdx = days.indexOf(nowLocal.date);
+  // The second column reads each hour of today (or the first day shown) in the other zone.
+  const ref = todayIdx >= 0 ? nowLocal.date : (days[0] as LocalDate);
+  const extra = extraZone
+    ? Array.from({ length: 24 }, (_, h) => utcToLocal(extraZone, localToUtc(zone, ref, h * 60)))
+    : null;
+  const labelCols = extra ? "56px 56px" : "56px";
 
   const startDrag = (e: PointerEvent, box: Box) => {
     if (e.button !== 0) return;
@@ -132,8 +144,22 @@ export function WeekView({ days, zone, events, now, onMove, onSelect }: Props) {
 
   return (
     <div class="week">
-      <div class="week-head" style={{ gridTemplateColumns: `56px repeat(${days.length}, 1fr)` }}>
-        <div />
+      <div
+        class="week-head"
+        style={{ gridTemplateColumns: `${labelCols} repeat(${days.length}, 1fr)` }}
+      >
+        {extra && extraZone ? (
+          <>
+            <div class="zone-head" data-testid="zone-head" title={zone}>
+              {city(zone)}
+            </div>
+            <div class="zone-head" data-testid="zone-head" title={extraZone}>
+              {city(extraZone)}
+            </div>
+          </>
+        ) : (
+          <div />
+        )}
         {days.map((d, i) => (
           <div class={i === todayIdx ? "day-name today" : "day-name"} key={d}>
             {new Date(`${d}T12:00:00Z`).toLocaleDateString(undefined, {
@@ -145,7 +171,13 @@ export function WeekView({ days, zone, events, now, onMove, onSelect }: Props) {
         ))}
       </div>
       <div class="week-scroll" ref={scrollRef}>
-        <div class="week-body" style={{ height: `${DAY_PX}px` }}>
+        <div
+          class="week-body"
+          style={{
+            height: `${DAY_PX}px`,
+            ...(extra ? { gridTemplateColumns: `${labelCols} 1fr` } : {}),
+          }}
+        >
           <div class="hours">
             {Array.from({ length: 24 }, (_, h) => (
               <div class="hour-label" key={h} style={{ top: `${h * HOUR_PX}px` }}>
@@ -153,6 +185,20 @@ export function WeekView({ days, zone, events, now, onMove, onSelect }: Props) {
               </div>
             ))}
           </div>
+          {extra && (
+            <div class="hours extra-hours">
+              {extra.map((l, h) => (
+                <div
+                  class="hour-label"
+                  key={h}
+                  data-testid="extra-hour"
+                  style={{ top: `${h * HOUR_PX}px` }}
+                >
+                  {h === 0 ? "" : fmtMinute(l.minuteOfDay)}
+                </div>
+              ))}
+            </div>
+          )}
           <div
             class="grid"
             ref={gridRef}
@@ -179,8 +225,9 @@ export function WeekView({ days, zone, events, now, onMove, onSelect }: Props) {
               return (
                 <div
                   key={`${b.ev.id}:${b.day}`}
-                  class={`ev ev-${b.ev.kind}${b.ev.busy ? "" : " ev-free"}${b.ev.locked ? " ev-locked" : ""}${d ? " ev-drag" : ""}`}
+                  class={`ev ev-${b.ev.kind}${b.ev.busy ? "" : " ev-free"}${b.ev.locked ? " ev-locked" : ""}${d ? " ev-drag" : ""}${flagged?.has(b.ev.id) ? " ev-conflict" : ""}`}
                   data-event-id={b.ev.id}
+                  data-start={b.ev.start}
                   title={b.ev.title}
                   style={{
                     top: `${top}px`,
@@ -205,7 +252,10 @@ export function WeekView({ days, zone, events, now, onMove, onSelect }: Props) {
 }
 
 function fmtTime(zone: string, t: number): string {
-  const m = utcToLocal(zone, t).minuteOfDay;
+  return fmtMinute(utcToLocal(zone, t).minuteOfDay);
+}
+
+function fmtMinute(m: number): string {
   return `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
 }
 
