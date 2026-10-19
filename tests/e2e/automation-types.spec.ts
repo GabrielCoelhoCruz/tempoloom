@@ -262,7 +262,7 @@ test("a meeting overload's list entry opens its editor, ranks against focus time
   await page.reload();
   await expect.poll(() => names(group(page, 4))).toEqual(["Deep work"]);
   await openSettings(page);
-  await expect(page.getByTestId("overload-list")).toBeVisible();
+  await expect(page.getByTestId("overload-section")).toBeVisible();
   await expect(page.locator('[data-overload-title="Meeting limit"]')).toHaveCount(0);
 });
 
