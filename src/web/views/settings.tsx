@@ -53,11 +53,15 @@ function copyToAll(weekly: HoursSet["weekly"]): HoursSet["weekly"] {
 function TaskCalendar({
   set,
   calendars,
+  dirty,
   act,
 }: {
   set: HoursSet;
-  calendars: { id: string; name: string; writable: number }[];
-  act: (fn: () => Promise<unknown>) => Promise<void>;
+  /** Calendars that take events, besides the main calendar. */
+  calendars: { id: string; name: string }[];
+  /** The ranges of this set have changes that are not saved. */
+  dirty: boolean;
+  act: (fn: () => Promise<unknown>, done?: string) => Promise<unknown>;
 }) {
   return (
     <label class="inline">
@@ -66,17 +70,18 @@ function TaskCalendar({
         value={set.task_calendar_id ?? ""}
         onChange={(e) => {
           const value = e.currentTarget.value;
-          void act(() => api("PUT", `/api/hours/${set.id}`, { taskCalendarId: value || null }));
+          void act(
+            () => api("PUT", `/api/hours/${set.id}`, { taskCalendarId: value || null }),
+            dirty ? "Calendar saved. The changed ranges are not saved yet." : "Saved",
+          );
         }}
       >
         <option value="">Main calendar</option>
-        {calendars
-          .filter((c) => c.writable)
-          .map((c) => (
-            <option value={c.id} key={c.id}>
-              {c.name}
-            </option>
-          ))}
+        {calendars.map((c) => (
+          <option value={c.id} key={c.id}>
+            {c.name}
+          </option>
+        ))}
       </select>
     </label>
   );
@@ -88,10 +93,19 @@ export function HoursEditor({
   children,
 }: {
   set: HoursSet;
-  onSave: (weekly: HoursSet["weekly"]) => Promise<void>;
-  children?: ComponentChildren;
+  /** Saves the ranges; a result of false means the save failed. */
+  onSave: (weekly: HoursSet["weekly"]) => Promise<unknown>;
+  /** A function child gets whether the ranges have changes that are not saved. */
+  children?: ComponentChildren | ((dirty: boolean) => ComponentChildren);
 }) {
   const [weekly, setWeekly] = useState(set.weekly);
+  const [saved, setSaved] = useState(set.weekly);
+  const dirty = JSON.stringify(weekly) !== JSON.stringify(saved);
+  const save = (w: HoursSet["weekly"]) =>
+    onSave(w).then(
+      (ok) => ok !== false && setSaved(w),
+      () => {},
+    );
   const update = (day: string, i: number, which: 0 | 1, value: string) => {
     const ranges = [...(weekly[day] ?? [])];
     const r = [...(ranges[i] ?? [540, 1020])] as [number, number];
@@ -153,16 +167,21 @@ export function HoursEditor({
             // HRS-6: the copy is saved at once.
             const copied = copyToAll(weekly);
             setWeekly(copied);
-            void onSave(copied);
+            void save(copied);
           }}
         >
           Copy to all
         </button>
-        <button type="button" class="primary" onClick={() => void onSave(weekly)}>
+        <button type="button" class="primary" onClick={() => void save(weekly)}>
           Save {set.name.toLowerCase()}
         </button>
+        {dirty && (
+          <span class="status" data-testid={`hours-unsaved-${set.kind}`}>
+            Changes not saved
+          </span>
+        )}
       </div>
-      {children}
+      {typeof children === "function" ? children(dirty) : children}
     </div>
   );
 }
@@ -185,20 +204,25 @@ export function Settings() {
     { id: string; title: string; weekly_goal_minutes: number; event_settings: string }[]
   >([]);
   // The buffer editor's calendar scope lists the connected calendars.
-  const [calendars, setCalendars] = useState<{ id: string; name: string; writable: number }[]>([]);
+  const [calendars, setCalendars] = useState<{ id: string; name: string }[]>([]);
+  const [taskCalendars, setTaskCalendars] = useState<{ id: string; name: string }[]>([]);
   const [message, setMessage] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     const [s, h, b, f, c] = await Promise.all([
       api<{ settings: UserSettings; windowLimit: number | null }>("GET", "/api/settings"),
-      api<{ hours: HoursSet[] }>("GET", "/api/hours"),
+      api<{ hours: HoursSet[]; taskCalendars: { id: string; name: string }[] }>(
+        "GET",
+        "/api/hours",
+      ),
       api<{ buffers: typeof buffers }>("GET", "/api/buffers"),
       api<{ focus: typeof focus }>("GET", "/api/focus"),
-      api<{ calendars: { id: string; name: string; writable: number }[] }>("GET", "/api/calendars"),
+      api<{ calendars: { id: string; name: string }[] }>("GET", "/api/calendars"),
     ]);
     setSettings(s.settings);
     setWindowLimit(s.windowLimit);
     setHours(h.hours);
+    setTaskCalendars(h.taskCalendars);
     setBuffers(b.buffers);
     setFocus(f.focus);
     setCalendars(c.calendars);
@@ -212,16 +236,19 @@ export function Settings() {
       document.getElementById("hours")?.scrollIntoView();
   }, [ready]);
 
-  const act = async (fn: () => Promise<unknown>, done = "Saved") => {
+  /** Runs a change, plans and reloads; false when the change failed. */
+  const act = async (fn: () => Promise<unknown>, done = "Saved"): Promise<boolean> => {
     setMessage(null);
     try {
       await fn();
       await planNow();
       await Promise.all([load(), loadMe()]);
       setMessage(done);
+      return true;
     } catch (err) {
       const body = (err as { body?: { message?: string } }).body;
       setMessage(body?.message ?? (err instanceof Error ? err.message : String(err)));
+      return false;
     }
   };
 
@@ -353,8 +380,12 @@ export function Settings() {
             set={h}
             onSave={(weekly) => act(() => api("PUT", `/api/hours/${h.id}`, { weekly }))}
           >
-            <TaskCalendar set={h} calendars={calendars} act={act} />
-            {h.kind === "custom" && <DeleteHoursSet set={h} sets={hours} act={act} />}
+            {(dirty) => (
+              <>
+                <TaskCalendar set={h} calendars={taskCalendars} dirty={dirty} act={act} />
+                {h.kind === "custom" && <DeleteHoursSet set={h} sets={hours} act={act} />}
+              </>
+            )}
           </HoursEditor>
         ))}
         <form

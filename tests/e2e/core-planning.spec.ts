@@ -7,7 +7,10 @@
 //
 // Ways this can fail, and the test that catches each:
 // - the chunk spacing choice is missing, not saved, or not used (spacing test)
-// - chunks go to the main calendar whatever the hours set says (calendar test)
+// - chunks go to the main calendar whatever the hours set says, or placed
+//   chunks stay on the old calendar after the menu changes (calendar tests)
+// - the calendar menu saves range edits or says "Saved" while they are not
+//   saved (new calendar test)
 // - a task takes a slot before a habit or meeting of its level, or a lower
 //   level goes before a higher one (order test)
 // - the urgency choice does not change the order of tasks (urgency test)
@@ -15,8 +18,8 @@
 //   booking link offers its time (focus test)
 // - a series level changes only one event, or one event's level changes the
 //   series (series test)
-// - an event of another calendar can change level, or a link offers it (other
-//   calendar test)
+// - an event of another calendar, also the primary calendar of an added
+//   account, can change level, or a link offers it (other calendar test)
 // - meetings ignore meeting hours, or a change of meeting hours does not move
 //   them (meeting hours test)
 // - a second range is lost, copy to all misses a day or turns on a day that is
@@ -33,6 +36,8 @@ import {
   openAutomations,
   save,
 } from "./automation-list-helpers.ts";
+import { calendarRow } from "./calendar-helpers.ts";
+import { addCalDavAccount } from "./delegation-helpers.ts";
 import {
   at,
   BACKEND,
@@ -184,7 +189,7 @@ test("each hours set has a calendar for task chunks; chunks of tasks in that set
   expect(titled(await week(tasks), "AT-Personal")).toHaveLength(0);
 });
 
-test("a new calendar for task chunks keeps placed chunks and the saved hours; a calendar that is not the user's is refused (HRS-12, TSK-50)", async ({
+test("a new calendar for task chunks moves placed chunks there at the same times and saves no hours; a calendar that is not the user's is refused (HRS-6, HRS-7, HRS-12, TSK-50)", async ({
   page,
   cal,
   signIn,
@@ -204,21 +209,44 @@ test("a new calendar for task chunks keeps placed chunks and the saved hours; a 
 
   const other = await secondCalendar(page, cal, "Chunks");
   await page.reload();
-  await page.getByTestId("hours-work").getByLabel("Calendar for task chunks").selectOption({
-    label: "Chunks",
-  });
-  await expect(page.getByTestId("settings-message")).toHaveText("Saved");
-  // The menu changes no hours, so the chunk is not placed again.
-  await planNow(page);
-  expect(titled(await week(cal), "AT-Stay").map(span)).toEqual([`${W} 10:00-11:00`]);
-  expect(titled(await week(other), "AT-Stay")).toHaveLength(0);
+  // A range edit that is not saved yet stays unsaved when the menu changes.
+  const work = page.getByTestId("hours-work");
+  await work.getByTestId("range-work-1-0").locator("input").first().fill("08:00");
+  await expect(work.getByTestId("hours-unsaved-work")).toHaveText("Changes not saved");
+  await work.getByLabel("Calendar for task chunks").selectOption({ label: "Chunks" });
+  await expect(page.getByTestId("settings-message")).toHaveText(
+    "Calendar saved. The changed ranges are not saved yet.",
+  );
+  await expect(work.getByTestId("hours-unsaved-work")).toBeVisible();
+  // HRS-7: the placed chunk moves to the new calendar and keeps its time.
+  await eventually(
+    () => week(other),
+    (l) => expect(titled(l, "AT-Stay").map(span)).toEqual([`${W} 10:00-11:00`]),
+  );
+  expect(titled(await week(cal), "AT-Stay")).toHaveLength(0);
+  // A new task of the set goes there too.
+  await addTask(page, { title: "AT-Next", minutes: 60, split: false, due: "" });
+  await eventually(
+    () => week(other),
+    (l) => {
+      expect(titled(l, "AT-Next")).toHaveLength(1);
+      expect(titled(l, "AT-Stay").map(span)).toEqual([`${W} 10:00-11:00`]);
+    },
+  );
+  expect(titled(await week(cal), "AT-Next")).toHaveLength(0);
+  const next = titled(await week(other), "AT-Next").map(span);
   await page.reload();
+  await openSettings(page);
   const monday = page.getByTestId("hours-work").getByTestId("range-work-1-0").locator("input");
   await expect(monday.first()).toHaveValue("09:00");
   await expect(monday.last()).toHaveValue("17:00");
   await expect(
     page.getByTestId("hours-work").getByLabel("Calendar for task chunks"),
   ).not.toHaveValue("");
+  // The menu lists the main calendar once.
+  await expect(
+    page.getByTestId("hours-work").getByLabel("Calendar for task chunks").locator("option"),
+  ).toHaveText(["Main calendar", "Chunks"]);
 
   // The API refuses a calendar id that is not one of the user's calendars.
   const put = (body: unknown) =>
@@ -236,7 +264,18 @@ test("a new calendar for task chunks keeps placed chunks and the saved hours; a 
     }, body);
   expect(await put({ taskCalendarId: "not-a-calendar" })).toBe(400);
   expect(await put({ taskCalendarId: null })).toBe(200);
+  // Back to the main calendar: both chunks return there at the same times.
+  await planNow(page);
+  await eventually(
+    () => week(cal),
+    (l) => {
+      expect(titled(l, "AT-Stay").map(span)).toEqual([`${W} 10:00-11:00`]);
+      expect(titled(l, "AT-Next").map(span)).toEqual(next);
+    },
+  );
+  expect(titled(await week(other), "AT-Stay")).toHaveLength(0);
   await page.reload();
+  await openSettings(page);
   await expect(page.getByTestId("hours-work").getByLabel("Calendar for task chunks")).toHaveValue(
     "",
   );
@@ -605,7 +644,11 @@ test("events of another connected calendar stay P1: the control is disabled with
   browser,
   cal,
   signIn,
+  people,
+  radicale,
 }) => {
+  const six = radicale?.users[6];
+  if (!six) throw new Error("This test needs the CalDAV backend.");
   await blockUntil(cal, W);
   await signIn();
   const other = await secondCalendar(page, cal, "Family");
@@ -630,11 +673,51 @@ test("events of another connected calendar stay P1: the control is disabled with
     page.getByTestId("external-priority").getByLabel("Priority for booking links"),
   ).toBeEnabled();
 
+  // The primary calendar of an added account is not the main calendar either.
+  const extra = await people(6);
+  await addCalDavAccount(page, { ...six, email: extra.email });
+  await extra.cal.addEvent({
+    title: "AT-Added primary",
+    start: at(W, "13:00"),
+    end: at(W, "14:00"),
+  });
+  await openSettings(page);
+  await page.getByRole("button", { name: "Refresh calendar list" }).click();
+  // Its primary calendar counts for availability from the start.
+  await expect(calendarRow(page, extra.email).getByRole("checkbox")).toBeChecked();
+  await openWeek(page);
+  await page.locator(".ev-external", { hasText: "AT-Added primary" }).click();
+  await expect(page.getByTestId("external-priority-fixed")).toContainText(
+    "Events from other calendars stay P1",
+  );
+  await expect(page.getByTestId("external-priority")).toHaveCount(0);
+  // The API refuses a level for it, so no link can use one.
+  const refused = await page.evaluate(
+    async ({ from, to }) => {
+      const r = await fetch(`/api/planner/events?from=${from}&to=${to}`);
+      const { events } = (await r.json()) as { events: { id: string; title: string }[] };
+      const id = events.find((e) => e.title === "AT-Added primary")?.id ?? "";
+      const [, calendarId, ...rest] = id.split(":");
+      const post = await fetch(
+        `/api/planner/external/${encodeURIComponent(calendarId ?? "")}/${encodeURIComponent(rest.join(":"))}/priority`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ level: 4 }),
+        },
+      );
+      return post.status;
+    },
+    { from: at(W, "00:00"), to: at(day(7), "00:00") },
+  );
+  expect(refused).toBe(400);
+
   await claimPage(page, "otto");
   const v = await visitor(browser);
   await v.goto("/book/otto/important-meeting");
   await expect(v.getByTestId("times")).toBeVisible();
   await expect(slot(v, at(W, "10:00"))).toHaveCount(0);
+  await expect(slot(v, at(W, "13:00"))).toHaveCount(0);
   await expect(slot(v, at(W, "11:00"))).toBeVisible();
   await page.reload();
   await openWeek(page);

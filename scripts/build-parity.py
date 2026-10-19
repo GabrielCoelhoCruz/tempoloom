@@ -784,7 +784,7 @@ for n in [664, 665, 666, 667, 668]:
 T.update({
     "u03_spacing": "the time between chunks of a task is a setting: once a day puts each chunk on its own day, 2 hours keeps a 2-hour gap",
     "u03_calendar": "each hours set has a calendar for task chunks; chunks of tasks in that set go there",
-    "u03_calendar_keep": "a new calendar for task chunks keeps placed chunks and the saved hours; a calendar that is not the user's is refused",
+    "u03_calendar_keep": "a new calendar for task chunks moves placed chunks there at the same times and saves no hours; a calendar that is not the user's is refused",
     "u03_order": "inside one level meetings go first, then habits, then tasks; a higher level goes before all of them",
     "u03_urgency": "the urgency setting decides whether a low task that is short of time goes first",
     "u03_urgency_48": "with the 48-hour urgency mode a low task due within 48 hours goes up one level, a task due later does not",
@@ -812,7 +812,7 @@ E2E.update({
 })
 E2E_NOTES.update({
     9: "The choice is a user task default on the Settings page; existing chunks keep their place while they stay valid",
-    27: "A chunk keeps the calendar it was written to; a new choice applies to new chunks",
+    27: "A new choice moves placed unlocked chunks to that calendar at the same times (HRS-7) and applies to new chunks",
     73: "Copy to all takes Monday's ranges and saves at once",
 })
 PARTIAL.pop(78, None)
@@ -822,7 +822,8 @@ BLOCKED[147] = "Needs a Google OAuth client and a Google test account to prove i
 # Row 90 stays partial: E2E does not cover buffers inside a level.
 UNIT.pop(90, None)
 PARTIAL[90] = "E2E on CalDAV covers flexible meetings, habits, tasks, next-up tasks and focus time in the order (\u201cinside one level meetings go first, then habits, then tasks\u2026\u201d, \u201ca next-up task goes before other tasks of any level\u201d, \u201cfocus time goes after a P4 task\u2026\u201d); buffers inside a level have unit tests only"
-# Row 76 stays partial (standing order 19): the spec says the other kinds do not offer it "yet".
+# Row 76 stays partial: planning-hours.md says focus time, flexible meetings and
+# booking links do not offer item-specific hours "yet", so only habits are built.
 U03_ROWS = [9, 27, 55, 56, 58, 59, 60, 61, 70, 73, 76, 78, 90, 100, 109, 147]
 for _n in U03_ROWS:
     if _n in E2E:

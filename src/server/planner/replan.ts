@@ -545,16 +545,19 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
     }),
   );
   const calendars = new Map(
-    all<CalendarInfo>(
+    all<CalendarInfo & { ok: number }>(
       db,
-      `SELECT c.id, c.account_id, c.provider_id, c.is_primary, c.writable, c.check_availability
+      `SELECT c.id, c.account_id, c.provider_id, c.is_primary, c.writable, c.check_availability,
+         a.status = 'ok' AS ok
        FROM calendars c JOIN accounts a ON a.id = c.account_id WHERE a.user_id = ?`,
       userId,
     ).map((c) => [c.id, c]),
   );
-  // The calendar chosen in an automation's event settings, while it can take events.
-  const writable = (id: string | null | undefined) =>
-    id && calendars.get(id)?.writable === 1 ? id : undefined;
+  // A calendar chosen for an item, while its account works and it takes events.
+  const writable = (id: string | null | undefined) => {
+    const cal = id ? calendars.get(id) : undefined;
+    return cal?.writable === 1 && cal.ok === 1 ? cal.id : undefined;
+  };
   const chosenCalendar = (es: EventSettings | undefined) => writable(es?.calendarId);
   const travelBuffers = new Set(
     snapshot.buffers.filter((b) => b.filter.travel || b.filter.flight).map((b) => b.id),
@@ -563,11 +566,13 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
     const row = rowByKey.get(p.key);
     const itemKey = `${p.kind}:${p.itemId}`;
     const es = eventSettings.get(itemKey);
-    const calendarId =
-      row?.calendar_id ??
-      (p.kind === "task" ? writable(taskCalendar.get(taskHours.get(p.itemId) ?? "")) : undefined) ??
-      chosenCalendar(es) ??
-      target.id;
+    // HRS-7, HRS-12: unlocked task chunks follow the calendar of their hours
+    // set, also when it changes; they keep their times. Other events stay where they are.
+    const taskCalendarId =
+      p.kind === "task" && !row?.locked
+        ? (writable(taskCalendar.get(taskHours.get(p.itemId) ?? "")) ?? target.id)
+        : undefined;
+    const calendarId = taskCalendarId ?? row?.calendar_id ?? chosenCalendar(es) ?? target.id;
     const keepUserTitle = row?.user_edited === 1;
     const itemNotes = notes.get(itemKey) ?? "";
     const travel = p.kind === "buffer" && travelBuffers.has(p.itemId);
