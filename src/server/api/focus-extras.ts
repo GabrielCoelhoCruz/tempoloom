@@ -3,7 +3,7 @@
 import { randomUUID } from "node:crypto";
 import { Hono } from "hono";
 import { z } from "zod";
-import { hasTag, TAG_FOCUS } from "../../scheduler/blocking.ts";
+import { hasTag, TAG_FOCUS, tagText } from "../../scheduler/blocking.ts";
 import { hoursToTimeSet, type WeeklyHours } from "../../scheduler/hours.ts";
 import type { ReportEntry } from "../../scheduler/model.ts";
 import { TimeSet } from "../../scheduler/timeset.ts";
@@ -91,9 +91,10 @@ function countedMinutes(
     description: string;
     event_type: string;
     private_props: string;
+    rsvp_note: string;
   }>(
     db,
-    `SELECT e.start_ms, e.end_ms, e.summary, e.description, e.event_type, e.private_props
+    `SELECT e.start_ms, e.end_ms, e.summary, e.description, e.event_type, e.private_props, e.rsvp_note
      FROM events e JOIN calendars c ON c.id = e.calendar_id JOIN accounts a ON a.id = c.account_id
      WHERE a.user_id = ? AND c.check_availability = 1 AND e.all_day = 0 AND e.end_ms > ? AND e.start_ms < ?`,
     userId,
@@ -102,8 +103,7 @@ function countedMinutes(
   ).filter(
     (e) =>
       (JSON.parse(e.private_props) as Record<string, string>).tl !== "1" &&
-      (e.event_type === "focusTime" ||
-        hasTag({ title: e.summary, description: e.description }, TAG_FOCUS)),
+      (e.event_type === "focusTime" || hasTag(tagText(e), TAG_FOCUS)),
   );
   const ranges = [...managed, ...tagged].map((x) => ({ start: x.start_ms, end: x.end_ms }));
   return hoursToTimeSet(weekly, zone, from, to).intersect(TimeSet.from(ranges)).total() / 60_000;

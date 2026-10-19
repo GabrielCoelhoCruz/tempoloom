@@ -14,6 +14,7 @@ const HOUR = 3_600_000;
 const base = (over: Partial<CategoryInput> = {}): CategoryInput => ({
   title: "Event",
   description: "",
+  rsvpNote: "",
   start: 0,
   end: HOUR,
   eventType: "default",

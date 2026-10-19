@@ -12,7 +12,7 @@ import {
   type TeamRules,
   teamOffers,
 } from "../../scheduler/availability.ts";
-import { hasTag, TAG_FREE } from "../../scheduler/blocking.ts";
+import { hasTag, TAG_FREE, tagText } from "../../scheduler/blocking.ts";
 import type { WeeklyHours } from "../../scheduler/hours.ts";
 import type { ExternalEvent, Level } from "../../scheduler/model.ts";
 import { isValidTimeZone } from "../../shared/time.ts";
@@ -332,6 +332,7 @@ export function calendarItems(db: Db, userId: string, from: number, to: number):
     self_response: ExternalEvent["selfResponse"];
     organizer_self: number;
     private_props: string;
+    rsvp_note: string;
   }>(
     db,
     `SELECT e.* FROM events e JOIN calendars c ON c.id = e.calendar_id JOIN accounts a ON a.id = c.account_id
@@ -352,7 +353,7 @@ export function calendarItems(db: Db, userId: string, from: number, to: number):
     } else if (!e.busy || e.self_response === "declined") {
       // Free events (with or without #tl_busy) and declined invitations never block a link.
       items.push({ ...span, cls: "free" });
-    } else if (hasTag({ title: e.summary, description: e.description }, TAG_FREE)) {
+    } else if (hasTag(tagText(e), TAG_FREE)) {
       // No-meeting time is closed to every link, whatever its priority (events-tags.md rule 4).
       items.push({ ...span, cls: "fixed" });
     } else {

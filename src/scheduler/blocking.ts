@@ -13,12 +13,21 @@ export const TAG_FOCUS = "#tl_focus";
  * is not a letter, digit or `_`; after it: the end, whitespace or punctuation
  * other than `_` (`#tl_freedom` and `x#tl_free` do not match).
  */
-export function hasTag(
-  e: Pick<ExternalEvent, "title" | "description"> & { rsvpNote?: string | undefined },
-  tag: string,
-): boolean {
+export function hasTag(e: ExternalEvent | TagText, tag: string): boolean {
   const re = tagPattern(tag);
-  return [e.title, e.description, e.rsvpNote ?? ""].some((text) => re.test(text));
+  return re.test(e.title) || re.test(e.description) || re.test(e.rsvpNote ?? "");
+}
+
+/** The three texts where tags count; every place that reads tags passes all three. */
+export interface TagText {
+  title: string;
+  description: string;
+  rsvpNote: string;
+}
+
+/** The tag texts of a cached event row. */
+export function tagText(e: { summary: string; description: string; rsvp_note: string }): TagText {
+  return { title: e.summary, description: e.description, rsvpNote: e.rsvp_note };
 }
 
 const patterns = new Map<string, RegExp>();

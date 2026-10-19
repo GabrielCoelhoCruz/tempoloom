@@ -1,7 +1,7 @@
 // Look up one event (docs/specs/support-troubleshooting.md rules 7-12): what
 // Tempoloom knows about an event, found by its link or id, and the change log
 // of Tempoloom's writes to it.
-import { hasTag } from "../scheduler/blocking.ts";
+import { hasTag, tagText } from "../scheduler/blocking.ts";
 import { hoursToTimeSet, type WeeklyHours } from "../scheduler/hours.ts";
 import { changesOf } from "./change-log.ts";
 import { all, type Db, one } from "./db.ts";
@@ -34,6 +34,7 @@ interface EventRow {
   organizer_self: number;
   attendee_count: number;
   private_props: string;
+  rsvp_note: string;
 }
 
 interface PolicyRow {
@@ -185,8 +186,7 @@ const KIND_NAMES: Record<string, string> = {
 function skipReason(db: Db, userId: string, p: PolicyRow, e: EventRow, now: number): string {
   if (!p.enabled) return "the mirroring is off";
   if (e.end_ms <= now) return "the event is over; only future events get copies";
-  const title = { title: e.summary, description: e.description };
-  if (hasTag(title, TAG_NOSYNC)) return "the event has #tl_nosync";
+  if (hasTag(tagText(e), TAG_NOSYNC)) return "the event has #tl_nosync";
   if (e.self_response === "declined") return "you declined it";
   if (e.all_day && p.all_day_mode === "none") return "all-day events are not copied";
   if (e.all_day && p.all_day_mode === "busy_only" && !e.busy) return "the all-day event is free";

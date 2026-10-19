@@ -17,8 +17,8 @@ export type Category = (typeof CATEGORIES)[number];
 export interface CategoryInput {
   title: string;
   description: string;
-  /** The user's own RSVP note on an invitation. */
-  rsvpNote?: string;
+  /** The user's own RSVP note on an invitation ("" for none). */
+  rsvpNote: string;
   start: number;
   end: number;
   eventType: string;

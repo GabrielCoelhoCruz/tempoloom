@@ -287,6 +287,7 @@ export function loadMemberDays(db: Db, userId: string, from: LocalDate, to: Loca
         {
           title: "",
           description: "",
+          rsvpNote: "",
           start: m.start_ms,
           end: m.end_ms,
           eventType: "default",

@@ -1,6 +1,6 @@
 // Calendar mirroring: which source events get a copy, and how the copy looks
 // (docs/specs/sync-calendar-mirroring.md rules 14-32).
-import { hasTag } from "../../scheduler/blocking.ts";
+import { hasTag, tagText } from "../../scheduler/blocking.ts";
 import { type Category, categoryOf } from "../../scheduler/categories.ts";
 import { hoursToTimeSet, type WeeklyHours } from "../../scheduler/hours.ts";
 import { all, type Db } from "../db.ts";
@@ -62,6 +62,7 @@ interface SourceEvent {
   event_type: string;
   location: string;
   calendar_id: string;
+  rsvp_note: string;
 }
 
 /** The copies every enabled policy of the user wants, as desired managed events. */
@@ -119,8 +120,7 @@ export function mirrorCopies(
         travelBuffers.has((props[KEY_PROP] ?? "").split(":")[1] ?? "") &&
         (props[KEY_PROP] ?? "").startsWith("buffer:");
       if (props[MANAGED_PROP] === "1" && !travel) continue;
-      const tagged = { title: e.summary, description: e.description };
-      if (hasTag(tagged, TAG_NOSYNC)) continue;
+      if (hasTag(tagText(e), TAG_NOSYNC)) continue;
       const attendees = JSON.parse(e.attendees) as string[];
       if (attendees.some((a) => destination.includes(a.toLowerCase()))) continue;
       if (e.self_response === "declined") continue;
@@ -157,6 +157,7 @@ export function mirrorCopies(
               {
                 title: e.summary,
                 description: e.description,
+                rsvpNote: e.rsvp_note,
                 start: e.start_ms,
                 end: e.end_ms,
                 eventType: e.event_type,
