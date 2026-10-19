@@ -53,6 +53,8 @@ scripts/e2e-run.sh            # builds, runs all tests, writes .e2e/run.md
 scripts/e2e-run.sh tests/e2e/meetings.spec.ts   # one file
 ```
 
+Each test's server data directory (`$TMPDIR/tempoloom-e2e-*`) is removed after a passed test and kept after a failed one; the test output prints its path.
+
 Set `TEMPOLOOM_E2E_KEEP_CALDAV=1` to keep the Radicale container between runs.
 Stop it with `scripts/caldav-server.sh stop`.
 
