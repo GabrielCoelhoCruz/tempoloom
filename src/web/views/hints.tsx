@@ -3,7 +3,8 @@
 // and the offer of a first mirroring policy (sync-calendar-mirroring.md rule 11).
 import { useEffect, useId, useState } from "preact/hooks";
 import { api } from "../lib/api.ts";
-import { type CalendarRow, displayName, failure } from "../lib/calendars.tsx";
+import { calendarList, displayName, failure, loadCalendars } from "../lib/calendars.tsx";
+import { plannerReload } from "../lib/planner-signals.ts";
 import { onLinkClick } from "../lib/router.ts";
 
 export function PlannerHints() {
@@ -41,15 +42,16 @@ export function PlannerHints() {
 
 /** One source and one destination; the other policy fields keep their defaults. */
 function FirstMirror({ onDone, onDismiss }: { onDone: () => void; onDismiss: () => void }) {
-  const [calendars, setCalendars] = useState<CalendarRow[] | null>(null);
+  const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const id = useId();
   useEffect(() => {
-    void api<{ calendars: CalendarRow[] }>("GET", "/api/calendars").then((r) =>
-      setCalendars(r.calendars.filter((c) => c.provider !== "ics")),
-    );
+    loadCalendars()
+      .then(() => setLoaded(true))
+      .catch((err) => setError(failure(err)));
   }, []);
-  if (!calendars) return null;
+  const calendars = calendarList.value.filter((c) => c.provider !== "ics");
+  if (!loaded) return error ? <p class="hint error">{error}</p> : null;
   return (
     <form
       class="hint"
@@ -62,7 +64,12 @@ function FirstMirror({ onDone, onDismiss }: { onDone: () => void; onDismiss: () 
           sourceCalendarId: String(d.get("source")),
           destCalendarId: String(d.get("dest")),
         })
-          .then(onDone)
+          .then(() => {
+            onDone();
+            // The two calendars are now locked, and the planner shows the copies.
+            plannerReload.value++;
+            return loadCalendars();
+          })
           .catch((err) => setError(failure(err)));
       }}
     >

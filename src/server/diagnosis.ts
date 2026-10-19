@@ -5,7 +5,7 @@ import { hasTag } from "../scheduler/blocking.ts";
 import { hoursToTimeSet, type WeeklyHours } from "../scheduler/hours.ts";
 import { changesOf } from "./change-log.ts";
 import { all, type Db, one } from "./db.ts";
-import { TAG_NOSYNC } from "./planner/mirror.ts";
+import { mirrorKey, TAG_NOSYNC } from "./planner/mirror.ts";
 import { MANAGED_PROP } from "./planner/push.ts";
 import { when, zoneOf } from "./preview.ts";
 
@@ -281,7 +281,7 @@ export function lookupEvent(db: Db, userId: string, q: string, now: number) {
           db,
           "SELECT 1 FROM managed_events WHERE user_id = ? AND key = ? AND event_id IS NOT NULL",
           userId,
-          `mirror:${p.id}:${e.event_id}`,
+          mirrorKey(p.id, e.event_id),
         );
         return {
           name: policyName(p),
