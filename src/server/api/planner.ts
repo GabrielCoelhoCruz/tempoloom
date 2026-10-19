@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { CATEGORIES, type Category } from "../../scheduler/categories.ts";
 import type { AppEnv } from "../app.ts";
+import { logChange } from "../change-log.ts";
 import { all, type Db, one, run } from "../db.ts";
 import { jsonBody, notFound } from "../http.ts";
 import { type CachedEvent, categoryContext, externalCategory } from "../planner/categories.ts";
@@ -292,6 +293,23 @@ export function plannerRoutes(db: Db, sync: SyncService, now: () => number): Hon
         row.etag,
       );
       cacheEvent(db, row.calendar_id, ev);
+      logChange(
+        db,
+        user.id,
+        {
+          calendarId: row.calendar_id,
+          eventId: row.event_id,
+          key: row.key,
+          action: "update",
+          item: `${row.kind}:${row.source_id}`,
+          reason: "moved in the planner",
+          title,
+          start,
+          end,
+          actor: c.get("actor")?.email ?? "",
+        },
+        now(),
+      );
       if (row.kind === "task") {
         run(
           db,

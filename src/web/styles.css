@@ -719,3 +719,16 @@ table.heat td {
   border-radius: var(--radius);
   padding: 10px 12px;
 }
+
+/* Help pages and planner hints (support-troubleshooting.md) */
+.help section ul,
+.help ol {
+  padding-left: 20px;
+}
+.hint {
+  margin: 8px 0;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--accent) 8%, var(--panel));
+}

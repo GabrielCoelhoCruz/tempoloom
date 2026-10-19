@@ -38,9 +38,20 @@ that come from the calendar provider or the device, not from Tempoloom.
 3. The general group has entries for: an item that does not get placed,
    events placed at the wrong hours, chat status not set, and alerts on
    Apple devices (E-0159).
+
+   Tempoloom decision: the help page is `/help`, with one page per entry at
+   `/help/<topic>`. The general group also links "Events come back after you
+   delete them" (rules 19-20), "Turn off other scheduling tools"
+   (`platform-current-version.md` rule 17) and the event lookup. It has no
+   entry for chat status, because the Slack status sync is not built.
 4. The last group says how to contact support (E-0159). Proposed for a
    self-hosted install: a link that the operator sets, with the project
    issue tracker as default.
+
+   Tempoloom decision: the operator sets the link with the environment
+   variable `SUPPORT_URL`. Without it, the group tells users to ask the
+   person who runs the server; the project has no public issue tracker
+   address yet.
 
 ### Mirroring not working: first steps
 
@@ -57,6 +68,13 @@ that come from the calendar provider or the device, not from Tempoloom.
    event (E-0221, E-0213). Implementation note, not from the evidence: on
    Google, the last path segment of the edit link is a base64 string of the
    event id and the calendar id, separated by a space.
+
+   Tempoloom decision: on a CalDAV server the event link is the address of
+   the event object (it ends in `.ics`). The view also accepts the object
+   name alone, a provider event id, and the id of an event in the planner.
+   The page is `/help/lookup?q=<link or id>`, so a lookup can be linked and
+   survives a reload. It reads Tempoloom's copy of the calendar; it does not
+   ask the provider.
 8. When the event was deleted, the help text tells the user to restore it
    from the provider's trash first, to get its link (E-0213).
 9. Proposed: the diagnosis view shows:
@@ -81,6 +99,14 @@ that come from the calendar provider or the device, not from Tempoloom.
     calendar id, action, the item or policy, the reason (for example
     "source moved" or "copy restored"), and the acting user (owner or
     delegate). The diagnosis view shows the entries for the event.
+
+    Tempoloom decision: the reasons are "placed", "moved", "details changed",
+    "no longer planned" and "event restored" for planned events; "source
+    copied", "source moved", "source changed", "source removed" and "copy
+    restored" for copies; "moved in the planner" for a drag; and "applied
+    from preview mode". The entry also keeps the event's title and time.
+    The acting user is named when it is a delegate. Retention is a fixed 90
+    days; there is no setting yet.
 
 ### Invitations hidden by Google anti-spam (legacy evidence)
 

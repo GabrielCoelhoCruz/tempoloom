@@ -83,6 +83,10 @@ import from a closed competitor, which Tempoloom does not need.
     competing events. Tempoloom onboarding should show the same advice
     (proposal).
 
+    Tempoloom decision: the planner shows this advice as a hint, with a link
+    to the help page "Turn off other scheduling tools", until the user
+    dismisses it. The dismissal is saved per user.
+
 ## Outputs
 
 - No direct outputs. This spec sets the baseline for other specs.

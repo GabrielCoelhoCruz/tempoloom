@@ -26,6 +26,7 @@ const REASONS: Record<string, string> = {
 const PreviewPanel = lazyComponent<{ onApplied: () => void }>(() =>
   import("./preview.tsx").then((m) => m.PreviewPanel),
 );
+const PlannerHints = lazyComponent(() => import("./hints.tsx").then((m) => m.PlannerHints));
 
 function mondayOf(z: string, t: number): string {
   const d = utcToLocal(z, t).date;
@@ -129,6 +130,7 @@ export function Planner() {
           Plan now
         </button>
       </div>
+      <PlannerHints />
       <PreviewPanel onApplied={() => void load()} />
       <WeekView
         days={days}
