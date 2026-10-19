@@ -24,7 +24,7 @@ import {
   openAutomations,
   save,
 } from "./automation-list-helpers.ts";
-import { at, BACKEND, blockUntil, eventually, expect, local, test } from "./fixtures.ts";
+import { at, BACKEND, blockUntil, eventually, expect, local, planNow, test } from "./fixtures.ts";
 import {
   addHabit,
   addLink,
@@ -144,7 +144,7 @@ test("an accepted invitation over focus time moves it; an unanswered one does no
   );
   expect(titled(moved, "Focus time").find((e) => e.id === tue.id)?.start).toBe(tue.start);
   await page.reload();
-  await page.waitForTimeout(6000);
+  await planNow(page);
   const later = titled(await week(cal), "Focus time");
   expect(later.find((e) => e.id === tue.id)?.start).toBe(tue.start);
   expect(later.some((e) => e.start < thu.start + 60 * MIN && e.end > thu.start)).toBe(false);
@@ -176,7 +176,7 @@ test("moving a focus event in the calendar locks it; a new event over it does no
     },
   );
   await cal.addEvent({ title: "Walk-in", start, end: start + 30 * MIN });
-  await page.waitForTimeout(6500);
+  await planNow(page);
   await page.reload();
   const after = titled(await week(cal), "Focus time").find((x) => x.id === wed.id);
   expect(after?.start).toBe(start);
@@ -246,7 +246,7 @@ test("focus time is placed after every other item, ranks in P4, and counts as P2
   const evs = await eventually(() => week(cal), check);
   expect(titled(evs, "Focus time")[0]?.busy).toBe(true);
   await page.reload();
-  await page.waitForTimeout(6000);
+  await planNow(page);
   check(await week(cal));
 });
 
@@ -268,7 +268,7 @@ test("an event with the focus tag counts toward the weekly goal (counted time; #
     (l) => expect(minutesOf(titled(l, "Focus time"))).toBe(600 - 120),
   );
   await page.reload();
-  await page.waitForTimeout(6000);
+  await planNow(page);
   expect(minutesOf(titled(await week(cal), "Focus time"))).toBe(480);
   // Without the tag the event no longer counts: focus fills the whole goal.
   await cal.update(tagged, {
