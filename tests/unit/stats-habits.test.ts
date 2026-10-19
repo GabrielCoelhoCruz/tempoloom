@@ -30,11 +30,12 @@ function setup() {
     `INSERT INTO calendars (id, account_id, provider_id, name, is_primary, check_availability)
      VALUES ('cal', 'acc', '/cal/', 'Main', 1, 1)`,
   );
-  const hours = one<{ id: string }>(
-    db,
-    "SELECT id FROM hours_sets WHERE user_id = ? AND kind = 'work'",
-    user.id,
-  )?.id ?? "";
+  const hours =
+    one<{ id: string }>(
+      db,
+      "SELECT id FROM hours_sets WHERE user_id = ? AND kind = 'work'",
+      user.id,
+    )?.id ?? "";
   const habit = (id: string, title: string) =>
     run(
       db,
