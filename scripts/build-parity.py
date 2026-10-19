@@ -789,6 +789,50 @@ for n in [664, 665, 666, 667, 668]:
     BLOCKED[n] = "The pricing page names it and gives no behavior to build (plans-feature-inventory.md open questions); it also needs meeting notes, transcripts or a room provider"
 # --- end merge ---
 
+# --- U08: mirroring copy rules, accounts and webhook delivery ---
+T.update({
+    "u8_answers": "the owner's answer and role decide a copy's free/busy; the no-reply setting applies to every policy; details copy free events",
+    "u8_allday": "all-day events: none by default, then busy ones, then all; a copy of an all-day event is all-day",
+    "u8_hours": "copy only during work hours: events fully outside are skipped, an overlapping one is copied in full; the checkbox is saved",
+    "u8_privacy": "privacy: busy-only copies say Busy with no details; private details copies keep the details, are marked private, and copy free events as free",
+    "u8_type": "the calendar type of a policy sets the label and the category color of its copies",
+    "u8_resync": "turning a policy off and on runs a full re-sync: a drifted copy and changes made while it was off are all put right",
+    "u8_taskcal": "tasks on personal hours go to that set's task calendar; work-hours tasks stay on the main calendar",
+    "u8_reconnect": "an account whose login stops working shows Disconnected, pauses its policies and nothing else; reconnect resumes them",
+    "u8_urls": "with private receivers off, http, localhost and IP hosts are refused and a public https host is kept; the operator setting allows loopback",
+    "u8_timeout": "an answer after 10 seconds is a failure and is cut at 10 seconds; only 200, 201, 202 and 204 count as success",
+    "u8_suspend": "an endpoint that fails for the whole period is suspended, gets no new requests and its admins get an email; Resume sends the waiting request",
+})
+E2E.update({
+    456: ["u8_resync"], 467: ["u8_allday"], 468: ["u8_hours"], 470: ["u8_answers"],
+    471: ["u8_answers"], 472: ["u8_answers"], 473: ["m_follow", "u8_answers", "u8_privacy"],
+    475: ["u8_privacy"], 476: ["u8_privacy"], 480: ["u8_type"], 506: ["u8_taskcal"],
+    517: ["u8_reconnect"], 934: ["u8_urls"], 936: ["u8_timeout"], 938: ["u8_suspend"],
+})
+E2E_NOTES.update({
+    471: "One setting on the Settings page for every policy, stored with the account settings",
+    473: "Label and busy-only copies skip free events; details copies are free",
+    476: "Copies get the private class (CalDAV CLASS:PRIVATE, Google visibility private)",
+    506: "Each hours set has a task calendar picker on the Settings page",
+    517: "On CalDAV the server rejects the stored password and the user types a new one; a Google account reconnects through Google sign-in again",
+    934: "The E2E server runs with private receivers off for this test (WEBHOOK_ALLOW_PRIVATE)",
+    938: "The 24-hour period is a setting (WEBHOOK_SUSPEND_AFTER_SECONDS), 4 seconds in the test",
+})
+for n in [456, 467, 468, 470, 471, 472, 473, 475, 476, 480, 506, 517]:
+    UNIT.pop(n, None)
+for n in [934, 936, 938]:
+    PARTIAL.pop(n, None)
+for n in [510, 513, 518]:
+    GOOGLE_ROWS.pop(n, None)
+BLOCKED[510] = ("Needs a Microsoft 365 account and a Microsoft Graph provider, which is not built; "
+                "Google sign-in (OAuth with PKCE) and Google Calendar sync are built, and their E2E needs a Google service-account key")
+BLOCKED[513] = ("Needs a Microsoft 365 account and a Microsoft Graph provider, which is not built; a second CalDAV account "
+                "is added with CalDAV E2E (\u201ca user adds a second CalDAV account and removes it after a confirmation\u201d), "
+                "and Google accounts connect through Google sign-in (Google E2E needs a Google account)")
+BLOCKED[518] = ("Needs a Google account: incremental consent shows only on Google's consent screen, and AT-7 turns on the "
+                "Google Tasks integration, which needs one too; sign-up asks only the calendar scopes with include_granted_scopes")
+# --- end U08 ---
+
 GOOGLE_PENDING = "Google E2E pending: the service-account key is not available yet (1Password token missing)."
 
 def e2e_status(row_id, tests):

@@ -4,6 +4,7 @@ import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 import type { SecretBox } from "./crypto.ts";
 import { all, type Db, one, run } from "./db.ts";
+import type { Mailer } from "./mail.ts";
 
 export const API_VERSION = "v2026-10-01";
 export type WebhookType =
@@ -13,7 +14,7 @@ export type WebhookType =
 const OK = new Set([200, 201, 202, 204]);
 const TIMEOUT_MS = 10_000;
 const MAX_DELAY_MS = 3_600_000;
-const SUSPEND_AFTER_MS = 24 * 3_600_000;
+export const SUSPEND_AFTER_MS = 24 * 3_600_000;
 
 export const newSecret = () => randomBytes(32).toString("base64url");
 
@@ -75,6 +76,11 @@ export interface WebhookDeps {
   allowPrivate: boolean;
   retryBaseMs: number;
   now: () => number;
+  /** Failures for this long suspend an endpoint (rule 15); default 24 hours. */
+  suspendAfterMs?: number;
+  /** Tells the team's admins that an endpoint was suspended (rule 15). */
+  mailer?: Mailer;
+  baseUrl?: string;
 }
 
 /** Queues one event for every active endpoint attached to the link (rule 7). */
@@ -182,6 +188,7 @@ async function attempt(
     d.id,
   );
   // Rule 15: suspend an endpoint whose deliveries have all failed for over 24 hours.
+  const suspendAfter = deps.suspendAfterMs ?? SUSPEND_AFTER_MS;
   const oldest = one<{ t: number | null }>(
     deps.db,
     "SELECT MIN(created_at) AS t FROM webhook_deliveries WHERE endpoint_id = ? AND status = 'pending'",
@@ -191,15 +198,47 @@ async function attempt(
     deps.db,
     "SELECT 1 FROM webhook_deliveries WHERE endpoint_id = ? AND status = 'delivered' AND delivered_at > ?",
     d.endpoint_id,
-    deps.now() - SUSPEND_AFTER_MS,
+    deps.now() - suspendAfter,
   );
-  if (
-    oldest !== null &&
-    oldest !== undefined &&
-    deps.now() - oldest > SUSPEND_AFTER_MS &&
-    !recent
-  ) {
+  if (oldest !== null && oldest !== undefined && deps.now() - oldest > suspendAfter && !recent) {
     run(deps.db, "UPDATE webhook_endpoints SET status = 'suspended' WHERE id = ?", d.endpoint_id);
+    await tellAdmins(deps, d.endpoint_id);
+  }
+}
+
+/** Emails the admins of the endpoint's team (or its owner) that it is suspended. */
+async function tellAdmins(deps: WebhookDeps, endpointId: string): Promise<void> {
+  if (!deps.mailer?.configured) return;
+  const ep = one<{ name: string; url: string; team_id: string | null; user_id: string }>(
+    deps.db,
+    "SELECT name, url, team_id, user_id FROM webhook_endpoints WHERE id = ?",
+    endpointId,
+  );
+  if (!ep) return;
+  const admins = all<{ email: string }>(
+    deps.db,
+    ep.team_id
+      ? `SELECT u.email FROM team_members m JOIN users u ON u.id = m.user_id
+         WHERE m.team_id = ? AND m.role = 'admin'`
+      : "SELECT email FROM users WHERE id = ?",
+    ep.team_id ?? ep.user_id,
+  );
+  const hours = Math.round((deps.suspendAfterMs ?? SUSPEND_AFTER_MS) / 3_600_000);
+  for (const a of admins) {
+    try {
+      await deps.mailer.send({
+        to: a.email,
+        subject: `Webhook ${ep.name} is suspended`,
+        text: [
+          `Every request to the webhook ${ep.name} (${ep.url}) has failed for ${hours > 0 ? `${hours} hours` : "too long"}.`,
+          "Tempoloom sends it no new requests until an admin resumes it.",
+          "",
+          `Resume it in Team settings > Webhooks${deps.baseUrl ? `: ${deps.baseUrl}/team` : "."}`,
+        ].join("\n"),
+      });
+    } catch (err) {
+      console.error("could not send the webhook suspension email", err);
+    }
   }
 }
 

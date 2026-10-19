@@ -83,6 +83,7 @@ export function AccountPage() {
   const [message, setMessage] = useState<string | null>(null);
   const [ask, setAsk] = useState<Ask | null>(null);
   const [adding, setAdding] = useState(false);
+  const [reconnecting, setReconnecting] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [found, setFound] = useState<Person[]>([]);
   const [delegates, setDelegates] = useState<Person[]>([]);
@@ -147,9 +148,22 @@ export function AccountPage() {
                     main
                   </span>
                 )}{" "}
-                <span class="badge">{a.status === "ok" ? "connected" : "disconnected"}</span>
+                <span class="badge" data-testid="account-status">
+                  {a.status === "ok" ? "Connected" : "Disconnected"}
+                </span>
               </span>
               <div class="actions">
+                {a.status !== "ok" &&
+                  !a.viaGrant &&
+                  (a.provider === "caldav" ? (
+                    <button type="button" onClick={() => setReconnecting(a.id)}>
+                      Reconnect
+                    </button>
+                  ) : (
+                    <a class="button" href="/auth/google/start">
+                      Reconnect
+                    </a>
+                  ))}
                 {a.is_main !== 1 && !a.viaGrant && (
                   <button
                     type="button"
@@ -194,6 +208,35 @@ export function AccountPage() {
                   </button>
                 )}
               </div>
+              {reconnecting === a.id && (
+                <form
+                  class="form wide"
+                  data-testid="reconnect-form"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    const f = new FormData(e.currentTarget as HTMLFormElement);
+                    void act(async () => {
+                      await api("POST", `/api/accounts/${a.id}/reconnect`, {
+                        password: String(f.get("password")),
+                      });
+                      setReconnecting(null);
+                    }, `${a.email} is connected again.`);
+                  }}
+                >
+                  <label>
+                    Password for {a.email}
+                    <input name="password" type="password" required autocomplete="off" />
+                  </label>
+                  <div class="actions">
+                    <button type="submit" class="primary">
+                      Reconnect account
+                    </button>
+                    <button type="button" onClick={() => setReconnecting(null)}>
+                      Cancel
+                    </button>
+                  </div>
+                </form>
+              )}
             </div>
           ))}
         </div>

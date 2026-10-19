@@ -4,6 +4,7 @@ import { CATEGORIES } from "../../scheduler/categories.ts";
 import type { Settings as UserSettings } from "../../server/settings.ts";
 import { defaultEventSettings, readEventSettings } from "../../shared/event-settings.ts";
 import { api } from "../lib/api.ts";
+import { type CalendarRow, calendarList } from "../lib/calendars.tsx";
 import { CATEGORY_LABELS, COLORS } from "../lib/categories.ts";
 import { hhmm, parseHhmm } from "../lib/format.ts";
 import { lazyComponent } from "../lib/lazy.ts";
@@ -26,7 +27,9 @@ interface HoursSet {
   kind: string;
   name: string;
   weekly: Record<string, [number, number][]>;
+  task_calendar_id?: string | null;
 }
+
 const FocusRecommendation = lazyComponent(() =>
   import("./team-recommendations.tsx").then((m) => m.FocusRecommendation),
 );
@@ -134,7 +137,7 @@ export function Settings() {
       api<{ hours: HoursSet[] }>("GET", "/api/hours"),
       api<{ buffers: typeof buffers }>("GET", "/api/buffers"),
       api<{ focus: typeof focus }>("GET", "/api/focus"),
-      api<{ calendars: { id: string; name: string }[] }>("GET", "/api/calendars"),
+      api<{ calendars: CalendarRow[] }>("GET", "/api/calendars"),
     ]);
     setSettings(s.settings);
     setWindowLimit(s.windowLimit);
@@ -142,6 +145,7 @@ export function Settings() {
     setBuffers(b.buffers);
     setFocus(f.focus);
     setCalendars(c.calendars);
+    calendarList.value = c.calendars;
     await loadPolicyMarks();
   }, []);
   useEffect(() => void load(), [load]);
@@ -274,6 +278,35 @@ export function Settings() {
             set={h}
             onSave={(weekly) => act(() => api("PUT", `/api/hours/${h.id}`, { weekly }))}
           >
+            <label class="inline">
+              Task calendar
+              <select
+                aria-label={`Task calendar for ${h.name.toLowerCase()}`}
+                value={h.task_calendar_id ?? ""}
+                onChange={(e) => {
+                  const taskCalendarId = e.currentTarget.value || null;
+                  void act(() =>
+                    api("PUT", `/api/hours/${h.id}`, { weekly: h.weekly, taskCalendarId }),
+                  );
+                }}
+              >
+                <option value="">Main calendar</option>
+                {calendarList.value
+                  .filter(
+                    (c) =>
+                      c.provider !== "ics" &&
+                      c.writable === 1 &&
+                      c.main !== 1 &&
+                      (c.check_availability === 1 || c.id === h.task_calendar_id),
+                  )
+                  .map((c) => (
+                    <option value={c.id} key={c.id}>
+                      {c.name}
+                      {c.email ? ` (${c.email})` : ""}
+                    </option>
+                  ))}
+              </select>
+            </label>
             {h.kind === "custom" && <DeleteHoursSet set={h} sets={hours} act={act} />}
           </HoursEditor>
         ))}

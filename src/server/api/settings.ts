@@ -117,6 +117,18 @@ export function settingsRoutes(db: Db, sync: SyncService, now: () => number): Ho
       body.name ?? null,
       id,
     );
+    // Rule 19 of accounts-connected-calendars.md: tasks go only to a writable calendar of the user.
+    if (
+      body.taskCalendarId &&
+      !one(
+        db,
+        `SELECT 1 FROM calendars c JOIN accounts a ON a.id = c.account_id
+         WHERE c.id = ? AND a.user_id = ? AND c.writable = 1 AND a.provider <> 'ics'`,
+        body.taskCalendarId,
+        user.id,
+      )
+    )
+      notFound("calendar");
     if (body.taskCalendarId !== undefined) {
       run(db, "UPDATE hours_sets SET task_calendar_id = ? WHERE id = ?", body.taskCalendarId, id);
     }

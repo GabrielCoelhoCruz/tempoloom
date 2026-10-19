@@ -91,7 +91,9 @@ export function mirrorRoutes(db: Db, sync: SyncService, now: () => number): Hono
       mirrors: all(
         db,
         `SELECT p.*, s.name AS source_name, d.name AS dest_name, s.account_id AS source_account_id,
-           d.account_id AS dest_account_id
+           d.account_id AS dest_account_id,
+           (SELECT GROUP_CONCAT(a.email, ', ') FROM accounts a
+            WHERE a.id IN (s.account_id, d.account_id) AND a.status <> 'ok') AS disconnected
          FROM mirror_policies p
            JOIN calendars s ON s.id = p.source_calendar_id JOIN calendars d ON d.id = p.dest_calendar_id
          WHERE p.user_id = ? ORDER BY p.created_at, p.id`,

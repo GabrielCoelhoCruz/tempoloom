@@ -95,11 +95,19 @@ export function webhookRoutes(
 
   /** Rule 15: an admin resumes a suspended endpoint. */
   r.post("/webhooks/:id/resume", (c) => {
+    const id = c.req.param("id");
+    if (!one(db, "SELECT 1 FROM webhook_endpoints WHERE id = ? AND team_id = ?", id, admin(c)))
+      notFound("endpoint");
+    run(db, "UPDATE webhook_endpoints SET status = 'active' WHERE id = ?", id);
+    // Waiting deliveries go out now, and the 24 hours of failures count from here.
+    const t = now();
     run(
       db,
-      "UPDATE webhook_endpoints SET status = 'active' WHERE id = ? AND team_id = ?",
-      c.req.param("id"),
-      admin(c),
+      `UPDATE webhook_deliveries SET next_attempt_at = ?, created_at = ?
+       WHERE endpoint_id = ? AND status = 'pending'`,
+      t,
+      t,
+      id,
     );
     return c.json({ ok: true });
   });

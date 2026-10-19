@@ -8,6 +8,7 @@ import { replanUser } from "../planner/replan.ts";
 import { enforceAgendas } from "../policies/agendas.ts";
 import { applyPolicies } from "../policies/apply.ts";
 import { type ProviderDeps, ProviderPool } from "../providers/index.ts";
+import { ProviderError } from "../providers/types.ts";
 import { applyCalendarEdits } from "./edits.ts";
 import { MIRROR_READ_AHEAD, pullEvents, syncCalendarList } from "./pull.ts";
 
@@ -46,6 +47,19 @@ export class SyncService {
   /** Calls fn after each run that read or wrote changes of the user's calendars. */
   onChange(fn: (userId: string) => void): void {
     this.#listeners.add(fn);
+  }
+
+  /**
+   * Marks an account disconnected when its server rejects the stored login
+   * (accounts-login-emails-permissions.md rules 14, 16): Tempoloom then stops
+   * reading and writing its calendars until the user reconnects it. Returns
+   * true when it did; other errors are the caller's.
+   */
+  #disconnected(accountId: string, err: unknown): boolean {
+    if (!(err instanceof ProviderError && err.kind === "auth")) return false;
+    run(this.#deps.db, "UPDATE accounts SET status = 'reauth_required' WHERE id = ?", accountId);
+    this.#log(`account ${accountId} is disconnected: the server rejected its login`);
+    return true;
   }
 
   pool(userId: string): ProviderPool {
@@ -215,7 +229,12 @@ export class SyncService {
         userId,
         now0 - CALENDAR_LIST_EVERY_MS,
       )) {
-        await syncCalendarList(db, pool.get(a.id), a.id, userId);
+        try {
+          await syncCalendarList(db, pool.get(a.id), a.id, userId);
+        } catch (err) {
+          if (this.#disconnected(a.id, err)) continue;
+          throw err;
+        }
         run(db, "UPDATE accounts SET calendars_synced_at = ? WHERE id = ?", now0, a.id);
       }
       // A lower instance limit turns extra connected calendars off (plans edge case 1).
@@ -253,14 +272,21 @@ export class SyncService {
       );
       const now = this.#deps.now();
       let pulled = 0;
+      const lost = new Set<string>();
       for (const cal of calendars) {
-        pulled += await pullEvents(
-          db,
-          pool.get(cal.account_id),
-          cal.id,
-          now,
-          mirrored.has(cal.id) ? MIRROR_READ_AHEAD : undefined,
-        );
+        if (lost.has(cal.account_id)) continue;
+        try {
+          pulled += await pullEvents(
+            db,
+            pool.get(cal.account_id),
+            cal.id,
+            now,
+            mirrored.has(cal.id) ? MIRROR_READ_AHEAD : undefined,
+          );
+        } catch (err) {
+          if (!this.#disconnected(cal.account_id, err)) throw err;
+          lost.add(cal.account_id);
+        }
       }
       if (!signedIn) {
         run(

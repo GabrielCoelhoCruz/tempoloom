@@ -31,6 +31,8 @@ interface Policy {
   copy_outside_work_hours: number;
   color_override: string | null;
   enabled: number;
+  /** Emails of the policy's accounts that are disconnected, or null. */
+  disconnected: string | null;
 }
 
 interface Fields {
@@ -220,6 +222,7 @@ export function MirrorSettings() {
   const [message, setMessage] = useState<string | null>(null);
   const [ask, setAsk] = useState<Ask | null>(null);
   const [created, setCreated] = useState(0);
+  const [noReply, setNoReply] = useState<string | null>(null);
   const calendars = calendarList.value;
   const accounts = (me.value?.accounts ?? []).filter((a) => !a.viaGrant);
 
@@ -229,6 +232,12 @@ export function MirrorSettings() {
     setReconciledAt(r.reconciledAt);
   }, []);
   useEffect(() => void load(), [load]);
+  useEffect(() => {
+    void api<{ settings: { noReplyCopies: string } }>("GET", "/api/settings").then((r) =>
+      // A choice made before this first load stays.
+      setNoReply((prev) => prev ?? r.settings.noReplyCopies),
+    );
+  }, []);
 
   const act = async (fn: () => Promise<unknown>, after?: () => void) => {
     setMessage(null);
@@ -298,6 +307,23 @@ export function MirrorSettings() {
         </p>
       )}
       {ask && <Confirm ask={ask} onClose={() => setAsk(null)} />}
+      <div class="field">
+        <label for="mirror-no-reply">Copies of events you have not answered</label>
+        <select
+          id="mirror-no-reply"
+          value={noReply ?? "free"}
+          disabled={noReply === null}
+          onChange={(e) => {
+            const value = e.currentTarget.value;
+            setNoReply(value);
+            void act(() => api("PATCH", "/api/settings", { noReplyCopies: value }));
+          }}
+        >
+          <option value="free">Show as free</option>
+          <option value="busy">Show as busy</option>
+        </select>
+        <p class="meta">Applies to every mirroring policy.</p>
+      </div>
       <p class="meta">Each switch writes many events. Wait a few minutes between switches.</p>
       <p class="meta" data-testid="mirror-reconciled">
         Last full check:{" "}
@@ -325,6 +351,12 @@ export function MirrorSettings() {
                 <span>
                   {label} · {p.visibility.replace("_", " ")}
                   {p.enabled ? "" : " · off"}
+                  {p.disconnected && (
+                    <span class="status error" role="alert" data-testid="mirror-disconnected">
+                      {" "}
+                      · Paused: {p.disconnected} is disconnected. Reconnect it on the Account page.
+                    </span>
+                  )}
                 </span>
                 <div class="actions">
                   <button type="button" onClick={() => setEditing(editing === p.id ? null : p.id)}>
