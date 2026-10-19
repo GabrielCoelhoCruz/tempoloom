@@ -1,4 +1,4 @@
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import { addDays, utcToLocal, weekdayOf } from "../../shared/time.ts";
 import { api } from "../lib/api.ts";
 import { duration } from "../lib/format.ts";
@@ -74,11 +74,27 @@ export function StatsPage() {
     const [f, t] = [q.get("from") ?? "", q.get("to") ?? ""];
     return DATE.test(f) && DATE.test(t) ? [f, t] : picks["This week"];
   });
+  // The newest choice: a quick second edit can come before the re-render that
+  // carries the first one. The address is written here, not in an effect,
+  // because effects run after paint and a reload can come before them.
+  const latest = useRef(range);
+  const choose = (next: (r: readonly [string, string]) => readonly [string, string]) => {
+    const r = next(latest.current);
+    latest.current = r;
+    history.replaceState(null, "", `/stats?from=${r[0]}&to=${r[1]}`);
+    setRange(r);
+  };
   const [grouping, setGrouping] = useState<"day" | "week">("day");
   const [stats, setStats] = useState<Stats | null>(null);
   useEffect(() => {
-    void api<Stats>("GET", `/api/stats?from=${range[0]}&to=${range[1]}`).then(setStats);
-    history.replaceState(null, "", `/stats?from=${range[0]}&to=${range[1]}`);
+    // An older range's answer can arrive after a newer one; drop it.
+    let current = true;
+    void api<Stats>("GET", `/api/stats?from=${range[0]}&to=${range[1]}`).then((s) => {
+      if (current) setStats(s);
+    });
+    return () => {
+      current = false;
+    };
   }, [range]);
 
   const groups = (() => {
@@ -107,7 +123,7 @@ export function StatsPage() {
             type="button"
             key={label}
             aria-pressed={range[0] === r[0] && range[1] === r[1]}
-            onClick={() => setRange(r)}
+            onClick={() => choose(() => r)}
           >
             {label}
           </button>
@@ -118,7 +134,10 @@ export function StatsPage() {
             type="date"
             aria-label="From"
             value={range[0]}
-            onChange={(e) => setRange([e.currentTarget.value, range[1]])}
+            onChange={(e) => {
+              const from = e.currentTarget.value;
+              choose((r) => [from, r[1]]);
+            }}
           />
         </label>
         <label class="inline">
@@ -127,7 +146,10 @@ export function StatsPage() {
             type="date"
             aria-label="To"
             value={range[1]}
-            onChange={(e) => setRange([range[0], e.currentTarget.value])}
+            onChange={(e) => {
+              const to = e.currentTarget.value;
+              choose((r) => [r[0], to]);
+            }}
           />
         </label>
         <select
