@@ -14,7 +14,9 @@ import {
 import { hasTag, TAG_FREE } from "../../scheduler/blocking.ts";
 import type { WeeklyHours } from "../../scheduler/hours.ts";
 import type { ExternalEvent, Level } from "../../scheduler/model.ts";
+import { isValidTimeZone } from "../../shared/time.ts";
 import type { AppEnv } from "../app.ts";
+import { type Answer, type BookingChange, notifyBooking } from "../booking-mail.ts";
 import {
   assign,
   bookingHolds,
@@ -27,12 +29,13 @@ import {
 } from "../booking-team.ts";
 import { all, type Db, one, run, tx } from "../db.ts";
 import { jsonBody, notFound } from "../http.ts";
+import type { Mailer } from "../mail.ts";
 import { MANAGED_PROP } from "../planner/push.ts";
 import { getSettings } from "../settings.ts";
 import type { SyncService } from "../sync/service.ts";
 import { membership, sameTeam } from "../teams.ts";
 import { type CustomData, customData, type WebhookType } from "../webhooks.ts";
-import { type Branding, brandingFor } from "./branding.ts";
+import { type Branding, brandingFor, resolveLinkBranding } from "./branding.ts";
 
 export interface LinkRow {
   id: string;
@@ -54,6 +57,18 @@ export interface LinkRow {
   location: string;
   use_recovery_buffer: number;
   branding: Branding;
+  questions: string;
+  reminder_enabled: number;
+  reminder_hours: number;
+  reminder_message: string;
+  reminder_saved_at: number;
+  redirect_url: string | null;
+  default_duration: number | null;
+  group_id: string | null;
+  source_id: string | null;
+  invitee_name: string;
+  invitee_email: string;
+  created_at: number;
 }
 
 interface BookingRow {
@@ -72,6 +87,8 @@ interface BookingRow {
   custom_data: string;
   host_id: string | null;
   assignee_id: string | null;
+  answers: string;
+  time_zone: string;
 }
 
 const slugRe = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
@@ -87,6 +104,23 @@ export function slugify(title: string): string {
       .slice(0, 64) || "link"
   );
 }
+
+/** A screening question (booking-links.md, question record). */
+export interface Question {
+  label: string;
+  type: "singleLine" | "multiLine" | "choice";
+  options: string[];
+  required: boolean;
+}
+
+const question = z
+  .object({
+    label: z.string().trim().min(1).max(300),
+    type: z.enum(["singleLine", "multiLine", "choice"]),
+    options: z.array(z.string().trim().min(1).max(200)).max(20),
+    required: z.boolean(),
+  })
+  .refine((q) => q.type !== "choice" || q.options.length > 0, "A choice question needs choices.");
 
 const linkInput = z.object({
   title: z.string().trim().min(1).max(120),
@@ -108,6 +142,17 @@ const linkInput = z.object({
   maxPerDay: z.number().int().min(1).max(50).nullable().optional(),
   maxPerWeek: z.number().int().min(1).max(200).nullable().optional(),
   location: z.string().max(500).optional(),
+  questions: z.array(question).max(10).optional(),
+  reminder: z
+    .object({
+      enabled: z.boolean(),
+      hoursBefore: z.number().int().min(1).max(168),
+      message: z.string().max(1024),
+    })
+    .optional(),
+  /** Must start with https:// (edge case 8); "" or null removes it. */
+  redirectUrl: z.string().max(2000).nullable().optional(),
+  defaultDuration: z.number().int().nullable().optional(),
 });
 
 const BRANDINGS = ["sameAsGroup", "default", "none", "custom"] as const;
@@ -140,6 +185,64 @@ const forbidden = (): never => {
 const invalid = (error: string): never => {
   throw new HTTPException(400, { res: Response.json({ error }, { status: 400 }) });
 };
+
+/** A redirect URL as stored: https only (booking-links.md edge case 8); empty removes it. */
+function redirectValue(v: string | null | undefined): string | null | undefined {
+  if (v === undefined) return undefined;
+  const text = v?.trim() ?? "";
+  if (!text) return null;
+  let url: URL | undefined;
+  try {
+    url = new URL(text);
+  } catch {}
+  if (url?.protocol !== "https:") invalid("redirect_https");
+  return url?.toString() ?? null;
+}
+
+type Options = {
+  [K in "questions" | "reminder" | "redirectUrl" | "defaultDuration" | "durations"]?:
+    | z.infer<typeof linkInput>[K]
+    | undefined;
+};
+
+/**
+ * Columns for the booking page options of a link. The reminder setting records
+ * when it changed: bookings made before get a reminder only if it is still
+ * ahead then (booking-links.md rule 21).
+ */
+function optionColumns(
+  b: Options,
+  current: LinkRow | undefined,
+  now: number,
+): [string, string | number | null | undefined][] {
+  const durations =
+    b.durations ?? (current ? (JSON.parse(current.durations) as number[]) : undefined);
+  let defaultDuration: number | null | undefined;
+  if (b.defaultDuration !== undefined) {
+    if (b.defaultDuration !== null && !durations?.includes(b.defaultDuration))
+      invalid("default_duration");
+    defaultDuration = b.defaultDuration;
+  } else if (current?.default_duration && !durations?.includes(current.default_duration)) {
+    // The old default is no longer one of the durations: the first one is the default again.
+    defaultDuration = null;
+  }
+  const r = b.reminder;
+  const changed =
+    r !== undefined &&
+    (!current ||
+      current.reminder_enabled !== (r.enabled ? 1 : 0) ||
+      current.reminder_hours !== r.hoursBefore ||
+      current.reminder_message !== r.message);
+  return [
+    ["questions", b.questions && JSON.stringify(b.questions)],
+    ["reminder_enabled", r === undefined ? undefined : r.enabled ? 1 : 0],
+    ["reminder_hours", r?.hoursBefore],
+    ["reminder_message", r?.message],
+    ["reminder_saved_at", changed ? now : undefined],
+    ["redirect_url", redirectValue(b.redirectUrl)],
+    ["default_duration", defaultDuration],
+  ];
+}
 
 /** Classifies the owner's events for availability (class table of the spec). */
 export function calendarItems(db: Db, userId: string, from: number, to: number): CalendarItem[] {
@@ -335,13 +438,35 @@ export function linkTimes(
 }
 
 function publicLink(link: LinkRow) {
+  const durations = JSON.parse(link.durations) as number[];
   return {
     slug: link.slug,
     title: link.title,
     description: link.description,
-    durations: JSON.parse(link.durations) as number[],
+    durations,
+    defaultDuration:
+      link.default_duration && durations.includes(link.default_duration)
+        ? link.default_duration
+        : (durations[0] ?? null),
     location: link.location,
+    questions: JSON.parse(link.questions) as Question[],
+    redirectUrl: link.redirect_url,
   };
+}
+
+/** The booker's answers, in question order; null when one is missing or not a choice. */
+function checkAnswers(link: LinkRow, given: string[]): { answers: Answer[] } | { error: string } {
+  const questions = JSON.parse(link.questions) as Question[];
+  if (given.length > questions.length) return { error: "invalid_answer" };
+  const answers: Answer[] = [];
+  for (const [i, q] of questions.entries()) {
+    const answer = (given[i] ?? "").trim();
+    if (q.required && !answer) return { error: "answer_required" };
+    if (q.type === "choice" && answer && !q.options.includes(answer))
+      return { error: "invalid_answer" };
+    answers.push({ question: q.label, answer });
+  }
+  return { answers };
 }
 
 /** Names the booker may see before confirming: organizers only, never the pool (team rule 15). */
@@ -381,6 +506,7 @@ function linkView(db: Db, link: LinkRow) {
   return {
     ...link,
     durations: JSON.parse(link.durations) as number[],
+    questions: JSON.parse(link.questions) as Question[],
     owner: { id: link.user_id, ...user(link.user_id) },
     pageSlug:
       one<{ slug: string }>(db, "SELECT slug FROM booking_pages WHERE user_id = ?", link.user_id)
@@ -517,6 +643,15 @@ export function bookingRoutes(db: Db, now: () => number): Hono<AppEnv> {
       b.location ?? "",
       now(),
     );
+    const options = optionColumns(b, undefined, now()).filter(([, v]) => v !== undefined);
+    if (options.length > 0) {
+      run(
+        db,
+        `UPDATE booking_links SET ${options.map(([k]) => `${k} = ?`).join(", ")} WHERE id = ?`,
+        ...options.map(([, v]) => v ?? null),
+        id,
+      );
+    }
     // A personal link: the creator is its only organizer and its host.
     run(
       db,
@@ -652,6 +787,7 @@ export function bookingRoutes(db: Db, now: () => number): Hono<AppEnv> {
         b.useRecoveryBuffer === undefined ? undefined : b.useRecoveryBuffer ? 1 : 0,
       ],
       ["branding", b.branding],
+      ...optionColumns(b, link, now()),
     ];
     const set = columns.filter(([, v]) => v !== undefined);
     tx(db, () => {
@@ -759,6 +895,7 @@ interface MeetingFacts {
   custom: CustomData;
   hostId: string;
   participants: string[];
+  answers: Answer[];
   rescheduled?: number;
   cancelled?: number;
 }
@@ -801,7 +938,9 @@ function meetingObject(db: Db, link: LinkRow, b: MeetingFacts, baseUrl: string) 
     ccs: [],
     message: b.message,
     location: link.location ? { text: link.location } : null,
-    answers: [],
+    answers: b.answers
+      .filter((a) => a.answer)
+      .map((a) => ({ question: a.question, answer: a.answer })),
     custom_data: b.custom,
   };
 }
@@ -846,6 +985,18 @@ const contact = (db: Db, id: string | null) =>
       null)
     : null;
 
+const zoneInput = z.string().max(64).refine(isValidTimeZone).optional();
+
+/** The link at a booking page URL: /book/<page slug>/<link slug>. */
+export function resolveLink(db: Db, page: string, link: string): LinkRow | undefined {
+  return one<LinkRow>(
+    db,
+    `SELECT l.* FROM booking_links l JOIN booking_pages p ON p.user_id = l.user_id WHERE p.slug = ? AND l.slug = ?`,
+    page,
+    link,
+  );
+}
+
 /** Public booking API: no session; the page and link slugs or a manage token identify the data. */
 export function publicBookingRoutes(
   db: Db,
@@ -853,18 +1004,10 @@ export function publicBookingRoutes(
   baseUrl: string,
   now: () => number,
   onEvent: OnEvent,
+  mailer: Mailer,
 ): Hono {
   const r = new Hono();
-  const findLink = (page: string, link: string) =>
-    one<LinkRow>(
-      db,
-      `SELECT l.* FROM booking_links l JOIN booking_pages p ON p.user_id = l.user_id WHERE p.slug = ? AND l.slug = ?`,
-      page,
-      link,
-    );
-  const pageBranding = (userId: string) =>
-    one<{ branding: string }>(db, "SELECT branding FROM booking_pages WHERE user_id = ?", userId)
-      ?.branding ?? "default";
+  const findLink = (page: string, link: string) => resolveLink(db, page, link);
 
   r.get("/pages/:page", (c) => {
     const page = one<{ user_id: string; slug: string; branding: Branding }>(
@@ -890,13 +1033,11 @@ export function publicBookingRoutes(
   r.get("/pages/:page/:link", (c) => {
     const link = findLink(c.req.param("page"), c.req.param("link"));
     if (!link) notFound("link");
-    // Link setting first; sameAsGroup takes the page's (booking page rule 27).
-    const mode = link.branding === "sameAsGroup" ? pageBranding(link.user_id) : link.branding;
     return c.json({
       link: publicLink(link),
       organizers: organizerNames(db, link),
       timeZone: zoneOf(db, link.user_id),
-      branding: brandingFor(db, link.user_id, mode as Branding),
+      branding: brandingFor(db, link.user_id, resolveLinkBranding(db, link)),
     });
   });
 
@@ -942,6 +1083,8 @@ export function publicBookingRoutes(
     name: z.string().trim().min(1).max(200),
     email: z.email(),
     message: z.string().max(4000).optional(),
+    answers: z.array(z.string().max(4000)).max(10).optional(),
+    timeZone: zoneInput,
     params: z
       .array(z.tuple([z.string().max(200), z.string().max(2000)]))
       .max(100)
@@ -953,10 +1096,47 @@ export function publicBookingRoutes(
       (t) => t.start === start,
     );
 
-  function manageText(token: string): string {
+  /** The event description: message, answers, then the booker's actions (rule 12). */
+  function description(message: string, answers: Answer[], token: string): string {
     const url = new URL(`/book/manage/${token}`, baseUrl).toString();
-    return `Reschedule or cancel: ${url}`;
+    return [
+      message,
+      ...answers.filter((a) => a.answer).map((a) => `${a.question}\n${a.answer}`),
+      `Reschedule: ${url}?action=reschedule\nCancel: ${url}?action=cancel`,
+    ]
+      .filter(Boolean)
+      .join("\n\n");
   }
+
+  const mail = (
+    change: BookingChange,
+    link: LinkRow,
+    b: {
+      start: number;
+      end: number;
+      name: string;
+      email: string;
+      zone: string;
+      message: string;
+      answers: Answer[];
+      people: string[];
+      token: string | null;
+    },
+  ) =>
+    notifyBooking(db, mailer, baseUrl, change, {
+      link,
+      title: link.title,
+      start: b.start,
+      end: b.end,
+      location: link.location,
+      bookerName: b.name,
+      bookerEmail: b.email,
+      bookerZone: b.zone,
+      message: b.message,
+      answers: b.answers,
+      people: b.people,
+      token: b.token,
+    });
 
   const noCalendar = (err: unknown) => err instanceof Error && err.message === "no_calendar";
 
@@ -966,6 +1146,10 @@ export function publicBookingRoutes(
     const body = await jsonBody(c, bookInput);
     if (!(JSON.parse(link.durations) as number[]).includes(body.duration))
       return c.json({ error: "invalid_duration" }, 400);
+    const checked = checkAnswers(link, body.answers ?? []);
+    if ("error" in checked) return c.json(checked, 400);
+    const { answers } = checked;
+    const zone = body.timeZone ?? zoneOf(db, link.user_id);
     const result = await sync.exclusive(link.user_id, async () => {
       // Check again inside the owner's queue so two bookers cannot take one slot.
       const slot = slotAt(link, body.start, body.duration);
@@ -979,8 +1163,8 @@ export function publicBookingRoutes(
       run(
         db,
         `INSERT INTO bookings (id, link_id, user_id, start_ms, end_ms, name, email, message, token_hash, status,
-           created_at, updated_at, custom_data, host_id, assignee_id, assigned_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'booked', ?, ?, ?, ?, ?, ?)`,
+           created_at, updated_at, custom_data, host_id, assignee_id, assigned_at, answers, time_zone)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'booked', ?, ?, ?, ?, ?, ?, ?, ?)`,
         id,
         link.id,
         link.user_id,
@@ -996,6 +1180,8 @@ export function publicBookingRoutes(
         plan.hostId,
         plan.assignee,
         plan.assignee ? now() : null,
+        JSON.stringify(answers),
+        zone,
       );
       let placed: { calendarId: string; eventId: string } | null;
       try {
@@ -1004,7 +1190,7 @@ export function publicBookingRoutes(
           parties: plan.parties,
           event: {
             summary: title,
-            description: [body.message ?? "", manageText(token)].filter(Boolean).join("\n\n"),
+            description: description(body.message ?? "", answers, token),
             start: body.start,
             end,
             location: link.location,
@@ -1023,6 +1209,7 @@ export function publicBookingRoutes(
         placed?.eventId ?? null,
         id,
       );
+      const people = [plan.hostId, ...plan.parties.map((p) => p.userId)];
       onEvent(link.id, "booking_link.meeting.created", {
         meeting: meetingObject(
           db,
@@ -1039,9 +1226,21 @@ export function publicBookingRoutes(
             custom,
             hostId: plan.hostId,
             participants: plan.parties.map((p) => p.userId),
+            answers,
           },
           baseUrl,
         ),
+      });
+      mail("created", link, {
+        start: body.start,
+        end,
+        name: body.name,
+        email: body.email,
+        zone,
+        message: body.message ?? "",
+        answers,
+        people,
+        token,
       });
       return {
         token,
@@ -1059,6 +1258,13 @@ export function publicBookingRoutes(
   const byToken = (token: string) =>
     one<BookingRow>(db, "SELECT * FROM bookings WHERE token_hash = ?", hash(token));
 
+  const participants = (b: BookingRow) =>
+    all<{ user_id: string }>(
+      db,
+      "SELECT user_id FROM booking_participants WHERE booking_id = ?",
+      b.id,
+    ).map((p) => p.user_id);
+
   const facts = (b: BookingRow, title: string) => ({
     id: b.id,
     title,
@@ -1068,11 +1274,8 @@ export function publicBookingRoutes(
     created: b.created_at,
     custom: JSON.parse(b.custom_data) as CustomData,
     hostId: b.host_id ?? b.user_id,
-    participants: all<{ user_id: string }>(
-      db,
-      "SELECT user_id FROM booking_participants WHERE booking_id = ?",
-      b.id,
-    ).map((p) => p.user_id),
+    participants: participants(b),
+    answers: JSON.parse(b.answers) as Answer[],
   });
 
   r.get("/bookings/:token", (c) => {
@@ -1087,7 +1290,13 @@ export function publicBookingRoutes(
       b.user_id,
     );
     return c.json({
-      booking: { start: b.start_ms, end: b.end_ms, name: b.name, status: b.status },
+      booking: {
+        start: b.start_ms,
+        end: b.end_ms,
+        name: b.name,
+        status: b.status,
+        timeZone: b.time_zone,
+      },
       link: link ? publicLink(link) : null,
       page: page?.slug ?? null,
       assignee: contact(db, b.assignee_id),
@@ -1100,7 +1309,11 @@ export function publicBookingRoutes(
     if (!b || b.status !== "booked" || !b.link_id) notFound("booking");
     const link = one<LinkRow>(db, "SELECT * FROM booking_links WHERE id = ?", b.link_id);
     if (!link) notFound("link");
-    const { start } = await jsonBody(c, z.object({ start: z.number().int() }));
+    const { start, timeZone } = await jsonBody(
+      c,
+      z.object({ start: z.number().int(), timeZone: zoneInput }),
+    );
+    const zone = timeZone ?? b.time_zone;
     const duration = (b.end_ms - b.start_ms) / 60_000;
     const end = start + duration * 60_000;
     const result = await sync.exclusive(b.user_id, async () => {
@@ -1121,7 +1334,7 @@ export function publicBookingRoutes(
             parties: plan.parties,
             event: {
               summary: title,
-              description: [b.message, manageText(token)].filter(Boolean).join("\n\n"),
+              description: description(b.message, before.answers, token),
               start,
               end,
               location: link.location,
@@ -1133,10 +1346,12 @@ export function publicBookingRoutes(
         if (noCalendar(err)) return { error: "no_event" as const };
         throw err;
       }
+      // A moved booking gets its reminder again for the new time (rule 21).
       run(
         db,
         `UPDATE bookings SET start_ms = ?, end_ms = ?, updated_at = ?, calendar_id = ?, event_id = ?,
-           host_id = ?, assignee_id = ?, assigned_at = CASE WHEN assignee_id IS ? THEN assigned_at ELSE ? END
+           host_id = ?, assignee_id = ?, assigned_at = CASE WHEN assignee_id IS ? THEN assigned_at ELSE ? END,
+           time_zone = ?, reminder_sent_at = NULL
          WHERE id = ?`,
         start,
         end,
@@ -1147,6 +1362,7 @@ export function publicBookingRoutes(
         plan.assignee,
         plan.assignee,
         now(),
+        zone,
         b.id,
       );
       const after = facts({ ...b, host_id: plan.hostId }, title);
@@ -1159,6 +1375,17 @@ export function publicBookingRoutes(
         ),
         new_meeting: meetingObject(db, link, { ...after, start, end, rescheduled: now() }, baseUrl),
         change_reason: "rescheduled",
+      });
+      mail("rescheduled", link, {
+        start,
+        end,
+        name: b.name,
+        email: b.email,
+        zone,
+        message: b.message,
+        answers: before.answers,
+        people: [plan.hostId, ...plan.parties.map((p) => p.userId)],
+        token,
       });
       return { start, end, assignee: contact(db, plan.assignee) };
     });
@@ -1193,6 +1420,17 @@ export function publicBookingRoutes(
             { ...before, start: b.start_ms, end: b.end_ms, cancelled: now() },
             baseUrl,
           ),
+        });
+        mail("cancelled", link, {
+          start: b.start_ms,
+          end: b.end_ms,
+          name: b.name,
+          email: b.email,
+          zone: b.time_zone,
+          message: b.message,
+          answers: before.answers,
+          people: [before.hostId, ...before.participants],
+          token: null,
         });
       }
     });

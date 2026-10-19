@@ -681,3 +681,24 @@ table.heat td {
   object-fit: cover;
   border-radius: var(--radius);
 }
+
+/* Booking page options: questions, zone picker, overlay (booking-links-booking-page.md) */
+.field,
+.question {
+  display: grid;
+  gap: 4px;
+}
+.field > label,
+.question > label {
+  color: var(--muted);
+  font-size: 12px;
+}
+.my-events {
+  margin: 0 0 6px;
+  padding-left: 16px;
+  color: var(--muted);
+  font-size: 12px;
+}
+button[data-mine="busy"] {
+  border-style: dashed;
+}

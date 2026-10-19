@@ -21,6 +21,7 @@ import {
 import { accountRoutes } from "./api/account.ts";
 import { analyticsRoutes } from "./api/analytics.ts";
 import { bookingRoutes, publicBookingRoutes } from "./api/booking.ts";
+import { bookingViewerRoutes } from "./api/booking-viewer.ts";
 import { brandingRoutes, publicBrandingRoutes } from "./api/branding.ts";
 import { delegationGuard, delegationRoutes } from "./api/delegation.ts";
 import { itemRoutes } from "./api/items.ts";
@@ -252,10 +253,17 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   };
   app.route(
     "/pub",
-    publicBookingRoutes(db, sync, config.BASE_URL, now, (linkId, type, body) => {
-      enqueueBookingEvent(webhookDeps, linkId, type, body);
-      deps.webhooks.kick();
-    }),
+    publicBookingRoutes(
+      db,
+      sync,
+      config.BASE_URL,
+      now,
+      (linkId, type, body) => {
+        enqueueBookingEvent(webhookDeps, linkId, type, body);
+        deps.webhooks.kick();
+      },
+      deps.mailer,
+    ),
   );
 
   app.route("/pub", publicInviteRoutes(db));
@@ -344,6 +352,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
 
   app.route("/api", teamDefaultRoutes(db, now));
   app.route("/api", oooRoutes(db, sync, now));
+  app.route("/api/booking", bookingViewerRoutes(db));
 
   // Static client with a single-page fallback. Text files are compressed once
   // per encoding and kept in memory; the build output does not change at run time.

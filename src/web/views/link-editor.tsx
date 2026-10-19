@@ -26,6 +26,19 @@ export interface PoolMember extends Person {
   preferred: boolean;
 }
 
+export interface Question {
+  label: string;
+  type: "singleLine" | "multiLine" | "choice";
+  options: string[];
+  required: boolean;
+}
+
+/** A question as the form edits it: the choices stay text until the save. */
+interface QuestionDraft extends Omit<Question, "options"> {
+  key: number;
+  choices: string;
+}
+
 export interface EditableLink {
   id: string;
   slug: string;
@@ -41,6 +54,11 @@ export interface EditableLink {
   location: string;
   use_recovery_buffer: number;
   branding: string;
+  questions: Question[];
+  reminder_enabled: number;
+  reminder_hours: number;
+  reminder_message: string;
+  redirect_url: string | null;
   owner: { id: string; name: string; email: string };
   pageSlug: string | null;
   organizers: Organizer[];
@@ -63,7 +81,123 @@ const ERRORS: Record<string, string> = {
   duplicate_person: "A person can be an organizer or in the pool, not both.",
   slug_taken: "That URL name is taken.",
   forbidden: "Only the owner can change the URL or the page.",
+  redirect_https: "The redirect URL must start with https://.",
 };
+
+const ANSWER_TYPES = [
+  ["singleLine", "Single line"],
+  ["multiLine", "Several lines"],
+  ["choice", "Choice"],
+] as const;
+
+/** Screening questions of a link (booking-links.md, question record). */
+function QuestionsEditor({
+  questions,
+  onChange,
+}: {
+  questions: QuestionDraft[];
+  onChange: (q: QuestionDraft[]) => void;
+}) {
+  const set = (key: number, change: Partial<QuestionDraft>) =>
+    onChange(questions.map((q) => (q.key === key ? { ...q, ...change } : q)));
+  return (
+    <section class="wide" data-testid="questions">
+      <h3>Questions</h3>
+      <p class="status">Bookers answer these on the booking page. Answers go into the event.</p>
+      <div class="list">
+        {questions.map((q, i) => (
+          <div class="row" key={q.key} data-testid={`question-${i + 1}`}>
+            <div class="actions">
+              <label>
+                Question {i + 1}
+                <input
+                  value={q.label}
+                  maxLength={300}
+                  onInput={(e) => set(q.key, { label: e.currentTarget.value })}
+                />
+              </label>
+              <label>
+                Answer type
+                <select
+                  value={q.type}
+                  onChange={(e) =>
+                    set(q.key, { type: e.currentTarget.value as QuestionDraft["type"] })
+                  }
+                >
+                  {ANSWER_TYPES.map(([value, label]) => (
+                    <option value={value} key={value}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {q.type === "choice" && (
+                <label>
+                  Choices (comma list)
+                  <input
+                    value={q.choices}
+                    onInput={(e) => set(q.key, { choices: e.currentTarget.value })}
+                  />
+                </label>
+              )}
+              <label class="inline">
+                <input
+                  type="checkbox"
+                  checked={q.required}
+                  onChange={(e) => set(q.key, { required: e.currentTarget.checked })}
+                />
+                Required
+              </label>
+            </div>
+            <button
+              type="button"
+              onClick={() => onChange(questions.filter((x) => x.key !== q.key))}
+            >
+              Remove question
+            </button>
+          </div>
+        ))}
+      </div>
+      {questions.length < 10 && (
+        <button
+          type="button"
+          onClick={() =>
+            onChange([
+              ...questions,
+              {
+                key: Math.max(0, ...questions.map((q) => q.key)) + 1,
+                label: "",
+                type: "singleLine",
+                choices: "",
+                required: false,
+              },
+            ])
+          }
+        >
+          + Add question
+        </button>
+      )}
+    </section>
+  );
+}
+
+const toDrafts = (questions: Question[]): QuestionDraft[] =>
+  questions.map(({ options, ...q }, i) => ({ ...q, key: i + 1, choices: options.join(", ") }));
+
+const fromDrafts = (drafts: QuestionDraft[]): Question[] =>
+  drafts
+    .filter((q) => q.label.trim())
+    .map(({ key: _key, choices, ...q }) => ({
+      ...q,
+      label: q.label.trim(),
+      options:
+        q.type === "choice"
+          ? choices
+              .split(",")
+              .map((c) => c.trim())
+              .filter(Boolean)
+          : [],
+    }));
 
 function HoursPicker({
   person,
@@ -108,6 +242,7 @@ export function LinkEditor({
 }) {
   const [organizers, setOrganizers] = useState<Organizer[]>(link.organizers);
   const [pool, setPool] = useState<PoolMember[]>(link.pool);
+  const [questions, setQuestions] = useState<QuestionDraft[]>(() => toDrafts(link.questions));
   const [error, setError] = useState<string | null>(null);
   const taken = new Set([...organizers, ...pool].map((p) => p.userId));
   const free = people.filter((p) => !taken.has(p.userId));
@@ -146,6 +281,13 @@ export function LinkEditor({
           location: String(f.get("location") ?? ""),
           useRecoveryBuffer: f.get("useRecoveryBuffer") === "on",
           branding: String(f.get("branding")),
+          questions: fromDrafts(questions),
+          reminder: {
+            enabled: f.get("reminderEnabled") === "on",
+            hoursBefore: Number(f.get("reminderHours")),
+            message: String(f.get("reminderMessage") ?? ""),
+          },
+          redirectUrl: String(f.get("redirectUrl") ?? ""),
           ...(isOwner ? { slug: String(f.get("slug")), hidden: f.get("hidden") === "on" } : {}),
           organizers: organizers.map(({ userId, hoursSetId, required, isHost }) => ({
             userId,
@@ -290,6 +432,46 @@ export function LinkEditor({
           {several && " Turn this off to offer more times on a link with several people."}
         </p>
       </div>
+
+      <QuestionsEditor questions={questions} onChange={setQuestions} />
+
+      <section class="wide form" data-testid="reminder">
+        <h3 class="wide">Reminder and redirect</h3>
+        <label class="inline wide">
+          <input
+            name="reminderEnabled"
+            type="checkbox"
+            defaultChecked={link.reminder_enabled === 1}
+          />
+          Send a reminder email
+        </label>
+        <label>
+          Hours before
+          <input
+            name="reminderHours"
+            type="number"
+            min={1}
+            max={168}
+            defaultValue={String(link.reminder_hours)}
+          />
+        </label>
+        <label class="wide">
+          Reminder message
+          <textarea
+            name="reminderMessage"
+            rows={2}
+            maxLength={1024}
+            defaultValue={link.reminder_message}
+          />
+        </label>
+        <label class="wide">
+          Redirect after booking (https URL)
+          <input name="redirectUrl" defaultValue={link.redirect_url ?? ""} />
+        </label>
+        <p class="status wide">
+          The booking page shows the confirmation, then opens this page 7 seconds later.
+        </p>
+      </section>
 
       <section class="wide" data-testid="organizers">
         <h3>Organizers</h3>

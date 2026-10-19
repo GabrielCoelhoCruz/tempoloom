@@ -483,7 +483,12 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
           Text: string;
           HTML: string;
         };
-        return { subject: m?.Subject ?? "", text: full.Text, html: full.HTML };
+        // Mail bodies use CRLF line ends; tests compare with \n.
+        return {
+          subject: m?.Subject ?? "",
+          text: full.Text.replace(/\r\n/g, "\n"),
+          html: full.HTML,
+        };
       },
       count: async (to) => (await list(to)).length,
     });

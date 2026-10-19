@@ -2,21 +2,39 @@
 //   node src/server/cli.ts login-link --email you@example.com
 //   node src/server/cli.ts connect-google-service-account --email you@example.com [--calendar ID]
 //   node src/server/cli.ts seat-limit --email admin@example.com --seats 10|none
+//   node src/server/cli.ts booking-reminders [--now 2026-10-20T08:00:00Z]
 import { parseArgs } from "node:util";
 import { createLoginLink, ensureUser, upsertAccount } from "./accounts.ts";
+import { sendDueReminders } from "./booking-mail.ts";
 import { loadConfig } from "./config.ts";
 import { SecretBox } from "./crypto.ts";
 import { one, openDb, run } from "./db.ts";
 import { parseServiceAccountKey } from "./google/service-account.ts";
+import { createMailer } from "./mail.ts";
 
 const [command, ...rest] = process.argv.slice(2);
 const { values } = parseArgs({
   args: rest,
-  options: { email: { type: "string" }, name: { type: "string" }, seats: { type: "string" } },
+  options: {
+    email: { type: "string" },
+    name: { type: "string" },
+    seats: { type: "string" },
+    now: { type: "string" },
+  },
 });
 const config = loadConfig();
 const db = openDb(config.dbPath);
 const box = new SecretBox(config.SECRET_KEY);
+if (command === "booking-reminders") {
+  // Sends the booking reminders due at --now (default: the current time), as the server does each minute.
+  const at = values.now ? Date.parse(values.now) : Date.now();
+  if (Number.isNaN(at)) throw new Error("--now must be an ISO date and time");
+  const mailer = createMailer(config.SMTP_URL, config.MAIL_FROM);
+  const n = await sendDueReminders(db, mailer, config.BASE_URL, at);
+  console.log(`sent ${n} reminder${n === 1 ? "" : "s"}`);
+  db.close();
+  process.exit(0);
+}
 const email = values.email;
 if (!email) throw new Error("--email is required");
 
