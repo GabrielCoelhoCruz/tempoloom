@@ -227,7 +227,8 @@ export function OneOffForm({
                 data-testid="oneoff-expiry"
                 data-date={utcToLocal(myZone(), saved.expiresAt).date}
               >
-                Copied. Expires on {new Date(saved.expiresAt).toLocaleDateString()}.
+                Copied. Expires on{" "}
+                {new Date(saved.expiresAt).toLocaleDateString(undefined, { timeZone: myZone() })}.
               </span>
             )}
           </>
