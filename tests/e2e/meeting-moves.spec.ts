@@ -346,7 +346,11 @@ test("the daily emails list meetings at risk in the next 14 days and new recurri
   // No time this week: the occurrence is kept as a marked conflict.
   await eventually(
     () => twoWeeks(cal),
-    (l) => expect(titled(l, "Crunch").map((e) => e.summary)).toEqual(["⚠️ Crunch", "Crunch"]),
+    (l) => {
+      const crunch = titled(l, "Crunch");
+      expect(crunch.map((e) => e.summary.startsWith("⚠️"))).toEqual([true, false]);
+      expect(local(crunch[0]?.start ?? 0)).toBe(`${day(1)} 10:00`);
+    },
   );
 
   const time = soon();

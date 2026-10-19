@@ -462,8 +462,8 @@ test("library entry 'Agenda drafts' stages a draft that is written only when app
   const wed = addDays(W, 2);
   const c = cal.calendarId;
   await blockUntil(cal, W);
-  // Wednesday of the test week is fully blocked, so a Wednesday-only habit is skipped.
-  await allDayBusy(c, "Away", wed);
+  // The test week is fully blocked, so a Wednesday habit finds no other day and is skipped.
+  for (let d = 0; d < 7; d++) await allDayBusy(c, "Away", addDays(W, d));
   const workshop = await putMeeting(c, {
     title: "Strategy workshop",
     start: at(t1, "09:00"),

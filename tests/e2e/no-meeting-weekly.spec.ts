@@ -8,7 +8,8 @@
 // - habits leave the day (the tag turned into plain busy)              -> one test
 // - a flexible meeting or a booking link still uses the day            -> one test
 // - the day is lost after a reload, or the library shows no badge      -> one test
-// - removing the day leaves the event, or meetings stay off the day     -> one test
+// - removing the day leaves the event, or new meetings and the booking
+//   link stay off the day                                              -> one test
 import type { Browser } from "@playwright/test";
 import { addDays } from "../../src/shared/time.ts";
 import {
@@ -32,13 +33,20 @@ const starts = (evs: Awaited<ReturnType<typeof twoWeeks>>, title: string) =>
   titled(evs, title).map((e) => `${local(e.start)}-${local(e.end).slice(11)}`);
 const TITLE = "No meetings #tl_free";
 
+/** Offered starts on one local date, from the page's first two spans of two weeks. */
 async function offered(browser: Browser, path: string, date: string): Promise<string[]> {
   const v = await visitor(browser);
   await v.goto(path);
   await expect(v.getByTestId("times")).toBeVisible();
-  const list = await v
-    .locator('[data-testid="times"] button[data-start]')
-    .evaluateAll((bs) => bs.map((b) => Number(b.getAttribute("data-start"))));
+  const read = () =>
+    v
+      .locator('[data-testid="times"] button[data-start]')
+      .evaluateAll((bs) => bs.map((b) => Number(b.getAttribute("data-start"))));
+  const first = await read();
+  await v.getByRole("button", { name: "Later" }).click();
+  await expect(v.getByRole("button", { name: "Earlier" })).toBeVisible();
+  await expect(v.getByTestId("times")).toBeVisible();
+  const list = [...first, ...(await read())];
   await v.context().close();
   return list
     .map(local)
@@ -100,16 +108,20 @@ test("the weekly no-meeting day from the library writes one weekly all-day busy 
   await page.getByRole("link", { name: "Settings" }).click();
   await expect(nm).toContainText("No meetings on Wednesdays");
 
-  // Removing the day deletes the series; the meeting comes back to its ideal day.
+  // Removing the day deletes the series: a new meeting may use Wednesday again,
+  // and so may the booking link. Placed meetings keep their time (rule 7).
   await nm.getByRole("button", { name: "Remove no-meeting day" }).click();
   await expect(nm.getByRole("button", { name: "Add no-meeting day" })).toBeVisible();
+  await addMeeting(page, { title: "Retro", guests: "dana@example.com", days: ["Wed"] });
   await eventually(
     () => twoWeeks(cal),
     (l) => {
       expect(l.filter((e) => e.summary === TITLE)).toEqual([]);
-      expect(starts(l, "Sync")).toEqual([`${day(2)} 10:00-10:30`, `${day(9)} 10:00-10:30`]);
+      expect(starts(l, "Retro")).toEqual([`${day(2)} 10:00-10:30`, `${day(9)} 10:00-10:30`]);
     },
   );
+  expect((await offered(browser, "/book/quiet/intro", day(9))).length).toBeGreaterThan(0);
   await page.reload();
+  await page.getByRole("link", { name: "Settings" }).click();
   await expect(nm.getByRole("button", { name: "Add no-meeting day" })).toBeVisible();
 });
