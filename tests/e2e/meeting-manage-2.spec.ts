@@ -11,6 +11,8 @@
 //   period that has none                                                   -> no time
 // - delete leaves future occurrences, emails guests when told not to,
 //   or does not email them when told to                              -> delete
+// - delete of rules on an existing series offers to email a cancel while
+//   the series stays on the calendar                                  -> delete series
 // - lock from the planner does not lock a meeting occurrence, a locked
 //   occurrence moves for a conflict, or unlock does not free it       -> manual
 // - a resize in the calendar is put back or does not lock; a title edit
@@ -22,6 +24,7 @@ import {
   BACKEND,
   blockUntil,
   type CalendarDriver,
+  EMAIL,
   eventually,
   expect,
   local,
@@ -30,7 +33,7 @@ import {
 } from "./fixtures.ts";
 import { openWeek, titled, W } from "./helpers.ts";
 import { allDayBusy, credentials } from "./ics.ts";
-import { addMeeting as fillMeeting, type MeetingForm } from "./meeting-helpers.ts";
+import { addMeeting as fillMeeting, type MeetingForm, putMeeting } from "./meeting-helpers.ts";
 
 test.skip(BACKEND === "google", "Meeting E2E writes raw iCalendar objects to CalDAV.");
 
@@ -140,6 +143,10 @@ test("with no time in a period, 'remove' leaves the period empty and 'keep' keep
     guests: "dana@example.com",
     noTime: "Remove it for that period",
   });
+  // The next form starts from the defaults again.
+  await expect(page.getByTestId("meeting-form").getByLabel("When there is no time")).toHaveValue(
+    "keep_as_conflict",
+  );
   await addMeeting(page, { title: "Kept", guests: "dana@example.com", days: ["Wed"] });
   await eventually(
     () => twoWeeks(cal),
@@ -324,4 +331,59 @@ test("delete asks first: with email the guests get the cancelled times, without 
   await page.reload();
   await expect(page.getByTestId("meetings-page")).toContainText("No meetings yet.");
   expect(await mail.count("ana@example.com")).toBe(1);
+});
+
+test("delete on rules attached to an existing series offers no cancel email: the series stays on the calendar and the guests get nothing (MEET-02 rule 28; MEET-01 rule 39)", async ({
+  page,
+  cal,
+  signIn,
+  mail,
+}) => {
+  await blockUntil(cal, W);
+  const series = await putMeeting(cal.calendarId, {
+    title: "Weekly 1:1",
+    start: at(day(1), "10:00"),
+    end: at(day(1), "10:30"),
+    organizer: EMAIL,
+    attendees: [{ email: "cleo@example.com", answer: "ACCEPTED" }],
+    rrule: "FREQ=WEEKLY;COUNT=6",
+  });
+  await signIn();
+  await page.getByRole("link", { name: "Meetings" }).click();
+  const form = page.getByTestId("meeting-form");
+  const pick = form.getByLabel("From an existing meeting");
+  await expect(pick.locator("option", { hasText: "Weekly 1:1" })).toHaveCount(1, LONG);
+  await pick.selectOption({ label: "Weekly 1:1" });
+  await form.getByRole("button", { name: "Add meeting" }).click();
+  const m = page.locator('[data-meeting-title="Weekly 1:1"]');
+  await expect(m).toBeVisible();
+  const instances = (l: Awaited<ReturnType<typeof twoWeeks>>) =>
+    l.filter((e) => e.summary.includes("Weekly 1:1")).sort((a, b) => a.start - b.start);
+  await eventually(
+    () => twoWeeks(cal),
+    (l) => {
+      expect(instances(l).length).toBe(2);
+      expect(instances(l).every((e) => (e.privateProps.tl_meeting ?? "") !== "")).toBe(true);
+    },
+  );
+
+  await m.getByRole("button", { name: "Delete" }).click();
+  const ask = m.getByTestId("meeting-delete");
+  await expect(ask).toContainText(
+    "Delete the rules of Weekly 1:1? The recurring meeting stays on the calendar.",
+  );
+  await expect(ask.getByRole("button", { name: "Delete and email guests" })).toHaveCount(0);
+  await ask.getByRole("button", { name: "Delete rules" }).click();
+  await expect(m).toHaveCount(0);
+  await eventually(
+    () => twoWeeks(cal),
+    (l) => {
+      const left = instances(l);
+      expect(left.map((e) => local(e.start))).toEqual([`${day(1)} 10:00`, `${day(8)} 10:00`]);
+      expect(left.every((e) => e.recurringId === series)).toBe(true);
+    },
+  );
+  await page.reload();
+  await expect(page.getByTestId("meetings-page")).toContainText("No meetings yet.");
+  expect(await mail.count("cleo@example.com")).toBe(0);
 });

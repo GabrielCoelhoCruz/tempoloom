@@ -30,6 +30,8 @@ interface Meeting {
     status: string;
     reason: string;
     suggestions?: { start: number; end: number }[];
+    /** The period of the problem: its first day, a day or a week long. */
+    period: { start: string; kind: "day" | "week" };
   }[];
   changes: Change[];
   series_event_id: string | null;
@@ -141,7 +143,6 @@ function Attention({ meetings, zone: z }: { meetings: Meeting[]; zone: string })
       m,
       p,
       occurrence: m.occurrences.find((o) => o.key === p.demandKey),
-      period: p.demandKey.slice(p.demandKey.lastIndexOf(":") + 1),
     })),
   );
   if (items.length === 0) return null;
@@ -149,7 +150,7 @@ function Attention({ meetings, zone: z }: { meetings: Meeting[]; zone: string })
     <section data-testid="meeting-attention">
       <h2>Needs your attention</h2>
       <ul class="list">
-        {items.map(({ m, p, occurrence, period }) => (
+        {items.map(({ m, p, occurrence }) => (
           <li
             class="row warning"
             key={`${m.id}-${p.demandKey}`}
@@ -159,7 +160,7 @@ function Attention({ meetings, zone: z }: { meetings: Meeting[]; zone: string })
             {m.title} ·{" "}
             {occurrence
               ? localWhen(z, occurrence.start_ms)
-              : `${m.frequency.period === "daily" ? "day" : "week of"} ${period}`}{" "}
+              : `${p.period.kind === "day" ? "day" : "week of"} ${p.period.start}`}{" "}
             · {p.status === "conflict" ? "Conflict" : "Not placed"}:{" "}
             {FLAGS[p.reason] ?? REASONS[p.reason] ?? p.reason}
           </li>
@@ -184,9 +185,12 @@ export function Meetings() {
   // first option of each select, because Preact sets `selected` as a property.
   const [saved, setSaved] = useState(0);
   const [deleting, setDeleting] = useState<string | null>(null);
+  const [mailConfigured, setMailConfigured] = useState(false);
 
   const load = useCallback(async () => {
-    setMeetings((await api<{ meetings: Meeting[] }>("GET", "/api/meetings")).meetings);
+    const r = await api<{ meetings: Meeting[]; mailConfigured: boolean }>("GET", "/api/meetings");
+    setMeetings(r.meetings);
+    setMailConfigured(r.mailConfigured);
   }, []);
   useEffect(() => void load(), [load]);
   useLive(load);
@@ -279,7 +283,7 @@ export function Meetings() {
       <form
         class="form"
         data-testid="meeting-form"
-        key={`${seed ? `series-${seed.key}` : template ? `${template.slug}-${meetings.length}` : "new"}-${saved}`}
+        key={`${seed ? `series-${seed.key}` : (template?.slug ?? "new")}-${saved}`}
         onSubmit={(e) => {
           e.preventDefault();
           const form = e.currentTarget as HTMLFormElement;
@@ -618,11 +622,18 @@ export function Meetings() {
                     </button>
                     {deleting === m.id ? (
                       <div class="warning" data-testid="meeting-delete">
-                        Delete {m.title} and its future times?
-                        {[
-                          ["1", "Delete and email guests"],
-                          ["0", "Delete without email"],
-                        ].map(([notify, label]) => (
+                        {m.series_event_id
+                          ? `Delete the rules of ${m.title}? The recurring meeting stays on the calendar.`
+                          : `Delete ${m.title} and its future times?`}
+                        {(m.series_event_id
+                          ? [["0", "Delete rules"]]
+                          : mailConfigured
+                            ? [
+                                ["1", "Delete and email guests"],
+                                ["0", "Delete without email"],
+                              ]
+                            : [["0", "Delete"]]
+                        ).map(([notify, label]) => (
                           <button
                             type="button"
                             class="danger"

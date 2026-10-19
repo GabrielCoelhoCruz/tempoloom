@@ -8,6 +8,7 @@ import type { AppEnv } from "../app.ts";
 import { all, type Db, one, run } from "../db.ts";
 import { jsonBody, notFound } from "../http.ts";
 import type { Mailer } from "../mail.ts";
+import { notifyMeetingCancelled } from "../meeting-mail.ts";
 import { adoptableSeries } from "../meeting-series.ts";
 import { logChange } from "../planner/meeting-log.ts";
 import {
@@ -20,11 +21,11 @@ import {
 } from "../planner/meetings.ts";
 import { KEY_PROP, MANAGED_PROP, type ManagedRow } from "../planner/push.ts";
 import { loadSnapshot } from "../planner/replan.ts";
-import { when } from "../preview.ts";
 import type { ProviderPool } from "../providers/index.ts";
 import { getSettings } from "../settings.ts";
 import { cacheEvent } from "../sync/pull.ts";
 import type { SyncService } from "../sync/service.ts";
+import { homeZone } from "../travel.ts";
 import { badRequest, hhmm, hoursSetId, nextRank } from "./items.ts";
 
 const fiveMinutes = z.number().int().min(5).max(480).multipleOf(5);
@@ -263,7 +264,17 @@ export function meetingRoutes(
         m.id,
         now(),
       ),
-      problems: report.filter((e) => e.itemKind === "meeting" && e.itemId === m.id),
+      // The period of each problem: its first day, and whether it is a day or a week.
+      problems: report
+        .filter((e) => e.itemKind === "meeting" && e.itemId === m.id)
+        .map((e) => ({
+          ...e,
+          period: {
+            start: e.demandKey.slice(e.demandKey.lastIndexOf(":") + 1),
+            kind:
+              (JSON.parse(m.frequency) as { period: string }).period === "daily" ? "day" : "week",
+          },
+        })),
       // MEET-02 rule 31: the change log of each occurrence, newest first.
       changes: all<{
         id: number;
@@ -283,7 +294,7 @@ export function meetingRoutes(
         m.id,
       ),
     }));
-    return c.json({ meetings });
+    return c.json({ meetings, mailConfigured: mailer?.configured ?? false });
   });
 
   /** Rule 1: the user's recurring series that rules can attach to. */
@@ -502,36 +513,36 @@ export function meetingRoutes(
     const user = c.get("user");
     const m = own(c.req.param("id"), user.id);
     const peers = meetingPeers(db, user.id).attendees;
-    const notify = c.req.query("notify") === "1";
-    const guests = attendeesOf(db, m.id).filter((a) => a.email !== user.email);
-    const future = all<{ start_ms: number; end_ms: number }>(
-      db,
-      "SELECT start_ms, end_ms FROM managed_events WHERE user_id = ? AND kind = 'meeting' AND source_id = ? AND start_ms > ? ORDER BY start_ms",
-      user.id,
-      m.id,
-      now(),
-    );
-    await sync.exclusive(user.id, async (pool) => {
+    // Rules on an adopted series leave the series on the calendar: nothing to cancel.
+    const notify = c.req.query("notify") === "1" && !m.series_event_id;
+    const guests = attendeesOf(db, m.id)
+      .map((a) => a.email)
+      .filter((e) => e !== user.email);
+    const times = await sync.exclusive(user.id, async (pool) => {
+      // Read in the queue, so a plan run cannot move them in between.
+      const future = all<{ start_ms: number; end_ms: number }>(
+        db,
+        `SELECT start_ms, end_ms FROM managed_events
+         WHERE user_id = ? AND kind = 'meeting' AND source_id = ? AND start_ms > ?
+           AND event_id IS NOT NULL ORDER BY start_ms`,
+        user.id,
+        m.id,
+        now(),
+      );
       if (m.series_event_id) await releaseSeries(db, pool, m);
       run(db, "DELETE FROM meetings WHERE id = ?", m.id);
+      return future.map((o) => ({ start: o.start_ms, end: o.end_ms }));
     });
     sync.request(user.id);
     for (const id of peers) sync.request(id);
-    if (notify && mailer?.configured && future.length > 0) {
-      const zone =
-        one<{ time_zone: string }>(db, "SELECT time_zone FROM users WHERE id = ?", user.id)
-          ?.time_zone ?? "UTC";
-      const text = [
-        `${user.email} cancelled "${m.title}". These times are cancelled:`,
-        "",
-        ...future.map((o) => `- ${when(zone, o.start_ms, o.end_ms)}`),
-        "",
-        `Times are in ${zone}.`,
-      ].join("\n");
-      for (const g of guests)
-        await mailer
-          .send({ to: g.email, subject: `Cancelled: ${m.title}`, text })
-          .catch(() => undefined);
+    if (notify && mailer) {
+      notifyMeetingCancelled(mailer, {
+        organizer: user.email,
+        title: m.title,
+        zone: homeZone(db, user.id),
+        times,
+        guests,
+      });
     }
     return c.body(null, 204);
   });
