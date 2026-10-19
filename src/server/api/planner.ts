@@ -21,6 +21,8 @@ export interface PlannerEvent {
   /** External events: the stored priority (1 when never lowered) and whether it can change. */
   level?: number;
   levelEditable?: boolean;
+  /** Why the priority cannot change: a booking-link meeting, or another calendar. */
+  levelFixed?: "booking-link" | "other-calendar";
   recurring?: boolean;
   start: number;
   end: number;
@@ -91,7 +93,8 @@ export function plannerEvents(db: Db, userId: string, from: number, to: number):
   );
   for (const e of external) {
     if (e.all_day) continue;
-    if ((JSON.parse(e.private_props) as Record<string, string>)[MANAGED_PROP] === "1") continue;
+    const props = JSON.parse(e.private_props) as Record<string, string>;
+    if (props[MANAGED_PROP] === "1") continue;
     out.push({
       id: `ext:${e.calendar_id}:${e.event_id}`,
       category: externalCategory(cats, e),
@@ -109,13 +112,21 @@ export function plannerEvents(db: Db, userId: string, from: number, to: number):
         levels.get(`${e.calendar_id}:${e.event_id}`) ??
         (e.recurring_id ? levels.get(`${e.calendar_id}:${e.recurring_id}`) : undefined) ??
         1,
-      levelEditable:
-        e.is_primary === 1 &&
-        (JSON.parse(e.private_props) as Record<string, string>).tl_booking !== "1",
+      ...levelRule(e.is_primary === 1, props.tl_booking === "1"),
       recurring: e.recurring_id !== null,
     });
   }
   return out.sort((a, b) => a.start - b.start || a.id.localeCompare(b.id));
+}
+
+/** External priority rule 4 and booking rule 11: what may change the level of an external event. */
+function levelRule(
+  primary: boolean,
+  booking: boolean,
+): Pick<PlannerEvent, "levelEditable" | "levelFixed"> {
+  if (booking) return { levelEditable: false, levelFixed: "booking-link" };
+  if (!primary) return { levelEditable: false, levelFixed: "other-calendar" };
+  return { levelEditable: true };
 }
 
 export function plannerRoutes(db: Db, sync: SyncService, now: () => number): Hono<AppEnv> {

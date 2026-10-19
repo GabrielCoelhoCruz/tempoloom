@@ -346,7 +346,9 @@ export function Planner() {
                 </select>
               </label>
               <p class="status wide">
-                Events from other calendars stay P1: only events on your main calendar can change.
+                {selected.levelFixed === "booking-link"
+                  ? "Meetings booked through a booking link stay P1: they are fixed."
+                  : "Events from other calendars stay P1: only events on your main calendar can change."}
               </p>
             </div>
           )}
