@@ -53,12 +53,20 @@ export class SyncService {
    * Marks an account disconnected when its server rejects the stored login
    * (accounts-login-emails-permissions.md rules 14, 16): Tempoloom then stops
    * reading and writing its calendars until the user reconnects it. Returns
-   * true when it did; other errors are the caller's.
+   * true for a rejected login; other errors are the caller's. Only the login
+   * that the provider used is marked: a reconnect saved while the request was
+   * open stays connected.
    */
-  #disconnected(accountId: string, err: unknown): boolean {
+  #disconnected(pool: ProviderPool, accountId: string, err: unknown): boolean {
     if (!(err instanceof ProviderError && err.kind === "auth")) return false;
-    run(this.#deps.db, "UPDATE accounts SET status = 'reauth_required' WHERE id = ?", accountId);
-    this.#log(`account ${accountId} is disconnected: the server rejected its login`);
+    const { changes } = this.#deps.db
+      .prepare("UPDATE accounts SET status = 'reauth_required' WHERE id = ? AND credentials IS ?")
+      .run(accountId, pool.credentialsOf(accountId) ?? null);
+    this.#log(
+      changes > 0
+        ? `account ${accountId} is disconnected: the server rejected its login`
+        : `account ${accountId}: an old login was rejected; the new login is kept`,
+    );
     return true;
   }
 
@@ -232,7 +240,7 @@ export class SyncService {
         try {
           await syncCalendarList(db, pool.get(a.id), a.id, userId);
         } catch (err) {
-          if (this.#disconnected(a.id, err)) continue;
+          if (this.#disconnected(pool, a.id, err)) continue;
           throw err;
         }
         run(db, "UPDATE accounts SET calendars_synced_at = ? WHERE id = ?", now0, a.id);
@@ -284,7 +292,7 @@ export class SyncService {
             mirrored.has(cal.id) ? MIRROR_READ_AHEAD : undefined,
           );
         } catch (err) {
-          if (!this.#disconnected(cal.account_id, err)) throw err;
+          if (!this.#disconnected(pool, cal.account_id, err)) throw err;
           lost.add(cal.account_id);
         }
       }

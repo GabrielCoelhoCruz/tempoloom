@@ -63,6 +63,7 @@ export class ProviderPool {
   readonly #deps: ProviderDeps;
   readonly #zone: string;
   readonly #byAccount = new Map<string, CalendarProvider>();
+  readonly #credentials = new Map<string, string | null>();
 
   constructor(deps: ProviderDeps, zone: string) {
     this.#deps = deps;
@@ -72,9 +73,22 @@ export class ProviderPool {
   get(accountId: string): CalendarProvider {
     let p = this.#byAccount.get(accountId);
     if (!p) {
+      this.#credentials.set(
+        accountId,
+        one<{ credentials: string | null }>(
+          this.#deps.db,
+          "SELECT credentials FROM accounts WHERE id = ?",
+          accountId,
+        )?.credentials ?? null,
+      );
       p = providerFor(this.#deps, accountId, this.#zone);
       this.#byAccount.set(accountId, p);
     }
     return p;
+  }
+
+  /** The stored credentials that the account's provider was built with. */
+  credentialsOf(accountId: string): string | null | undefined {
+    return this.#credentials.get(accountId);
   }
 }
