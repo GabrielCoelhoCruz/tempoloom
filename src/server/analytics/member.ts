@@ -27,7 +27,9 @@ export type Kind =
   | "personal"
   | "travel"
   | "breaks"
-  | "vacation";
+  | "vacation"
+  /** Time away shorter than 8 hours (events-out-of-office.md rule 7). */
+  | "personalCommitment";
 
 export const MEETINGS = ["oneOnOne", "teamMeetings", "externalMeetings"] as const;
 export const BUCKETS = [
@@ -38,6 +40,7 @@ export const BUCKETS = [
   "travel",
   "breaks",
   "vacation",
+  "personalCommitment",
   "free",
 ] as const;
 export type Bucket = (typeof BUCKETS)[number];
@@ -194,7 +197,7 @@ const KIND: Record<Category, Kind> = {
   external_meeting: "externalMeetings",
   solo_work: "solo",
   personal: "personal",
-  personal_commitment: "personal",
+  personal_commitment: "personalCommitment",
   travel: "travel",
   flight: "travel",
   vacation: "vacation",
@@ -291,6 +294,7 @@ export function loadMemberDays(
         {
           title: "",
           description: "",
+          rsvpNote: "",
           start: m.start_ms,
           end: m.end_ms,
           eventType: "default",

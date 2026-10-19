@@ -34,7 +34,7 @@ import type { CalendarProvider } from "../providers/types.ts";
 import { getSettings, type Settings } from "../settings.ts";
 import { planningZone } from "../travel.ts";
 import { afterPush } from "./after-push.ts";
-import { categoryContext, colorFor, paintExternal } from "./categories.ts";
+import { categoryContext, colorFor, externalPaints } from "./categories.ts";
 import { externalEvents } from "./events.ts";
 import {
   eventTitle,
@@ -48,6 +48,7 @@ import { recordMeetingChanges } from "./meeting-log.ts";
 import { attendeeOccurrences, attendeesOf, meetingItems } from "./meetings.ts";
 import { LABELS, mirrorCopies } from "./mirror.ts";
 import { type DesiredEvent, type ManagedRow, type PushResult, pushSchedule } from "./push.ts";
+import { type Paint, type PaintJob, repaintRequest } from "./repaint.ts";
 
 export interface ReplanContext {
   db: Db;
@@ -62,6 +63,8 @@ export interface ReplanContext {
 export interface ReplanResult {
   push: PushResult;
   report: ReportEntry[];
+  /** Colors to write after the run (events-categories-and-colors.md rule 16). */
+  paint: PaintJob;
 }
 
 interface CalendarInfo {
@@ -487,6 +490,7 @@ export function copyAnchors(db: Db, userId: string, now: number): ExternalEvent[
       {
         title: c.summary,
         description: c.description,
+        rsvpNote: "",
         start: c.start_ms,
         end: c.end_ms,
         eventType: "default",
@@ -659,6 +663,7 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
       user.time_zone,
       now,
       work ? (JSON.parse(work.weekly) as WeeklyHours) : null,
+      desired.filter((d) => d.kind === "buffer" && travelBuffers.has(d.sourceId)),
     ),
   );
 
@@ -703,40 +708,49 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
       userId,
     ).map((p) => [p.id, p.color_override]),
   );
-  for (const d of desired) {
-    const row = rowByKey.get(d.key);
-    const manual = row?.event_id
-      ? (cats.manual.get(`${row.calendar_id}:${row.event_id}`) ?? null)
-      : null;
-    const type = d.kind === "mirror" ? mirrorTypes.get(d.sourceId) : undefined;
+  /** The color of a managed event: its category color, or its item's own color (rule 9). */
+  const colorOf = (
+    kind: string,
+    sourceId: string,
+    text: { title: string; description: string; start: number; end: number },
+    attendees: string[],
+    manualKey: string | null,
+  ): string | null => {
+    const manual = manualKey ? (cats.manual.get(manualKey) ?? null) : null;
+    const type = kind === "mirror" ? mirrorTypes.get(sourceId) : undefined;
     const category =
       type === "travel" && !manual
         ? "travel"
         : categoryOf(
             {
-              title: d.title,
-              description: d.description,
-              start: d.start,
-              end: d.end,
+              ...text,
+              rsvpNote: "",
               eventType: "default",
-              attendees: [...(d.attendees ?? []), ...(d.optionalAttendees ?? [])],
-              managedKind: d.kind,
-              personalHabit: personalHabits.has(d.sourceId),
-              travelBuffer: travelBuffers.has(d.sourceId),
+              attendees,
+              managedKind: kind,
+              personalHabit: personalHabits.has(sourceId),
+              travelBuffer: travelBuffers.has(sourceId),
               personalCalendar: type === "personal",
               manual,
             },
             cats.userEmail,
           );
-    d.colorId =
-      (d.kind === "mirror" ? mirrorColors.get(d.sourceId) : undefined) ??
-      colorFor(settings, category);
-    // Rule 9: an item color overrides the category color.
     const own =
-      d.kind === "task"
-        ? taskColors.get(d.sourceId)
-        : eventSettings.get(`${d.kind}:${d.sourceId}`)?.color;
-    if (own && own !== "category") d.colorId = own === "calendar_default" ? null : own;
+      kind === "task" ? taskColors.get(sourceId) : eventSettings.get(`${kind}:${sourceId}`)?.color;
+    if (own && own !== "category") return own === "calendar_default" ? null : own;
+    return (
+      (kind === "mirror" ? mirrorColors.get(sourceId) : undefined) ?? colorFor(settings, category)
+    );
+  };
+  for (const d of desired) {
+    const row = rowByKey.get(d.key);
+    d.colorId = colorOf(
+      d.kind,
+      d.sourceId,
+      d,
+      [...(d.attendees ?? []), ...(d.optionalAttendees ?? [])],
+      row?.event_id ? `${row.calendar_id}:${row.event_id}` : null,
+    );
   }
 
   const push = await pushSchedule(
@@ -754,14 +768,44 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
     desired,
   );
   recordMeetingChanges(db, userId, rows, now, last);
-  await paintExternal(
+  // Rule 8: a new color also repaints managed events that ended, up to 90 days back.
+  // Rule 12, "repaint all": every managed event gets its color again, also where
+  // the user changed the color in the calendar. The run only lists the paints;
+  // the sync service writes them after the run (rule 16).
+  const requestedAt = repaintRequest(db, userId);
+  const paints: Paint[] = [];
+  for (const r of all<ManagedRow & { cached_color: string | null; attendees: string | null }>(
     db,
+    `SELECT m.*, e.color_id AS cached_color, e.attendees FROM managed_events m
+       JOIN calendars c ON c.id = m.calendar_id
+       JOIN accounts a ON a.id = c.account_id
+       LEFT JOIN events e ON e.calendar_id = m.calendar_id AND e.event_id = m.event_id
+     WHERE m.user_id = ? AND a.status = 'ok' AND c.writable = 1
+       AND m.event_id IS NOT NULL AND m.end_ms > ? AND m.end_ms <= ?`,
     userId,
-    settings,
-    (accountId) => ctx.provider(accountId),
-    now,
-    snapshot.windowEnd,
-  );
+    now - 90 * DAY,
+    requestedAt === null ? now : Number.MAX_SAFE_INTEGER,
+  )) {
+    if (!r.event_id || (r.kind === "mirror" && r.end_ms <= now)) continue;
+    const color = colorOf(
+      r.kind,
+      r.source_id,
+      { title: r.title, description: r.description, start: r.start_ms, end: r.end_ms },
+      // Only a meeting's category depends on its guests.
+      r.kind === "meeting" ? (JSON.parse(r.attendees ?? "[]") as string[]) : [],
+      `${r.calendar_id}:${r.event_id}`,
+    );
+    const current = requestedAt === null ? r.color_id : r.cached_color;
+    if ((current ?? null) === color) continue;
+    paints.push({
+      calendarId: r.calendar_id,
+      eventId: r.event_id,
+      series: false,
+      color,
+      managedId: r.id,
+    });
+  }
+  paints.push(...externalPaints(db, userId, settings, now, snapshot.windowEnd));
   await markEnded(db, userId, settings.markers, (accountId) => ctx.provider(accountId), now);
   await markFlights(db, userId, (accountId) => ctx.provider(accountId), now, snapshot.windowEnd);
   await afterPush(db, userId, (accountId) => ctx.provider(accountId), now);
@@ -773,5 +817,5 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
     JSON.stringify(result.report),
     now,
   );
-  return { push, report: result.report };
+  return { push, report: result.report, paint: { paints, requestedAt } };
 }

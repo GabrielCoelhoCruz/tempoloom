@@ -41,6 +41,7 @@ export function fromGoogleEvent(e: GoogleEvent, zone: string): ProviderEvent {
     busy: e.transparency !== "transparent",
     eventType: e.eventType ?? "default",
     selfResponse: self?.responseStatus ?? null,
+    rsvpNote: self?.comment ?? "",
     attendeeCount: e.attendees?.filter((a) => !a.resource).length ?? 0,
     attendees: (e.attendees ?? [])
       .filter((a) => !a.resource && a.email)
@@ -197,6 +198,7 @@ export class GoogleProvider implements CalendarProvider {
     const patch: Partial<GoogleEventInput> = {};
     if (change.summary !== undefined) patch.summary = change.summary;
     if (change.description !== undefined) patch.description = change.description;
+    if (change.busy !== undefined) patch.transparency = change.busy ? "opaque" : "transparent";
     if (change.end !== undefined) patch.end = { dateTime: new Date(change.end).toISOString() };
     if (change.start !== undefined)
       patch.start = { dateTime: new Date(change.start).toISOString() };

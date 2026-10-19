@@ -1,7 +1,9 @@
 // Team stats (docs/specs/analytics-team-stats.md): the personal figures
 // averaged over the team's included members. No member's name, event or
 // single value appears here.
+
 import { useEffect, useRef, useState } from "preact/hooks";
+import type { Bucket } from "../../server/analytics/member.ts";
 import { diffDays } from "../../shared/time.ts";
 import { ApiError, api } from "../lib/api.ts";
 import { zone } from "../lib/state.ts";
@@ -17,17 +19,6 @@ import {
 } from "./stats-range.tsx";
 import { StatsTabs } from "./stats-tabs.tsx";
 
-type Bucket =
-  | "oneOnOne"
-  | "teamMeetings"
-  | "externalMeetings"
-  | "deepWork"
-  | "shallowWork"
-  | "personal"
-  | "travel"
-  | "breaks"
-  | "vacation"
-  | "free";
 type Figure =
   | Bucket
   | "meetings"
@@ -60,6 +51,7 @@ const LABELS: Record<Bucket, string> = {
   travel: "Travel",
   breaks: "Breaks",
   vacation: "Vacation",
+  personalCommitment: "Personal commitments",
   free: "Free work time",
 };
 const COLORS: Record<Bucket, string> = {
@@ -72,6 +64,7 @@ const COLORS: Record<Bucket, string> = {
   travel: "var(--task)",
   breaks: "var(--buffer)",
   vacation: "var(--external)",
+  personalCommitment: "color-mix(in srgb, var(--external) 50%, #fff)",
   free: "transparent",
 };
 const ORDER = Object.keys(LABELS) as Bucket[];

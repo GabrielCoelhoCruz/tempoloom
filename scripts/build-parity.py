@@ -286,19 +286,6 @@ PARTIAL = StatusMap("PARTIAL", {
     349: "The list is grouped by priority; no drag to reorder",
     350: "No limit in code; not under test",
     356: "Changed rules or hours place future occurrences again (engine change flag); unit tests only",
-    278: "The category is computed again from the cached attendees on each run; not under E2E",
-    283: "Future managed events and external events from 90 days back are repainted; past managed events are not",
-    284: "An event that cannot change color is skipped and painting never stops a run; not under E2E (Google)",
-    285: "At most 2 scope changes a minute (E2E); no repaint-all button",
-    261: "Google out-of-office events are busy, so they block like any busy event; Google E2E pending",
-    262: "Away time over 8 hours is vacation, shorter is personal commitment (unit tests); stats do not split it yet",
-    263: "#tl_free opens a busy event to tasks and habits (E2E for a timed event); not under E2E for out of office",
-    265: "Any connected calendar that counts for availability blocks its busy events (E2E); no holiday calendar of its own",
-    253: "#tl_busy makes any free event block tasks and habits (E2E); no quick-block action",
-    254: "#tl_travel makes the travel buffer wrap an event without an address; not under E2E",
-    255: "#tl_flight gives airport time and the flight category; E2E covers flight numbers in the title, not the tag",
-    256: "#tl_trip gives the travel category (unit tests); no buffer is added",
-    257: "#tl_focus counts an event as focus in stats; not under test",
 })
 
 # Row id -> reason, for rows that cannot work yet because a feature they build on is missing.
@@ -327,14 +314,12 @@ for n in [5, 6, 12, 14, 15, 16, 17, 18, 20, 21, 22, 24, 31]:
 
 # Row id -> limits, for rows implemented with unit or property tests only.
 UNIT = StatusMap("UNIT", {
-    259: "title and description; not the RSVP note", 292: "settings field; no UI yet", 506: "API only",
+    506: "API only",
     517: "status is stored; no reconnect UI yet",
     456: "", 467: "", 468: "API only; no UI switch",
     470: "", 471: "stored per policy; no UI", 472: "", 473: "the skip half is E2E-proven; free copies in details mode are not",
     475: "", 476: "copies the details; the provider visibility is not set to private", 480: "",
     353: "one-to-one, group and booked meeting hours",
-    297: "",
-    298: "only main-calendar events can change",
 })
 
 GOOGLE_ROWS = StatusMap("GOOGLE_ROWS", {
@@ -399,7 +384,6 @@ E2E_NOTES.update({
 })
 PARTIAL.update({
     301: "From the library and from the top-bar create menu (E2E: \u201ca library entry opens the shared form\u2026\u201d, \u201cthe automation list shows habits\u2026\u201d); asking the assistant chat needs the chat, which is not implemented",
-    245: "Travel and airport buffers start public, with the travel marker (E2E: \u201ctask chunks, habits and flexible meetings get the calendar default reminder\u2026\u201d); mirroring skips every managed event, while mirroring rule 15 skips only copies, so no copy of a travel buffer exists to follow a policy",
 })
 # --- end s1 ---
 
@@ -604,9 +588,6 @@ E2E_NOTES.update({
     722: "The draft is a fixed agenda template (no AI drafting); it is staged in the Issues tab and written to the event only when the user applies it",
     751: "The series is 'No meetings #tl_free' on the user's main calendar; removing it deletes the series",
     772: "Issues come from the meeting checks; recommendations come from the planner's report and days with 6 hours or more of meetings",
-})
-PARTIAL.update({
-    317: "The daily digest by email, at a time the user sets, has full UI E2E on CalDAV (\u201clibrary entry 'Flag meeting problems' turns on the checks and an email digest of open, not ignored, issues at the chosen time, once a day\u201d); the chat app channel needs a chat vendor app (Slack), which Tempoloom does not have",
 })
 # --- end s5 ---
 
@@ -933,6 +914,62 @@ BLOCKED.update({
     208: "Needs a Google Workspace account: native focus-time events exist only in Google Calendar. Their event type is counted in code, and on CalDAV the focus tag gives the same result (row 209)",
 })
 # --- end U04 ---
+
+# --- U05: event tags, time away, colors, markers and external priority ---
+T.update({
+    "u5_tags": "travel tags in the title, the description and the user's own RSVP note add travel time; #tl_flight adds airport time and #tl_trip only the travel category, also at an address; a removed tag removes its buffers",
+    "u5_quick": "a busy event titled only #tl_busy turns free and still keeps tasks out; a longer title stays busy",
+    "u5_focus": "an event tagged #tl_focus counts toward the weekly focus goal, so less focus time is placed",
+    "u5_away": "out-of-office time blocks habits and tasks and counts as vacation from 8 hours, else as a personal commitment; #tl_free in its title lets habits and tasks back",
+    "u5_away_conflict": "a habit that keeps conflicts is skipped on time away and kept as a conflict on plain busy time",
+    "u5_holiday": "a company holiday blocks the day once the user answers yes or maybe to its invitation; an unanswered one and a free holiday do not",
+    "u5_guests": "a meeting gets a new category and color when its guests change in the calendar",
+    "u5_repaint": "a new category color repaints events that ended too; Repaint all events puts back colors changed in the calendar, at most twice a minute",
+    "u5_markers": "chosen markers after the title replace the defaults on new and changed events; the planner shows plain titles; back before the title rewrites them",
+    "u5_series": "a priority for one occurrence of a series changes only that one; for the whole series it changes every occurrence",
+    "u5_fixed": "an event of another connected calendar, which a copy mirrors to the main calendar, shows a fixed P1 with the reason",
+    "u5_copies": "copies of travel buffers on mirrored calendars show what each policy shows, while the main calendar keeps them with the travel marker",
+})
+E2E.update({
+    245: ["s1_kinds", "u5_copies"],
+    253: ["u5_quick"],
+    254: ["u5_tags"],
+    255: ["u5_tags"],
+    256: ["u5_tags"],
+    257: ["u5_focus"],
+    259: ["u5_tags"],
+    262: ["u5_away"],
+    263: ["u5_away"],
+    278: ["u5_guests"],
+    283: ["c_paint", "u5_repaint"],
+    285: ["c_paint", "u5_repaint"],
+    292: ["u5_markers"],
+    297: ["u5_series"],
+    298: ["u5_fixed"],
+})
+E2E_NOTES.update({
+    245: "A travel buffer is the one managed event that mirroring copies, so its copy follows the policy",
+    253: "Quick block: the event turns free within one run",
+    259: "On CalDAV the RSVP note is the X-RESPONSE-COMMENT of the user's own attendee line; a COMMENT on the event is the organizer's text and is not read (edge case 5)",
+    262: "Exactly 8 hours is vacation; stats show personal commitments on their own line",
+    285: "Repaint all events is a button in the Colors section; it counts toward the same limit of 2 a minute",
+    292: "Settings, Title markers: one field for each state marker and a position before or after the title",
+    298: "The planner shows a mirrored copy as its source event, so one control covers both",
+})
+PARTIAL[261] = (
+    "Out-of-office events are read from the Google event type outOfOffice and, on CalDAV, from "
+    "X-MICROSOFT-CDO-BUSYSTATUS:OOF, as Outlook-style clients write it. Full UI E2E passes on CalDAV (Radicale) "
+    f"only: \u201c{T['u5_away']}\u201d; \u201c{T['u5_away_conflict']}\u201d. "
+    "Limit: the Google event type has no E2E; the Google Calendar run is pending (service-account key)"
+)
+PARTIAL[265] = (
+    f"Full UI E2E passes on CalDAV (Radicale): \u201c{T['u5_holiday']}\u201d. "
+    "Limit: an invitation that lists only a mailing list, not the user, blocks before the user answers, "
+    "because Tempoloom cannot see the user's own answer; holiday feeds are row 266. Google Calendar run pending (service-account key)"
+)
+BLOCKED[284] = "Needs a Google Calendar account: the events that cannot change color (made from mail, birthdays) exist only in Google Calendar; a CalDAV server lets the owner change every event. Painting skips refused events and never stops a run (code)"
+BLOCKED[317] = "The chat app channel needs the Slack app (a vendor developer app and a test workspace); the daily digest by email, at a time the user sets, has full UI E2E on CalDAV (\u201clibrary entry 'Flag meeting problems' turns on the checks and an email digest of open, not ignored, issues at the chosen time, once a day\u201d)"
+# --- end U05 ---
 
 GOOGLE_PENDING = "Google E2E pending: the service-account key is not available yet (1Password token missing)."
 

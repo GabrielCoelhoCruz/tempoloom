@@ -1,6 +1,6 @@
 // Calendar mirroring: which source events get a copy, and how the copy looks
 // (docs/specs/sync-calendar-mirroring.md rules 14-32).
-import { hasTag } from "../../scheduler/blocking.ts";
+import { hasTag, tagText } from "../../scheduler/blocking.ts";
 import { type Category, categoryOf } from "../../scheduler/categories.ts";
 import { hoursToTimeSet, type WeeklyHours } from "../../scheduler/hours.ts";
 import { all, type Db } from "../db.ts";
@@ -62,15 +62,44 @@ interface SourceEvent {
   event_type: string;
   location: string;
   calendar_id: string;
+  rsvp_note: string;
 }
 
-/** The copies every enabled policy of the user wants, as desired managed events. */
+/** A travel or airport buffer of this run as a source event; its key stands for the event id. */
+function bufferSource(d: DesiredEvent): SourceEvent {
+  return {
+    event_id: d.key,
+    summary: d.title,
+    description: d.description,
+    start_ms: d.start,
+    end_ms: d.end,
+    all_day: 0,
+    busy: d.busy ? 1 : 0,
+    self_response: null,
+    organizer_self: 1,
+    attendee_count: 0,
+    private_props: "{}",
+    attendees: "[]",
+    event_type: "default",
+    location: d.location ?? "",
+    calendar_id: d.calendarId,
+    rsvp_note: "",
+  };
+}
+
+/**
+ * The copies every enabled policy of the user wants, as desired managed events.
+ * Managed events are never copied (no chaining), except the travel and airport
+ * buffers of this run (buffers-travel.md outputs): their copies follow the
+ * policy's visibility, and come with the buffers in the same run.
+ */
 export function mirrorCopies(
   db: Db,
   userId: string,
   zone: string,
   now: number,
   workHours: WeeklyHours | null,
+  travelBuffers: DesiredEvent[] = [],
 ): DesiredEvent[] {
   const out: DesiredEvent[] = [];
   const policies = all<Policy>(
@@ -85,23 +114,28 @@ export function mirrorCopies(
   let cats: ReturnType<typeof categoryContext> | undefined;
   for (const p of policies) {
     // Rule 14: copies for events that end after now and start within 12 months.
-    const events = all<SourceEvent>(
-      db,
-      "SELECT * FROM events WHERE calendar_id = ? AND end_ms > ? AND start_ms < ?",
-      p.source_calendar_id,
-      now,
-      now + MIRROR_WINDOW,
-    );
+    const buffers = travelBuffers
+      .filter((d) => d.calendarId === p.source_calendar_id && d.end > now)
+      .map(bufferSource);
+    const travel = new Set(buffers.map((b) => b.event_id));
+    const events = [
+      ...all<SourceEvent>(
+        db,
+        "SELECT * FROM events WHERE calendar_id = ? AND end_ms > ? AND start_ms < ?",
+        p.source_calendar_id,
+        now,
+        now + MIRROR_WINDOW,
+      ).filter(
+        (e) => (JSON.parse(e.private_props) as Record<string, string>)[MANAGED_PROP] !== "1",
+      ),
+      ...buffers,
+    ];
     // Rule 17: the destination's address (its calendar id, or the email of a primary calendar).
     const destination = [p.dest_provider_id, p.dest_email ?? ""].map((a) => a.toLowerCase());
     const horizon = Math.max(now, ...events.map((e) => e.end_ms));
     const work = workHours ? hoursToTimeSet(workHours, zone, now, horizon) : null;
     for (const e of events) {
-      const props = JSON.parse(e.private_props) as Record<string, string>;
-      // No chaining: copies and other managed events are never copied again.
-      if (props[MANAGED_PROP] === "1") continue;
-      const tagged = { title: e.summary, description: e.description };
-      if (hasTag(tagged, TAG_NOSYNC)) continue;
+      if (hasTag(tagText(e), TAG_NOSYNC)) continue;
       const attendees = JSON.parse(e.attendees) as string[];
       if (attendees.some((a) => destination.includes(a.toLowerCase()))) continue;
       if (e.self_response === "declined") continue;
@@ -132,20 +166,23 @@ export function mirrorCopies(
       if (p.visibility === "busy_only") title = "Busy";
       else if (!details) {
         cats ??= categoryContext(db, userId);
-        const category = categoryOf(
-          {
-            title: e.summary,
-            description: e.description,
-            start: e.start_ms,
-            end: e.end_ms,
-            eventType: e.event_type,
-            attendees,
-            managedKind: null,
-            personalCalendar: false,
-            manual: cats.manual.get(`${e.calendar_id}:${e.event_id}`) ?? null,
-          },
-          cats.userEmail,
-        );
+        const category: Category = travel.has(e.event_id)
+          ? "travel"
+          : categoryOf(
+              {
+                title: e.summary,
+                description: e.description,
+                rsvpNote: e.rsvp_note,
+                start: e.start_ms,
+                end: e.end_ms,
+                eventType: e.event_type,
+                attendees,
+                managedKind: null,
+                personalCalendar: false,
+                manual: cats.manual.get(`${e.calendar_id}:${e.event_id}`) ?? null,
+              },
+              cats.userEmail,
+            );
         title = copyLabel(category, p.calendar_type);
       }
       out.push({

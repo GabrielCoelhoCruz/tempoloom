@@ -10,7 +10,7 @@ import {
   utcToLocal,
   weekdayOf,
 } from "../shared/time.ts";
-import { allDayBlocks, attends, blockingIntervals, hasTag, TAG_FOCUS } from "./blocking.ts";
+import { attends, awayBlocks, blockingIntervals, hasTag, TAG_FOCUS } from "./blocking.ts";
 import { hoursToTimeSet } from "./hours.ts";
 import type {
   BufferFilter,
@@ -53,7 +53,8 @@ interface Ctx {
   breakMs: number;
   /** External blocking time plus locked and started managed events. */
   fixed: TimeSet;
-  allDay: TimeSet;
+  /** Time away: busy all-day and out-of-office events (events-out-of-office.md). */
+  away: TimeSet;
   /** Free time for task and habit demands (break gaps applied). */
   freeTH: TimeSet;
   /** Free time for focus and buffer demands. */
@@ -137,7 +138,7 @@ function init(s: Snapshot): Ctx {
     end,
     breakMs,
     fixed,
-    allDay: TimeSet.from(allDayBlocks(s.events)),
+    away: TimeSet.from(awayBlocks(s.events)),
     freeTH,
     freeOther,
     hours: new Map(),
@@ -181,7 +182,7 @@ function baseReason(
   const h = hours.clip(lower, Math.min(upper, ctx.end));
   if (h.total() === 0) return "no-hours";
   if (!fits(h, minLength, ctx.step)) return "too-long-for-hours";
-  if (minus(h, ctx.allDay.intervals()).total() === 0) return "all-day-block";
+  if (minus(h, ctx.away.intervals()).total() === 0) return "away";
   return null;
 }
 
@@ -665,7 +666,11 @@ function placeHabit(ctx: Ctx, h: HabitItem): void {
         ? "no-space-priority"
         : "no-space-fixed";
     }
-    if (h.whenUnplaceable === "keep_as_conflict") {
+    // events-out-of-office.md rule 2: on a day fully away the occurrence is skipped,
+    // never a conflict. Decision: the same holds when away time covers all of the
+    // habit's hours that day but not the whole day, because rule 12 forbids any
+    // managed item on away time and the habit has no other time that day.
+    if (h.whenUnplaceable === "keep_as_conflict" && reason !== "away") {
       const iv =
         cur && !h.changed
           ? { start: cur.start, end: cur.end }
@@ -966,10 +971,21 @@ export function hasAddress(e: ExternalEvent): boolean {
   return !/^https?:\/\//i.test(loc) && (loc.match(/,/g)?.length ?? 0) >= 2;
 }
 
+/**
+ * A travel buffer goes around an event with an address or #tl_travel, but not
+ * around a flight (it gets airport time) or a #tl_trip event without
+ * #tl_travel, which is travel itself (events-tags.md rule 18).
+ */
+function wantsTravelBuffer(e: ExternalEvent): boolean {
+  if (isFlight(e)) return false;
+  if (hasTag(e, "#tl_travel")) return true;
+  return hasAddress(e) && !hasTag(e, "#tl_trip");
+}
+
 export function matchesFilter(f: BufferFilter, e: ExternalEvent): boolean {
   if (f.categories && !(e.category && f.categories.includes(e.category))) return false;
   if (f.flight && !isFlight(e)) return false;
-  if (f.travel && (isFlight(e) || !(hasAddress(e) || hasTag(e, "#tl_travel")))) return false;
+  if (f.travel && !wantsTravelBuffer(e)) return false;
   if (f.text) {
     const fields = f.text.fields.length > 0 ? f.text.fields : (["title"] as const);
     const hay = fields.map((k) => e[k].toLowerCase());

@@ -1172,4 +1172,11 @@ export const MIGRATIONS: readonly string[] = [
   `
   ALTER TABLE mirror_policies ADD COLUMN template_id TEXT;
   `,
+  // 31: the user's own RSVP note on an invitation, where tags count too (events-tags.md),
+  // and a pending "repaint all" request.
+  `
+  ALTER TABLE events ADD COLUMN rsvp_note TEXT NOT NULL DEFAULT '';
+  -- A "repaint all" request (events-categories-and-colors.md rule 12), cleared when done.
+  ALTER TABLE users ADD COLUMN repaint_requested_at INTEGER;
+  `,
 ];

@@ -35,6 +35,8 @@ export interface ProviderEvent {
   updated: number | null;
   /** Private key-value properties; Tempoloom marks its own events here. */
   privateProps: Record<string, string>;
+  /** The user's own note with the answer to an invitation (events-tags.md), or "". */
+  rsvpNote?: string;
   /** Each guest's answer, by lower-case email (meeting checks, meeting declines). */
   responses?: Record<string, ResponseStatus>;
   /** The event's conference link (CalDAV CONFERENCE, Google Meet), or "". */
@@ -80,6 +82,8 @@ export interface ExternalChange {
   /** A note to the organizer with the answer (focus-time.md rule 23). */
   comment?: string;
   description?: string;
+  /** Busy or free (events-tags.md rule 14, quick block). */
+  busy?: boolean;
   end?: number;
   /** A new start, for an event the user organizes (preview mode apply). */
   start?: number;
