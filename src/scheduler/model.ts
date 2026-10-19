@@ -265,7 +265,7 @@ export type ReasonCode =
   | "no-hours"
   | "no-hours-overlap"
   | "too-long-for-hours"
-  | "all-day-block"
+  | "away"
   | "reserved-word"
   | "no-space-fixed"
   | "no-space-priority"

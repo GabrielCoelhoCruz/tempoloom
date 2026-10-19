@@ -688,6 +688,36 @@ describe("habits", () => {
     );
   });
 
+  it("skips, never keeps as a conflict, an occurrence whose hours are all away; busy time gives a conflict (events-out-of-office rules 2, 12)", () => {
+    const [wed, thu, fri] = [day(2), day(3), day(4)];
+    const result = plan(
+      snapshot({
+        hours: lunchHours,
+        habits: [lunch({ whenUnplaceable: "keep_as_conflict" })],
+        events: [
+          // Plain busy time over the habit's hours: a conflict.
+          ext(at(wed, "11:00"), at(wed, "14:30")),
+          // Out of office over the habit's hours only (not the whole day): skipped.
+          ext(at(thu, "11:00"), at(thu, "14:30"), { eventType: "outOfOffice" }),
+          // A busy all-day event: the whole day is away, skipped.
+          ext(at(fri, "00:00"), at(day(5), "00:00"), { allDay: true }),
+        ],
+      }),
+    );
+    const on = (d: string) => of(result, "lunch").filter((p) => hm(p.start).startsWith(d));
+    expect(on(wed)).toMatchObject([{ conflict: true }]);
+    expect(on(thu)).toEqual([]);
+    expect(on(fri)).toEqual([]);
+    for (const d of [thu, fri])
+      expect(result.report).toContainEqual(
+        expect.objectContaining({
+          demandKey: `habit:lunch:${d}`,
+          status: "unplaced",
+          reason: "away",
+        }),
+      );
+  });
+
   it("moves a weekly occurrence to another day of the week but never a daily one", () => {
     const hours: Snapshot["hours"] = {
       ...snapshot().hours,

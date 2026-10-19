@@ -61,7 +61,7 @@ interface Ctx {
   /** External blocking time plus locked and started managed events. */
   fixed: TimeSet;
   /** Time away: busy all-day and out-of-office events (events-out-of-office.md). */
-  allDay: TimeSet;
+  away: TimeSet;
   /** Free time for task and habit demands (break gaps applied). */
   freeTH: TimeSet;
   /** Free time for focus and buffer demands. */
@@ -145,7 +145,7 @@ function init(s: Snapshot): Ctx {
     end,
     breakMs,
     fixed,
-    allDay: TimeSet.from(awayBlocks(s.events)),
+    away: TimeSet.from(awayBlocks(s.events)),
     freeTH,
     freeOther,
     hours: new Map(),
@@ -189,7 +189,7 @@ function baseReason(
   const h = hours.clip(lower, Math.min(upper, ctx.end));
   if (h.total() === 0) return "no-hours";
   if (!fits(h, minLength, ctx.step)) return "too-long-for-hours";
-  if (minus(h, ctx.allDay.intervals()).total() === 0) return "all-day-block";
+  if (minus(h, ctx.away.intervals()).total() === 0) return "away";
   return null;
 }
 
@@ -648,8 +648,11 @@ function placeHabit(ctx: Ctx, h: HabitItem): void {
         ? "no-space-priority"
         : "no-space-fixed";
     }
-    // events-out-of-office.md rule 2: on a day fully away the occurrence is skipped, never a conflict.
-    if (h.whenUnplaceable === "keep_as_conflict" && reason !== "all-day-block") {
+    // events-out-of-office.md rule 2: on a day fully away the occurrence is skipped,
+    // never a conflict. Decision: the same holds when away time covers all of the
+    // habit's hours that day but not the whole day, because rule 12 forbids any
+    // managed item on away time and the habit has no other time that day.
+    if (h.whenUnplaceable === "keep_as_conflict" && reason !== "away") {
       const iv =
         cur && !h.changed
           ? { start: cur.start, end: cur.end }

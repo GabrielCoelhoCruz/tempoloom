@@ -28,7 +28,7 @@ const REASONS: Record<string, string> = {
   "outside-window": "starts after the scheduling window",
   "no-hours": "its hours have no time in this period",
   "too-long-for-hours": "longer than any range of its hours",
-  "all-day-block": "time away (all-day or out-of-office events) blocks every day",
+  away: "time away (all-day or out-of-office events) covers all its hours",
   "reserved-word": "an event with a reserved word exists that day",
   "no-space-fixed": "no free time between your meetings",
   "no-space-priority": "higher-priority items use the free time",
