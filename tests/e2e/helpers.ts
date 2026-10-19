@@ -79,6 +79,8 @@ export interface HabitForm {
   skipWords?: string;
   notes?: string;
   hours?: string;
+  /** Preview mode is on: the save is staged, so no habit row appears yet. */
+  staged?: boolean;
 }
 
 export async function addHabit(page: Page, h: HabitForm): Promise<void> {
@@ -97,6 +99,7 @@ export async function addHabit(page: Page, h: HabitForm): Promise<void> {
   if (h.notes) await form.getByLabel("Notes").fill(h.notes);
   for (const d of h.days ?? []) await form.getByLabel(d, { exact: true }).check();
   await form.getByRole("button", { name: "Add habit" }).click();
+  if (h.staged) return;
   await expect(page.locator(`[data-habit-title="${h.title}"]`)).toBeVisible();
 }
 
