@@ -491,6 +491,40 @@ describe("MCP list pages", () => {
       ).toEqual(expected);
   });
 
+  it("list_automations keeps every company meeting check when one is deleted between pages", async () => {
+    const s = setup();
+    seedAutomations(s);
+    const team =
+      one<{ team_id: string }>(
+        s.db,
+        "SELECT team_id FROM team_members WHERE user_id = ?",
+        s.user.id,
+      )?.team_id ?? "";
+    // Oldest first, ids in another order: the id alone cannot keep the order.
+    for (const [i, id] of ["z", "a", "m"].entries())
+      run(
+        s.db,
+        "INSERT INTO company_checks (id, team_id, name, conditions, created_at) VALUES (?, ?, ?, '{}', ?)",
+        id,
+        team,
+        `Check ${id}`,
+        T0 + i,
+      );
+    const all = listAutomations(s.db, s.user.id).map((a) => a.id);
+    expect(all.slice(-3)).toEqual(["company:z", "company:a", "company:m"]);
+    // The first page ends at company:z, which is deleted before the next page.
+    const got = await pages(
+      s,
+      "list_automations",
+      "automations",
+      { limit: all.length - 2 },
+      (n) => {
+        if (n === 1) run(s.db, "DELETE FROM company_checks WHERE id = 'z'");
+      },
+    );
+    expect(got.flat()).toEqual(all);
+  });
+
   it("list_tasks pages more than 100 done tasks in due order, each once", async () => {
     const s = setup();
     for (let i = 0; i < 130; i++)

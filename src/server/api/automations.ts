@@ -75,11 +75,23 @@ export interface ListedAutomation {
   check?: { kind: "built_in" | "company"; locked: boolean };
 }
 
-/** Rule 9: the meeting checks, without priority: each built-in check, then the team's company checks. */
+/**
+ * Rule 9: the meeting checks, without priority: each built-in check, then the
+ * team's company checks, oldest first. Each key holds only stored values, so a
+ * company check added or deleted between two pages moves no other check.
+ */
 function meetingCheckEntries(db: Db, userId: string): ListedAutomation[] {
   const on = getPrefs(db, userId).checks;
   const locked = adminTeam(db, userId) === null;
-  const entry = (id: string, name: string, enabled: boolean, rank: number) => ({
+  const created = new Map(
+    all<{ id: string; created_at: number }>(
+      db,
+      `SELECT c.id, c.created_at FROM company_checks c
+         JOIN team_members m ON m.team_id = c.team_id WHERE m.user_id = ?`,
+      userId,
+    ).map((c) => [c.id, c.created_at]),
+  );
+  const entry = (id: string, name: string, enabled: boolean, rank: number, createdAt: number) => ({
     type: "meeting_check" as const,
     id,
     name,
@@ -88,15 +100,16 @@ function meetingCheckEntries(db: Db, userId: string): ListedAutomation[] {
     level: null,
     rank,
     templateId: null,
-    createdAt: 0,
+    createdAt,
   });
   return [
     ...CHECK_IDS.map((id, i) => ({
-      ...entry(id, CHECK_NAMES[id], on[id], i),
+      ...entry(id, CHECK_NAMES[id], on[id], i, 0),
       check: { kind: "built_in" as const, locked: false },
     })),
-    ...companyChecks(db, userId).map((c, i) => ({
-      ...entry(`company:${c.id}`, c.name, c.enabled, CHECK_IDS.length + i),
+    // One rank for every company check, after the built-in ones: age and id order them.
+    ...companyChecks(db, userId).map((c) => ({
+      ...entry(`company:${c.id}`, c.name, c.enabled, CHECK_IDS.length, created.get(c.id) ?? 0),
       check: { kind: "company" as const, locked },
     })),
   ];
@@ -106,24 +119,45 @@ const levelOf = (t: ListedType) =>
   t.fixedLevel === undefined ? "level" : t.fixedLevel === null ? "NULL" : String(t.fixedLevel);
 
 /** The sort key of the automation list, unique per automation. */
-export type ListKey = [level: number, rank: number, type: number, createdAt: number, id: string];
+type ListKey = [level: number, rank: number, type: AutomationType, createdAt: number, id: string];
 
 /** Rules 6-9: priority (none last), rank, the scheduler's type order, age, then id. */
-export const listKey = (a: ListedAutomation): ListKey => [
-  a.level ?? 9,
-  a.rank,
-  AUTOMATION_TYPES.indexOf(a.type),
-  a.createdAt,
-  a.id,
-];
+const listKey = (a: ListedAutomation): ListKey => [a.level ?? 9, a.rank, a.type, a.createdAt, a.id];
 
-export function compareListKeys(a: ListKey, b: ListKey): number {
+function compareListKeys(a: ListKey, b: ListKey): number {
   for (let i = 0; i < a.length; i++) {
-    const x = a[i] as string | number;
-    const y = b[i] as string | number;
+    const x = i === 2 ? AUTOMATION_TYPES.indexOf(a[2]) : (a[i] as string | number);
+    const y = i === 2 ? AUTOMATION_TYPES.indexOf(b[2]) : (b[i] as string | number);
     if (x !== y) return x < y ? -1 : 1;
   }
   return 0;
+}
+
+/** A list key in a page cursor: the type by name, so a new type does not shift the old keys. */
+export const listKeySchema = z.tuple([
+  z.number(),
+  z.number(),
+  z.enum(AUTOMATION_TYPES),
+  z.number(),
+  z.string(),
+]);
+
+/**
+ * One page of the automation list: the automations after the key `after`, at
+ * most `limit`, and the key of the last one when more follow.
+ */
+export function listAutomationsPage(
+  db: Db,
+  userId: string,
+  after: ListKey | undefined,
+  limit: number,
+): { rows: ListedAutomation[]; next?: ListKey } {
+  const rest = listAutomations(db, userId).filter(
+    (a) => !after || compareListKeys(listKey(a), after) > 0,
+  );
+  const rows = rest.slice(0, limit);
+  const last = rows.at(-1);
+  return rest.length > limit && last ? { rows, next: listKey(last) } : { rows };
 }
 
 /** All automations in list order (listKey); meeting checks, without priority, last. */

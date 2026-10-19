@@ -8,11 +8,11 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { addDays, utcToLocal, weekdayOf } from "../shared/time.ts";
 import { hashToken, type User } from "./accounts.ts";
-import { AUTOMATION_TYPES, compareListKeys, listAutomations, listKey } from "./api/automations.ts";
+import { AUTOMATION_TYPES, listAutomationsPage, listKeySchema } from "./api/automations.ts";
 import { CATEGORIES, computeStats } from "./api/stats.ts";
 import { apiKeyUser } from "./api-keys.ts";
 import { all, type Db, one } from "./db.ts";
-import { cursorKey, cut, nextCursor, PAGE_SIZE, pageInput } from "./mcp/pages.ts";
+import { cursorKey, cursorOf, cut, nextCursor, PAGE_SIZE, pageInput } from "./mcp/pages.ts";
 import { type CachedRow, cached, DAY, isoOf, rangeOf, readers, toMs } from "./mcp/reads.ts";
 import {
   type Caller,
@@ -301,17 +301,8 @@ export function mcpRoutes(deps: McpDeps): Hono {
       }),
       run: ({ user }, a) => {
         const limit = a.limit ?? PAGE_SIZE;
-        const after = cursorKey(
-          "list_automations",
-          "",
-          z.tuple([z.number(), z.number(), z.number(), z.number(), z.string()]),
-          a.cursor,
-        );
-        // listAutomations is in listKey order: the order of the automation list.
-        const rows = listAutomations(db, user.id).filter(
-          (r) => !after || compareListKeys(listKey(r), after) > 0,
-        );
-        const p = cut(rows.slice(0, limit + 1), limit, "list_automations", "", listKey);
+        const after = cursorKey("list_automations", "", listKeySchema, a.cursor);
+        const p = listAutomationsPage(db, user.id, after, limit);
         return {
           automations: p.rows.map((r) => ({
             type: r.type,
@@ -320,7 +311,7 @@ export function mcpRoutes(deps: McpDeps): Hono {
             level: r.level,
             enabled: r.enabled,
           })),
-          next_cursor: p.next_cursor,
+          next_cursor: p.next && cursorOf("list_automations", "", p.next),
         };
       },
     }),

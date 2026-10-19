@@ -54,8 +54,9 @@ export function cut<T>(
   if (rows.length <= limit) return { rows };
   const page = rows.slice(0, limit);
   const k = key(page[limit - 1] as T);
-  return {
-    rows: page,
-    next_cursor: Buffer.from(JSON.stringify({ t: tool, f: filter, k })).toString("base64url"),
-  };
+  return { rows: page, next_cursor: cursorOf(tool, filter, k) };
 }
+
+/** The cursor of the page after the row with the sort key k. */
+export const cursorOf = (tool: string, filter: string, k: unknown) =>
+  Buffer.from(JSON.stringify({ t: tool, f: filter, k })).toString("base64url");
