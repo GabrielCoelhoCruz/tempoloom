@@ -7,6 +7,7 @@
 // - a copy of a travel buffer ignores the policy (details where the policy shows
 //   a label, or the reverse);
 // - other managed events (task chunks) are copied too;
+// - the copies come one run after the buffers (tests/unit/travel-copies.test.ts);
 // - the copies go away or change after a reload and another run.
 import { addDays } from "../../src/shared/time.ts";
 import { addPolicy, copies } from "./calendar-helpers.ts";
@@ -67,7 +68,9 @@ test("copies of travel buffers on mirrored calendars show what each policy shows
     const all = [...(await labels.events(at(W, "00:00"), at(addDays(W, 7), "00:00")))];
     expect(all.some((e) => e.summary.includes("AT-NoCopy"))).toBe(false);
   };
-  await expect(expected).toPass({ timeout: 60_000 });
+  // One run writes the buffers and their copies together.
+  await planNow(page);
+  await expected();
   await page.reload();
   await planNow(page);
   await expected();

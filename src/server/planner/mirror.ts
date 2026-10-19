@@ -7,7 +7,7 @@ import { all, type Db } from "../db.ts";
 import { MIRROR_WINDOW } from "../sync/pull.ts";
 import { categoryContext } from "./categories.ts";
 import type { DesiredEvent } from "./push.ts";
-import { KEY_PROP, MANAGED_PROP } from "./push.ts";
+import { MANAGED_PROP } from "./push.ts";
 
 export const TAG_NOSYNC = "#tl_nosync";
 export const LABELS = {
@@ -65,13 +65,41 @@ interface SourceEvent {
   rsvp_note: string;
 }
 
-/** The copies every enabled policy of the user wants, as desired managed events. */
+/** A travel or airport buffer of this run as a source event; its key stands for the event id. */
+function bufferSource(d: DesiredEvent): SourceEvent {
+  return {
+    event_id: d.key,
+    summary: d.title,
+    description: d.description,
+    start_ms: d.start,
+    end_ms: d.end,
+    all_day: 0,
+    busy: d.busy ? 1 : 0,
+    self_response: null,
+    organizer_self: 1,
+    attendee_count: 0,
+    private_props: "{}",
+    attendees: "[]",
+    event_type: "default",
+    location: d.location ?? "",
+    calendar_id: d.calendarId,
+    rsvp_note: "",
+  };
+}
+
+/**
+ * The copies every enabled policy of the user wants, as desired managed events.
+ * Managed events are never copied (no chaining), except the travel and airport
+ * buffers of this run (buffers-travel.md outputs): their copies follow the
+ * policy's visibility, and come with the buffers in the same run.
+ */
 export function mirrorCopies(
   db: Db,
   userId: string,
   zone: string,
   now: number,
   workHours: WeeklyHours | null,
+  travelBuffers: DesiredEvent[] = [],
 ): DesiredEvent[] {
   const out: DesiredEvent[] = [];
   const policies = all<Policy>(
@@ -84,42 +112,29 @@ export function mirrorCopies(
     userId,
   );
   let cats: ReturnType<typeof categoryContext> | undefined;
-  // buffers-travel.md outputs: travel and airport buffers are copied like the
-  // user's own events, so their copies follow the policy's visibility.
-  const travelBuffers = new Set(
-    all<{ id: string; filter: string }>(
-      db,
-      "SELECT id, filter FROM buffers WHERE user_id = ?",
-      userId,
-    )
-      .filter((b) => {
-        const f = JSON.parse(b.filter) as { travel?: boolean; flight?: boolean };
-        return f.travel || f.flight;
-      })
-      .map((b) => b.id),
-  );
   for (const p of policies) {
     // Rule 14: copies for events that end after now and start within 12 months.
-    const events = all<SourceEvent>(
-      db,
-      "SELECT * FROM events WHERE calendar_id = ? AND end_ms > ? AND start_ms < ?",
-      p.source_calendar_id,
-      now,
-      now + MIRROR_WINDOW,
-    );
+    const buffers = travelBuffers
+      .filter((d) => d.calendarId === p.source_calendar_id && d.end > now)
+      .map(bufferSource);
+    const travel = new Set(buffers.map((b) => b.event_id));
+    const events = [
+      ...all<SourceEvent>(
+        db,
+        "SELECT * FROM events WHERE calendar_id = ? AND end_ms > ? AND start_ms < ?",
+        p.source_calendar_id,
+        now,
+        now + MIRROR_WINDOW,
+      ).filter(
+        (e) => (JSON.parse(e.private_props) as Record<string, string>)[MANAGED_PROP] !== "1",
+      ),
+      ...buffers,
+    ];
     // Rule 17: the destination's address (its calendar id, or the email of a primary calendar).
     const destination = [p.dest_provider_id, p.dest_email ?? ""].map((a) => a.toLowerCase());
     const horizon = Math.max(now, ...events.map((e) => e.end_ms));
     const work = workHours ? hoursToTimeSet(workHours, zone, now, horizon) : null;
     for (const e of events) {
-      const props = JSON.parse(e.private_props) as Record<string, string>;
-      // No chaining: copies and other managed events are never copied again,
-      // except travel and airport buffers (keys `buffer:<id>:...`).
-      const travel =
-        props[MANAGED_PROP] === "1" &&
-        travelBuffers.has((props[KEY_PROP] ?? "").split(":")[1] ?? "") &&
-        (props[KEY_PROP] ?? "").startsWith("buffer:");
-      if (props[MANAGED_PROP] === "1" && !travel) continue;
       if (hasTag(tagText(e), TAG_NOSYNC)) continue;
       const attendees = JSON.parse(e.attendees) as string[];
       if (attendees.some((a) => destination.includes(a.toLowerCase()))) continue;
@@ -151,7 +166,7 @@ export function mirrorCopies(
       if (p.visibility === "busy_only") title = "Busy";
       else if (!details) {
         cats ??= categoryContext(db, userId);
-        const category: Category = travel
+        const category: Category = travel.has(e.event_id)
           ? "travel"
           : categoryOf(
               {
