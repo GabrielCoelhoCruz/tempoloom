@@ -144,11 +144,14 @@ test("calendar scope: a buffer for one calendar skips meetings on other calendar
   });
   await openSettings(page);
   await page.getByRole("button", { name: "Refresh calendar list" }).click();
-  await expect(page.getByTestId("settings-message")).toHaveText("Calendar list updated");
+  await expect(page.getByTestId("calendars-message")).toHaveText("Calendar list updated");
   const extraRow = page.getByTestId("calendar-list").locator("label", { hasText: "Extra" });
-  // The box shows the saved state once the change is saved.
+  // The box shows the choice at once; wait until the server has saved it.
+  const saved = page.waitForResponse(
+    (r) => r.request().method() === "PATCH" && r.url().includes("/api/calendars/") && r.ok(),
+  );
   await extraRow.getByRole("checkbox").click();
-  await expect(page.getByTestId("settings-message")).toHaveText("Saved");
+  await saved;
   await expect(extraRow.getByRole("checkbox")).toBeChecked();
 
   const editor = editorOf(page);
