@@ -715,8 +715,8 @@ E2E_NOTES.update({
     175: "Staged while preview mode is on; with preview mode off a habit save applies at once",
     303: "Staged while preview mode is on; the impact is the difference between the plan now and the plan with the change",
     693: "CalDAV servers need not deliver invitations, so Tempoloom sends each guest one email at apply",
-    697: "Streamable HTTP at /mcp; a personal API key is the bearer token, not OAuth",
-    698: "The E2E calls list_events, find_free_time, get_week_summary and get_meeting_context; list_tasks, list_automations and get_stats exist but are not under E2E",
+    697: "Streamable HTTP at /mcp; a personal API key is the bearer token, not OAuth. Per-tool hints (apply_staged_changes is destructive), output schemas and cursor pages are unit-tested (tests/unit/mcp.test.ts), not under E2E",
+    698: "The E2E calls list_events, find_free_time, get_week_summary and get_meeting_context; list_tasks, list_automations, list_staged_changes and get_stats have unit tests only (tests/unit/mcp.test.ts)",
     663: "An instance setting (MCP_WRITE_ENABLED); Tempoloom has no tiers",
     539: "CalDAV event links; a Google edit link is read too but not under E2E",
     541: "Tempoloom's own change log, shown in the event lookup; the Google Workspace audit log is outside Tempoloom",
@@ -724,6 +724,7 @@ E2E_NOTES.update({
     606: "Totals per meeting category over the range, with the busiest and lightest weekday",
 })
 PARTIAL.update({
+    700: "The account page gives the server URL and the API key steps for any MCP client (E2E: \u201can MCP client with an API key reads\u2026\u201d checks the URL); no guide per product (ChatGPT, Claude, Cursor), which integrations-ai-tools.md owns",
     610: "Planned time (the calendar when each day began, from Tempoloom's change log) and actual time (what stayed) show on the stats page; unit tests only, because an E2E run cannot pass a day boundary; logged time is not added",
     634: "The facts (busiest meeting day, longest focus session, booked meetings, breaks, people met) show on the stats page for any range (E2E: \u201cstats split deep and shallow work\u2026\u201d); the weekly report email itself is not built",
 })
