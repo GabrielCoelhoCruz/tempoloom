@@ -38,7 +38,7 @@ import type {
   Snapshot,
   TaskItem,
 } from "../../src/scheduler/model.ts";
-import { plan } from "../../src/scheduler/plan.ts";
+import { meetingAnchor, meetingPeriodStart, plan } from "../../src/scheduler/plan.ts";
 import { addDays, localToUtc } from "../../src/shared/time.ts";
 
 const ZONE = "Europe/Berlin";
@@ -900,6 +900,92 @@ describe("flexible meetings", () => {
     expect(weeks(result, "a")).toEqual([`${day(1)}T10:00/10:30`, `${day(15)}T10:00/10:30`]);
     expect(weeks(result, "b")).toEqual([`${day(9)}T10:00/10:30`, `${day(16)}T10:00/10:30`]);
     expect(weeks(result, "c")).toEqual([`${day(3)}T10:00/10:30`, `${day(17)}T10:00/10:30`]);
+  });
+
+  it("counts every N weeks from the creation day when no start date is set, on any later run", () => {
+    const fortnight = meeting({
+      id: "f",
+      starting: null,
+      createdAt: at(MON, "08:00"),
+      frequency: { period: "weekly", everyWeeks: 2, idealDays: [2] },
+    });
+    const first = plan(snapshot({ meetings: [fortnight] }));
+    expect(weeks(first, "f")).toEqual([`${day(1)}T10:00/10:30`, `${day(15)}T10:00/10:30`]);
+    // One week later the off week stays off: the period does not restart on "today".
+    const later = plan(snapshot({ now: at(day(7), "08:00"), meetings: [fortnight] }));
+    expect(weeks(later, "f")).toEqual([`${day(15)}T10:00/10:30`]);
+  });
+
+  it("takes the nearest free day before a farther day that fragments less", () => {
+    // Ideal day Thursday is full. Friday (1 day away) only has a slot that leaves
+    // short gaps; Monday (3 days away) has a slot that fills a short gap.
+    const events = [0, 1, 2, 3, 4, 7, 8, 9, 10, 11, 14, 15, 16, 17, 18].flatMap((i) =>
+      i === 0
+        ? fill(day(0), ["09:45", "10:15"])
+        : i === 4
+          ? fill(day(4), ["09:45", "10:45"])
+          : fill(day(i)),
+    );
+    const result = plan(
+      snapshot({
+        events,
+        fragmentation: { minBlockMinutes: 60, maxShiftMinutes: 120 },
+        meetings: [meeting({ id: "m", frequency: { period: "monthly", dayOfMonth: 12 } })],
+      }),
+    );
+    expect(weeks(result, "m")).toEqual([`${day(4)}T10:00/10:30`]);
+  });
+
+  it("places no monthly occurrence in a month without its ideal day, or whose ideal day has passed", () => {
+    // November 2026 has no 5th Thursday; its 3rd is before "now" (8 November).
+    const result = plan(
+      snapshot({
+        meetings: [
+          meeting({ id: "fifth", frequency: { period: "monthly", nth: 5, weekday: 4 } }),
+          meeting({ id: "passed", frequency: { period: "monthly", dayOfMonth: 3 } }),
+          meeting({ id: "kept", frequency: { period: "monthly", dayOfMonth: 3 } }),
+        ],
+        current: [
+          {
+            key: "meeting:kept:2026-11-01",
+            itemId: "kept",
+            start: at(day(1), "11:00"),
+            end: at(day(1), "11:30"),
+            locked: false,
+          },
+        ],
+      }),
+    );
+    expect(weeks(result, "fifth")).toEqual([]);
+    expect(weeks(result, "passed")).toEqual([]);
+    // An occurrence already placed after a passed ideal day stays.
+    expect(weeks(result, "kept")).toEqual([`${day(1)}T11:00/11:30`]);
+  });
+
+  it("gives each occurrence the period that meetingPeriodStart finds for its date", () => {
+    const cases: MeetingItem["frequency"][] = [
+      { period: "daily", everyDays: 3 },
+      { period: "weekly", everyWeeks: 3, idealDays: [3] },
+      { period: "monthly", everyMonths: 2, dayOfMonth: 20 },
+    ];
+    for (const frequency of cases) {
+      const m = meeting({ id: "m", starting: null, createdAt: at(day(-62), "09:00"), frequency });
+      const placed = of(plan(snapshot({ meetings: [m] })), "m");
+      expect(placed.length).toBeGreaterThan(0);
+      for (const p of placed)
+        expect(
+          meetingPeriodStart(frequency, hm(p.start).slice(0, 10), 1, meetingAnchor(ZONE, m)),
+        ).toBe(p.key.split(":")[2]);
+    }
+    // Days of a skipped week or month have no period.
+    expect(
+      meetingPeriodStart(
+        { period: "monthly", everyMonths: 2, dayOfMonth: 1 },
+        "2026-12-05",
+        1,
+        MON,
+      ),
+    ).toBeNull();
   });
 
   it("keeps an unchanged occurrence in place and moves it no sooner than the lead time", () => {
