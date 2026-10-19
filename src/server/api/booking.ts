@@ -17,6 +17,14 @@ import type { WeeklyHours } from "../../scheduler/hours.ts";
 import type { ExternalEvent, Level } from "../../scheduler/model.ts";
 import { isValidTimeZone } from "../../shared/time.ts";
 import type { AppEnv } from "../app.ts";
+import {
+  bookedLocation,
+  defaultLocation,
+  type LocationOption,
+  locationsOf,
+  locationText,
+  needsTravel,
+} from "../booking-location.ts";
 import { type Answer, type BookingChange, notifyBooking } from "../booking-mail.ts";
 import {
   assign,
@@ -35,6 +43,7 @@ import { limitRefusal } from "../limits.ts";
 import type { Mailer } from "../mail.ts";
 import { getPrefs } from "../meeting-prefs.ts";
 import { MANAGED_PROP } from "../planner/push.ts";
+import { writeCalendar } from "../planner/replan.ts";
 import { getSettings } from "../settings.ts";
 import type { SyncService } from "../sync/service.ts";
 import { membership, sameTeam } from "../teams.ts";
@@ -81,19 +90,6 @@ export interface LinkRow {
   use_travel_buffer: number;
   /** JSON list of location options; the first is the default. */
   locations: string;
-}
-
-/** A location option of a link (booking-links.md, location option). */
-export interface LocationOption {
-  kind: "address" | "phone" | "custom";
-  value: string;
-}
-
-/** The link's location options: its list, or its one location text as a custom option. */
-export function locationsOf(link: Pick<LinkRow, "locations" | "location">): LocationOption[] {
-  const list = JSON.parse(link.locations || "[]") as LocationOption[];
-  if (list.length > 0) return list;
-  return link.location ? [{ kind: "custom", value: link.location }] : [];
 }
 
 interface BookingRow {
@@ -229,7 +225,6 @@ const linkInput = z.object({
   bufferAfter: z.number().int().min(0).max(120).optional(),
   maxPerDay: z.number().int().min(1).max(50).nullable().optional(),
   maxPerWeek: z.number().int().min(1).max(200).nullable().optional(),
-  location: z.string().max(500).optional(),
   questions: z.array(question).max(10).optional(),
   reminder: z
     .object({
@@ -495,6 +490,7 @@ export function linkInputs(
   from: number,
   to: number,
   now: number,
+  location: LocationOption | null = defaultLocation(link),
 ): { rules: TeamRules; required: Person[]; pool: Person[]; bookings: Booking[] } | null {
   const { people, usable } = linkTeam(db, link);
   if (!usable) return null;
@@ -522,7 +518,7 @@ export function linkInputs(
     selfResponse: null,
     organizerSelf: true,
     attendeeCount: organizers.length + (organizers.length < people.length ? 1 : 0) + 1,
-    location: link.location,
+    location: locationText(location),
     eventType: "default",
     bookedViaLink: true,
   };
@@ -534,7 +530,9 @@ export function linkInputs(
     zone: planningZone(db, p.userId),
     items: calendarItems(db, p.userId, from - pad, to + pad),
     recoveryMinutes: link.use_recovery_buffer ? recoveryMinutes(db, p.userId, meeting) : 0,
-    ...(link.use_travel_buffer ? travelMinutes(db, p.userId, meeting) : {}),
+    ...(link.use_travel_buffer && needsTravel(location)
+      ? travelMinutes(db, p.userId, meeting)
+      : {}),
     startMinutes: getPrefs(db, p.userId).startMinutes,
   });
   return {
@@ -554,8 +552,9 @@ export function linkTimes(
   to: number,
   now: number,
   rescheduling?: string,
+  location?: LocationOption | null,
 ): OfferedTime[] {
-  const inputs = linkInputs(db, link, duration, from, to, now);
+  const inputs = linkInputs(db, link, duration, from, to, now, location);
   if (!inputs) return [];
   const { rules, required, pool, bookings } = inputs;
   return teamOffers(rules, required, pool, bookings, now, from, to, rescheduling);
@@ -572,7 +571,7 @@ function publicLink(link: LinkRow) {
       link.default_duration && durations.includes(link.default_duration)
         ? link.default_duration
         : (durations[0] ?? null),
-    location: link.location,
+    location: locationText(defaultLocation(link)),
     locations: locationsOf(link),
     questions: JSON.parse(link.questions) as Question[],
     redirectUrl: link.redirect_url,
@@ -765,7 +764,7 @@ export function bookingRoutes(db: Db, now: () => number, oneOffDays: number): Ho
       b.bufferAfter ?? 0,
       b.maxPerDay ?? null,
       b.maxPerWeek ?? null,
-      b.location ?? "",
+      locationText(b.locations?.[0]),
       now(),
     );
     const options = [
@@ -773,6 +772,7 @@ export function bookingRoutes(db: Db, now: () => number, oneOffDays: number): Ho
         string,
         string | undefined,
       ],
+      ["locations", b.locations && JSON.stringify(b.locations)] as [string, string | undefined],
       ...optionColumns(b, undefined, now()),
     ].filter(([, v]) => v !== undefined);
     if (options.length > 0) {
@@ -912,17 +912,8 @@ export function bookingRoutes(db: Db, now: () => number, oneOffDays: number): Ho
       ) !== undefined);
 
   /** A calendar the owner can write to, or null for the main calendar. */
-  const ownCalendar = (userId: string, id: string | null): string | null => {
-    if (id === null) return null;
-    const ok = one(
-      db,
-      `SELECT 1 FROM calendars c JOIN accounts a ON a.id = c.account_id
-       WHERE c.id = ? AND a.user_id = ? AND c.writable = 1`,
-      id,
-      userId,
-    );
-    return ok ? id : invalid("calendar");
-  };
+  const ownCalendar = (userId: string, id: string | null): string | null =>
+    id === null || writeCalendar(db, userId, id)?.id === id ? id : invalid("calendar");
 
   /** Saves changes to a link, or the settings of a new one-off link. */
   function applyChanges(link: LinkRow, b: Changes): void {
@@ -954,17 +945,9 @@ export function bookingRoutes(db: Db, now: () => number, oneOffDays: number): Ho
       ["buffer_after", b.bufferAfter],
       ["max_per_day", b.maxPerDay],
       ["max_per_week", b.maxPerWeek],
-      // The default location stays in `location` for emails, buffers and the page.
-      ["location", b.locations ? (b.locations[0]?.value ?? "") : b.location],
-      // A new single location text replaces the options.
-      [
-        "locations",
-        b.locations
-          ? JSON.stringify(b.locations)
-          : b.location !== undefined && b.location !== link.location
-            ? "[]"
-            : undefined,
-      ],
+      // `location` keeps the default's text for the reminder query.
+      ["location", b.locations && locationText(b.locations[0])],
+      ["locations", b.locations && JSON.stringify(b.locations)],
       ["range_end_date", b.rangeEndDate],
       [
         "calendar_id",
@@ -1031,7 +1014,14 @@ export function bookingRoutes(db: Db, now: () => number, oneOffDays: number): Ho
     const user = c.get("user");
     const { link, owner } = editable(c.req.param("id"), user.id);
     const b = await jsonBody(c, linkChanges);
-    if (!owner && (b.slug !== undefined || b.hidden !== undefined || b.page !== undefined))
+    // The target calendar is the owner's own calendar (booking-links.md, targetCalendar).
+    if (
+      !owner &&
+      (b.slug !== undefined ||
+        b.hidden !== undefined ||
+        b.page !== undefined ||
+        b.calendarId !== undefined)
+    )
       forbidden();
     applyChanges(link, b);
     const saved = one<LinkRow>(db, "SELECT * FROM booking_links WHERE id = ?", link.id);
@@ -1158,6 +1148,9 @@ interface MeetingFacts {
   hostId: string;
   participants: string[];
   answers: Answer[];
+  /** The chosen location's text and the booker's CC guests. */
+  location: string;
+  cc: string[];
   rescheduled?: number;
   cancelled?: number;
 }
@@ -1197,9 +1190,9 @@ function meetingObject(db: Db, link: LinkRow, b: MeetingFacts, baseUrl: string) 
     ...(b.cancelled ? { cancelled_at: iso(b.cancelled) } : {}),
     participants: people,
     attendee: { email: b.email, name: b.name },
-    ccs: [],
+    ccs: b.cc,
     message: b.message,
-    location: link.location ? { text: link.location } : null,
+    location: b.location ? { text: b.location } : null,
     answers: b.answers
       .filter((a) => a.answer)
       .map((a) => ({ question: a.question, answer: a.answer })),
@@ -1417,8 +1410,14 @@ export function publicBookingRoutes(
       .optional(),
   });
 
-  const slotAt = (link: LinkRow, start: number, duration: number, resched?: string) =>
-    linkTimes(db, link, duration, start, start + duration * 60_000, now(), resched).find(
+  const slotAt = (
+    link: LinkRow,
+    start: number,
+    duration: number,
+    resched: string | undefined,
+    location: LocationOption | null,
+  ) =>
+    linkTimes(db, link, duration, start, start + duration * 60_000, now(), resched, location).find(
       (t) => t.start === start,
     );
 
@@ -1448,6 +1447,7 @@ export function publicBookingRoutes(
       people: string[];
       token: string | null;
       location: string;
+      cc: string[];
     },
   ) =>
     notifyBooking(db, mailer, baseUrl, change, {
@@ -1458,6 +1458,7 @@ export function publicBookingRoutes(
       location: b.location,
       bookerName: b.name,
       bookerEmail: b.email,
+      cc: b.cc,
       bookerZone: b.zone,
       message: b.message,
       answers: b.answers,
@@ -1480,15 +1481,21 @@ export function publicBookingRoutes(
     const options = locationsOf(link);
     if (body.location !== undefined && body.location >= Math.max(1, options.length))
       return c.json({ error: "invalid_location" }, 400);
-    const location = options[body.location ?? 0]?.value ?? "";
+    const chosen = options[body.location ?? 0] ?? null;
+    const location = locationText(chosen);
     const cc = [...new Set((body.cc ?? []).map((e) => e.toLowerCase()))].filter(
       (e) => e !== body.email.toLowerCase(),
     );
     const zone = body.timeZone ?? zoneOf(db, link.user_id);
     const result = await sync.exclusive(link.user_id, async () => {
       // Check again inside the owner's queue so two bookers cannot take one slot.
-      const slot = slotAt(link, body.start, body.duration);
-      if (!slot) return { error: "slot_taken" as const };
+      const slot = slotAt(link, body.start, body.duration, undefined, chosen);
+      if (!slot) {
+        // The time is free, but not the travel time the chosen address needs (availability rule 10).
+        if (needsTravel(chosen) && slotAt(link, body.start, body.duration, undefined, null))
+          return { error: "no_travel_time" as const };
+        return { error: "slot_taken" as const };
+      }
       const plan = placementFor(db, link, slot, null, now());
       const id = randomUUID();
       const token = randomBytes(24).toString("base64url");
@@ -1566,6 +1573,8 @@ export function publicBookingRoutes(
             hostId: plan.hostId,
             participants: plan.parties.map((p) => p.userId),
             answers,
+            location,
+            cc,
           },
           baseUrl,
         ),
@@ -1581,6 +1590,7 @@ export function publicBookingRoutes(
         people,
         token,
         location,
+        cc,
       });
       return {
         token,
@@ -1592,7 +1602,11 @@ export function publicBookingRoutes(
         assignee: contact(db, plan.assignee),
       };
     });
-    if ("error" in result) return c.json(result, result.error === "slot_taken" ? 409 : 500);
+    if ("error" in result)
+      return c.json(
+        result,
+        result.error === "slot_taken" || result.error === "no_travel_time" ? 409 : 500,
+      );
     return c.json(result, 201);
   });
 
@@ -1606,7 +1620,11 @@ export function publicBookingRoutes(
       b.id,
     ).map((p) => p.user_id);
 
-  const facts = (b: BookingRow, title: string) => ({
+  const facts = (
+    b: BookingRow,
+    link: LinkRow | undefined,
+    title: string,
+  ): Omit<MeetingFacts, "start" | "end"> => ({
     id: b.id,
     title,
     name: b.name,
@@ -1617,6 +1635,8 @@ export function publicBookingRoutes(
     hostId: b.host_id ?? b.user_id,
     participants: participants(b),
     answers: JSON.parse(b.answers) as Answer[],
+    location: link ? locationText(bookedLocation(link, b.location)) : (b.location ?? ""),
+    cc: JSON.parse(b.cc) as string[],
   });
 
   r.get("/bookings/:token", (c) => {
@@ -1652,12 +1672,13 @@ export function publicBookingRoutes(
     const zone = timeZone ?? b.time_zone;
     const duration = (b.end_ms - b.start_ms) / 60_000;
     const end = start + duration * 60_000;
+    const where = bookedLocation(link, b.location);
     const result = await sync.exclusive(b.user_id, async () => {
-      const slot = slotAt(link, start, duration, b.id);
+      const slot = slotAt(link, start, duration, b.id, where);
       if (!slot) return { error: "slot_taken" as const };
       const plan = placementFor(db, link, slot, b.assignee_id, now());
       const title = eventTitle(link, plan.organizerName, b.name);
-      const before = facts(b, title);
+      const before = facts(b, link, title);
       let placed: { calendarId: string; eventId: string } | null;
       try {
         placed = await writeBookingEvents(
@@ -1673,7 +1694,7 @@ export function publicBookingRoutes(
               description: description(b.message, before.answers, token),
               start,
               end,
-              location: b.location ?? link.location,
+              location: locationText(where),
               bookerEmail: b.email,
               cc: JSON.parse(b.cc) as string[],
               calendarId: plan.hostId === link.user_id ? link.calendar_id : null,
@@ -1703,7 +1724,7 @@ export function publicBookingRoutes(
         zone,
         b.id,
       );
-      const after = facts({ ...b, host_id: plan.hostId }, title);
+      const after = facts({ ...b, host_id: plan.hostId }, link, title);
       event(link.id, "booking_link.meeting.updated", {
         previous_meeting: meetingObject(
           db,
@@ -1724,7 +1745,8 @@ export function publicBookingRoutes(
         answers: before.answers,
         people: [plan.hostId, ...plan.parties.map((p) => p.userId)],
         token,
-        location: b.location ?? link.location,
+        location: locationText(where),
+        cc: before.cc,
       });
       return { start, end, assignee: contact(db, plan.assignee) };
     });
@@ -1742,7 +1764,7 @@ export function publicBookingRoutes(
       const title = link
         ? eventTitle(link, organizerName(db, link, b.assignee_id), b.name)
         : b.name;
-      const before = facts(b, title);
+      const before = facts(b, link, title);
       await writeBookingEvents(
         db,
         sync,
@@ -1770,7 +1792,8 @@ export function publicBookingRoutes(
           answers: before.answers,
           people: [before.hostId, ...before.participants],
           token: null,
-          location: b.location ?? link.location,
+          location: before.location,
+          cc: before.cc,
         });
       }
     });

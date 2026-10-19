@@ -89,7 +89,7 @@ const LOCATION_KINDS = [
 ] as const;
 
 /** Location options of a link; the default is first (booking-links.md, location option). */
-function LocationsEditor({
+export function LocationsEditor({
   locations,
   onChange,
 }: {
@@ -453,11 +453,16 @@ export function LinkEditor({
     link.locations.length > 0 ? link.locations : [{ kind: "custom", value: "" }],
   );
   const [calendars, setCalendars] = useState<{ id: string; name: string; email: string }[]>([]);
+  // The saved calendar stays chosen and is sent only when the owner changes it,
+  // so a save before the list loads, or when it fails to load, keeps it.
+  const [calendarId, setCalendarId] = useState(link.calendar_id ?? "");
   useEffect(() => {
     void api<{ calendars: { id: string; name: string; email: string; writable: number }[] }>(
       "GET",
       "/api/calendars",
-    ).then((r) => setCalendars(r.calendars.filter((c) => c.writable)));
+    )
+      .then((r) => setCalendars(r.calendars.filter((c) => c.writable)))
+      .catch(() => undefined);
   }, []);
   // Main and hidden links share the main page URL; a group has its own (sharing rule 5).
   const urlPage = (p: string) => (p === "main" || p === "hidden" ? "" : p);
@@ -499,7 +504,9 @@ export function LinkEditor({
           locations: locations.map((l) => ({ ...l, value: l.value.trim() })).filter((l) => l.value),
           useRecoveryBuffer: f.get("useRecoveryBuffer") === "on",
           useTravelBuffer: f.get("useTravelBuffer") === "on",
-          ...(isOwner ? { calendarId: String(f.get("calendarId") ?? "") || null } : {}),
+          ...(isOwner && calendarId !== (link.calendar_id ?? "")
+            ? { calendarId: calendarId || null }
+            : {}),
           branding: String(f.get("branding")),
           questions: fromDrafts(questions),
           reminder: {
@@ -635,10 +642,17 @@ export function LinkEditor({
       {isOwner && (
         <label>
           Calendar for booked events
-          <select name="calendarId">
+          <select
+            name="calendarId"
+            value={calendarId}
+            onChange={(e) => setCalendarId(e.currentTarget.value)}
+          >
             <option value="">Main calendar</option>
+            {link.calendar_id && !calendars.some((c) => c.id === link.calendar_id) && (
+              <option value={link.calendar_id}>The saved calendar</option>
+            )}
             {calendars.map((c) => (
-              <option value={c.id} key={c.id} selected={c.id === link.calendar_id}>
+              <option value={c.id} key={c.id}>
                 {c.name} ({c.email})
               </option>
             ))}

@@ -11,9 +11,12 @@
 //   the rolling days are offered; the settings are lost on reload      -> range
 // - times that leave no buffer before or after a busy event are offered;
 //   travel time is not kept free for an address, or still kept when off -> buffers
+// - travel time reads the location text instead of its kind, or ignores
+//   the location the booker chose                                      -> travel kind
 // - the booker cannot choose a location or add CC guests; the event goes
 //   to the main calendar instead of the chosen one; a reschedule drops
 //   the location or the calendar                                       -> locations
+// - a save while the calendar list is not loaded resets the calendar  -> calendar kept
 // - a P2 link offers placed focus time, or a P1 link does not           -> focus
 // - preferred times have no dot or legend, or a time next to a free
 //   event is marked preferred                                          -> preferred
@@ -30,7 +33,7 @@ import {
   test,
   ZONE,
 } from "./fixtures.ts";
-import { addLink, claimPage, slot, titled, visitor, W } from "./helpers.ts";
+import { addLink, book, claimPage, slot, titled, visitor, W } from "./helpers.ts";
 import { editLink, offered, saveLink } from "./link-helpers.ts";
 
 const HOUR = 3_600_000;
@@ -214,6 +217,89 @@ test("buffers: times that leave no buffer before or after a busy event are not o
   await expect(ed.getByLabel("Buffer after (minutes)")).toHaveValue("30");
 });
 
+test("travel time follows the kind of the chosen location: an address keeps it free with or without commas, other text with commas does not, and a booker who picks the address is held to it (availability rule 10)", async ({
+  page,
+  browser,
+  cal,
+  signIn,
+}) => {
+  await blockUntil(cal, W);
+  await cal.addEvent({ title: "Standup", start: at(day(2), "09:00"), end: at(day(2), "10:00") });
+  await signIn();
+  await page.getByRole("link", { name: "Settings" }).click();
+  await page.getByRole("button", { name: "Add travel time (30 min)" }).click();
+  await expect(page.getByTestId("buffer-list")).toContainText("Travel");
+  await claimPage(page, "tara");
+  await addLink(page, { title: "Street", durations: "30" });
+  await addLink(page, { title: "Room", durations: "30" });
+  await addLink(page, { title: "Choice", durations: "30" });
+  let ed = await editLink(page, "Street");
+  await ed.getByTestId("location-1").getByLabel("Kind").selectOption({ label: "Address" });
+  await ed.getByLabel("Location 1").fill("Main Street 5");
+  await saveLink(page);
+  ed = await editLink(page, "Room");
+  await ed
+    .getByTestId("location-1")
+    .getByLabel("Kind")
+    .selectOption({ label: "Other (text or URL)" });
+  await ed.getByLabel("Location 1").fill("Room 4, Main St 5, Berlin");
+  await saveLink(page);
+  ed = await editLink(page, "Choice");
+  await ed.getByTestId("location-1").getByLabel("Kind").selectOption({ label: "Phone" });
+  await ed.getByLabel("Location 1").fill("+49 30 1234567");
+  await ed.getByRole("button", { name: "+ Add location" }).click();
+  await ed.getByTestId("location-2").getByLabel("Kind").selectOption({ label: "Address" });
+  await ed.getByLabel("Location 2").fill("Main Street 5");
+  await saveLink(page);
+
+  const v = await visitor(browser);
+  const check = async () => {
+    // An address without commas is still an address.
+    await v.goto("/book/tara/street");
+    let wed = await offered(v, day(2));
+    expect(wed).not.toContain("10:00");
+    expect(wed).toContain("10:30");
+    // Other text that looks like an address is not one.
+    await v.goto("/book/tara/room");
+    wed = await offered(v, day(2));
+    expect(wed).toContain("10:00");
+    // The default is the phone: no travel time in the offer.
+    await v.goto("/book/tara/choice");
+    wed = await offered(v, day(2));
+    expect(wed).toContain("10:00");
+  };
+  await check();
+
+  // The booker picks the address for 10:00: no travel time is left, so it is refused.
+  await slot(v, at(day(2), "10:00")).click();
+  const form = v.getByTestId("book-form");
+  await form.getByLabel("Location").selectOption({ label: "Address: Main Street 5" });
+  await form.getByLabel("Your name").fill("Ida");
+  await form.getByLabel("Your email").fill("ida@example.com");
+  await form.getByRole("button", { name: "Book" }).click();
+  await expect(form.getByRole("alert")).toHaveText(
+    "This time leaves no travel time for that location. Pick another location or time.",
+  );
+  await expect(v.getByTestId("booked")).toHaveCount(0);
+  // With the phone the same time books.
+  await form.getByLabel("Location").selectOption({ label: "Phone: +49 30 1234567" });
+  await form.getByRole("button", { name: "Book" }).click();
+  await expect(v.getByTestId("booked-location")).toHaveText("Location: +49 30 1234567");
+  const evs = await eventually(
+    () => cal.events(at(W, "00:00"), at(day(7), "00:00")),
+    (l) => expect(l.find((e) => e.summary === "Choice with Ida")).toBeDefined(),
+  );
+  const ev = evs.find((e) => e.summary === "Choice with Ida");
+  expect([local(ev?.start ?? 0), ev?.location]).toEqual([`${day(2)} 10:00`, "+49 30 1234567"]);
+
+  await page.reload();
+  ed = await editLink(page, "Street");
+  await expect(ed.getByTestId("location-1").getByLabel("Kind")).toHaveValue("address");
+  await expect(ed.getByLabel("Location 1")).toHaveValue("Main Street 5");
+  await v.goto("/book/tara/street");
+  expect(await offered(v, day(2))).not.toContain("10:00");
+});
+
 test("locations, CC and calendar: the booker chooses one of the link's locations and adds CC guests; the busy event goes to the chosen calendar with the location, guests and manage links, and keeps them on reschedule (booking-links rules 12-13, locations, targetCalendar; page details form)", async ({
   page,
   browser,
@@ -299,6 +385,46 @@ test("locations, CC and calendar: the booker chooses one of the link's locations
   await expect(ed.getByLabel("Calendar for booked events")).toHaveValue(/.+/);
   await expect(ed.getByLabel("Calendar for booked events").locator("option:checked")).toHaveText(
     `Bookings (${EMAIL})`,
+  );
+});
+
+test("the calendar for booked events is kept when the editor saves while the calendar list cannot load (booking-links targetCalendar)", async ({
+  page,
+  browser,
+  cal,
+  signIn,
+}) => {
+  test.skip(BACKEND === "google", "A second calendar needs CalDAV.");
+  await blockUntil(cal, W);
+  const bookings = await cal.newCalendar("Bookings");
+  await signIn();
+  await claimPage(page, "quin");
+  await addLink(page, { title: "Desk", durations: "30" });
+  let ed = await editLink(page, "Desk");
+  await ed.getByLabel("Calendar for booked events").selectOption({ label: `Bookings (${EMAIL})` });
+  await saveLink(page);
+
+  // The list of calendars fails to load; another setting is saved.
+  await page.reload();
+  await page.getByRole("link", { name: "Booking links" }).click();
+  await page.route(/\/api\/calendars$/, (r) => r.fulfill({ status: 500, body: "{}" }));
+  ed = await editLink(page, "Desk");
+  await ed.getByLabel("Buffer before (minutes)").fill("15");
+  await saveLink(page);
+  await page.unroute(/\/api\/calendars$/);
+
+  await page.reload();
+  ed = await editLink(page, "Desk");
+  await expect(ed.getByLabel("Buffer before (minutes)")).toHaveValue("15");
+  await expect(ed.getByLabel("Calendar for booked events").locator("option:checked")).toHaveText(
+    `Bookings (${EMAIL})`,
+  );
+  const v = await visitor(browser);
+  await v.goto("/book/quin/desk");
+  await book(v, at(day(1), "10:00"), "Kit", "kit@example.com");
+  await eventually(
+    () => bookings.events(at(W, "00:00"), at(day(7), "00:00")),
+    (l) => expect(l.find((e) => e.summary === "Desk with Kit")).toBeDefined(),
   );
 });
 

@@ -453,7 +453,14 @@ function DetailsForm({
         })
           .then(onDone)
           .catch((err) => {
-            if (err instanceof ApiError && err.status === 409) {
+            if (
+              err instanceof ApiError &&
+              (err.body as { error?: string } | null)?.error === "no_travel_time"
+            ) {
+              setError(
+                "This time leaves no travel time for that location. Pick another location or time.",
+              );
+            } else if (err instanceof ApiError && err.status === 409) {
               onTaken();
             } else if (err instanceof ApiError && err.status === 400) {
               setError(

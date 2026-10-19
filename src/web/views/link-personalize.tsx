@@ -9,6 +9,8 @@ import { LEVEL_NAMES, zone as myZone } from "../lib/state.ts";
 import { dayText, savedFormat, timeText, type View } from "../lib/zoned.ts";
 import {
   type EditableLink,
+  type LocationOption,
+  LocationsEditor,
   type Organizer,
   OrganizersEditor,
   type PersonOption,
@@ -45,6 +47,7 @@ export function OneOffForm({
   const [saved, setSaved] = useState<EditableLink | undefined>(existing);
   const base = existing ?? source;
   const [organizers, setOrganizers] = useState<Organizer[]>(base.organizers);
+  const [locations, setLocations] = useState<LocationOption[]>(base.locations);
   const [error, setError] = useState<string | null>(null);
   const taken = new Set([...organizers, ...base.pool].map((p) => p.userId));
   const free = people.filter((p) => !taken.has(p.userId));
@@ -71,7 +74,7 @@ export function OneOffForm({
           noticeMinutes: Number(f.get("notice")) * 60,
           rangeEndDays: Number(f.get("rangeEndDays")),
           useRecoveryBuffer: f.get("useRecoveryBuffer") === "on",
-          location: text("location"),
+          locations: locations.map((l) => ({ ...l, value: l.value.trim() })).filter((l) => l.value),
           reminder: {
             enabled: f.get("reminderEnabled") === "on",
             hoursBefore: Number(f.get("reminderHours")),
@@ -161,10 +164,6 @@ export function OneOffForm({
         />
       </label>
       <label>
-        Location
-        <input name="location" defaultValue={base.location} />
-      </label>
-      <label>
         URL name
         <input
           name="slug"
@@ -203,6 +202,7 @@ export function OneOffForm({
         Reminder message
         <textarea name="reminderMessage" rows={2} defaultValue={base.reminder_message} />
       </label>
+      <LocationsEditor locations={locations} onChange={setLocations} />
       <OrganizersEditor
         organizers={organizers}
         people={people}
