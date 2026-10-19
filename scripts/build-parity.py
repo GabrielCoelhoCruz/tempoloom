@@ -392,6 +392,47 @@ GOOGLE_ROWS = {
 # --- end s6 ---
 
 # --- s7: preview mode, MCP, stats and support ---
+T.update({
+    "s7_mcp_read": "an MCP client with an API key reads events, free time, the week summary and meeting context; without a key it gets a 401",
+    "s7_mcp_stage": "an MCP write is staged, not written; the planner shows it with its source; accept and apply write it, and nothing stays staged",
+    "s7_final": "the final list applies only what stays in it: a discarded and a removed change stay off the calendar, and guests get mail only at apply",
+    "s7_stale": "a change whose event moved after staging is skipped as stale, and the event keeps its newer time",
+    "s7_readonly": "a server with MCP_WRITE_ENABLED=false lists no write tools, refuses a write and stages nothing",
+    "s7_manual": "preview mode turned on by hand stages a drag; turned off, the change stays pending after a reload; apply moves and locks the event",
+    "s7_auto": "with preview mode on, a new habit and turning it off show their calendar impact and write nothing until apply",
+    "s7_help": "the help index groups common problems, and its pages give each fix in order, also after a reload",
+    "s7_lookup": "an event link shows the copy's mirroring and source, a skip reason, and Tempoloom's change log with the source move",
+    "s7_hint": "a new user sees the advice to turn off other scheduling tools until they dismiss it",
+    "s7_stats": "stats split deep and shallow work, count breaks, travel and time away, and name the people met, busiest and lightest days, insights and facts",
+})
+E2E.update({
+    93: ["s7_auto"], 175: ["s7_auto"], 303: ["s7_auto"], 696: ["s7_auto"],
+    690: ["s7_mcp_stage", "s7_auto"], 691: ["s7_mcp_stage", "s7_final"],
+    692: ["s7_final", "s7_stale"], 693: ["s7_final"], 694: ["s7_manual"], 695: ["s7_manual"],
+    697: ["s7_mcp_read"], 698: ["s7_mcp_read"], 699: ["s7_mcp_stage", "s7_final"],
+    663: ["s7_readonly"],
+    537: ["s7_help"], 538: ["s7_help"], 544: ["s7_help"], 545: ["s7_help"],
+    539: ["s7_lookup"], 541: ["s7_lookup"], 774: ["s7_hint"],
+    235: ["s7_stats"], 276: ["s7_stats"], 584: ["s7_stats"], 603: ["s7_stats"],
+    605: ["s7_stats"], 608: ["s7_stats"], 606: ["s7_stats"],
+})
+E2E_NOTES.update({
+    93: "Staged while preview mode is on; with preview mode off an automation save applies at once",
+    175: "Staged while preview mode is on; with preview mode off a habit save applies at once",
+    303: "Staged while preview mode is on; the impact is the difference between the plan now and the plan with the change",
+    693: "CalDAV servers need not deliver invitations, so Tempoloom sends each guest one email at apply",
+    697: "Streamable HTTP at /mcp; a personal API key is the bearer token, not OAuth",
+    698: "The E2E calls list_events, find_free_time, get_week_summary and get_meeting_context; list_tasks, list_automations and get_stats exist but are not under E2E",
+    663: "An instance setting (MCP_WRITE_ENABLED); Tempoloom has no tiers",
+    539: "CalDAV event links; a Google edit link is read too but not under E2E",
+    541: "Tempoloom's own change log, shown in the event lookup; the Google Workspace audit log is outside Tempoloom",
+    774: "A planner hint with a help page, until the user dismisses it",
+    606: "Totals per meeting category over the range, with the busiest and lightest weekday",
+})
+PARTIAL.update({
+    610: "Planned time (the calendar when each day began, from Tempoloom's change log) and actual time (what stayed) show on the stats page; unit tests only, because an E2E run cannot pass a day boundary; logged time is not added",
+    634: "The facts (busiest meeting day, longest focus session, booked meetings, breaks, people met) show on the stats page for any range (E2E: \u201cstats split deep and shallow work\u2026\u201d); the weekly report email itself is not built",
+})
 # --- end s7 ---
 
 GOOGLE_PENDING = "Google E2E pending: the service-account key is not available yet (1Password token missing)."
