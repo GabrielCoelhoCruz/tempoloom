@@ -192,7 +192,11 @@ export class SyncService {
    * it paints goes before the next step and is never delayed by a whole repaint.
    */
   #paint(userId: string, job: PaintJob): void {
-    if (job.paints.length === 0 && job.requestedAt === null) return;
+    // A newer run always ends an older job, also when it has nothing to paint.
+    if (job.paints.length === 0 && job.requestedAt === null) {
+      this.#paintJobs.delete(userId);
+      return;
+    }
     this.#paintJobs.set(userId, job);
     const pool = this.#pool(userId);
     const ctx = { db: this.#deps.db, provider: (id: string) => pool.get(id) };
