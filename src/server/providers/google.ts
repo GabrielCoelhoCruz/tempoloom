@@ -15,6 +15,7 @@ import {
   type ProviderCalendar,
   ProviderError,
   type ProviderEvent,
+  type ResponseStatus,
 } from "./types.ts";
 
 function toInstant(t: GoogleEventTime | undefined, zone: string): { ms: number; allDay: boolean } {
@@ -49,6 +50,12 @@ export function fromGoogleEvent(e: GoogleEvent, zone: string): ProviderEvent {
     colorId: e.colorId ?? null,
     updated: e.updated ? Date.parse(e.updated) : null,
     privateProps: e.extendedProperties?.private ?? {},
+    responses: Object.fromEntries(
+      (e.attendees ?? [])
+        .filter((a) => !a.resource && a.email && a.responseStatus)
+        .map((a) => [(a.email ?? "").toLowerCase(), a.responseStatus as ResponseStatus]),
+    ),
+    conference: e.hangoutLink ?? "",
   };
 }
 
@@ -73,6 +80,7 @@ function toGoogleEvent(w: EventWrite): GoogleEventInput {
       : {}),
     reminders: { useDefault: false },
     extendedProperties: { private: w.privateProps },
+    ...(w.recurrence ? { recurrence: [`RRULE:${w.recurrence}`] } : {}),
   };
 }
 
@@ -200,5 +208,15 @@ export class GoogleProvider implements CalendarProvider {
 
   async deleteEvent(calendarId: string, eventId: string): Promise<void> {
     await this.#api.deleteEvent(calendarId, eventId).catch(mapError);
+  }
+
+  async setSeriesProps(
+    calendarId: string,
+    seriesId: string,
+    props: Record<string, string>,
+  ): Promise<void> {
+    await this.#api
+      .patchEvent(calendarId, seriesId, { extendedProperties: { private: props } })
+      .catch(mapError);
   }
 }

@@ -31,6 +31,7 @@ import { getSettings, type Settings } from "../settings.ts";
 import { afterPush } from "./after-push.ts";
 import { categoryContext, colorFor, paintExternal } from "./categories.ts";
 import { externalEvents } from "./events.ts";
+import { recordMeetingChanges } from "./meeting-log.ts";
 import { attendeeOccurrences, attendeesOf, meetingItems } from "./meetings.ts";
 import { mirrorCopies } from "./mirror.ts";
 import { type DesiredEvent, type ManagedRow, type PushResult, pushSchedule } from "./push.ts";
@@ -579,6 +580,7 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
     },
     desired,
   );
+  recordMeetingChanges(db, userId, rows, now, last);
   await paintExternal(
     db,
     userId,

@@ -27,6 +27,7 @@ import {
 } from "../booking-team.ts";
 import { all, type Db, one, run, tx } from "../db.ts";
 import { jsonBody, notFound } from "../http.ts";
+import { getPrefs } from "../meeting-prefs.ts";
 import { MANAGED_PROP } from "../planner/push.ts";
 import { getSettings } from "../settings.ts";
 import type { SyncService } from "../sync/service.ts";
@@ -321,6 +322,7 @@ export function linkTimes(
     zone: zoneOf(db, p.userId),
     items: calendarItems(db, p.userId, from - pad, to + pad),
     recoveryMinutes: link.use_recovery_buffer ? recoveryMinutes(db, p.userId, meeting) : 0,
+    startMinutes: getPrefs(db, p.userId).startMinutes,
   });
   return teamOffers(
     rulesFor(db, link, duration),

@@ -10,6 +10,7 @@ import { loadPolicyMarks, PolicyMark, policyMarks } from "../lib/policy-marks.ts
 import { loadMe, me, planNow } from "../lib/state.ts";
 import { BufferEditor } from "./buffer-editor.tsx";
 import { FocusOptionsList, MeetingOverloadSection } from "./focus-options.tsx";
+import { MeetingSettings } from "./meeting-settings.tsx";
 
 interface HoursSet {
   id: string;
@@ -616,6 +617,7 @@ export function Settings() {
       </section>
 
       <MeetingOverloadSection />
+      <MeetingSettings />
     </div>
   );
 }

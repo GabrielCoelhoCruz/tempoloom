@@ -53,6 +53,10 @@ how Tempoloom reports occurrences it cannot place. Placement itself is in
    occurrence, Tempoloom places it again at the best remaining slot
    (E-0131, E-0046). The new slot cannot be the declined time.
    A decline by an optional attendee changes nothing (E-0131).
+   Tempoloom decision: Tempoloom reads each guest's answer on the organizer's
+   copy of the occurrence (CalDAV PARTSTAT, as a server with scheduling writes
+   it when a guest replies; Google responseStatus). A moved occurrence asks
+   every guest again (their answers reset), so one decline moves it once.
 3. A decline also unlocks a locked occurrence before the move (E-0045;
    `planning-locks.md` LCK-40) (legacy evidence).
 4. Rule change: when the user changes the frequency, duration, hours,
@@ -73,12 +77,20 @@ how Tempoloom reports occurrences it cannot place. Placement itself is in
    last 24 hours. When the count equals the policy limit, Tempoloom stops
    moving the meeting and flags the conflict (E-0176). Proposed: the window
    is rolling, and the count is per meeting, not per occurrence.
+   Tempoloom decision: the count uses the change log: moves with reason
+   `conflict` or `declined`. Moves after a rule change do not count. A flag
+   with reason `budgetReached` or `policyNone` is raised only when another
+   time exists; with no time at all, `ifNoTime` applies as usual (rule 13).
 10. Policy `none`: Tempoloom never moves the meeting by itself. On a
     conflict it flags the occurrence and suggests other times (E-0176).
 11. A flag is an entry in the attention list. It holds the occurrence, the
     reason code and up to 3 suggested slots (Proposed number). The
     organizer can apply a suggestion with one action. An applied suggestion
     is a manual move (rule 17).
+    Tempoloom decision: the flag shows on the meeting in the Meetings page. The
+    suggestions are the 3 best full-length starts in the occurrence's period,
+    in placement order, without the lead time; the occurrence keeps its time
+    and gets the conflict marker meanwhile.
 12. An automatic move keeps the occurrence inside its own period (Proposed).
 13. When no slot exists, `ifNoTime` decides (E-0176, E-0131, E-0177, E-0223):
     - `remove`: Tempoloom cancels the instance. The period shows as skipped
@@ -174,6 +186,10 @@ how Tempoloom reports occurrences it cannot place. Placement itself is in
 31. Every automatic or manual change writes a change-log entry on the
     occurrence: time of change, old start and end, new start and end, actor
     (Tempoloom, organizer, attendee) and reason code (E-0092, E-0223).
+    Tempoloom decision: the log shows on each meeting in the Meetings page.
+    Tempoloom writes the codes `conflict`, `declined` (actor: the guest who
+    declined), `ruleChanged`, `noFreeSlot`, `manualMove` and `manualSkip`. A
+    decline that cannot move yet stays in the log with no new time.
 32. Reason codes (Proposed set, from the causes in E-0223 and E-0176):
     `conflict`, `declined`, `ruleChanged`, `hoursChanged`, `noHoursOverlap`,
     `noFreeSlot`, `budgetReached`, `policyNone`, `lockedConflict`,
@@ -188,6 +204,9 @@ how Tempoloom reports occurrences it cannot place. Placement itself is in
     in the user's time zone, and send nothing when the list is empty.
     E-0223 lists this email as available; E-0125 lists it as planned
     (`planning-notifications.md` NTF-30). Proposed: build it.
+    Tempoloom decision: built. It lists each occurrence kept in conflict with
+    its time, and each period with no time. Its time is a setting ("Send daily
+    emails at", default 07:00), shared with the new recurring meeting email.
 36. Guest update emails for moves and cancellations follow
     `planning-notifications.md` NTF-20 to NTF-22 (`meetingChangeEmails`,
     `meetingChangeDaysAhead`) (E-0223, E-0125).

@@ -29,6 +29,7 @@ import { focusExtraRoutes } from "./api/focus-extras.ts";
 import { helpRoutes } from "./api/help.ts";
 import { insightRoutes } from "./api/insights.ts";
 import { itemRoutes } from "./api/items.ts";
+import { meetingCheckRoutes } from "./api/meeting-checks.ts";
 import { meetingRoutes } from "./api/meetings.ts";
 import { oooRoutes } from "./api/ooo.ts";
 import { plannerRoutes } from "./api/planner.ts";
@@ -410,6 +411,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   app.route("/api", taskSearchRoutes(db, now));
   app.route("/api", focusExtraRoutes(db, sync, now));
   app.route("/api", bufferFilterRoutes(db, now));
+  app.route("/api", meetingCheckRoutes(db, sync, now));
 
   // Static client with a single-page fallback. Text files are compressed once
   // per encoding and kept in memory; the build output does not change at run time.

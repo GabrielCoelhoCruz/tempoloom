@@ -53,12 +53,16 @@ const PreviewBanner = lazyComponent(() =>
 const PoliciesPage = lazyComponent(() =>
   import("./views/policies.tsx").then((m) => m.PoliciesPage),
 );
+const MeetingChecks = lazyComponent(() =>
+  import("./views/meeting-checks.tsx").then((m) => m.MeetingChecks),
+);
 
 const NAV: { href: string; label: string }[] = [
   { href: "/", label: "Planner" },
   { href: "/tasks", label: "Tasks" },
   { href: "/habits", label: "Habits" },
   { href: "/meetings", label: "Meetings" },
+  { href: "/meeting-checks", label: "Meeting checks" },
   { href: "/library", label: "Library" },
   { href: "/links", label: "Booking links" },
   { href: "/stats", label: "Stats" },
@@ -207,6 +211,8 @@ function Page() {
       return <PoliciesPage />;
     case "/account":
       return <AccountPage />;
+    case "/meeting-checks":
+      return <MeetingChecks />;
     default:
       if (path.value.startsWith("/join/")) return <JoinPage token={path.value.slice(6)} />;
       if (path.value === "/help" || path.value.startsWith("/help/")) return <HelpPage />;

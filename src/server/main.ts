@@ -2,6 +2,7 @@ import { serve } from "@hono/node-server";
 import { createApp } from "./app.ts";
 import { loadConfig } from "./config.ts";
 import { SecretBox } from "./crypto.ts";
+import { DailyMailWorker } from "./daily-mail.ts";
 import { openDb } from "./db.ts";
 import type { OAuthClient } from "./google/oauth.ts";
 import { parseServiceAccountKey } from "./google/service-account.ts";
@@ -51,6 +52,14 @@ const provisioning = new ProvisionWorker({
   now: Date.now,
 });
 const app = createApp({ db, config, box, oauth, sync, webhooks, mailer });
+// Meeting emails: guest updates and the daily digests, checked on the sync interval.
+const dailyMail = new DailyMailWorker({
+  db,
+  mailer,
+  now: Date.now,
+  baseUrl: config.BASE_URL,
+  intervalMs: config.SYNC_INTERVAL_SECONDS * 1000,
+});
 
 const server = serve({ fetch: app.fetch, port: config.PORT, hostname: config.HOST }, (info) => {
   console.log(`tempoloom listening on http://${info.address}:${info.port}`);
@@ -58,11 +67,13 @@ const server = serve({ fetch: app.fetch, port: config.PORT, hostname: config.HOS
 sync.start();
 webhooks.start();
 provisioning.start();
+dailyMail.start();
 
 // Stop taking requests, let queued calendar writes finish, then exit.
 async function shutdown() {
   server.close();
   await provisioning.stop();
+  await dailyMail.stop();
   await sync.stop();
   await webhooks.stop();
   db.close();

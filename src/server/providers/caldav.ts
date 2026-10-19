@@ -110,25 +110,31 @@ function davText(v: unknown): string | null {
 const mailto = (v: unknown) =>
   typeof v === "string" ? v.replace(/^mailto:/i, "").toLowerCase() : "";
 
+function responseOf(a: ICAL.Property): ResponseStatus {
+  const partstat = String(a.getParameter("partstat") ?? "NEEDS-ACTION").toUpperCase();
+  return partstat === "ACCEPTED"
+    ? "accepted"
+    : partstat === "DECLINED"
+      ? "declined"
+      : partstat === "TENTATIVE"
+        ? "tentative"
+        : "needsAction";
+}
+
 function attendeeFacts(ev: ICAL.Component, selfEmail: string) {
   const self = selfEmail.toLowerCase();
   const attendees = ev.getAllProperties("attendee");
   let selfResponse: ResponseStatus | null = null;
+  const responses: Record<string, ResponseStatus> = {};
   for (const a of attendees) {
-    if (mailto(a.getFirstValue()) !== self) continue;
-    const partstat = String(a.getParameter("partstat") ?? "NEEDS-ACTION").toUpperCase();
-    selfResponse =
-      partstat === "ACCEPTED"
-        ? "accepted"
-        : partstat === "DECLINED"
-          ? "declined"
-          : partstat === "TENTATIVE"
-            ? "tentative"
-            : "needsAction";
+    const email = mailto(a.getFirstValue());
+    if (email) responses[email] = responseOf(a);
+    if (email === self) selfResponse = responseOf(a);
   }
   const organizer = ev.getFirstPropertyValue("organizer");
   return {
     selfResponse,
+    responses,
     attendeeCount: attendees.length,
     attendees: attendees.map((a) => mailto(a.getFirstValue())).filter(Boolean),
     organizerSelf: organizer === null || organizer === undefined || mailto(organizer) === self,
@@ -164,6 +170,8 @@ function baseEvent(
     colorId: COLOR_IDS.get(str("color").toLowerCase()) ?? null,
     updated: stamp instanceof ICAL.Time ? stamp.toUnixTime() * 1000 : null,
     privateProps: readProps(comp),
+    // RFC 7986 CONFERENCE: a video call link (automations-meeting-quality.md, video_link).
+    conference: str("conference"),
   };
 }
 
@@ -252,6 +260,7 @@ export function objectFromWrite(uid: string, w: EventWrite, now: number): string
     ev.addPropertyWithValue("dtstart", toUtcTime(w.start));
     ev.addPropertyWithValue("dtend", toUtcTime(w.end));
   }
+  if (w.recurrence) ev.addPropertyWithValue("rrule", ICAL.Recur.fromString(w.recurrence));
   ev.addPropertyWithValue("summary", w.summary);
   if (w.description) ev.addPropertyWithValue("description", w.description);
   if (w.location) ev.addPropertyWithValue("location", w.location);
@@ -459,6 +468,7 @@ export class CalDavProvider implements CalendarProvider {
     event: EventWrite,
     etag: string | null,
   ): Promise<ProviderEvent> {
+    if (eventId.includes("#")) return this.#updateInstance(calendarId, eventId, event, etag);
     const client = await this.#connect();
     await this.#calendar(calendarId);
     const uid = decodeURIComponent(eventId.slice(eventId.lastIndexOf("/") + 1)).replace(
@@ -627,7 +637,192 @@ export class CalDavProvider implements CalendarProvider {
     );
   }
 
+  /**
+   * The series object of an instance id (`<object url>#<recurrence id>`): the
+   * parsed object, its master, the instance's original start and its override.
+   */
+  async #series(calendarId: string, eventId: string) {
+    const client = await this.#connect();
+    const cal = await this.#calendar(calendarId);
+    const hash = eventId.indexOf("#");
+    const url = eventId.slice(0, hash);
+    const rid = eventId.slice(hash + 1);
+    const [obj] = await retryRead(() =>
+      client.fetchCalendarObjects({ calendar: cal, objectUrls: [url] }),
+    );
+    if (typeof obj?.data !== "string") throw new ProviderError("not_found", 404, "Event not found");
+    const root = new ICAL.Component(ICAL.parse(obj.data));
+    for (const tz of root.getAllSubcomponents("vtimezone")) {
+      ICAL.TimezoneService.register(new ICAL.Timezone(tz));
+    }
+    const vevents = root.getAllSubcomponents("vevent");
+    const master = vevents.find((v) => !v.hasProperty("recurrence-id"));
+    if (!master) throw new ProviderError("not_found", 404, "Event not found");
+    // The instance's original start, as the series rule makes it.
+    const bound = Date.parse(rid) + 2 * 86_400_000;
+    const it = new ICAL.Event(master).iterator();
+    let occurrence: ICAL.Time | null = null;
+    for (let n = 0, next = it.next(); next && n < MAX_OCCURRENCES; n++, next = it.next()) {
+      if (next.toString() === rid) {
+        occurrence = next;
+        break;
+      }
+      if (Number.isFinite(bound) && next.toUnixTime() * 1000 > bound) break;
+    }
+    if (!occurrence) throw new ProviderError("not_found", 404, "Instance not found");
+    const at = occurrence.toUnixTime();
+    const override = vevents.find((v) => {
+      const r = v.getFirstPropertyValue("recurrence-id");
+      return v !== master && r instanceof ICAL.Time && r.toUnixTime() === at;
+    });
+    return { client, url, etag: obj.etag ?? null, root, master, occurrence, override };
+  }
+
+  async #putSeries(url: string, root: ICAL.Component, etag: string | null): Promise<string | null> {
+    const client = await this.#connect();
+    const res = await client.updateCalendarObject({
+      calendarObject: { url, data: root.toString(), ...(etag ? { etag } : {}) },
+    });
+    if (res.status === 412) throw new ProviderError("precondition_failed", 412, "Event changed");
+    if (res.status === 404) throw new ProviderError("not_found", 404, "Event not found");
+    if (!res.ok) throw new ProviderError("other", res.status, `Update failed: ${res.status}`);
+    return res.headers.get("etag");
+  }
+
+  /** Changes one instance of a series: writes or replaces its override (RFC 5545 RECURRENCE-ID). */
+  async #updateInstance(
+    calendarId: string,
+    eventId: string,
+    w: EventWrite,
+    etag: string | null,
+  ): Promise<ProviderEvent> {
+    const {
+      url,
+      etag: current,
+      root,
+      master,
+      occurrence,
+      override,
+    } = await this.#series(calendarId, eventId);
+    let ov = override;
+    if (!ov) {
+      ov = new ICAL.Component("vevent");
+      const skip = new Set(["rrule", "rdate", "exdate", "exrule", "dtstart", "dtend", "duration"]);
+      for (const p of master.getAllProperties()) {
+        if (!skip.has(p.name)) ov.addProperty(new ICAL.Property(structuredClone(p.toJSON())));
+      }
+      const rid = new ICAL.Property("recurrence-id");
+      rid.setValue(occurrence);
+      const tzid = occurrence.zone?.tzid;
+      if (tzid && tzid !== "UTC" && tzid !== "floating") rid.setParameter("tzid", tzid);
+      ov.addProperty(rid);
+      root.addSubcomponent(ov);
+    }
+    const startOf = (name: string) => {
+      const v = ov?.getFirstPropertyValue(name);
+      return v instanceof ICAL.Time ? instantOf(v, this.#zone) : null;
+    };
+    const length = (master.getFirstPropertyValue("dtend") as ICAL.Time | null)?.subtractDate(
+      master.getFirstPropertyValue("dtstart") as ICAL.Time,
+    );
+    const oldStart = startOf("dtstart") ?? instantOf(occurrence, this.#zone);
+    const oldEnd =
+      startOf("dtend") ?? oldStart + (length ? length.toSeconds() * 1000 : w.end - w.start);
+    // Guests keep their answers unless the time changes (a new time asks again).
+    const keep = oldStart === w.start && oldEnd === w.end;
+    const answers = new Map(
+      ov
+        .getAllProperties("attendee")
+        .map((a) => [mailto(a.getFirstValue()), a.getParameter("partstat")]),
+    );
+    const props = { ...readProps(master), ...w.privateProps };
+    for (const name of ["dtstart", "dtend", "duration", "summary", "description", "location"])
+      ov.removeAllProperties(name);
+    for (const name of ["transp", "color", "attendee", "last-modified", PROPS_PROPERTY])
+      ov.removeAllProperties(name);
+    ov.addPropertyWithValue("dtstart", toUtcTime(w.start));
+    ov.addPropertyWithValue("dtend", toUtcTime(w.end));
+    ov.addPropertyWithValue("summary", w.summary);
+    if (w.description) ov.addPropertyWithValue("description", w.description);
+    if (w.location) ov.addPropertyWithValue("location", w.location);
+    ov.addPropertyWithValue("transp", w.busy ? "OPAQUE" : "TRANSPARENT");
+    if (w.colorId && COLOR_NAMES[w.colorId])
+      ov.addPropertyWithValue("color", COLOR_NAMES[w.colorId]);
+    if (w.organizer) {
+      ov.removeAllProperties("organizer");
+      ov.addPropertyWithValue("organizer", `mailto:${w.organizer}`);
+    }
+    const guest = (email: string, optional: boolean) => {
+      const p = ov.addPropertyWithValue("attendee", `mailto:${email}`);
+      if (optional) p.setParameter("role", "OPT-PARTICIPANT");
+      const answer = answers.get(email.toLowerCase());
+      if (keep && typeof answer === "string") p.setParameter("partstat", answer);
+    };
+    for (const email of w.attendees ?? []) guest(email, false);
+    for (const email of w.optionalAttendees ?? []) guest(email, true);
+    const sequence = Number(ov.getFirstPropertyValue("sequence") ?? 0);
+    ov.removeAllProperties("sequence");
+    ov.addPropertyWithValue("sequence", keep ? sequence : sequence + 1);
+    ov.addPropertyWithValue("last-modified", toUtcTime(this.#now()));
+    ov.addPropertyWithValue(
+      PROPS_PROPERTY,
+      Buffer.from(JSON.stringify(props)).toString("base64url"),
+    );
+    const tag = await this.#putSeries(url, root, current ?? etag);
+    const from = Math.min(oldStart, w.start) - 86_400_000;
+    const to = Math.max(oldEnd, w.end) + 86_400_000;
+    const found = eventsFromObject(
+      root.toString(),
+      url,
+      tag,
+      from,
+      to,
+      this.#zone,
+      this.#creds.email,
+    ).find((e) => e.id === eventId);
+    if (!found) throw new ProviderError("other", 500, "Instance missing after update");
+    return found;
+  }
+
+  /** Cancels one instance of a series with an EXDATE; its override goes. */
+  async #cancelInstance(calendarId: string, eventId: string): Promise<void> {
+    const series = await this.#series(calendarId, eventId).catch((err: unknown) => {
+      if (err instanceof ProviderError && err.kind === "not_found") return null;
+      throw err;
+    });
+    if (!series) return;
+    const { url, etag, root, master, occurrence, override } = series;
+    if (override) root.removeSubcomponent(override);
+    const ex = new ICAL.Property("exdate");
+    ex.setValue(occurrence);
+    const tzid = occurrence.zone?.tzid;
+    if (tzid && tzid !== "UTC" && tzid !== "floating") ex.setParameter("tzid", tzid);
+    master.addProperty(ex);
+    await this.#putSeries(url, root, etag);
+  }
+
+  async setSeriesProps(
+    calendarId: string,
+    seriesId: string,
+    props: Record<string, string>,
+  ): Promise<void> {
+    const client = await this.#connect();
+    const cal = await this.#calendar(calendarId);
+    const [obj] = await retryRead(() =>
+      client.fetchCalendarObjects({ calendar: cal, objectUrls: [seriesId] }),
+    );
+    if (typeof obj?.data !== "string") throw new ProviderError("not_found", 404, "Event not found");
+    const root = new ICAL.Component(ICAL.parse(obj.data));
+    const value = Buffer.from(JSON.stringify(props)).toString("base64url");
+    for (const ev of root.getAllSubcomponents("vevent")) {
+      ev.removeAllProperties(PROPS_PROPERTY);
+      if (Object.keys(props).length > 0) ev.addPropertyWithValue(PROPS_PROPERTY, value);
+    }
+    await this.#putSeries(seriesId, root, obj.etag ?? null);
+  }
+
   async deleteEvent(calendarId: string, eventId: string): Promise<void> {
+    if (eventId.includes("#")) return this.#cancelInstance(calendarId, eventId);
     const client = await this.#connect();
     await this.#calendar(calendarId);
     const res = await client.deleteCalendarObject({ calendarObject: { url: eventId } });

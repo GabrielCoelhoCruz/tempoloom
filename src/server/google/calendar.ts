@@ -57,6 +57,7 @@ export interface GoogleEvent {
   updated?: string;
   hangoutLink?: string;
   conferenceData?: unknown;
+  recurrence?: string[];
   reminders?: { useDefault: boolean; overrides?: { method: string; minutes: number }[] };
 }
 

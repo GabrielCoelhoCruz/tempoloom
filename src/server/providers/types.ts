@@ -35,6 +35,10 @@ export interface ProviderEvent {
   updated: number | null;
   /** Private key-value properties; Tempoloom marks its own events here. */
   privateProps: Record<string, string>;
+  /** Each guest's answer, by lower-case email (meeting checks, meeting declines). */
+  responses?: Record<string, ResponseStatus>;
+  /** The event's conference link (CalDAV CONFERENCE, Google Meet), or "". */
+  conference?: string;
 }
 
 export interface EventWrite {
@@ -53,6 +57,8 @@ export interface EventWrite {
   organizer?: string;
   /** An all-day event on these local dates (end exclusive); `start` and `end` are then not written. */
   allDayDates?: { start: string; end: string };
+  /** An RFC 5545 RRULE value, for example "FREQ=WEEKLY;BYDAY=WE": a recurring series. */
+  recurrence?: string;
 }
 
 /** A change to an event someone else may organize; every other field stays as it is. */
@@ -134,4 +140,15 @@ export interface CalendarProvider {
     change: ExternalChange,
     etag: string | null,
   ): Promise<ProviderEvent>;
+  /**
+   * Sets the private properties of a whole recurring series, the series and
+   * every changed instance; other fields stay as they are (meetings-flexible.md
+   * rule 1: an adopted series). Instance ids of a series work with updateEvent
+   * (that one instance) and deleteEvent (cancel that instance).
+   */
+  setSeriesProps?(
+    calendarId: string,
+    seriesId: string,
+    props: Record<string, string>,
+  ): Promise<void>;
 }

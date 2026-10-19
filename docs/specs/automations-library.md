@@ -110,6 +110,11 @@ have none (`automations-overview.md`), so their presets set no priority.
    a number suffix (" 2") (proposal).
 10. When the user is at the automation count limit (instance setting,
     `plans-feature-inventory.md`), saving is refused with the limit message.
+11. Tempoloom decision: meeting check entries (4 and 9) open the meeting
+    checks page with their checks on (entry 9 also sets the daily digest to
+    email); they show "Added" once saved while their checks stay on. Entry 33
+    opens the weekly no-meeting day on the Settings page and shows "Added"
+    while that day exists.
 
 ## Outputs
 

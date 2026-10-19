@@ -16,6 +16,8 @@ const FORM_PAGE: Partial<Record<LibraryEntry["kind"], string>> = {
   booking_link: "/links",
   calendar_mirroring: "/settings",
   meeting_overload: "/settings",
+  meeting_check: "/meeting-checks",
+  no_meeting_day: "/settings",
 };
 
 /** Names of the user's automations; an entry with the same name shows "Added" (rule 4). */
@@ -33,15 +35,41 @@ async function automationNames(): Promise<string[]> {
   );
 }
 
+/** Meeting check entries and the no-meeting day are added when their settings are on. */
+async function meetingEntries(): Promise<string[]> {
+  const [checks, day] = await Promise.all([
+    api<{ prefs: { libraryEntries: string[]; checks: Record<string, boolean> } }>(
+      "GET",
+      "/api/meeting-checks",
+    ),
+    api<{ weekday: number | null }>("GET", "/api/no-meeting-day"),
+  ]);
+  const on = LIBRARY.filter(
+    (e) =>
+      e.kind === "meeting_check" &&
+      checks.prefs.libraryEntries.includes(e.slug) &&
+      e.preset.checks.every((c) => checks.prefs.checks[c]),
+  ).map((e) => e.slug);
+  return day.weekday === null ? on : [...on, "no-meeting-day"];
+}
+
 export function Library() {
   const [tab, setTab] = useState<LibraryGroup | "all">("all");
   const [names, setNames] = useState<string[]>([]);
+  const [slugs, setSlugs] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
 
-  const load = useCallback(async () => setNames(await automationNames()), []);
+  const load = useCallback(async () => {
+    const [n, s] = await Promise.all([automationNames(), meetingEntries()]);
+    setNames(n);
+    setSlugs(s);
+  }, []);
   useEffect(() => void load(), [load]);
 
-  const added = (e: LibraryEntry) => names.some((n) => n.toLowerCase() === e.name.toLowerCase());
+  const added = (e: LibraryEntry) =>
+    e.kind === "meeting_check" || e.kind === "no_meeting_day"
+      ? slugs.includes(e.slug)
+      : names.some((n) => n.toLowerCase() === e.name.toLowerCase());
 
   /** Buffers and focus time have no form of their own yet: the entry adds them as they are. */
   const addNow = async (e: LibraryEntry) => {

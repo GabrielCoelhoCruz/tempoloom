@@ -426,6 +426,62 @@ E2E_NOTES.update({
 # --- end s4 ---
 
 # --- s5: meeting rescheduling and meeting checks ---
+T.update({
+    "s5_checks": "each built-in check raises its issue in the planner Issues tab, never edits an event, and resolves when its cause ends",
+    "s5_ignore": "checks are on for a new user; ignore hides one event or a whole series; a disabled check closes its issues and raises no new ones",
+    "s5_digest": "library entry 'Flag meeting problems' turns on the checks and an email digest of open, not ignored, issues at the chosen time, once a day",
+    "s5_company": "a team admin's company check flags only the meeting's organizer, shows locked to members, and a member can ignore one issue",
+    "s5_agenda": "an agenda draft is staged and written only when applied; recommendations list a skipped habit, an unmet focus goal and a day with too many meetings",
+    "s5_decline": "a required guest's decline moves the occurrence and an optional guest's does not; each move is logged; guests get an update email only inside the days-ahead limit and while emails are on",
+    "s5_limit": "with 1 move per day a second conflict is flagged with suggested times and a suggestion applies as a locked move; with no automatic moves the meeting stays flagged",
+    "s5_adopt": "rules attach to an existing recurring meeting: the form fills from it, the series keeps its id, and a conflict moves only its own instance",
+    "s5_daily": "the daily emails list meetings at risk in the next 14 days and new recurring meetings; the email's link opens the form filled from that series",
+    "s5_starts": "start times limit flexible meetings and booking pages to the chosen minutes; a change does not move meetings placed before it",
+    "s5_nomeet": "the weekly no-meeting day writes one weekly all-day #tl_free series: habits keep the day, meetings and booking links stay off it each week",
+})
+E2E.update({
+    135: ["s5_decline"],
+    136: ["s5_daily"],
+    250: ["s5_nomeet"],
+    309: ["s5_checks"],
+    310: ["s5_checks"],
+    311: ["s5_checks", "s5_ignore"],
+    312: ["s5_checks", "s5_ignore"],
+    313: ["s5_ignore"],
+    314: ["s5_ignore"],
+    315: ["s5_checks", "s5_ignore"],
+    318: ["s5_company"],
+    319: ["s5_adopt"],
+    355: ["s5_decline"],
+    358: ["s5_limit", "s5_decline"],
+    373: ["s5_decline", "s5_limit"],
+    376: ["s5_daily"],
+    377: ["s5_decline"],
+    378: ["s5_starts"],
+    722: ["s5_agenda"],
+    727: ["s5_digest"],
+    751: ["s5_nomeet"],
+    772: ["s5_checks", "s5_agenda"],
+})
+E2E_NOTES.update({
+    135: "Tempoloom sends the update email itself, with an iCalendar REQUEST attached, because it writes changes without the provider's update emails; the limit uses the earlier of the old and new start",
+    136: "Tempoloom builds both planned notices: the at-risk digest (row 376) and an email that offers each new recurring series once, with a link to the meeting form filled from it",
+    310: "Not free is read from the calendar of a guest who is a user here; other guests count by their answer only",
+    312: "A video link is a CONFERENCE property or a URL whose host names a video service",
+    315: "The Issues tab is in a panel under the planner's week view",
+    318: "Conditions: attendee count, empty description, no video link, guests from outside the team, length and title text",
+    319: "On CalDAV a moved instance is an override (RECURRENCE-ID) inside the one series; turning the meeting off or deleting it keeps the series as a normal recurring event",
+    355: "Answers are read from the PARTSTAT on the organizer's copy, as a CalDAV server with scheduling writes it",
+    358: "The count is per meeting in a rolling 24 hours and counts moves for conflicts and declines; a flag is raised only when another time exists",
+    373: "The log shows on each meeting of the Meetings page",
+    377: "Tempoloom sends the update email itself, with an iCalendar REQUEST attached",
+    722: "The draft is a fixed agenda template (no AI drafting); it is staged in the Issues tab and written to the event only when the user applies it",
+    751: "The series is 'No meetings #tl_free' on the user's main calendar; removing it deletes the series",
+    772: "Issues come from the meeting checks; recommendations come from the planner's report and days with 6 hours or more of meetings",
+})
+PARTIAL.update({
+    317: "The daily digest by email, at a time the user sets, has full UI E2E on CalDAV (\u201clibrary entry 'Flag meeting problems' turns on the checks and an email digest of open, not ignored, issues at the chosen time, once a day\u201d); the chat app channel needs a chat vendor app (Slack), which Tempoloom does not have",
+})
 # --- end s5 ---
 
 # --- s6: booking links ---

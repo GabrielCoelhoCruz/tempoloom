@@ -27,6 +27,24 @@ they only raise an issue.
 
 Proposed horizon for all checks: events that start in the next 7 days.
 
+Tempoloom decision: the horizon is 7 days. Checks read events on calendars
+that count for availability. A video link is an RFC 7986 CONFERENCE property
+(Google: a Meet link), or a URL in the location or description whose host
+names a video service (Zoom, Meet, Teams, Webex, Whereby, Jitsi and similar)
+or contains "meet", "video" or "call". "Not free" is read only for a guest who
+is a Tempoloom user on this instance: a busy, timed event that guest
+organizes or accepted overlaps the meeting. Each guest's answer is read from
+the event (CalDAV PARTSTAT, Google responseStatus). Checks skip events the
+user declined, all-day events and calendar mirroring copies; the `conflict`
+check counts only locked managed events, as the rule says.
+
+Tempoloom decision: library entry 4 ("Agenda drafts for my meetings") adds a
+fifth check, `agenda`, off by default: a meeting the user organizes, with
+guests and an empty description, gets a "No agenda" issue. Its "Draft agenda"
+action shows a fixed agenda template (title, three agenda points, guests) in
+the Issues tab; Tempoloom writes it into the event description only when the
+user applies it. Tempoloom has no AI drafting.
+
 ### Issue
 
 | Field | Type | Notes |
@@ -45,11 +63,21 @@ Proposed horizon for all checks: events that start in the next 7 days.
 | `digest_channel` | `email`, `chat`, `both`, `none` | Proposed: `email` |
 | `digest_time` | local time | Proposed: 08:00 |
 
+Tempoloom decision: the channel is `email` or `none`. A chat app channel needs
+a chat integration (a vendor app), which Tempoloom does not have. The digest
+goes out at the first check after `digest_time` in the user's time zone; a new
+time takes effect at its next occurrence, which is today when the time is still
+ahead. No email is sent when there is no open issue.
+
 ## Behavior
 
 1. Each new user gets all built-in checks enabled. The user configures nothing (E-0134).
 2. The user can disable one check from the automation list. A disabled check raises no new issues and closes its open issues (E-0134).
 3. For an open issue, the user can ignore it for this event or for the whole series. An ignored issue does not come back for that scope (E-0134).
+   Tempoloom decision: issues are computed from the event cache each time they
+   are read, so an issue resolves as soon as its condition ends (rule 5) and
+   turning a check off closes its issues at once (rule 2). Only ignores are
+   stored. A `conflict` issue belongs to the earlier of the two events.
 4. Tempoloom re-evaluates checks when an event in the horizon changes, and at least every 15 minutes. Proposed.
 5. When the condition of an open issue is no longer true, the issue becomes `resolved` and leaves the issue list. Proposed.
 6. Issues show in three places (E-0134):
@@ -62,6 +90,10 @@ Proposed horizon for all checks: events that start in the next 7 days.
 
 8. A team admin can create a company check. It applies to every member's calendar (E-0134).
 9. A company check is a condition on a meeting. Example: more than four attendees and an empty description ("no agenda") (E-0134). Proposed condition fields: attendee count, external attendees present, description empty, length, video link present, title text.
+   Tempoloom decision: these six fields, all of which must hold. The attendee
+   count includes the organizer. A guest is external when the email domain
+   differs from the team's domain. A company check applies to the meetings the
+   organizer organizes; it shows in the Issues tab as "Company check".
 10. A company check raises its issue only for the meeting's organizer (E-0134).
 11. Company checks show in the "Meeting quality" section with a lock icon. Only admins may change or turn them off. A member can still ignore a single issue. Proposed for ignore (E-0134).
 12. A company check never stops anyone from booking the meeting (E-0134).

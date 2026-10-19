@@ -56,6 +56,11 @@ whitespace or punctuation other than `_`. So `#TL_FREE` matches and
 5. On an all-day busy event, `#tl_free` makes a full no-meeting day. On a timed busy event, it makes a no-meeting block for that time (E-0201).
 6. On a recurring event, the tag in the series applies to every occurrence, including future ones (E-0201).
 7. A no-meeting day does not delete or move meetings that already exist that day (E-0201).
+   Tempoloom decision: a weekly no-meeting day can be added from the
+   automation library (entry 33) or the Settings page. Tempoloom writes one
+   weekly all-day busy series "No meetings #tl_free" on the user's main
+   calendar, on the chosen weekday (default Wednesday). Removing it deletes
+   the series; flexible meetings placed elsewhere meanwhile keep their time.
 8. Team no-meeting day: a user creates the tagged busy event, puts the tag in the description, and invites team members or a team mailing list. For each invitee, the event acts as a no-meeting day once the invitee answers yes or maybe (E-0201). A shared calendar of tagged events that invites the team works the same way (E-0201).
 9. The tag has no effect on an event that is already free. Proposed.
 10. On an out-of-office event, `#tl_free` in the title lets tasks and habits stay on those days while others see the user as away (E-0111). See `events-out-of-office.md`.

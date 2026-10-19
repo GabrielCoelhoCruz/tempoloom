@@ -5,7 +5,9 @@ import { attends, hasTag, TAG_FREE } from "../../scheduler/blocking.ts";
 import { hoursToTimeSet, type WeeklyHours } from "../../scheduler/hours.ts";
 import type { ExternalEvent, Level, MeetingItem } from "../../scheduler/model.ts";
 import type { Interval, TimeSet } from "../../scheduler/timeset.ts";
+import type { LocalDate } from "../../shared/time.ts";
 import { all, type Db, one } from "../db.ts";
+import { getPrefs } from "../meeting-prefs.ts";
 import { externalEvents } from "./events.ts";
 
 export interface MeetingRow {
@@ -29,6 +31,26 @@ export interface MeetingRow {
   lead_minutes: number;
   created_at: number;
   rules_changed_at: number;
+  auto_reschedule: AutoReschedule;
+  series_calendar_id: string | null;
+  series_event_id: string | null;
+}
+
+/** MEET-02 rule 9: automatic moves per rolling 24 hours. */
+export const MOVE_LIMITS = { none: 0, conservative: 1, moderate: 3, aggressive: 5 } as const;
+export type AutoReschedule = keyof typeof MOVE_LIMITS;
+
+/** Automatic moves of a meeting in the 24 hours before `now` (the change log). */
+export function recentMoves(db: Db, meetingId: string, now: number): number {
+  return (
+    one<{ n: number }>(
+      db,
+      `SELECT count(*) AS n FROM meeting_changes WHERE meeting_id = ? AND at > ?
+         AND reason IN ('conflict', 'declined') AND new_start IS NOT NULL`,
+      meetingId,
+      now - 86_400_000,
+    )?.n ?? 0
+  );
 }
 
 export interface Attendee {
@@ -160,6 +182,21 @@ export function meetingItem(
     leadMinutes: m.lead_minutes,
     exclusions: exclusions.get(`meeting:${m.id}`) ?? [],
     changed: m.rules_changed_at > lastPlannedAt,
+    moveLimit: MOVE_LIMITS[m.auto_reschedule] ?? MOVE_LIMITS.moderate,
+    movesLeft:
+      (MOVE_LIMITS[m.auto_reschedule] ?? MOVE_LIMITS.moderate) - recentMoves(db, m.id, now),
+    startMinutes: getPrefs(db, userId).startMinutes,
+    // An adopted series: only periods that have an instance of it.
+    ...(m.series_event_id
+      ? {
+          periods: all<{ key: string }>(
+            db,
+            "SELECT key FROM managed_events WHERE user_id = ? AND kind = 'meeting' AND source_id = ?",
+            userId,
+            m.id,
+          ).map((r) => r.key.slice(r.key.lastIndexOf(":") + 1) as LocalDate),
+        }
+      : {}),
   };
 }
 

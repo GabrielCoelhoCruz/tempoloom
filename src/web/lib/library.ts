@@ -66,6 +66,12 @@ export interface MeetingPreset {
   level: 1 | 2 | 3 | 4;
 }
 
+export interface MeetingCheckPreset {
+  /** Checks the entry turns on (automations-meeting-quality.md). */
+  checks: ("conflict" | "attendee_availability" | "rsvp_reminder" | "video_link" | "agenda")[];
+  digest?: "email";
+}
+
 export interface LinkPreset {
   durations: string;
   level: 1 | 2 | 3 | 4;
@@ -85,12 +91,13 @@ export type LibraryEntry = {
   | { kind: "flexible_meeting"; preset: MeetingPreset }
   | { kind: "booking_link"; preset: LinkPreset }
   | { kind: "calendar_mirroring"; preset: { visibility: "busy_only" } }
+  | { kind: "meeting_check"; preset: MeetingCheckPreset }
+  | { kind: "no_meeting_day"; preset: { weekday: number } }
   /** Kinds Tempoloom does not have yet; the reason says what is missing. */
   | { kind: "unavailable"; reason: string }
 );
 
 const NEEDS_ASSISTANT = "Needs the assistant chat, which Tempoloom does not have yet.";
-const NEEDS_CHECKS = "Needs meeting checks, which Tempoloom does not have yet.";
 const prompt = (slug: string, name: string, summary: string): LibraryEntry => ({
   slug,
   name,
@@ -142,8 +149,8 @@ export const LIBRARY: LibraryEntry[] = [
     name: "Agenda drafts for my meetings",
     group: "meeting_checks",
     summary: "Draft agendas for your meetings without a description.",
-    kind: "unavailable",
-    reason: NEEDS_CHECKS,
+    kind: "meeting_check",
+    preset: { checks: ["agenda"] },
   },
   prompt("back-plan", "Back-plan work from due dates", "Propose work time before each due date."),
   prompt("what-now", "What to do now", "Which task to start now, and why."),
@@ -168,8 +175,11 @@ export const LIBRARY: LibraryEntry[] = [
     name: "Flag meeting problems",
     group: "meeting_checks",
     summary: "Daily check for conflicts, missing answers and missing video links.",
-    kind: "unavailable",
-    reason: NEEDS_CHECKS,
+    kind: "meeting_check",
+    preset: {
+      checks: ["conflict", "attendee_availability", "rsvp_reminder", "video_link"],
+      digest: "email",
+    },
   },
   {
     slug: "airport-travel",
@@ -308,9 +318,8 @@ export const LIBRARY: LibraryEntry[] = [
     name: "Weekly no-meeting day",
     group: "other",
     summary: "One whole weekday a week without meetings.",
-    kind: "unavailable",
-    reason:
-      "Tempoloom cannot write the weekly event yet. Add a weekly all-day busy event with #tl_free in its title: meetings and booking links stay off that day.",
+    kind: "no_meeting_day",
+    preset: { weekday: 3 },
   },
   {
     slug: "one-on-ones",

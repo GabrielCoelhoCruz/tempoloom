@@ -24,8 +24,74 @@ interface Meeting {
   defense: string;
   frequency: { period: "daily" } | { period: "weekly"; everyWeeks: number; idealDays: number[] };
   attendees: (Person & { required: boolean })[];
-  occurrences: { key: string; start_ms: number; end_ms: number; locked: number }[];
-  problems: { demandKey: string; status: string; reason: string }[];
+  occurrences: { id: string; key: string; start_ms: number; end_ms: number; locked: number }[];
+  problems: {
+    demandKey: string;
+    status: string;
+    reason: string;
+    suggestions?: { start: number; end: number }[];
+  }[];
+  changes: Change[];
+  series_event_id: string | null;
+}
+
+interface Change {
+  id: number;
+  occurrence_key: string;
+  old_start: number | null;
+  new_start: number | null;
+  actor: string;
+  reason: string;
+  detail: string;
+}
+
+interface Series {
+  key: string;
+  calendarId: string;
+  seriesId: string;
+  title: string;
+  description: string;
+  location: string;
+  attendees: string[];
+  start: number;
+  end: number;
+  idealTime: string;
+  idealDay: number;
+  everyWeeks: number | "daily";
+}
+
+/** MEET-02 rules 9-11: flags that offer other times. */
+const FLAGS: Record<string, string> = {
+  "budget-reached": "Move limit reached: Tempoloom used today's automatic moves.",
+  "policy-none": "No automatic moves: this meeting has a conflict at its time.",
+};
+const CHANGE_REASONS: Record<string, string> = {
+  conflict: "moved for a conflict",
+  declined: "declined",
+  ruleChanged: "rules changed",
+  noFreeSlot: "cancelled, no free time",
+  manualMove: "moved by you",
+  manualSkip: "skipped by you",
+};
+const MOVES: [string, string][] = [
+  ["none", "No automatic moves"],
+  ["conservative", "1 per day"],
+  ["moderate", "3 per day"],
+  ["aggressive", "5 per day"],
+];
+const pad2 = (n: number) => String(n).padStart(2, "0");
+function localWhen(z: string, t: number): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: z,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(new Date(t));
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
+  return `${get("year")}-${get("month")}-${get("day")} ${pad2(Number(get("hour")))}:${get("minute")}`;
 }
 
 interface Preview {
@@ -75,12 +141,36 @@ export function Meetings() {
   const [error, setError] = useState<string | null>(null);
   const template = templateFromUrl();
   const preset = template?.kind === "flexible_meeting" ? template.preset : null;
+  const [series, setSeries] = useState<Series[]>([]);
+  // The recurring meeting the form was filled from (meetings-flexible.md rule 1).
+  const [seed, setSeed] = useState<Series | null>(null);
 
   const load = useCallback(async () => {
     setMeetings((await api<{ meetings: Meeting[] }>("GET", "/api/meetings")).meetings);
   }, []);
   useEffect(() => void load(), [load]);
   useLive(load);
+  const loadSeries = useCallback(async () => {
+    const list = (await api<{ series: Series[] }>("GET", "/api/meetings/series")).series;
+    setSeries(list);
+    return list;
+  }, []);
+  useEffect(() => {
+    // ?adopt=<key> (the new recurring meeting email) fills the form from that series.
+    const adopt = new URLSearchParams(location.search).get("adopt");
+    void loadSeries().then((list) => {
+      const found = adopt ? list.find((x) => x.key === adopt) : undefined;
+      if (found) pick(found);
+    });
+    const t = setInterval(() => void loadSeries(), 10_000);
+    return () => clearInterval(t);
+  }, [loadSeries]);
+  const pick = (x: Series | null) => {
+    setSeed(x);
+    setPreview(null);
+    if (x) void lookup(x.attendees.join(", "));
+    else setPeople([]);
+  };
 
   const fail = (err: unknown) => {
     const body = (err as { body?: { issues?: { message: string }[] } }).body;
@@ -131,9 +221,11 @@ export function Meetings() {
       defense: text("defense"),
       whenUnplaceable: text("whenUnplaceable"),
       leadHours: Number(f.get("leadHours")),
+      autoReschedule: text("autoReschedule"),
       starting: text("starting") || null,
       description: text("description"),
       location: text("location"),
+      ...(seed ? { series: { calendarId: seed.calendarId, seriesId: seed.seriesId } } : {}),
     };
   };
 
@@ -147,7 +239,7 @@ export function Meetings() {
       <form
         class="form"
         data-testid="meeting-form"
-        key={template ? `${template.slug}-${meetings.length}` : "new"}
+        key={seed ? `series-${seed.key}` : template ? `${template.slug}-${meetings.length}` : "new"}
         onSubmit={(e) => {
           e.preventDefault();
           const form = e.currentTarget as HTMLFormElement;
@@ -156,9 +248,26 @@ export function Meetings() {
             form.reset();
             setPeople([]);
             setPreview(null);
+            setSeed(null);
+            await loadSeries();
           });
         }}
       >
+        <label class="wide">
+          From an existing meeting
+          <select
+            name="series"
+            value={seed?.key ?? ""}
+            onChange={(e) => pick(series.find((x) => x.key === e.currentTarget.value) ?? null)}
+          >
+            <option value="">A new meeting</option>
+            {series.map((x) => (
+              <option value={x.key} key={x.key}>
+                {x.title}
+              </option>
+            ))}
+          </select>
+        </label>
         <label class="wide">
           Title
           <input
@@ -166,12 +275,14 @@ export function Meetings() {
             required
             maxLength={255}
             defaultValue={
-              template
-                ? freeName(
-                    template.name,
-                    meetings.map((m) => m.title),
-                  )
-                : ""
+              seed
+                ? seed.title
+                : template
+                  ? freeName(
+                      template.name,
+                      meetings.map((m) => m.title),
+                    )
+                  : ""
             }
           />
         </label>
@@ -181,6 +292,7 @@ export function Meetings() {
             name="guests"
             required
             placeholder="ana@example.com, ben@example.com"
+            defaultValue={seed ? seed.attendees.join(", ") : ""}
             onChange={(e) => void lookup(e.currentTarget.value)}
           />
         </label>
@@ -201,16 +313,25 @@ export function Meetings() {
           How often
           <select name="every">
             <option value="1">Every week</option>
-            <option value="2" selected={preset?.everyWeeks === 2}>
+            <option value="2" selected={seed ? seed.everyWeeks === 2 : preset?.everyWeeks === 2}>
               Every 2 weeks
             </option>
-            <option value="4">Every 4 weeks</option>
-            <option value="daily">Every day</option>
+            <option value="4" selected={seed?.everyWeeks === 4}>
+              Every 4 weeks
+            </option>
+            <option value="daily" selected={seed?.everyWeeks === "daily"}>
+              Every day
+            </option>
           </select>
         </label>
         <label>
           Ideal time
-          <input name="idealTime" type="time" step={900} defaultValue="10:00" />
+          <input
+            name="idealTime"
+            type="time"
+            step={900}
+            defaultValue={seed?.idealTime ?? "10:00"}
+          />
         </label>
         <label>
           Duration (minutes)
@@ -220,7 +341,11 @@ export function Meetings() {
             min={5}
             max={480}
             step={5}
-            defaultValue={String(preset?.durationMinutes ?? 30)}
+            defaultValue={String(
+              seed
+                ? Math.max(5, Math.round((seed.end - seed.start) / 300_000) * 5)
+                : (preset?.durationMinutes ?? 30),
+            )}
           />
         </label>
         <label>
@@ -266,25 +391,45 @@ export function Meetings() {
           <input name="leadHours" type="number" min={0} max={168} defaultValue="12" />
         </label>
         <label>
+          Automatic moves
+          <select name="autoReschedule">
+            {MOVES.map(([v, l]) => (
+              <option value={v} key={v} selected={v === "moderate"}>
+                {l}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
           Starting
           <input name="starting" type="date" />
         </label>
         <label>
           Location
-          <input name="location" maxLength={500} />
+          <input name="location" maxLength={500} defaultValue={seed?.location ?? ""} />
         </label>
         <fieldset class="wide days">
           <legend>Ideal days (weekly)</legend>
           {DAY_NAMES.map((n, i) => (
             <label key={n} class="inline">
-              <input type="checkbox" name="days" value={i + 1} defaultChecked={i === 1} />
+              <input
+                type="checkbox"
+                name="days"
+                value={i + 1}
+                defaultChecked={seed ? i === seed.idealDay - 1 : i === 1}
+              />
               {n}
             </label>
           ))}
         </fieldset>
         <label class="wide">
           Description
-          <textarea name="description" rows={2} maxLength={8000} />
+          <textarea
+            name="description"
+            rows={2}
+            maxLength={8000}
+            defaultValue={seed?.description ?? ""}
+          />
         </label>
         <div class="actions wide">
           <button
@@ -364,13 +509,60 @@ export function Meetings() {
                           {o.locked ? " · locked" : ""}
                         </li>
                       ))}
-                      {m.problems.map((p) => (
-                        <li key={p.demandKey} class="warning">
-                          {p.status === "conflict" ? "Conflict" : "Not placed"}:{" "}
-                          {REASONS[p.reason] ?? p.reason}
-                        </li>
-                      ))}
+                      {m.problems
+                        .filter((p) => !FLAGS[p.reason])
+                        .map((p) => (
+                          <li key={p.demandKey} class="warning">
+                            {p.status === "conflict" ? "Conflict" : "Not placed"}:{" "}
+                            {REASONS[p.reason] ?? p.reason}
+                          </li>
+                        ))}
                     </ul>
+                    {m.problems
+                      .filter((p) => FLAGS[p.reason])
+                      .map((p) => {
+                        const occurrence = m.occurrences.find((o) => o.key === p.demandKey);
+                        return (
+                          <div key={p.demandKey} class="warning" data-testid="meeting-flag">
+                            {occurrence ? `${localWhen(z, occurrence.start_ms)}: ` : ""}
+                            {FLAGS[p.reason]}
+                            <div class="actions">
+                              {occurrence &&
+                                (p.suggestions ?? []).map((t) => (
+                                  <button
+                                    type="button"
+                                    key={t.start}
+                                    data-testid="suggestion"
+                                    onClick={() =>
+                                      void act(() =>
+                                        api("POST", `/api/meetings/${m.id}/move`, {
+                                          eventId: occurrence.id,
+                                          start: t.start,
+                                        }),
+                                      )
+                                    }
+                                  >
+                                    Move to {localWhen(z, t.start)}
+                                  </button>
+                                ))}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    {m.changes.length > 0 && (
+                      <details class="meta" open>
+                        <summary>Changes</summary>
+                        <ul data-testid="meeting-changes">
+                          {m.changes.map((ch) => (
+                            <li key={ch.id} data-testid="change" data-reason={ch.reason}>
+                              {ch.old_start !== null ? localWhen(z, ch.old_start) : ""} →{" "}
+                              {ch.new_start !== null ? localWhen(z, ch.new_start) : "no new time"} ·{" "}
+                              {CHANGE_REASONS[ch.reason] ?? ch.reason} · by {ch.detail || ch.actor}
+                            </li>
+                          ))}
+                        </ul>
+                      </details>
+                    )}
                   </div>
                   <div class="actions">
                     <button

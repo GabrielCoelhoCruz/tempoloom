@@ -89,6 +89,14 @@ E-0051).
   (E-0125).
 - **NTF-22.** With `meetingChangeEmails` off, Tempoloom changes the events
   without update emails (E-0125).
+- Tempoloom decision: Tempoloom sends the update email itself over SMTP, to
+  each guest, with an iCalendar REQUEST (RFC 6047) attached; it writes the
+  calendar change without the provider's own update emails, and many CalDAV
+  servers do not deliver invitations at all. An email goes out for each
+  move or cancellation that Tempoloom writes (automatic moves, moves after a
+  decline, an applied suggestion, a skip from the planner), not for edits the
+  organizer makes in a calendar app. The limit uses the earlier of the old and
+  the new start. `meetingChangeDaysAhead` 0 sends nothing.
 - **NTF-23.** For Outlook calendars the notices cannot be turned off (E-0125).
   Tempoloom targets Google Calendar first; Outlook is out of scope here.
 
@@ -98,6 +106,11 @@ E-0051).
   daily summary of flexible meetings that may fail to get a slot within two
   weeks, and an email listing new recurring meetings that could become
   flexible meetings (E-0125). Tempoloom does not need them for parity.
+  Tempoloom decision: Tempoloom builds both, each with an on/off setting (on
+  by default) and one daily time (default 07:00). The new recurring meeting
+  email lists each recurring series the user organizes with guests and that
+  no flexible meeting manages, once per series, with a link that opens the
+  meeting form filled from that series (`meetings-flexible.md` rule 1).
 - **NTF-31.** The current reference sends a morning review digest by email,
   chat app or both (E-0158). Assistant chat spec owns it.
 

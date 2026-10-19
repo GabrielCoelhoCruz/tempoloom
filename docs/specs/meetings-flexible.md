@@ -111,6 +111,18 @@ Attendee class, computed each time the meeting is placed:
 3. Only series organized by the user can be adopted. A series where the user
    is only a guest is not listed (Proposed; E-0046 requires the user to own
    the series).
+   Tempoloom decision: the list shows recurring series on a calendar Tempoloom
+   can write, organized by the user, with at least one guest, that no meeting
+   manages yet. The form copies the next instance: title, guests (all
+   required), local start time, duration, weekday, description and location;
+   the frequency comes from the gap between the next two instances. Saving
+   writes the private properties `tl`, `tl_user` and `tl_meeting` (the
+   meeting id) on the series, so its instances count as managed events. On
+   CalDAV, Tempoloom moves an instance by writing an override (RECURRENCE-ID)
+   in the series object and cancels one with an EXDATE; it never writes a new
+   event for an adopted series. Turning the meeting off or deleting it removes
+   those properties and keeps the series as a normal recurring event
+   (SPEC-MEET-02 open question 1).
 4. When the user adds an attendee of class `none`, the form shows a warning:
    Tempoloom cannot see this person's availability or time zone. The user can
    still save (E-0073).

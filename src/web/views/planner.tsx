@@ -12,6 +12,9 @@ import { overlay, withPreview } from "../lib/preview.ts";
 import { planNow, zone } from "../lib/state.ts";
 import { WeekView } from "./week.tsx";
 
+// The Issues and Recommendations panel loads on demand, after the week view.
+const IssuesPanel = lazyComponent(() => import("./issues-panel.tsx").then((m) => m.IssuesPanel));
+
 const REASONS: Record<string, string> = {
   "outside-window": "starts after the scheduling window",
   "no-hours": "its hours have no time in this period",
@@ -155,6 +158,7 @@ export function Planner() {
         onMove={onMove}
         onSelect={(id) => setSelected(events.find((e) => e.id === id) ?? null)}
       />
+      <IssuesPanel />
       {report.length > 0 && (
         <details class="issues" data-testid="issues">
           <summary>{report.length} items need attention</summary>
