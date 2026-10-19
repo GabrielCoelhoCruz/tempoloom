@@ -7,12 +7,36 @@ Status rules:
   partial       = implemented in part, or proven by unit tests only (PARTIAL, UNIT,
                   GOOGLE_ROWS); the reason says what is missing.
   blocked       = not implemented yet, or a non-goal; the reason says which.
+
+Each row id goes into exactly one status map (E2E, PARTIAL, GOOGLE_ROWS, UNIT or
+BLOCKED). The maps record every write, and the build fails when a row was ever
+written to two of them, even if a later pop removed it from one.
 """
 import re, sys, glob, os
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 STAGING = os.path.join(ROOT, "docs/parity-src")
 OUT = os.path.join(ROOT, "docs/parity.md")
+
+# Row id -> every status map that was ever given that row. A pop does not erase it.
+WRITES = {}
+
+class StatusMap(dict):
+    """A status map that records each row it gets in WRITES."""
+    def __init__(self, name, rows):
+        super().__init__()
+        self.name = name
+        self.update(rows)
+    def __setitem__(self, row_id, value):
+        WRITES.setdefault(row_id, set()).add(self.name)
+        super().__setitem__(row_id, value)
+    def update(self, rows):
+        for row_id, value in rows.items():
+            self[row_id] = value
+    def setdefault(self, row_id, value):
+        if row_id not in self:
+            self[row_id] = value
+        return self[row_id]
 
 T = {
     "split": "places a split task in work hours and keeps it after reload and restart",
@@ -137,7 +161,7 @@ T = {
 }
 
 # Row id -> E2E test keys that prove it on CalDAV.
-E2E = {
+E2E = StatusMap("E2E", {
     1: ["t_title"], 4: ["split"], 7: ["split", "t_title"], 8: ["split"], 10: ["t_title", "t_prio"], 11: ["t_title"],
     12: ["t_start"], 13: ["t_late"], 15: ["t_notes"], 20: ["t_more"], 21: ["t_huge", "t_late"], 22: ["done", "t_more"],
     23: ["t_more"], 24: ["done"], 41: ["t_next"], 44: ["t_next"], 52: ["t_prio"], 53: ["t_prio"], 57: ["t_prio"],
@@ -209,7 +233,7 @@ E2E = {
     435: ["tl_rr", "tl_pref"], 434: ["tl_pref"], 432: ["tl_rr_org"], 767: ["bp_starter"],
     766: ["bp_dir", "dg_switch"], 423: ["bp_brand"], 570: ["bp_brand"], 571: ["wh_team"],
     930: ["wh_team", "w_flow"],
-}
+})
 
 # Row id -> how Tempoloom meets the row, when that differs from the reference's wording.
 E2E_NOTES = {
@@ -240,7 +264,7 @@ E2E_NOTES = {
 }
 
 # Row id -> reason, for rows implemented in part (some behavior has E2E, some does not).
-PARTIAL = {
+PARTIAL = StatusMap("PARTIAL", {
     934: "http on a public host is rejected in E2E; the localhost and IP-literal checks are in code but not under E2E, because the E2E server allows private receivers (WEBHOOK_ALLOW_PRIVATE)",
     936: "success on 200 and failure on 500 are E2E-proven; the 10-second timeout is not under test",
     938: "the delivery worker suspends the endpoint and the page offers Resume; not under test (needs 24 hours of failures)",
@@ -288,7 +312,7 @@ PARTIAL = {
     256: "#tl_trip gives the travel category (unit tests); no buffer is added",
     257: "#tl_focus counts an event as focus in stats; not under test",
     385: "Booked events go to the main calendar; no choice of calendar",
-}
+})
 
 # Library entries (automations-library.md): row = 718 + entry number.
 LIB_FORM = [11, 32, 34, 35, 36, 37, 38, 39, 40, 42, 43, 44, 45]
@@ -299,7 +323,7 @@ for n in LIB_DIRECT:
     PARTIAL.setdefault(718 + n, "The library adds it with the preset (no form of its own yet); not under E2E")
 
 # Row id -> reason, for rows that cannot work yet because a feature they build on is missing.
-BLOCKED = {
+BLOCKED = StatusMap("BLOCKED", {
     718: "Needs the assistant chat, which is not implemented",
     627: "Needs the assistant chat, which is not implemented",
     630: "Not needed for parity: the reference lists these reports as coming soon (analytics-organization.md rule 16)",
@@ -318,12 +342,12 @@ BLOCKED = {
     591: "Needs the Slack app (a vendor developer app and a test workspace)",
     592: "Needs the Slack app (a vendor developer app and a test workspace)",
     688: "Needs the assistant chat, which is not implemented",
-}
+})
 for n in [5, 6, 12, 14, 15, 16, 17, 18, 20, 21, 22, 24, 31]:
     BLOCKED[718 + n] = "A prompt entry: needs the assistant chat, which is not implemented"
 
 # Row id -> limits, for rows implemented with unit or property tests only.
-UNIT = {
+UNIT = StatusMap("UNIT", {
     9: "cooldown options are in the engine and settings, not in the UI", 27: "API only; no UI yet",
     55: "engine only; no drag UI yet", 58: "", 59: "booking-link side not implemented", 70: "",
     73: "several ranges per day; no copy-to-all", 90: "meetings, then buffers, then habits inside one level; unit tests only",
@@ -347,18 +371,19 @@ UNIT = {
     60: "this event or the whole series; E2E covers a single event", 61: "only main-calendar events can change", 297: "",
     298: "only main-calendar events can change", 238: "a fixed 30 minutes; no setting yet",
     243: "travel buffers follow their event; a manual length is not kept", 244: "",
-}
+})
 
-GOOGLE_ROWS = {
+GOOGLE_ROWS = StatusMap("GOOGLE_ROWS", {
     638: "Google sign-in is implemented and follows the team's SSO rules; Google E2E pending (needs a Google OAuth client and account). Microsoft sign-in is not implemented: it needs an app registration and a Microsoft Graph provider.",
     510: "Google sign-in (OAuth with PKCE) and Google Calendar sync are implemented; Google E2E pending: needs a service-account key, and the consent screen needs a one-time check by a person. Microsoft is not implemented.",
     513: "Google and CalDAV accounts can be connected; a second CalDAV account is added in the UI with CalDAV E2E (\u201ca user adds a second CalDAV account and removes it after a confirmation\u201d); Microsoft is not implemented. Google E2E pending.",
     147: "Google sign-in asks for calendar scopes up front; incremental consent not implemented. Google E2E pending.",
     518: "All calendar scopes are asked at sign-in; incremental consent not implemented. Google E2E pending.",
-}
+})
 
 # Round 3 rows. Each block adds rows with T.update, E2E.update, E2E_NOTES.update,
-# PARTIAL.update and BLOCKED.update. E2E wins over PARTIAL, UNIT and BLOCKED (see status()).
+# PARTIAL.update and BLOCKED.update. A row goes into one status map only; to move a row,
+# delete it from the map where it was (a pop is not enough: check_one_map_per_row fails).
 
 # --- s1: automations and event settings ---
 T.update({
@@ -411,7 +436,6 @@ E2E_NOTES.update({
     304: "The list is its own Automations page; types without a priority show in a Meeting quality section, empty until meeting checks exist",
 })
 PARTIAL.update({
-    299: "Habit, focus time, buffer and flexible meeting automations share the list, its groups and its type filter (E2E: \u201cthe automation list shows habits, flexible meetings\u2026\u201d); the meeting overload and meeting check types come from their own streams and join the list's type table",
     301: "From the library and from the top-bar create menu (E2E: \u201ca library entry opens the shared form\u2026\u201d, \u201cthe automation list shows habits\u2026\u201d); asking the assistant chat needs the chat, which is not implemented",
     245: "Travel and airport buffers start public, with the travel marker (E2E: \u201ctask chunks, habits and flexible meetings get the calendar default reminder\u2026\u201d); mirroring skips every managed event, while mirroring rule 15 skips only copies, so no copy of a travel buffer exists to follow a policy",
 })
@@ -733,7 +757,6 @@ E2E_NOTES.update({
     299: "Meeting overload ranks in P4 with focus time; one Meeting quality entry per built-in check (turn off or on, no remove) and per company check (admins only)",
     304: "The list is its own Automations page; the meeting checks, which have no priority, show in a Meeting quality section below the groups",
 })
-PARTIAL.pop(299, None)
 # --- end s8 ---
 
 # --- merge: rows that need the work of more than one stream ---
@@ -768,20 +791,28 @@ for n in [664, 665, 666, 667, 668]:
 
 GOOGLE_PENDING = "Google E2E pending: the service-account key is not available yet (1Password token missing)."
 
+def e2e_status(row_id, tests):
+    tests = "; ".join(f"\u201c{T[k]}\u201d" for k in tests)
+    note = f" {E2E_NOTES[row_id]}." if row_id in E2E_NOTES else ""
+    return "done (CalDAV)", f"Full UI E2E passes on CalDAV (Radicale): {tests}.{note} Google Calendar run pending (service-account key)."
+
+def unit_status(row_id, extra):
+    return "partial", "Implemented; unit or property tests only, no E2E yet." + (f" Limits: {extra}." if extra else "")
+
+# The status maps and how each one writes its row. status() and check_one_map_per_row()
+# both use this list, so a new map is checked as soon as it gives a status.
+STATUS_MAPS = [
+    (E2E, e2e_status),
+    (PARTIAL, lambda row_id, reason: ("partial", f"{reason}.")),
+    (GOOGLE_ROWS, lambda row_id, reason: ("partial", reason)),
+    (UNIT, unit_status),
+    (BLOCKED, lambda row_id, reason: ("blocked", f"{reason}.")),
+]
+
 def status(row_id, spec_file, notes):
-    if row_id in E2E:
-        tests = "; ".join(f"\u201c{T[k]}\u201d" for k in E2E[row_id])
-        note = f" {E2E_NOTES[row_id]}." if row_id in E2E_NOTES else ""
-        return "done (CalDAV)", f"Full UI E2E passes on CalDAV (Radicale): {tests}.{note} Google Calendar run pending (service-account key)."
-    if row_id in PARTIAL:
-        return "partial", f"{PARTIAL[row_id]}."
-    if row_id in GOOGLE_ROWS:
-        return "partial", GOOGLE_ROWS[row_id]
-    if row_id in UNIT:
-        extra = UNIT[row_id]
-        return "partial", "Implemented; unit or property tests only, no E2E yet." + (f" Limits: {extra}." if extra else "")
-    if row_id in BLOCKED:
-        return "blocked", f"{BLOCKED[row_id]}."
+    for m, row_status in STATUS_MAPS:
+        if row_id in m:
+            return row_status(row_id, m[row_id])
     if "non-goal" in notes.lower():
         return "blocked", "Non-goal by decision (billing, payments or mobile apps)."
     if spec_file.startswith("integrations-"):
@@ -789,12 +820,9 @@ def status(row_id, spec_file, notes):
     return "blocked", "Not implemented yet."
 
 def check_one_map_per_row():
-    maps = {"E2E": E2E, "PARTIAL": PARTIAL, "GOOGLE_ROWS": GOOGLE_ROWS, "UNIT": UNIT, "BLOCKED": BLOCKED}
-    seen = {}
-    for name, m in maps.items():
-        for row_id in m:
-            seen.setdefault(row_id, []).append(name)
-    dups = {r: names for r, names in seen.items() if len(names) > 1}
+    order = [m.name for m, _ in STATUS_MAPS]
+    assert set().union(*WRITES.values()) <= set(order), "a StatusMap is missing from STATUS_MAPS"
+    dups = {r: [n for n in order if n in names] for r, names in WRITES.items() if len(names) > 1}
     if dups:
         for r in sorted(dups):
             print(f"row {r} is in more than one status map: {', '.join(dups[r])}", file=sys.stderr)
@@ -802,7 +830,7 @@ def check_one_map_per_row():
 
 def main():
     check_one_map_per_row()
-    files =sorted(glob.glob(f"{STAGING}/parity-[A-F]-*.md"))
+    files = sorted(glob.glob(f"{STAGING}/parity-[A-F]-*.md"))
     rows, n = [], 0
     for f in files:
         group = re.sub(r"^parity-|\.md$", "", os.path.basename(f))
