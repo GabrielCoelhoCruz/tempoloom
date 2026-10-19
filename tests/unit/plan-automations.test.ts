@@ -120,7 +120,11 @@ describe("monthly habits", () => {
       {
         habits: [
           habit({ id: "d31", frequency: { period: "monthly", dayOfMonth: 31 } }),
-          habit({ id: "lastMon", frequency: { period: "monthly", nth: "last", weekday: 1 } }),
+          habit({
+            id: "lastMon",
+            idealMinute: 900,
+            frequency: { period: "monthly", nth: "last", weekday: 1 },
+          }),
           habit({ id: "fifthFri", frequency: { period: "monthly", nth: 5, weekday: 5 } }),
           habit({ id: "secondTue", frequency: { period: "monthly", nth: 2, weekday: 2 } }),
         ],
@@ -129,7 +133,7 @@ describe("monthly habits", () => {
     );
     const r = plan(s);
     expect(spans(of(r, "d31"))).toEqual(["2026-11-30T10:00/11:00"]);
-    expect(spans(of(r, "lastMon"))).toEqual(["2026-11-30T10:00/11:00"]);
+    expect(spans(of(r, "lastMon"))).toEqual(["2026-11-30T15:00/16:00"]);
     expect(spans(of(r, "fifthFri"))).toEqual([]);
     expect(spans(of(r, "secondTue"))).toEqual(["2026-11-10T10:00/11:00"]);
   });
