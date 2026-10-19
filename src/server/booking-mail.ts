@@ -21,6 +21,8 @@ export interface BookingFacts {
   location: string;
   bookerName: string;
   bookerEmail: string;
+  /** Guests the booker added; they get the booker's email without its actions. */
+  cc: string[];
   /** The zone the booker chose on the page. */
   bookerZone: string;
   message: string;
@@ -103,7 +105,7 @@ const VERB: Record<BookingChange, [string, string]> = {
   cancelled: ["Cancelled", "Your meeting is cancelled."],
 };
 
-/** The emails of one change: one to the booker, one to each organizer. */
+/** The emails of one change: one to the booker, one to each CC guest and one to each organizer. */
 export function bookingMails(db: Db, baseUrl: string, change: BookingChange, f: BookingFacts) {
   const [verb, news] = VERB[change];
   const answers = f.answers.filter((a) => a.answer).map((a) => `${a.question}\n${a.answer}`);
@@ -131,6 +133,26 @@ export function bookingMails(db: Db, baseUrl: string, change: BookingChange, f: 
           : [],
     },
   ];
+  const organizers = new Set(f.people.map((id) => user(db, id)?.email.toLowerCase() ?? ""));
+  const sent = new Set([f.bookerEmail.toLowerCase(), ...organizers]);
+  for (const cc of f.cc) {
+    // An organizer or the booker in CC gets their own email only.
+    if (sent.has(cc.toLowerCase())) continue;
+    sent.add(cc.toLowerCase());
+    mails.push({
+      to: cc,
+      subject: `${verb}: ${f.title}, ${when(f.bookerZone, f.start, f.end)}`,
+      lines: [
+        "Hello,",
+        `${f.bookerName} (${f.bookerEmail}) added you to this meeting. ${news}`,
+        f.title,
+        when(f.bookerZone, f.start, f.end),
+        ...location,
+        ...(names.length > 0 ? [`With: ${names.join(", ")}`] : []),
+      ],
+      links: [],
+    });
+  }
   const lead = change === "created" ? "New booking" : verb;
   for (const id of new Set(f.people)) {
     const u = user(db, id);
@@ -216,7 +238,7 @@ export async function sendDueReminders(
   const rows = db
     .prepare(
       `SELECT b.id, b.start_ms, b.end_ms, b.updated_at, b.name, b.email, b.time_zone,
-         l.title, l.location, l.user_id, l.branding, l.group_id, l.reminder_hours, l.reminder_message,
+         l.title, COALESCE(b.location, l.location) AS location, l.user_id, l.branding, l.group_id, l.reminder_hours, l.reminder_message,
          l.reminder_saved_at
        FROM bookings b JOIN booking_links l ON l.id = b.link_id
        WHERE b.status = 'booked' AND b.reminder_sent_at IS NULL AND l.reminder_enabled = 1
