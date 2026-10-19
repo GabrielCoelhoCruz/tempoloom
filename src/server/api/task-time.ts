@@ -149,7 +149,6 @@ export function taskTimeRoutes(
         now(),
         t.item_id,
       );
-    else run(db, `UPDATE ${t.kind}s SET rules_changed_at = ? WHERE id = ?`, now(), t.item_id);
     sync.request(user.id, 0);
     return c.json({ ok: true });
   });

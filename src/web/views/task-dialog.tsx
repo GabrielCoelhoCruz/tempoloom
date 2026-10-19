@@ -1,6 +1,7 @@
 // The New task form from any page (docs/specs/planning-tasks.md TSK-5,
 // TSK-6): opened with the New task button or the key C. With "Create
 // another" on, the form stays open after each save.
+import "./parts.css";
 import { useEffect, useLayoutEffect, useState } from "preact/hooks";
 import { plannerReload } from "../lib/planner-signals.ts";
 import { TaskForm } from "./tasks.tsx";

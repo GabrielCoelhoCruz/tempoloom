@@ -111,10 +111,10 @@ yet.
 - **HRS-15.** First run: after the user connects the primary calendar,
   Tempoloom asks the user to review work, meeting and personal hours
   (E-0098).
-  Tempoloom decision: a banner on the planner asks a new user to review the
-  hours. "Review hours" opens the three built-in sets in a dialog; "Done",
-  or "Looks right" on the banner, records the review, and the banner does
-  not come back.
+  Tempoloom decision: the line above the planner's week asks a new user to
+  review the hours. "Review hours" opens the three built-in sets in a
+  dialog; "Done", or "Looks right" on that line, records the review, and the
+  question does not come back.
 - **HRS-16.** Ranges are wall-clock times. On a day with a daylight-saving
   change, a range keeps its wall-clock start and end. Proposed default.
 

@@ -7,16 +7,22 @@
 // (timezones-home-and-travel.md rules 8-11).
 import type { ComponentChildren } from "preact";
 import { useCallback, useEffect, useState } from "preact/hooks";
+import type { PlannerEvent } from "../../server/api/planner.ts";
 import { addDays, utcToLocal } from "../../shared/time.ts";
 import { api } from "../lib/api.ts";
 import { formatWhen, hhmm } from "../lib/format.ts";
 import { lazyComponent } from "../lib/lazy.ts";
 import { useLive } from "../lib/live.ts";
+import { Markdown } from "../lib/markdown.tsx";
 import { blockPreview, conflictIds, extraZone, plannerReload } from "../lib/planner-signals.ts";
-import { LEVEL_NAMES, me, planNow, zone } from "../lib/state.ts";
+import { LEVEL_NAMES, loadMe, me, planNow, zone } from "../lib/state.ts";
+import "./parts.css";
 
 const TimerDialog = lazyComponent<{ onClose: () => void }>(() =>
   import("./timer-dialog.tsx").then((m) => m.TimerDialog),
+);
+const HoursReview = lazyComponent<{ onClose: () => void }>(() =>
+  import("./hours-review.tsx").then((m) => m.HoursReview),
 );
 
 interface TaskLite {
@@ -159,6 +165,7 @@ export function NowBar({ from, to }: { from: number; to: number }) {
   const [conflicts, setConflicts] = useState<Conflict[]>([]);
   const [open, setOpen] = useState<"tasks" | "conflicts" | null>(null);
   const [stopping, setStopping] = useState(false);
+  const [reviewing, setReviewing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const load = useCallback(async () => {
     const [n, c] = await Promise.all([
@@ -195,10 +202,29 @@ export function NowBar({ from, to }: { from: number; to: number }) {
     }
   };
 
-  if (!now) return null;
+  // HRS-15: a new user reviews the hours once.
+  const review = me.value?.settings.hoursReviewed === false && (
+    <span class="review" data-testid="hours-review-banner">
+      New here? Check your hours.
+      <button type="button" onClick={() => setReviewing(true)}>
+        Review hours
+      </button>
+      <button
+        type="button"
+        onClick={() =>
+          void api("PATCH", "/api/settings", { hoursReviewed: true }).then(() => loadMe())
+        }
+      >
+        Looks right
+      </button>
+      {reviewing && <HoursReview onClose={() => setReviewing(false)} />}
+    </span>
+  );
+  if (!now) return review || null;
   const m = now.meeting;
   return (
     <>
+      {review}
       <span data-testid="next-up">
         Next up: <strong>{now.nextUp?.title ?? "nothing"}</strong>
       </span>
@@ -273,6 +299,37 @@ export function NowBar({ from, to }: { from: number; to: number }) {
           }}
         />
       )}
+    </>
+  );
+}
+
+/** The parts of the planner's event details that load later: notes, suggestions, the timer. */
+export function EventExtras({ event, onDone }: { event: PlannerEvent; onDone: () => void }) {
+  const [error, setError] = useState<string | null>(null);
+  const kind = event.kind;
+  const timer = (kind === "task" || kind === "habit") && event.sourceId;
+  return (
+    <>
+      {event.description && <Markdown text={event.description} />}
+      {kind === "focus" && <FocusSuggestions eventId={event.id} />}
+      {timer && (
+        <div class="actions">
+          <button
+            type="button"
+            onClick={() =>
+              void api("POST", "/api/timer", { kind, itemId: event.sourceId })
+                .then(() => {
+                  plannerReload.value++;
+                  onDone();
+                })
+                .catch((err) => setError(reason(err)))
+            }
+          >
+            Start timer
+          </button>
+        </div>
+      )}
+      {error && <p class="error">{error}</p>}
     </>
   );
 }

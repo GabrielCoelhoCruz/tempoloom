@@ -1,6 +1,7 @@
 // In-app alerts at event start (docs/specs/planning-notifications.md NTF-1 to
 // NTF-3): the tab title flashes the event name, and a short chime plays when
 // the user turned it on. Only while a Tempoloom page is open.
+import "./parts.css";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { api } from "../lib/api.ts";
 import { useLive } from "../lib/live.ts";

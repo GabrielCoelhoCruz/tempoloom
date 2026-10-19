@@ -1,6 +1,7 @@
 // The hours menu of item editors (docs/specs/planning-hours.md HRS-11): the
 // built-in and custom sets, "Item-specific hours" for items other than tasks,
 // and a preview of the chosen ranges with a link to the hours page.
+import "./parts.css";
 import { useState } from "preact/hooks";
 import { hhmm } from "../lib/format.ts";
 import { onLinkClick } from "../lib/router.ts";

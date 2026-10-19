@@ -9,22 +9,16 @@ import { formatWhen } from "../lib/format.ts";
 import { lazyComponent } from "../lib/lazy.ts";
 import { useLive } from "../lib/live.ts";
 import { blockPreview, conflictIds, extraZone, plannerReload } from "../lib/planner-signals.ts";
-import { loadMe, me, planNow, zone } from "../lib/state.ts";
+import { planNow, zone } from "../lib/state.ts";
 import { WeekView } from "./week.tsx";
 
-// Parts that load after the planner (docs/performance.md): the now line, prompts and notes.
+// Parts that load after the planner (docs/performance.md): the now line, prompts and event notes.
 const NowBar = lazyComponent<{ from: number; to: number }>(() =>
   import("./planner-now.tsx").then((m) => m.NowBar),
 );
 const TravelPrompt = lazyComponent(() => import("./planner-now.tsx").then((m) => m.TravelPrompt));
-const FocusSuggestions = lazyComponent<{ eventId: string }>(() =>
-  import("./planner-now.tsx").then((m) => m.FocusSuggestions),
-);
-const Markdown = lazyComponent<{ text: string }>(() =>
-  import("../lib/markdown.tsx").then((m) => m.Markdown),
-);
-const HoursReview = lazyComponent<{ onClose: () => void }>(() =>
-  import("./hours-review.tsx").then((m) => m.HoursReview),
+const EventExtras = lazyComponent<{ event: PlannerEvent; onDone: () => void }>(() =>
+  import("./planner-now.tsx").then((m) => m.EventExtras),
 );
 
 const REASONS: Record<string, string> = {
@@ -57,7 +51,6 @@ export function Planner() {
   const [selected, setSelected] = useState<PlannerEvent | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [reviewing, setReviewing] = useState(false);
   // A planner link (?item=task:<id>, planning-event-content.md CNT-10) opens that item's event.
   const openItem = useRef(new URLSearchParams(location.search).get("item"));
   const days = useMemo(
@@ -140,16 +133,6 @@ export function Planner() {
     [events, preview],
   );
 
-  const startTimer = (kind: "task" | "habit", itemId: string) => {
-    setSelected(null);
-    setError(null);
-    api("POST", "/api/timer", { kind, itemId })
-      .then(() => plannerReload.value++)
-      .catch((err) =>
-        setError((err as { body?: { message?: string } }).body?.message ?? String(err)),
-      );
-  };
-
   const onMove = (id: string, start: number) => {
     if (preview && id.startsWith("preview:")) {
       // NXT-50: the user changes a proposed block before applying it.
@@ -206,25 +189,6 @@ export function Planner() {
           Plan now
         </button>
       </div>
-      {me.value?.settings.hoursReviewed === false && (
-        <div class="banner" data-testid="hours-review-banner">
-          <span>
-            Review your work, meeting and personal hours, so Tempoloom plans in the right time.
-          </span>
-          <button type="button" onClick={() => setReviewing(true)}>
-            Review hours
-          </button>
-          <button
-            type="button"
-            onClick={() =>
-              void api("PATCH", "/api/settings", { hoursReviewed: true }).then(() => loadMe())
-            }
-          >
-            Looks right
-          </button>
-        </div>
-      )}
-      {reviewing && <HoursReview onClose={() => setReviewing(false)} />}
       <div class="now-bar" data-testid="now-bar">
         <NowBar from={localToUtc(z, weekStart, 0)} to={localToUtc(z, addDays(weekStart, 7), 0)} />
       </div>
@@ -263,8 +227,7 @@ export function Planner() {
             {selected.locked && selected.kind !== "external" ? " · locked" : ""}
             {selected.category ? ` · ${CATEGORY_LABELS[selected.category]}` : ""}
           </div>
-          {selected.description && <Markdown text={selected.description} />}
-          {selected.kind === "focus" && <FocusSuggestions eventId={selected.id} />}
+          <EventExtras event={selected} onDone={() => setSelected(null)} />
           <label class="inline">
             Category
             <select
@@ -370,16 +333,6 @@ export function Planner() {
                   }}
                 >
                   Skip this day
-                </button>
-              )}
-              {(selected.kind === "task" || selected.kind === "habit") && selected.sourceId && (
-                <button
-                  type="button"
-                  onClick={() =>
-                    startTimer(selected.kind as "task" | "habit", selected.sourceId ?? "")
-                  }
-                >
-                  Start timer
                 </button>
               )}
               {selected.kind === "meeting" && selected.sourceId && (

@@ -1,6 +1,7 @@
 // The stop dialog of the task timer (docs/specs/planning-task-progress.md
 // PRG-31, PRG-32): edit the minutes, keep going, discard, mark the task done,
 // pick the calendar, and see the event it adds before applying it.
+import "./parts.css";
 import { useEffect, useState } from "preact/hooks";
 import { utcToLocal } from "../../shared/time.ts";
 import { api } from "../lib/api.ts";

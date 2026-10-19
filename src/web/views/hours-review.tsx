@@ -1,5 +1,6 @@
 // First-run review of hours (docs/specs/planning-hours.md HRS-15): the work,
 // meeting and personal hours in one dialog; Done records the review.
+import "./parts.css";
 import { useEffect, useState } from "preact/hooks";
 import { api } from "../lib/api.ts";
 import { loadMe, planNow } from "../lib/state.ts";
