@@ -79,8 +79,17 @@ function Section({
   );
 }
 
+/** Errors of a Google reconnect that come back in ?reconnect_error=. */
+const RECONNECT_ERRORS: Record<string, string> = {
+  other_identity: "Sign in with the Google account that you reconnect.",
+  not_found: "That account is not one of yours.",
+};
+
 export function AccountPage() {
-  const [message, setMessage] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(() => {
+    const err = new URLSearchParams(location.search).get("reconnect_error");
+    return err ? (RECONNECT_ERRORS[err] ?? "The account was not reconnected.") : null;
+  });
   const [ask, setAsk] = useState<Ask | null>(null);
   const [adding, setAdding] = useState(false);
   const [reconnecting, setReconnecting] = useState<string | null>(null);
@@ -160,7 +169,10 @@ export function AccountPage() {
                       Reconnect
                     </button>
                   ) : (
-                    <a class="button" href="/auth/google/start">
+                    <a
+                      class="button"
+                      href={`/auth/google/start?reconnect=${encodeURIComponent(a.id)}`}
+                    >
                       Reconnect
                     </a>
                   ))}

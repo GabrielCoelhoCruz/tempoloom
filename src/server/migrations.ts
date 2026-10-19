@@ -1164,8 +1164,10 @@ export const MIGRATIONS: readonly string[] = [
   CREATE INDEX tasks_due_page ON tasks(user_id, status, COALESCE(due_at, 9000000000000000), created_at, id);
   `,
   // 29: when an admin last resumed a webhook endpoint (integrations-webhooks.md
-  // rule 15): the period of failures that suspends it counts from then.
+  // rule 15): the period of failures that suspends it counts from then. The
+  // Google account that a sign-in reconnects (accounts-login-emails-permissions.md rule 15).
   `
   ALTER TABLE webhook_endpoints ADD COLUMN resumed_at INTEGER;
+  ALTER TABLE oauth_states ADD COLUMN reconnect_account_id TEXT;
   `,
 ];
