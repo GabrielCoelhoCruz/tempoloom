@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useState } from "preact/hooks";
 import { api } from "../lib/api.ts";
+import { COLORS } from "../lib/categories.ts";
 import { duration, formatWhen, fromLocalInput, toLocalInput } from "../lib/format.ts";
 import { useLive } from "../lib/live.ts";
 import { LEVEL_NAMES, me, planNow, zone } from "../lib/state.ts";
+import { Select } from "./event-settings.tsx";
 
 interface Task {
   id: string;
@@ -81,6 +83,7 @@ export function Tasks() {
         ...(text("startAfter") ? { startAfter: fromLocalInput(z, text("startAfter")) } : {}),
         ...(text("hoursSetId") ? { hoursSetId: text("hoursSetId") } : {}),
         nextUp: f.get("nextUp") === "on",
+        color: text("taskColor"),
       });
       const title = formEl.elements.namedItem("title") as HTMLInputElement | null;
       if (title) title.value = "";
@@ -185,6 +188,16 @@ export function Tasks() {
           Notes
           <textarea name="notes" rows={2} />
         </label>
+        <Select
+          id="taskColor"
+          label="Color"
+          initial="category"
+          options={[
+            ["category", "Category color"],
+            ["calendar_default", "Calendar color"],
+            ...COLORS.map((c): [string, string] => [c.id, c.name]),
+          ]}
+        />
         <button type="submit" class="primary">
           Add task
         </button>

@@ -788,7 +788,8 @@ export const MIGRATIONS: readonly string[] = [
   // Round 3: each stream adds at most one migration, right below its own line.
   // round 3 s1
   // r3 s1: event settings of each automation (JSON, src/shared/event-settings.ts),
-  // the library template it came from, and the rank of focus time inside P4.
+  // the library template it came from, the rank of focus time inside P4, and
+  // the color of a task.
   `
   ALTER TABLE habits ADD COLUMN event_settings TEXT NOT NULL DEFAULT '{}';
   ALTER TABLE habits ADD COLUMN template_id TEXT;
@@ -797,6 +798,7 @@ export const MIGRATIONS: readonly string[] = [
   ALTER TABLE focus_goals ADD COLUMN event_settings TEXT NOT NULL DEFAULT '{}';
   ALTER TABLE focus_goals ADD COLUMN template_id TEXT;
   ALTER TABLE focus_goals ADD COLUMN rank INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE tasks ADD COLUMN color TEXT NOT NULL DEFAULT 'category';
   `,
   // round 3 s2
   // round 3 s3

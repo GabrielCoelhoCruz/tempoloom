@@ -5,7 +5,11 @@ import { HTTPException } from "hono/http-exception";
 import { z } from "zod";
 import { CATEGORIES } from "../../scheduler/categories.ts";
 import type { WeeklyHours } from "../../scheduler/hours.ts";
-import { defaultEventSettings, readEventSettings } from "../../shared/event-settings.ts";
+import {
+  defaultEventSettings,
+  ITEM_COLORS,
+  readEventSettings,
+} from "../../shared/event-settings.ts";
 import type { AppEnv } from "../app.ts";
 import { all, type Db, one, run, tx } from "../db.ts";
 import { editedEventSettings, eventSettingsInput, newEventSettings } from "../event-settings.ts";
@@ -34,6 +38,8 @@ const taskInput = z.object({
   dueAt: z.number().int().nullable().optional(),
   hoursSetId: z.string().optional(),
   nextUp: z.boolean().optional(),
+  /** events-categories-and-colors.md rule 9: overrides the category color. */
+  color: z.enum(ITEM_COLORS).optional(),
 });
 
 const habitInput = z.object({
@@ -171,6 +177,7 @@ export interface TaskRow {
   next_up_rank: number | null;
   status: "open" | "done";
   created_at: number;
+  color: string;
 }
 
 export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<AppEnv> {
@@ -267,8 +274,8 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
     run(
       db,
       `INSERT INTO tasks (id, user_id, title, notes, level, total_minutes, min_chunk_minutes, max_chunk_minutes,
-         start_after, due_at, hours_set_id, next_up_rank, created_at, rules_changed_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         start_after, due_at, hours_set_id, next_up_rank, created_at, rules_changed_at, color)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       id,
       user.id,
       body.title,
@@ -283,6 +290,7 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
       rank,
       t,
       t,
+      body.color ?? "category",
     );
     changed(user.id);
     return c.json({ task: one<TaskRow>(db, "SELECT * FROM tasks WHERE id = ?", id) }, 201);
@@ -312,7 +320,7 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
     run(
       db,
       `UPDATE tasks SET title = ?, notes = ?, level = ?, total_minutes = ?, min_chunk_minutes = ?, max_chunk_minutes = ?,
-         start_after = ?, due_at = ?, hours_set_id = ?, rules_changed_at = ? WHERE id = ?`,
+         start_after = ?, due_at = ?, hours_set_id = ?, rules_changed_at = ?, color = ? WHERE id = ?`,
       body.title ?? task.title,
       body.notes ?? task.notes,
       body.level ?? task.level,
@@ -323,6 +331,7 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
       dueAt,
       body.hoursSetId ? hoursSetId(db, user.id, body.hoursSetId, "work") : task.hours_set_id,
       now(),
+      body.color ?? task.color,
       task.id,
     );
     changed(user.id);

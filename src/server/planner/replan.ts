@@ -512,6 +512,13 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
 
   // Each managed event gets the color of its category (events-categories-and-colors.md rule 6).
   const cats = categoryContext(db, userId);
+  const taskColors = new Map(
+    all<{ id: string; color: string }>(
+      db,
+      "SELECT id, color FROM tasks WHERE user_id = ? AND color <> 'category'",
+      userId,
+    ).map((t) => [t.id, t.color]),
+  );
   const personalHabits = new Set(
     snapshot.habits
       .filter((h) => eventSettings.get(`habit:${h.id}`)?.category === "personal")
@@ -544,7 +551,10 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
           );
     d.colorId = colorFor(settings, category);
     // Rule 9: an item color overrides the category color.
-    const own = eventSettings.get(`${d.kind}:${d.sourceId}`)?.color;
+    const own =
+      d.kind === "task"
+        ? taskColors.get(d.sourceId)
+        : eventSettings.get(`${d.kind}:${d.sourceId}`)?.color;
     if (own && own !== "category") d.colorId = own === "calendar_default" ? null : own;
   }
 
