@@ -15,7 +15,7 @@ import {
 import { hasTag, TAG_FREE, tagText } from "../../scheduler/blocking.ts";
 import type { WeeklyHours } from "../../scheduler/hours.ts";
 import type { ExternalEvent, Level } from "../../scheduler/model.ts";
-import { isValidTimeZone } from "../../shared/time.ts";
+import { addDays, isValidTimeZone, localToUtc, utcToLocal } from "../../shared/time.ts";
 import type { AppEnv } from "../app.ts";
 import {
   bookedLocation,
@@ -644,7 +644,7 @@ function linkView(db: Db, link: LinkRow, oneOffDays: number) {
     owner: { id: link.user_id, ...user(link.user_id) },
     page: link.group_id ?? (link.hidden ? "hidden" : "main"),
     pageSlug: linkPageSlug(db, link),
-    expiresAt: oneOffExpiry(link, oneOffDays),
+    expiresAt: oneOffExpiry(link, oneOffDays, zoneOf(db, link.user_id)),
     organizers: people
       .filter((p) => p.kind === "organizer")
       .map((p) => ({ ...view(p), required: p.required, isHost: p.isHost })),
@@ -1278,8 +1278,22 @@ export function resolveLink(db: Db, page: string, link: string): LinkRow | undef
 }
 
 /** When a one-off link stops working: its creation plus the instance's lifetime (sharing rule 14). */
-export const oneOffExpiry = (link: LinkRow, days: number) =>
-  link.source_id ? link.created_at + days * 86_400_000 : null;
+/**
+ * Sharing rule 14: 30 days after creation, counted in the creator's zone: the
+ * same wall-clock time `days` local days later, also across a DST change.
+ */
+export function oneOffExpiry(
+  link: Pick<LinkRow, "source_id" | "created_at">,
+  days: number,
+  zone: string,
+): number | null {
+  if (!link.source_id) return null;
+  const created = utcToLocal(zone, link.created_at);
+  const wall = localToUtc(zone, created.date, created.minuteOfDay);
+  return (
+    localToUtc(zone, addDays(created.date, days), created.minuteOfDay) + (link.created_at - wall)
+  );
+}
 
 /** Public booking API: no session; the page and link slugs or a manage token identify the data. */
 export function publicBookingRoutes(
@@ -1293,8 +1307,9 @@ export function publicBookingRoutes(
 ): Hono {
   const r = new Hono();
   const findLink = (page: string, link: string) => resolveLink(db, page, link);
+  const expiryOf = (link: LinkRow) => oneOffExpiry(link, oneOffDays, zoneOf(db, link.user_id));
   const expired = (link: LinkRow) => {
-    const at = oneOffExpiry(link, oneOffDays);
+    const at = expiryOf(link);
     return at !== null && now() >= at;
   };
   // A one-off link fires its source link's webhooks (sharing rule 16).
@@ -1353,9 +1368,7 @@ export function publicBookingRoutes(
       organizers: organizerNames(db, link),
       timeZone: zoneOf(db, link.user_id),
       branding: brandingFor(db, link.user_id, resolveLinkBranding(db, link)),
-      oneOff: link.source_id
-        ? { expiresAt: oneOffExpiry(link, oneOffDays), expired: expired(link) }
-        : null,
+      oneOff: link.source_id ? { expiresAt: expiryOf(link), expired: expired(link) } : null,
     });
   });
 
