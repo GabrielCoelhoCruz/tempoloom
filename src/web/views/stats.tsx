@@ -23,7 +23,16 @@ type Category =
   | "focus"
   | "buffers";
 
+interface HabitProgress {
+  id: string;
+  title: string;
+  events: number;
+  done: number;
+  minutes: number;
+}
+
 interface Stats {
+  habits: HabitProgress[];
   days: { date: string; minutes: Record<Category, number> }[];
   totals: Record<Category, number>;
   highlights: {
@@ -199,6 +208,21 @@ export function StatsPage() {
                 <div class="meta">{g.label}</div>
               </div>
             ))}
+          </div>
+          <h2>Habit progress</h2>
+          <div class="list" data-testid="habit-progress">
+            {stats.habits.map((h) => (
+              <div class="row" key={h.id} data-habit-progress={h.title}>
+                <span>{h.title}</span>
+                <span>
+                  <strong>
+                    {h.done} of {h.events} done
+                  </strong>
+                  <span class="meta"> · {round(h.minutes)}</span>
+                </span>
+              </div>
+            ))}
+            {stats.habits.length === 0 && <p class="status">No habit events in this range.</p>}
           </div>
           <StatsExtras
             from={range[0]}

@@ -5,11 +5,13 @@ import { HTTPException } from "hono/http-exception";
 import { z } from "zod";
 import { CATEGORIES } from "../../scheduler/categories.ts";
 import type { WeeklyHours } from "../../scheduler/hours.ts";
+import type { HabitFrequency } from "../../scheduler/model.ts";
 import {
   defaultEventSettings,
   ITEM_COLORS,
   readEventSettings,
 } from "../../shared/event-settings.ts";
+import { utcToLocal } from "../../shared/time.ts";
 import type { AppEnv } from "../app.ts";
 import { all, type Db, one, run, tx } from "../db.ts";
 import { editedEventSettings, eventSettingsInput, newEventSettings } from "../event-settings.ts";
@@ -44,6 +46,56 @@ const taskInput = z.object({
   color: z.enum(ITEM_COLORS).optional(),
 });
 
+/**
+ * habits-automation.md "Frequency". `interval` above 1 is the custom frequency;
+ * the server sets its `anchor` (see withAnchor).
+ */
+const cadence = { interval: z.number().int().min(1).max(52).optional() };
+const habitFrequency = z.union([
+  z.object({ period: z.literal("daily"), ...cadence }),
+  z.object({
+    period: z.literal("weekly"),
+    days: z.array(z.number().int().min(1).max(7)).min(1),
+    ...cadence,
+  }),
+  z.object({
+    period: z.literal("monthly"),
+    dayOfMonth: z.number().int().min(1).max(31),
+    ...cadence,
+  }),
+  z.object({
+    period: z.literal("monthly"),
+    nth: z.union([
+      z.literal(1),
+      z.literal(2),
+      z.literal(3),
+      z.literal(4),
+      z.literal(5),
+      z.literal("last"),
+    ]),
+    weekday: z.number().int().min(1).max(7),
+    ...cadence,
+  }),
+]);
+
+/**
+ * Interval 1 is the plain frequency: no interval, no anchor. A new interval
+ * gets the anchor of the stored frequency, else the start date, else today;
+ * the anchor then stays, so a later start date (a snooze) keeps the cadence.
+ */
+export function withAnchor(
+  next: z.infer<typeof habitFrequency>,
+  stored: HabitFrequency | null,
+  starting: string | null,
+  today: string,
+): HabitFrequency {
+  const { interval, ...base } = next;
+  if (!interval || interval <= 1) return base;
+  const anchor =
+    (stored?.interval ?? 1) > 1 && stored?.anchor ? stored.anchor : (starting ?? today);
+  return { ...base, interval, anchor };
+}
+
 const habitInput = z.object({
   title: z.string().trim().min(1).max(255),
   notes: z.string().max(10_000).optional(),
@@ -53,28 +105,7 @@ const habitInput = z.object({
   idealTime: hhmm,
   minMinutes: minutes,
   maxMinutes: minutes,
-  frequency: z
-    .union([
-      z.object({ period: z.literal("daily") }),
-      z.object({
-        period: z.literal("weekly"),
-        days: z.array(z.number().int().min(1).max(7)).min(1),
-      }),
-      z.object({ period: z.literal("monthly"), dayOfMonth: z.number().int().min(1).max(31) }),
-      z.object({
-        period: z.literal("monthly"),
-        nth: z.union([
-          z.literal(1),
-          z.literal(2),
-          z.literal(3),
-          z.literal(4),
-          z.literal(5),
-          z.literal("last"),
-        ]),
-        weekday: z.number().int().min(1).max(7),
-      }),
-    ])
-    .optional(),
+  frequency: habitFrequency.optional(),
   starting: z.iso.date().nullable().optional(),
   defense: z.enum(["adaptive", "always-free", "always-busy"]).optional(),
   whenUnplaceable: z.enum(["remove", "keep_as_conflict"]).optional(),
@@ -524,7 +555,16 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
       ideal,
       body.minMinutes,
       body.maxMinutes,
-      JSON.stringify(body.frequency ?? { period: "daily" }),
+      JSON.stringify(
+        body.frequency
+          ? withAnchor(
+              body.frequency,
+              null,
+              body.starting ?? null,
+              utcToLocal(user.time_zone, t).date,
+            )
+          : { period: "daily" },
+      ),
       body.starting ?? null,
       body.defense ?? "adaptive",
       body.whenUnplaceable ?? "keep_as_conflict",
@@ -597,7 +637,16 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
       ideal,
       body.minMinutes ?? cur.min_minutes,
       body.maxMinutes ?? cur.max_minutes,
-      body.frequency ? JSON.stringify(body.frequency) : cur.frequency,
+      body.frequency
+        ? JSON.stringify(
+            withAnchor(
+              body.frequency,
+              JSON.parse(cur.frequency) as HabitFrequency,
+              body.starting === undefined ? cur.starting : body.starting,
+              utcToLocal(user.time_zone, now()).date,
+            ),
+          )
+        : cur.frequency,
       body.starting === undefined ? cur.starting : body.starting,
       body.defense ?? cur.defense,
       body.whenUnplaceable ?? cur.when_unplaceable,

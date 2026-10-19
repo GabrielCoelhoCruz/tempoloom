@@ -27,6 +27,7 @@ interface HoursSet {
   kind: string;
   name: string;
   weekly: Record<string, [number, number][]>;
+  task_calendar_id?: string | null;
 }
 const FocusRecommendation = lazyComponent(() =>
   import("./team-recommendations.tsx").then((m) => m.FocusRecommendation),
@@ -38,16 +39,74 @@ const MirrorSettings = lazyComponent(() => import("./mirroring.tsx").then((m) =>
 
 const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
+/** HRS-5: the ranges of the first day in the list, Monday, go to every day that is on. */
+function copyToAll(weekly: HoursSet["weekly"]): HoursSet["weekly"] {
+  const ranges = weekly["1"] ?? [];
+  return Object.fromEntries(
+    DAY_NAMES.map((_, i) => {
+      const d = String(i + 1);
+      return [d, (weekly[d] ?? []).length > 0 ? ranges.map((r) => [...r] as [number, number]) : []];
+    }),
+  );
+}
+
+/** HRS-12, TSK-50: the calendar that gets the chunks of tasks in this set. */
+function TaskCalendar({
+  set,
+  calendars,
+  dirty,
+  act,
+}: {
+  set: HoursSet;
+  /** Calendars that take events, besides the main calendar. */
+  calendars: { id: string; name: string }[];
+  /** The ranges of this set have changes that are not saved. */
+  dirty: boolean;
+  act: (fn: () => Promise<unknown>, done?: string) => Promise<unknown>;
+}) {
+  return (
+    <label class="inline">
+      Calendar for task chunks
+      <select
+        value={set.task_calendar_id ?? ""}
+        onChange={(e) => {
+          const value = e.currentTarget.value;
+          void act(
+            () => api("PUT", `/api/hours/${set.id}`, { taskCalendarId: value || null }),
+            dirty ? "Calendar saved. The changed ranges are not saved yet." : "Saved",
+          );
+        }}
+      >
+        <option value="">Main calendar</option>
+        {calendars.map((c) => (
+          <option value={c.id} key={c.id}>
+            {c.name}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
 export function HoursEditor({
   set,
   onSave,
   children,
 }: {
   set: HoursSet;
-  onSave: (weekly: HoursSet["weekly"]) => Promise<void>;
-  children?: ComponentChildren;
+  /** Saves the ranges; a result of false means the save failed. */
+  onSave: (weekly: HoursSet["weekly"]) => Promise<unknown>;
+  /** A function child gets whether the ranges have changes that are not saved. */
+  children?: ComponentChildren | ((dirty: boolean) => ComponentChildren);
 }) {
   const [weekly, setWeekly] = useState(set.weekly);
+  const [saved, setSaved] = useState(set.weekly);
+  const dirty = JSON.stringify(weekly) !== JSON.stringify(saved);
+  const save = (w: HoursSet["weekly"]) =>
+    onSave(w).then(
+      (ok) => ok !== false && setSaved(w),
+      () => {},
+    );
   const update = (day: string, i: number, which: 0 | 1, value: string) => {
     const ranges = [...(weekly[day] ?? [])];
     const r = [...(ranges[i] ?? [540, 1020])] as [number, number];
@@ -100,10 +159,30 @@ export function HoursEditor({
           </div>
         );
       })}
-      <button type="button" class="primary" onClick={() => void onSave(weekly)}>
-        Save {set.name.toLowerCase()}
-      </button>
-      {children}
+      <div class="actions">
+        <button
+          type="button"
+          title="Copy the ranges of Monday to every day that is on, and save"
+          disabled={(weekly["1"] ?? []).length === 0}
+          onClick={() => {
+            // HRS-6: the copy is saved at once.
+            const copied = copyToAll(weekly);
+            setWeekly(copied);
+            void save(copied);
+          }}
+        >
+          Copy to all
+        </button>
+        <button type="button" class="primary" onClick={() => void save(weekly)}>
+          Save {set.name.toLowerCase()}
+        </button>
+        {dirty && (
+          <span class="status" data-testid={`hours-unsaved-${set.kind}`}>
+            Changes not saved
+          </span>
+        )}
+      </div>
+      {typeof children === "function" ? children(dirty) : children}
     </div>
   );
 }
@@ -127,12 +206,16 @@ export function Settings() {
   >([]);
   // The buffer editor's calendar scope lists the connected calendars.
   const [calendars, setCalendars] = useState<{ id: string; name: string }[]>([]);
+  const [taskCalendars, setTaskCalendars] = useState<{ id: string; name: string }[]>([]);
   const [message, setMessage] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     const [s, h, b, f, c] = await Promise.all([
       api<{ settings: UserSettings; windowLimit: number | null }>("GET", "/api/settings"),
-      api<{ hours: HoursSet[] }>("GET", "/api/hours"),
+      api<{ hours: HoursSet[]; taskCalendars: { id: string; name: string }[] }>(
+        "GET",
+        "/api/hours",
+      ),
       api<{ buffers: typeof buffers }>("GET", "/api/buffers"),
       api<{ focus: typeof focus }>("GET", "/api/focus"),
       api<{ calendars: { id: string; name: string }[] }>("GET", "/api/calendars"),
@@ -140,6 +223,7 @@ export function Settings() {
     setSettings(s.settings);
     setWindowLimit(s.windowLimit);
     setHours(h.hours);
+    setTaskCalendars(h.taskCalendars);
     setBuffers(b.buffers);
     setFocus(f.focus);
     setCalendars(c.calendars);
@@ -153,16 +237,19 @@ export function Settings() {
       document.getElementById("hours")?.scrollIntoView();
   }, [ready]);
 
-  const act = async (fn: () => Promise<unknown>, done = "Saved") => {
+  /** Runs a change, plans and reloads; false when the change failed. */
+  const act = async (fn: () => Promise<unknown>, done = "Saved"): Promise<boolean> => {
     setMessage(null);
     try {
       await fn();
       await planNow();
       await Promise.all([load(), loadMe()]);
       setMessage(done);
+      return true;
     } catch (err) {
       const body = (err as { body?: { message?: string } }).body;
       setMessage(body?.message ?? (err instanceof Error ? err.message : String(err)));
+      return false;
     }
   };
 
@@ -217,6 +304,25 @@ export function Settings() {
                   {m === 0 ? "None" : `${m} minutes`}
                 </option>
               ))}
+            </select>
+          </label>
+          <label>
+            Time between chunks of a task
+            <select
+              name="chunkCooldown"
+              value={settings.chunkCooldown}
+              onChange={(e) =>
+                void act(() =>
+                  api("PATCH", "/api/settings", { chunkCooldown: e.currentTarget.value }),
+                )
+              }
+            >
+              <option value="none">At least 15 minutes</option>
+              <option value="30m">30 minutes</option>
+              <option value="1h">1 hour</option>
+              <option value="2h">2 hours</option>
+              <option value="4h">4 hours</option>
+              <option value="once-per-day">Once a day</option>
             </select>
           </label>
           <label>
@@ -275,7 +381,12 @@ export function Settings() {
             set={h}
             onSave={(weekly) => act(() => api("PUT", `/api/hours/${h.id}`, { weekly }))}
           >
-            {h.kind === "custom" && <DeleteHoursSet set={h} sets={hours} act={act} />}
+            {(dirty) => (
+              <>
+                <TaskCalendar set={h} calendars={taskCalendars} dirty={dirty} act={act} />
+                {h.kind === "custom" && <DeleteHoursSet set={h} sets={hours} act={act} />}
+              </>
+            )}
           </HoursEditor>
         ))}
         <form

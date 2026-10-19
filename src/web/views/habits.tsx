@@ -3,19 +3,14 @@ import type { HabitFrequency } from "../../scheduler/model.ts";
 import { defaultEventSettings, readEventSettings } from "../../shared/event-settings.ts";
 import { api } from "../lib/api.ts";
 import { duration, hhmm } from "../lib/format.ts";
+import { frequencyText, readFrequency } from "../lib/frequency.ts";
 import { lazyComponent } from "../lib/lazy.ts";
 import { freeName, templateFromUrl } from "../lib/library.ts";
 import { useLive } from "../lib/live.ts";
 import { loadPolicyMarks, PolicyMark, policyMarks } from "../lib/policy-marks.tsx";
 import { LEVEL_NAMES, planNow } from "../lib/state.ts";
 import { EventSettingsFields, eventSettingsFrom } from "./event-settings.tsx";
-import {
-  type EditorTarget,
-  frequencyText,
-  HabitEditor,
-  MonthlyFields,
-  readFrequency,
-} from "./habit-editor.tsx";
+import { type EditorTarget, FrequencyFields, HabitEditor } from "./habit-editor.tsx";
 import {
   describeWeekly,
   type HoursChoice,
@@ -43,7 +38,6 @@ const TeamHabitTemplates = lazyComponent(() =>
   import("./team-recommendations.tsx").then((m) => m.TeamHabitTemplates),
 );
 
-const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const DEFENSE: Record<string, string> = {
   adaptive: "Free until time gets short",
   "always-free": "Always free",
@@ -243,21 +237,9 @@ export function Habits() {
           Skip days with events named (comma list)
           <input name="reservedWords" placeholder="lunch, offsite" />
         </label>
-        <fieldset class="wide days">
-          <legend>Days (none selected: every day of its hours)</legend>
-          {DAY_NAMES.map((n, i) => (
-            <label key={n} class="inline">
-              <input
-                type="checkbox"
-                name="days"
-                value={i + 1}
-                defaultChecked={preset?.days?.includes(i + 1) ?? false}
-              />
-              {n}
-            </label>
-          ))}
-        </fieldset>
-        <MonthlyFields />
+        <FrequencyFields
+          preset={preset?.days ? { period: "weekly", days: preset.days } : undefined}
+        />
         <label class="wide">
           Notes
           <textarea name="notes" rows={2} />

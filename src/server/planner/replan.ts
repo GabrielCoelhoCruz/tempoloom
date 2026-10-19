@@ -75,15 +75,30 @@ interface CalendarInfo {
 
 const FOOTER = "Planned by Tempoloom.";
 
-export function writeCalendar(db: Db, userId: string): CalendarInfo | undefined {
-  return one<CalendarInfo>(
-    db,
-    `SELECT c.id, c.account_id, c.provider_id, c.is_primary, c.writable, c.check_availability
-     FROM calendars c JOIN accounts a ON a.id = c.account_id
-     WHERE a.user_id = ? AND a.status = 'ok' AND c.writable = 1
-     ORDER BY a.is_main DESC, c.is_primary DESC, a.created_at, c.name LIMIT 1`,
-    userId,
+/** Where new events go: the preferred calendar when the user can write to it, else the main one. */
+export function writeCalendar(
+  db: Db,
+  userId: string,
+  preferredId?: string | null,
+): CalendarInfo | undefined {
+  const pick = (only: string | null) =>
+    one<CalendarInfo>(
+      db,
+      `SELECT c.id, c.account_id, c.provider_id, c.is_primary, c.writable, c.check_availability
+       FROM calendars c JOIN accounts a ON a.id = c.account_id
+       WHERE a.user_id = ? AND a.status = 'ok' AND c.writable = 1 AND (? IS NULL OR c.id = ?)
+       ORDER BY a.is_main DESC, c.is_primary DESC, a.created_at, c.name LIMIT 1`,
+      userId,
+      only,
+      only,
+    );
+  if (!preferredId) return pick(null);
+  const chosen = pick(preferredId);
+  if (chosen) return chosen;
+  console.warn(
+    `calendar ${preferredId} is not writable for user ${userId}; using the main calendar`,
   );
+  return pick(null);
 }
 
 function weekStartOf(zone: string, now: number, weekStart: 1 | 7): number {
@@ -406,6 +421,13 @@ export function loadSnapshot(
     current,
     past,
     dismissedKeys: dismissed,
+    bufferLengths: Object.fromEntries(
+      rows.flatMap((r) =>
+        r.kind === "buffer" && r.kept_minutes !== null && r.end_ms > now
+          ? [[r.key, r.kept_minutes]]
+          : [],
+      ),
+    ),
     tasks,
     habits,
     meetings: meetings.items,
@@ -418,8 +440,13 @@ export function loadSnapshot(
   return { snapshot, rows, notes, titles, eventSettings };
 }
 
-/** Tempoloom's own mirror copies as their calendars show them (buffers-travel.md rule 13). */
+/**
+ * Tempoloom's own mirror copies as their calendars show them (buffers-travel.md
+ * rule 13), with the category their title and description give.
+ */
 export function copyAnchors(db: Db, userId: string, now: number): ExternalEvent[] {
+  const userEmail =
+    one<{ email: string }>(db, "SELECT email FROM users WHERE id = ?", userId)?.email ?? "";
   return all<{
     id: string;
     calendar_id: string;
@@ -456,6 +483,20 @@ export function copyAnchors(db: Db, userId: string, now: number): ExternalEvent[
     bookedViaLink: false,
     calendarId: c.calendar_id,
     mirrorSource: c.source_calendar_id,
+    category: categoryOf(
+      {
+        title: c.summary,
+        description: c.description,
+        start: c.start_ms,
+        end: c.end_ms,
+        eventType: "default",
+        attendees: [],
+        managedKind: null,
+        personalCalendar: false,
+        manual: null,
+      },
+      userEmail,
+    ),
   }));
 }
 
@@ -545,16 +586,20 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
     }),
   );
   const calendars = new Map(
-    all<CalendarInfo>(
+    all<CalendarInfo & { ok: number }>(
       db,
-      `SELECT c.id, c.account_id, c.provider_id, c.is_primary, c.writable, c.check_availability
+      `SELECT c.id, c.account_id, c.provider_id, c.is_primary, c.writable, c.check_availability,
+         a.status = 'ok' AS ok
        FROM calendars c JOIN accounts a ON a.id = c.account_id WHERE a.user_id = ?`,
       userId,
     ).map((c) => [c.id, c]),
   );
-  // The calendar chosen in an automation's event settings, while it can take events.
-  const chosenCalendar = (es: EventSettings | undefined) =>
-    es?.calendarId && calendars.get(es.calendarId)?.writable === 1 ? es.calendarId : undefined;
+  // A calendar chosen for an item, while its account works and it takes events.
+  const writable = (id: string | null | undefined) => {
+    const cal = id ? calendars.get(id) : undefined;
+    return cal?.writable === 1 && cal.ok === 1 ? cal.id : undefined;
+  };
+  const chosenCalendar = (es: EventSettings | undefined) => writable(es?.calendarId);
   const travelBuffers = new Set(
     snapshot.buffers.filter((b) => b.filter.travel || b.filter.flight).map((b) => b.id),
   );
@@ -562,11 +607,14 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
     const row = rowByKey.get(p.key);
     const itemKey = `${p.kind}:${p.itemId}`;
     const es = eventSettings.get(itemKey);
-    const calendarId =
-      row?.calendar_id ??
-      (p.kind === "task" ? taskCalendar.get(taskHours.get(p.itemId) ?? "") : undefined) ??
-      chosenCalendar(es) ??
-      target.id;
+    // HRS-7, HRS-12: unlocked task chunks follow the calendar of their hours
+    // set, also when it changes; they keep their times. A chunk on a calendar
+    // that cannot be written now stays, and other events stay where they are.
+    const taskCalendarId =
+      p.kind === "task" && !row?.locked && (!row || writable(row.calendar_id))
+        ? (writable(taskCalendar.get(taskHours.get(p.itemId) ?? "")) ?? target.id)
+        : undefined;
+    const calendarId = taskCalendarId ?? row?.calendar_id ?? chosenCalendar(es) ?? target.id;
     const keepUserTitle = row?.user_edited === 1;
     const itemNotes = notes.get(itemKey) ?? "";
     const travel = p.kind === "buffer" && travelBuffers.has(p.itemId);

@@ -43,6 +43,8 @@ export interface ManagedRow {
   user_edited: number;
   etag: string | null;
   extra: string;
+  /** Buffers: the length the user gave this event in the calendar (buffers rule 14). */
+  kept_minutes: number | null;
 }
 
 /** Guests, location, reminders and visibility as stored in `managed_events.extra`. */

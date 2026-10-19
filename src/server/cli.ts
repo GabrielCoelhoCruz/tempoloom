@@ -1,17 +1,20 @@
 // Operator commands. Run with the same environment as the server.
 //   node src/server/cli.ts login-link --email you@example.com
 //   node src/server/cli.ts connect-google-service-account --email you@example.com [--calendar ID]
+//   GOOGLE_REFRESH_TOKEN=... node src/server/cli.ts connect-google-oauth --email you@example.com [--calendar ID]
+//     (needs GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET, the client that got the token)
 //   node src/server/cli.ts seat-limit --email admin@example.com --seats 10|none
 //   node src/server/cli.ts limit [--name max_mirrors --value 3|none]
 //   node src/server/cli.ts booking-reminders [--now 2026-10-20T08:00:00Z]
 //   node src/server/cli.ts weekly-reports [--now 2026-10-23T08:30:00Z]   (--now: TEMPOLOOM_TEST_MODE=1 only)
 import { parseArgs } from "node:util";
-import { createLoginLink, ensureUser, upsertAccount } from "./accounts.ts";
+import { createLoginLink, ensureUser } from "./accounts.ts";
 import { sendDueReminders } from "./booking-mail.ts";
 import { clockOf, loadConfig } from "./config.ts";
 import { SecretBox } from "./crypto.ts";
 import { DailyMailWorker } from "./daily-mail.ts";
 import { one, openDb, run } from "./db.ts";
+import { connectGoogleOauth, connectGoogleServiceAccount } from "./google/connect.ts";
 import { parseServiceAccountKey } from "./google/service-account.ts";
 import { instanceLimit, LIMITS, type LimitName, setInstanceLimit } from "./limits.ts";
 import { createMailer } from "./mail.ts";
@@ -25,6 +28,7 @@ const { values } = parseArgs({
     seats: { type: "string" },
     value: { type: "string" },
     now: { type: "string" },
+    calendar: { type: "string" },
   },
 });
 const config = loadConfig();
@@ -73,16 +77,21 @@ switch (command) {
   case "connect-google-service-account": {
     if (!config.GOOGLE_SERVICE_ACCOUNT_JSON)
       throw new Error("GOOGLE_SERVICE_ACCOUNT_JSON is not set");
+    // The service account's own calendar list has no meaningful primary, so the
+    // operator names the calendar to plan on; the next sync keeps it as primary.
     const key = parseServiceAccountKey(config.GOOGLE_SERVICE_ACCOUNT_JSON);
-    const user = ensureUser(db, email, values.name ?? email);
-    const id = upsertAccount(db, box, {
-      userId: user.id,
-      provider: "google_service",
-      externalId: key.client_email,
-      email: key.client_email,
-      credentials: {},
-    });
-    console.log(`account ${id} for user ${user.id}`);
+    const c = await connectGoogleServiceAccount(db, box, key, target());
+    console.log(`account ${c.accountId} for user ${c.userId}`);
+    break;
+  }
+  case "connect-google-oauth": {
+    // For a server with no browser: the refresh token comes from a consent done elsewhere.
+    const client =
+      config.GOOGLE_CLIENT_ID && config.GOOGLE_CLIENT_SECRET
+        ? { clientId: config.GOOGLE_CLIENT_ID, clientSecret: config.GOOGLE_CLIENT_SECRET }
+        : undefined;
+    const c = await connectGoogleOauth(db, box, client, process.env.GOOGLE_REFRESH_TOKEN, target());
+    console.log(`account ${c.accountId} for user ${c.userId}`);
     break;
   }
   case "seat-limit": {
@@ -117,3 +126,7 @@ switch (command) {
     throw new Error(`Unknown command: ${command ?? "(none)"}`);
 }
 db.close();
+
+function target() {
+  return { email, name: values.name, calendar: values.calendar };
+}

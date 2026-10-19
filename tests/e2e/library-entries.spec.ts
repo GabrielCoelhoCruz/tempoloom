@@ -376,8 +376,8 @@ test("library buffer entries 28, 29, 30 anchor on external meetings: travel only
 
   await use(page, "Travel for external meetings");
   await expect(form.getByLabel("Side")).toHaveValue("both");
-  await expect(form.getByLabel("Before the event (minutes)")).toHaveValue("30");
-  await expect(form.getByLabel("After the event (minutes)")).toHaveValue("30");
+  // A travel buffer has one length for both sides (buffers-travel.md).
+  await expect(form.getByLabel("Travel length (minutes)")).toHaveValue("30");
   await saveShared(page);
   await eventually(
     () => week(cal),
