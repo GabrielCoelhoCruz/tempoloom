@@ -15,6 +15,8 @@
 // 7. A tool's run returns a key or a type that its outputSchema does not have,
 //    and tools/call sends it on as structuredContent.
 // 8. list_automations pages in another order than the automation list.
+// 9. list_staged_changes pages in another order than the preview panel
+//    (openChanges): oldest first, and in staging order at one created_at.
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { Hono } from "hono";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -26,7 +28,7 @@ import type { AppEnv } from "../../src/server/app.ts";
 import { all, one, openDb, run } from "../../src/server/db.ts";
 import { mcpRoutes } from "../../src/server/mcp.ts";
 import { CHECK_IDS } from "../../src/server/meeting-prefs.ts";
-import { createPreview, type PreviewDeps } from "../../src/server/preview.ts";
+import { createPreview, openChanges, type PreviewDeps } from "../../src/server/preview.ts";
 
 // get_stats returns computeStats as is: a test can make it return a bad result.
 vi.mock(import("../../src/server/api/stats.ts"), async (original) => {
@@ -500,6 +502,41 @@ describe("MCP list pages", () => {
     const seen = [...first.changes.map((c) => c.id), ...rest.flat()];
     expect(new Set(seen).size).toBe(seen.length);
     expect(seen.filter((id) => id !== added).sort()).toEqual([...ids].sort());
+  });
+
+  it("list_staged_changes pages, put together, are the open changes oldest first, in staging order at one time", async () => {
+    const s = setup();
+    // The clock stands still: every change has the same created_at, so only
+    // the staging order tells them apart (random ids would not).
+    const ids: string[] = [];
+    for (let i = 0; i < 8; i++)
+      ids.push(
+        (
+          await s.tool<{ id: string }>("propose_create_event", {
+            title: `Event ${i}`,
+            start: new Date(T0 + DAY + i * HOUR).toISOString(),
+            end: new Date(T0 + DAY + (i + 1) * HOUR).toISOString(),
+          })
+        ).id,
+      );
+    const listed = async () => {
+      const panel = openChanges(s.db, s.user.id, T0).map((c) => c.id);
+      for (const limit of [1, 3, 100])
+        expect(
+          (await pages(s, "list_staged_changes", "changes", { limit })).flat(),
+          `limit ${limit}`,
+        ).toEqual(panel);
+      return panel;
+    };
+    expect(await listed()).toEqual(ids);
+
+    // Distinct created_at: older first, whatever the staging order.
+    const stagedAt = (i: number, t: number) =>
+      run(s.db, "UPDATE staged_changes SET created_at = ? WHERE id = ?", t, ids[i] ?? "");
+    stagedAt(5, T0 - 2);
+    stagedAt(2, T0 - 1);
+    stagedAt(7, T0 - 1);
+    expect(await listed()).toEqual([5, 2, 7, 0, 1, 3, 4, 6].map((i) => ids[i]));
   });
 
   it("uses a default limit, refuses a limit above the maximum and refuses a bad cursor", async () => {

@@ -134,44 +134,46 @@ export function setPreviewMode(
 
 // ---------------------------------------------------------------- store
 
-/** Pending and accepted changes in the order they were staged; expired ones are deleted. */
+/**
+ * The open changes: pending and accepted, not expired. Oldest first; at one
+ * created_at, in staging order (rowid). openChanges and openChangesPage share it.
+ */
+const OPEN = `FROM staged_changes WHERE user_id = ? AND state IN ('pending', 'accepted') AND created_at >= ?`;
+const OPEN_ORDER = "ORDER BY created_at, rowid";
+
+/** The open changes, oldest first; expired ones are deleted. */
 export function openChanges(db: Db, userId: string, now: number): StagedChange[] {
+  const since = now - KEEP_DAYS * DAY;
   run(
     db,
     "DELETE FROM staged_changes WHERE user_id = ? AND state IN ('pending', 'accepted') AND created_at < ?",
     userId,
-    now - KEEP_DAYS * DAY,
+    since,
   );
-  return all<Row>(
-    db,
-    `SELECT * FROM staged_changes WHERE user_id = ? AND state IN ('pending', 'accepted')
-     ORDER BY created_at, rowid`,
-    userId,
-  ).map(fromRow);
+  return all<Row>(db, `SELECT * ${OPEN} ${OPEN_ORDER}`, userId, since).map(fromRow);
 }
 
 /**
- * One page of the open changes, oldest first, in (created_at, id) order after
- * the key `after`. Expired changes are skipped here and deleted by openChanges.
+ * One page of the open changes, in openChanges order after the key `after`
+ * ([created_at, seq] of the last row). Expired changes are skipped here and
+ * deleted by openChanges.
  */
 export function openChangesPage(
   db: Db,
   userId: string,
   now: number,
-  after: [number, string] | undefined,
+  after: [number, number] | undefined,
   limit: number,
-): (StagedChange & { state: "pending" | "accepted" })[] {
-  return all<Row & { state: "pending" | "accepted" }>(
+): (StagedChange & { state: "pending" | "accepted"; seq: number })[] {
+  return all<Row & { state: "pending" | "accepted"; seq: number }>(
     db,
-    `SELECT * FROM staged_changes WHERE user_id = ? AND state IN ('pending', 'accepted')
-       AND created_at >= ? AND (created_at, id) > (?, ?)
-     ORDER BY created_at, id LIMIT ?`,
+    `SELECT rowid AS seq, * ${OPEN} AND (created_at, rowid) > (?, ?) ${OPEN_ORDER} LIMIT ?`,
     userId,
     now - KEEP_DAYS * DAY,
     after?.[0] ?? -1,
-    after?.[1] ?? "",
+    after?.[1] ?? -1,
     limit,
-  ).map((r) => ({ ...fromRow(r), state: r.state }));
+  ).map((r) => ({ ...fromRow(r), state: r.state, seq: r.seq }));
 }
 
 export interface StageInput {

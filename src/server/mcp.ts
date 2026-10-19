@@ -349,7 +349,7 @@ export function mcpRoutes(deps: McpDeps): Hono {
         const after = cursorKey(
           "list_staged_changes",
           "",
-          z.tuple([z.number(), z.string()]),
+          z.tuple([z.number(), z.number()]),
           a.cursor,
         );
         const p = cut(
@@ -357,7 +357,7 @@ export function mcpRoutes(deps: McpDeps): Hono {
           limit,
           "list_staged_changes",
           "",
-          (c) => [c.createdAt, c.id],
+          (c) => [c.createdAt, c.seq],
         );
         return {
           changes: p.rows.map((c) => ({
