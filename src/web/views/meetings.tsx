@@ -282,11 +282,9 @@ export function Meetings() {
         ? "2"
         : "1";
   const fq = ed?.frequency ?? (seed ? seedFrequency(seed) : undefined);
-  // A series repeats every day or every N weeks from its first instance (rules 1, 10).
-  const forSeries = seed !== null || Boolean(ed?.series_event_id);
-  const shownUnit = forSeries ? "weeks" : unit;
-  // An adopted series keeps the frequency of the calendar series: its edit shows it read-only.
-  const locked = Boolean(ed?.series_event_id);
+  // A series repeats as its recurrence rule says, from its first instance (rules 1, 10):
+  // adding and editing it show its frequency read-only, with the unit it has.
+  const locked = seed !== null || Boolean(ed?.series_event_id);
   const pick = (x: Series | null) => {
     const init = x ? everyOf(seedFrequency(x)) : { every: "1", unit: "weeks" };
     setSeed(x);
@@ -498,7 +496,7 @@ export function Meetings() {
           <label>
             How often
             <select name="every" onChange={(e) => setEvery(e.currentTarget.value)}>
-              {EVERY.filter(([v]) => !forSeries || v !== "monthly").map(([v, l]) => (
+              {EVERY.map(([v, l]) => (
                 <option value={v} key={v} selected={v === everyInit}>
                   {l}
                 </option>
@@ -523,26 +521,26 @@ export function Meetings() {
             {locked ? (
               <label>
                 Unit
-                <input type="hidden" name="everyUnit" value="weeks" />
-                <input readOnly value="Weeks" />
+                <input type="hidden" name="everyUnit" value={unit} />
+                <input readOnly value={unit === "days" ? "Days" : "Weeks"} />
               </label>
             ) : (
               <label>
                 Unit
                 <select
                   name="everyUnit"
-                  value={shownUnit}
+                  value={unit}
                   onChange={(e) => setUnit(e.currentTarget.value)}
                 >
-                  {!forSeries && <option value="days">Days</option>}
+                  <option value="days">Days</option>
                   <option value="weeks">Weeks</option>
-                  {!forSeries && <option value="months">Months</option>}
+                  <option value="months">Months</option>
                 </select>
               </label>
             )}
           </>
         )}
-        {(every === "monthly" || (every === "custom" && shownUnit === "months")) && (
+        {(every === "monthly" || (every === "custom" && unit === "months")) && (
           <>
             <label>
               Day of the month
@@ -684,7 +682,7 @@ export function Meetings() {
             ))}
           </select>
         </label>
-        {!forSeries && (
+        {!locked && (
           <label>
             Starting
             <input name="starting" type="date" defaultValue={ed?.starting ?? ""} />

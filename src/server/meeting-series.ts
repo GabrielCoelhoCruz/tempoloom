@@ -18,6 +18,7 @@ export interface Series {
   end: number;
   idealTime: string;
   idealDay: number;
+  /** From the series recurrence rule (`seriesFrequency`); fixed for the meeting. */
   everyWeeks: number | "daily";
   firstDate: LocalDate;
 }
@@ -26,6 +27,39 @@ export const seriesKey = (calendarId: string, seriesId: string) =>
   createHash("sha256").update(`${calendarId}\n${seriesId}`).digest("base64url").slice(0, 16);
 
 const pad = (n: number) => String(n).padStart(2, "0");
+
+/**
+ * The date of an instance as the series recurrence rule makes it: the date in
+ * its recurrence id (CalDAV `<url>#<id>`, Google `<series>_<id>`). A moved
+ * instance keeps it. The planner counts the instances' periods from the same date.
+ */
+function ruleDay(eventId: string): number | null {
+  const m =
+    /#(\d{4})-?(\d{2})-?(\d{2})/.exec(eventId) ??
+    /_(\d{4})(\d{2})(\d{2})(?:T\d{6}Z?)?$/.exec(eventId);
+  return m ? Date.parse(`${m[1]}-${m[2]}-${m[3]}T00:00:00Z`) / 86_400_000 : null;
+}
+
+/**
+ * The frequency of a series from its recurrence rule (rule 1): the cache keeps
+ * the instances the rule makes for a year, and their smallest step is the
+ * rule's FREQ and INTERVAL; a cancelled instance only makes one step longer.
+ * Null when the rule repeats neither every day nor every N weeks (two days a
+ * week, monthly): a meeting cannot keep one instance in each of its periods.
+ * An id without a recurrence id falls back to the instance's start day; with
+ * one instance only, the series counts as weekly.
+ */
+function seriesFrequency(list: { event_id: string; start_ms: number }[]): number | "daily" | null {
+  const days = [
+    ...new Set(list.map((r) => ruleDay(r.event_id) ?? Math.floor(r.start_ms / 86_400_000))),
+  ].sort((a, b) => a - b);
+  const steps = days.slice(1).map((d, i) => d - (days[i] ?? d));
+  if (steps.length === 0) return 1;
+  const step = Math.min(...steps);
+  if (step === 1) return "daily";
+  if (step % 7 !== 0 || step > 52 * 7 || steps.some((x) => x % step !== 0)) return null;
+  return step / 7;
+}
 
 /**
  * Series with at least one guest that the user organizes on a calendar
@@ -41,6 +75,7 @@ export function adoptableSeries(db: Db, userId: string, now: number): Series[] {
   if (!user) return [];
   const rows = all<{
     calendar_id: string;
+    event_id: string;
     recurring_id: string;
     summary: string;
     description: string;
@@ -51,7 +86,7 @@ export function adoptableSeries(db: Db, userId: string, now: number): Series[] {
     private_props: string;
   }>(
     db,
-    `SELECT e.calendar_id, e.recurring_id, e.summary, e.description, e.location, e.start_ms,
+    `SELECT e.calendar_id, e.event_id, e.recurring_id, e.summary, e.description, e.location, e.start_ms,
        e.end_ms, e.attendees, e.private_props
      FROM events e JOIN calendars c ON c.id = e.calendar_id JOIN accounts a ON a.id = c.account_id
      WHERE a.user_id = ? AND a.status = 'ok' AND c.writable = 1 AND e.recurring_id IS NOT NULL
@@ -70,14 +105,15 @@ export function adoptableSeries(db: Db, userId: string, now: number): Series[] {
   }
   const out: Series[] = [];
   for (const list of groups.values()) {
-    const [first, second] = list;
+    const [first] = list;
     if (!first) continue;
+    const everyWeeks = seriesFrequency(list);
+    if (everyWeeks === null) continue;
     const attendees = (JSON.parse(first.attendees) as string[]).filter(
       (e) => e !== user.email.toLowerCase(),
     );
     if (attendees.length === 0) continue;
     const local = utcToLocal(user.time_zone, first.start_ms);
-    const gapDays = second ? Math.round((second.start_ms - first.start_ms) / 86_400_000) : 7;
     out.push({
       key: seriesKey(first.calendar_id, first.recurring_id),
       calendarId: first.calendar_id,
@@ -90,7 +126,7 @@ export function adoptableSeries(db: Db, userId: string, now: number): Series[] {
       end: first.end_ms,
       idealTime: `${pad(Math.floor(local.minuteOfDay / 60))}:${pad(local.minuteOfDay % 60)}`,
       idealDay: weekdayOf(local.date),
-      everyWeeks: gapDays === 1 ? "daily" : Math.min(52, Math.max(1, Math.round(gapDays / 7))),
+      everyWeeks,
       firstDate: local.date,
     });
   }

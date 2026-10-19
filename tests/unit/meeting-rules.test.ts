@@ -13,6 +13,9 @@
 // 4. An edit of a meeting that manages a series changes its frequency or moves
 //    its start date: its periods stop matching the series' instances and the
 //    push deletes them (rules 1, 10).
+// 5. Adopting a series takes a frequency other than the series' own, or reads
+//    it from the gap between the first two instances: a cancelled or moved
+//    instance, or a weekday-only series, then gives the wrong count (rule 1).
 import { Hono } from "hono";
 import { describe, expect, it } from "vitest";
 import { plan } from "../../src/scheduler/plan.ts";
@@ -22,7 +25,9 @@ import type { AppEnv } from "../../src/server/app.ts";
 import { all, type Db, one, openDb, run } from "../../src/server/db.ts";
 import { meetingItems } from "../../src/server/planner/meetings.ts";
 import { loadSnapshot } from "../../src/server/planner/replan.ts";
+import { eventsFromObject } from "../../src/server/providers/caldav.ts";
 import { getSettings } from "../../src/server/settings.ts";
+import { cacheEvent } from "../../src/server/sync/pull.ts";
 import type { SyncService } from "../../src/server/sync/service.ts";
 
 const DAY = 86_400_000;
@@ -32,7 +37,12 @@ function setup() {
   const db = openDb(":memory:");
   const owner = ensureUser(db, "owner@example.com", "Owner", T0);
   const clock = { t: T0 };
-  const sync = { request() {}, exclusive: async () => undefined } as unknown as SyncService;
+  // Adoption marks the series through the provider; this one accepts every write.
+  const pool = { get: () => ({ setSeriesProps: async () => undefined }) };
+  const sync = {
+    request() {},
+    exclusive: async (_userId: string, fn: (p: typeof pool) => Promise<unknown>) => fn(pool),
+  } as unknown as SyncService;
   const app = new Hono<AppEnv>();
   app.use("*", async (c, next) => {
     c.set("user", owner);
@@ -222,6 +232,102 @@ describe("series edits", () => {
     const plain = (await call("POST", "/meetings", sync1("Plain"))) as { id: string };
     const monthly = sync1("Plain", { frequency: { period: "monthly", dayOfMonth: 1 } });
     expect(await status("PUT", `/meetings/${plain.id}`, monthly)).toBe(200);
+  });
+});
+
+describe("series adoption", () => {
+  /** A CalDAV series the owner organizes with Dana, cached as the sync caches it. */
+  function withSeries(rule: string, extra = "") {
+    const s = setup();
+    run(
+      s.db,
+      `INSERT INTO accounts (id, user_id, provider, external_id, email, credentials, created_at)
+       VALUES ('acc', ?, 'caldav', 'owner', 'owner@example.com', '', ?)`,
+      s.owner.id,
+      T0,
+    );
+    run(
+      s.db,
+      "INSERT INTO calendars (id, account_id, provider_id, name, is_primary) VALUES ('cal', 'acc', 'cal', 'Work', 1)",
+    );
+    const ics = [
+      "BEGIN:VCALENDAR",
+      "VERSION:2.0",
+      "PRODID:-//test//EN",
+      "BEGIN:VEVENT",
+      "UID:standup",
+      "DTSTAMP:20261001T000000Z",
+      "DTSTART:20261020T100000Z",
+      "DTEND:20261020T103000Z",
+      "SUMMARY:Standup",
+      `RRULE:${rule}`,
+      ...(extra ? [extra] : []),
+      "ORGANIZER:mailto:owner@example.com",
+      "ATTENDEE;PARTSTAT=ACCEPTED:mailto:dana@example.com",
+      "END:VEVENT",
+      "END:VCALENDAR",
+    ].join("\r\n");
+    for (const e of eventsFromObject(
+      ics,
+      "/cal/standup.ics",
+      null,
+      T0,
+      T0 + 365 * DAY,
+      "UTC",
+      "owner@example.com",
+    ))
+      cacheEvent(s.db, "cal", e);
+    const list = async () =>
+      (await s.call("GET", "/meetings/series")).series as {
+        title: string;
+        calendarId: string;
+        seriesId: string;
+        everyWeeks: number | "daily";
+      }[];
+    const adopt = async (frequency: Record<string, unknown>) => {
+      const [x] = await list();
+      return s.status(
+        "POST",
+        "/meetings",
+        sync1("Standup", {
+          frequency,
+          series: { calendarId: x?.calendarId, seriesId: x?.seriesId },
+        }),
+      );
+    };
+    const meetings = () => all<{ f: string }>(s.db, "SELECT frequency AS f FROM meetings");
+    return { ...s, list, adopt, meetings };
+  }
+  const weekly = (everyWeeks: number) => ({ period: "weekly", everyWeeks, idealDays: [2] });
+
+  it.each([
+    { series: "every week", rule: "FREQ=WEEKLY", as: "every 2 weeks", frequency: weekly(2) },
+    { series: "every week", rule: "FREQ=WEEKLY", as: "every day", frequency: { period: "daily" } },
+    { series: "every day", rule: "FREQ=DAILY", as: "every week", frequency: weekly(1) },
+  ])("refuses to adopt a series $series as $as", async ({ rule, frequency }) => {
+    const { adopt, meetings } = withSeries(rule);
+    expect(await adopt(frequency)).toBe(400);
+    expect(meetings()).toEqual([]);
+  });
+
+  it("adopts a weekly series with INTERVAL=3 as every 3 weeks, also when an instance is cancelled", async () => {
+    // EXDATE drops the second instance: the first two instances are 6 weeks apart.
+    const { list, adopt, meetings } = withSeries(
+      "FREQ=WEEKLY;INTERVAL=3",
+      "EXDATE:20261110T100000Z",
+    );
+    expect((await list()).map((x) => x.everyWeeks)).toEqual([3]);
+    expect(await adopt(weekly(6))).toBe(400);
+    expect(await adopt(weekly(3))).toBe(201);
+    expect(JSON.parse(meetings()[0]?.f ?? "{}")).toMatchObject({ period: "weekly", everyWeeks: 3 });
+  });
+
+  it("reads a weekday-only daily series as daily, and does not offer a series with two days a week", async () => {
+    const weekdays = withSeries("FREQ=DAILY;BYDAY=MO,TU,WE,TH,FR", "");
+    expect((await weekdays.list()).map((x) => x.everyWeeks)).toEqual(["daily"]);
+    // Two instances a week fit neither every day nor every N weeks.
+    const twice = withSeries("FREQ=WEEKLY;BYDAY=TU,TH");
+    expect(await twice.list()).toEqual([]);
   });
 });
 

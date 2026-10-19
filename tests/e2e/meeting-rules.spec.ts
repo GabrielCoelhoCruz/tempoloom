@@ -683,7 +683,7 @@ test("adaptive defense writes busy within 12 hours and free later; always busy a
   check(await read());
 });
 
-test("a series every 3 weeks fills the form as custom every 3 weeks, keeps its instances when saved, cannot take a monthly frequency or a start date when added, and shows its frequency read-only when edited, where other ideal days move its instances (rules 1, 10)", async ({
+test("a series every 3 weeks fills the form with its frequency read-only, refuses another frequency or a start date when added, keeps its instances when saved, and keeps its frequency read-only when edited, where other ideal days move its instances (rules 1, 10)", async ({
   page,
   cal,
   signIn,
@@ -704,44 +704,54 @@ test("a series every 3 weeks fills the form as custom every 3 weeks, keeps its i
   await expect(pick.locator("option", { hasText: "Triweekly" })).toHaveCount(1, {
     timeout: 60_000,
   });
-  // A new meeting offers every month; a series does not, nor a start date of its own.
+  // A new meeting picks its frequency and a start date; a series has both from the calendar.
   const often = form.getByLabel("How often");
   await expect(often.locator("option", { hasText: "Every month" })).toHaveCount(1);
+  await expect(often).toBeEditable();
   await expect(form.getByLabel("Starting")).toBeVisible();
   await pick.selectOption({ label: "Triweekly" });
-  const seriesOnly = async () => {
-    await expect(often.locator("option", { hasText: "Every month" })).toHaveCount(0);
-    await expect(often.locator("option", { hasText: "Every day" })).toHaveCount(1);
-    await expect(form.getByLabel("Unit").locator("option")).toHaveText(["Weeks"]);
+  // The series' rule says every 3 weeks: the form shows it locked.
+  const lockedFrequency = async () => {
+    for (const [label, value] of [
+      ["How often", "Custom"],
+      ["Repeat every", "3"],
+      ["Unit", "Weeks"],
+    ]) {
+      await expect(form.getByLabel(label as string)).toHaveValue(value as string);
+      await expect(form.getByLabel(label as string)).not.toBeEditable();
+    }
     await expect(form.getByLabel("Starting")).toHaveCount(0);
   };
-  await expect(form.getByLabel("How often")).toHaveValue("custom");
-  await expect(form.getByLabel("Repeat every")).toHaveValue("3");
-  await expect(form.getByLabel("Unit")).toHaveValue("weeks");
+  await lockedFrequency();
   await expect(form.getByLabel("Tue", { exact: true })).toBeChecked();
-  await seriesOnly();
 
-  // A series repeats daily or every N weeks: the API refuses a monthly frequency for it.
+  // The API takes only the series' own frequency: every 2 weeks or every month is refused.
   const refused = await page.evaluate(async (title) => {
     const list = (await (await fetch("/api/meetings/series")).json()) as {
       series: { title: string; calendarId: string; seriesId: string }[];
     };
     const s = list.series.find((x) => x.title === title);
-    const res = await fetch("/api/meetings", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        title,
-        attendees: [{ email: "dana@example.com" }],
-        frequency: { period: "monthly", dayOfMonth: 1 },
-        idealTime: "10:00",
-        durationMinutes: 30,
-        series: { calendarId: s?.calendarId, seriesId: s?.seriesId },
-      }),
-    });
-    return res.status;
+    const post = async (frequency: unknown) =>
+      (
+        await fetch("/api/meetings", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            title,
+            attendees: [{ email: "dana@example.com" }],
+            frequency,
+            idealTime: "10:00",
+            durationMinutes: 30,
+            series: { calendarId: s?.calendarId, seriesId: s?.seriesId },
+          }),
+        })
+      ).status;
+    return [
+      await post({ period: "weekly", everyWeeks: 2, idealDays: [2] }),
+      await post({ period: "monthly", dayOfMonth: 1 }),
+    ];
   }, "Triweekly");
-  expect(refused).toBe(400);
+  expect(refused).toEqual([400, 400]);
 
   await form.getByRole("button", { name: "Add meeting" }).click();
   await expect(row(page, "Triweekly")).toContainText("every 3 weeks, ideally Tue");
@@ -761,15 +771,7 @@ test("a series every 3 weeks fills the form as custom every 3 weeks, keeps its i
   // The edit form of the adopted series shows its frequency read-only: it comes from the calendar.
   await row(page, "Triweekly").getByRole("button", { name: "Edit" }).click();
   await expect(form.getByLabel("Title")).toHaveValue("Triweekly");
-  for (const [label, value] of [
-    ["How often", "Custom"],
-    ["Repeat every", "3"],
-    ["Unit", "Weeks"],
-  ]) {
-    await expect(form.getByLabel(label as string)).toHaveValue(value as string);
-    await expect(form.getByLabel(label as string)).not.toBeEditable();
-  }
-  await expect(form.getByLabel("Starting")).toHaveCount(0);
+  await lockedFrequency();
   // Other ideal days stay editable: the instances move inside the series, and none is deleted.
   await form.getByLabel("Tue", { exact: true }).uncheck();
   await form.getByLabel("Thu", { exact: true }).check();

@@ -10,7 +10,7 @@ import { all, type Db, one, run, tx } from "../db.ts";
 import { editedEventSettings, eventSettingsInput, newEventSettings } from "../event-settings.ts";
 import { jsonBody, notFound } from "../http.ts";
 import { createItemHours, dropItemHours, itemHoursSchema, saveItemHours } from "../item-hours.ts";
-import { adoptableSeries } from "../meeting-series.ts";
+import { adoptableSeries, type Series } from "../meeting-series.ts";
 import { logChange } from "../planner/meeting-log.ts";
 import {
   type Attendee,
@@ -255,20 +255,27 @@ function weekStartOf(db: Db, userId: string, date: LocalDate): LocalDate {
   return addDays(date, -((weekdayOf(date) - weekStart + 7) % 7));
 }
 
+type Frequency = MeetingInput["frequency"];
+const sameFrequency = (a: Frequency, b: Frequency) => {
+  const count = (x: Frequency) =>
+    x.period === "weekly" ? x.everyWeeks : x.period === "daily" ? (x.everyDays ?? 1) : null;
+  return a.period === b.period && count(a) === count(b);
+};
+
 /**
- * A series repeats every day or every N weeks (rule 1); its periods count from
- * its first instance (rule 10). Another frequency or start date would give its
- * instances other period keys, and the push would delete them.
+ * An adopted series repeats as its recurrence rule says, every day or every N
+ * weeks (rule 1), and its periods count from its first instance (rule 10).
+ * Another frequency or start date would give its instances other period keys:
+ * some would stay unmanaged, and the push would delete others.
  */
-function seriesRules(
-  db: Db,
-  userId: string,
-  f: MeetingInput["frequency"],
-  firstDate: LocalDate | null,
-): LocalDate | null {
-  if (f.period === "monthly" || (f.period === "daily" && (f.everyDays ?? 1) > 1))
-    badRequest("frequency", "A recurring meeting can repeat every day or every N weeks");
-  return f.period === "weekly" && firstDate ? weekStartOf(db, userId, firstDate) : firstDate;
+function seriesRules(db: Db, userId: string, f: Frequency, series: Series): LocalDate {
+  const own: Frequency =
+    series.everyWeeks === "daily"
+      ? { period: "daily" }
+      : { period: "weekly", everyWeeks: series.everyWeeks, idealDays: [series.idealDay] };
+  if (!sameFrequency(own, f))
+    badRequest("frequency", "A recurring meeting keeps the frequency of its calendar series");
+  return f.period === "weekly" ? weekStartOf(db, userId, series.firstDate) : series.firstDate;
 }
 
 /**
@@ -276,11 +283,8 @@ function seriesRules(
  * edit keeps its period and count, and its start date (rules 1, 10). Ideal days
  * stay editable: they do not change the periods.
  */
-function keepSeriesFrequency(old: MeetingRow, f: MeetingInput["frequency"]): LocalDate | null {
-  const was = JSON.parse(old.frequency) as MeetingInput["frequency"];
-  const count = (x: MeetingInput["frequency"]) =>
-    x.period === "weekly" ? x.everyWeeks : x.period === "daily" ? (x.everyDays ?? 1) : null;
-  if (was.period !== f.period || count(was) !== count(f))
+function keepSeriesFrequency(old: MeetingRow, f: Frequency): LocalDate | null {
+  if (!sameFrequency(JSON.parse(old.frequency) as Frequency, f))
     badRequest("frequency", "A recurring meeting keeps the frequency of its calendar series");
   return old.starting;
 }
@@ -486,7 +490,7 @@ export function meetingRoutes(db: Db, sync: SyncService, now: () => number): Hon
     };
     if (series) {
       // An adopted series keeps its id; its instances are placed from the next sync on.
-      row.starting = seriesRules(db, user.id, body.frequency, series.firstDate);
+      row.starting = seriesRules(db, user.id, body.frequency, series);
       await sync.exclusive(user.id, async (pool) => {
         await markSeries(db, pool, row, user.id);
         tx(db, create);
