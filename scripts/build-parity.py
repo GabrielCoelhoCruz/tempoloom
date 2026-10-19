@@ -782,7 +782,7 @@ E2E_NOTES.update({
     471: "One setting on the Settings page for every policy, stored with the account settings",
     473: "Label and busy-only copies skip free events; details copies are free",
     476: "Copies get the private class (CalDAV CLASS:PRIVATE, Google visibility private)",
-    506: "Each hours set has a task calendar picker on the Settings page",
+    506: "Each hours set has a calendar for task chunks on the Settings page",
     517: "On CalDAV the server rejects the stored password and the user types a new one; a Google account reconnects through Google sign-in again",
     934: "The E2E server runs with private receivers off for this test (WEBHOOK_ALLOW_PRIVATE)",
     938: "The 24-hour period is a setting (WEBHOOK_SUSPEND_AFTER_SECONDS), 4 seconds in the test",

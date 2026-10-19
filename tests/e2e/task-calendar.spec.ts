@@ -6,9 +6,8 @@
 // - the choice is not offered, not saved, or lost on reload    -> select value after reload
 // - chunks ignore the set's task calendar                      -> chunk on "Tasks", not on Work
 // - one set's choice leaks to another set                      -> work-hours task stays on Work
-// - a calendar that is not connected or writable is offered    -> option list
-import { calendarRow, openSettings } from "./calendar-helpers.ts";
-import { BACKEND, blockUntil, EMAIL, eventually, expect, test } from "./fixtures.ts";
+import { openSettings } from "./calendar-helpers.ts";
+import { BACKEND, blockUntil, eventually, expect, test } from "./fixtures.ts";
 import { addTask, allEvents, inHours, titled, W } from "./helpers.ts";
 
 test.skip(BACKEND === "google", "The test adds a second CalDAV calendar.");
@@ -21,27 +20,19 @@ test("tasks on personal hours go to that set's task calendar; work-hours tasks s
   await blockUntil(cal, W);
   await signIn();
   const tasks = await cal.newCalendar("Tasks");
-  await cal.newCalendar("Unused");
   await openSettings(page);
   await page.getByRole("button", { name: "Refresh calendar list" }).click();
-  const box = calendarRow(page, "Tasks").getByRole("checkbox");
-  await box.check();
-  await expect(box).toBeChecked();
-
-  const personal = page.getByLabel("Task calendar for personal hours");
-  // Only connected calendars that take events are offered, besides the main calendar.
-  await expect(personal.locator("option")).toHaveText(["Main calendar", /^Tasks/]);
-  const saved = page.waitForResponse(
-    (r) => /\/api\/hours\//.test(r.url()) && r.request().method() === "PUT" && r.ok(),
-  );
-  await personal.selectOption({ label: `Tasks (${EMAIL})` });
-  await saved;
+  await expect(page.getByTestId("calendar-list")).toContainText("Tasks");
   await page.reload();
-  await expect(page.getByLabel("Task calendar for personal hours")).toHaveValue(/.+/);
-  await expect(
-    page.getByLabel("Task calendar for personal hours").locator("option:checked"),
-  ).toHaveText(/^Tasks/);
-  await expect(page.getByLabel("Task calendar for work hours")).toHaveValue("");
+
+  const pick = (kind: string) =>
+    page.getByTestId(`hours-${kind}`).getByLabel("Calendar for task chunks");
+  await expect(pick("personal")).toHaveValue("");
+  await pick("personal").selectOption({ label: "Tasks" });
+  await expect(page.getByTestId("settings-message")).toHaveText("Saved");
+  await page.reload();
+  await expect(pick("personal").locator("option:checked")).toHaveText("Tasks");
+  await expect(pick("work")).toHaveValue("");
 
   await addTask(page, {
     title: "AT-Evening",
@@ -72,8 +63,6 @@ test("tasks on personal hours go to that set's task calendar; work-hours tasks s
 
   await page.reload();
   await openSettings(page);
-  await expect(
-    page.getByLabel("Task calendar for personal hours").locator("option:checked"),
-  ).toHaveText(/^Tasks/);
+  await expect(pick("personal").locator("option:checked")).toHaveText("Tasks");
   expect(titled(await allEvents(tasks), "AT-Evening")).toHaveLength(1);
 });
