@@ -55,8 +55,9 @@ describe("categoryOf", () => {
   });
 
   it("splits out of office at 8 hours", () => {
-    expect(of({ eventType: "outOfOffice", end: 8 * HOUR })).toBe("personal_commitment");
-    expect(of({ eventType: "outOfOffice", end: 8 * HOUR + 1 })).toBe("vacation");
+    // Exactly 8 hours is vacation (events-out-of-office.md, derived value).
+    expect(of({ eventType: "outOfOffice", end: 8 * HOUR - 1 })).toBe("personal_commitment");
+    expect(of({ eventType: "outOfOffice", end: 8 * HOUR })).toBe("vacation");
   });
 
   it("gives managed events the category of their kind", () => {

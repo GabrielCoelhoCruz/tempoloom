@@ -42,9 +42,10 @@ export function blockingIntervals(events: ExternalEvent[]): Interval[] {
   return events.filter(blocksPlanning).map((e) => ({ start: e.start, end: e.end }));
 }
 
-export function allDayBlocks(events: ExternalEvent[]): Interval[] {
+/** Time away (events-out-of-office.md): busy all-day events and out-of-office events that block. */
+export function awayBlocks(events: ExternalEvent[]): Interval[] {
   return events
-    .filter((e) => e.allDay && blocksPlanning(e))
+    .filter((e) => (e.allDay || e.eventType === "outOfOffice") && blocksPlanning(e))
     .map((e) => ({ start: e.start, end: e.end }));
 }
 

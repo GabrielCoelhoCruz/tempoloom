@@ -11,8 +11,8 @@ import {
   weekdayOf,
 } from "../shared/time.ts";
 import {
-  allDayBlocks,
   attends,
+  awayBlocks,
   blockingIntervals,
   hasTag,
   isFlightTitle,
@@ -60,6 +60,7 @@ interface Ctx {
   breakMs: number;
   /** External blocking time plus locked and started managed events. */
   fixed: TimeSet;
+  /** Time away: busy all-day and out-of-office events (events-out-of-office.md). */
   allDay: TimeSet;
   /** Free time for task and habit demands (break gaps applied). */
   freeTH: TimeSet;
@@ -144,7 +145,7 @@ function init(s: Snapshot): Ctx {
     end,
     breakMs,
     fixed,
-    allDay: TimeSet.from(allDayBlocks(s.events)),
+    allDay: TimeSet.from(awayBlocks(s.events)),
     freeTH,
     freeOther,
     hours: new Map(),
@@ -647,7 +648,8 @@ function placeHabit(ctx: Ctx, h: HabitItem): void {
         ? "no-space-priority"
         : "no-space-fixed";
     }
-    if (h.whenUnplaceable === "keep_as_conflict") {
+    // events-out-of-office.md rule 2: on a day fully away the occurrence is skipped, never a conflict.
+    if (h.whenUnplaceable === "keep_as_conflict" && reason !== "all-day-block") {
       const iv =
         cur && !h.changed
           ? { start: cur.start, end: cur.end }

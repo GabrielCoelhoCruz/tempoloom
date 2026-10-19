@@ -51,7 +51,7 @@ export function categoryOf(e: CategoryInput, userEmail: string): Category {
   if (hasTag(e, "#tl_flight")) return "flight";
   if (hasTag(e, "#tl_trip")) return "travel";
   if (e.eventType === "outOfOffice")
-    return e.end - e.start > EIGHT_HOURS ? "vacation" : "personal_commitment";
+    return e.end - e.start >= EIGHT_HOURS ? "vacation" : "personal_commitment";
   if (!e.managedKind && isFlightTitle(e.title)) return "flight";
   const self = userEmail.toLowerCase();
   const others = e.attendees.map((a) => a.toLowerCase()).filter((a) => a !== self);

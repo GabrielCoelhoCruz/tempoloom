@@ -30,7 +30,7 @@ const REASONS: Record<string, string> = {
   "outside-window": "starts after the planning window",
   "no-hours": "no hours in this period",
   "too-long-for-hours": "a chunk is longer than any range of its hours",
-  "all-day-block": "all-day events block every day",
+  "all-day-block": "time away (all-day or out-of-office events) blocks every day",
   "no-space-fixed": "no free time",
   "no-space-priority": "higher priorities use the free time",
   "after-due": "part ends after the due date",

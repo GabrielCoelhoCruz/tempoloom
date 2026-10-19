@@ -49,6 +49,7 @@ const LABELS: [string, string][] = [
   ["travel", "Travel"],
   ["breaks", "Breaks"],
   ["vacation", "Time away"],
+  ["personal_commitment", "Personal commitments"],
   ["free", "Free work time"],
 ];
 const h = (m: number) => duration(Math.round(m));
