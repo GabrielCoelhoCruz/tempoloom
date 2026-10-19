@@ -143,7 +143,26 @@ export function computeStats(db: Db, userId: string, from: string, to: string) {
     ),
   ).clip(start, end);
   const outside = meetings.total() - meetings.intersect(work).total();
+  // Habit progress: each habit's events in the range, the ended ones, and their time.
+  const now = Date.now();
+  const habits = all<{ id: string; title: string; events: number; done: number; minutes: number }>(
+    db,
+    `SELECT h.id, h.title, COUNT(m.id) AS events,
+       SUM(CASE WHEN m.end_ms <= ? THEN 1 ELSE 0 END) AS done,
+       SUM(MIN(m.end_ms, ?) - MAX(m.start_ms, ?)) / 60000.0 AS minutes
+     FROM habits h JOIN managed_events m
+       ON m.user_id = h.user_id AND m.kind = 'habit' AND m.source_id = h.id
+     WHERE h.user_id = ? AND m.end_ms > ? AND m.start_ms < ?
+     GROUP BY h.id ORDER BY h.title`,
+    now,
+    end,
+    start,
+    userId,
+    start,
+    end,
+  );
   return {
+    habits,
     from,
     to,
     days,

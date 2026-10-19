@@ -20,13 +20,13 @@ import {
 } from "./blocking.ts";
 import { hoursToTimeSet } from "./hours.ts";
 import type {
+  BaseFrequency,
   BufferFilter,
   BufferItem,
   Comparison,
   CurrentPlacement,
   ExternalEvent,
   FocusItem,
-  HabitFrequency,
   HabitItem,
   Level,
   MeetingItem,
@@ -404,23 +404,44 @@ function weekStartDate(ctx: Ctx, date: LocalDate): LocalDate {
   return addDays(date, -back);
 }
 
+/**
+ * A custom frequency keeps the periods of its unit (day, week or month) whose
+ * distance from the period of the start date is a multiple of the interval.
+ */
 function habitOccurrences(ctx: Ctx, h: HabitItem): Occurrence[] {
+  const f = h.frequency;
+  if (f.period !== "custom") return baseOccurrences(ctx, h, f);
+  const startDate = h.starting ?? utcToLocal(ctx.s.zone, h.createdAt).date;
+  const index = (d: LocalDate): number => {
+    if (f.of.period === "daily") return dayDiff(d, startDate);
+    if (f.of.period === "weekly") return dayDiff(d, weekStartDate(ctx, startDate)) / 7;
+    const months = (x: LocalDate) => Number(x.slice(0, 4)) * 12 + Number(x.slice(5, 7));
+    return months(d) - months(startDate);
+  };
+  const every = Math.max(1, f.interval);
+  return baseOccurrences(ctx, h, f.of).filter((o) => {
+    const i = index(o.periodStart);
+    return i >= 0 && i % every === 0;
+  });
+}
+
+function baseOccurrences(ctx: Ctx, h: HabitItem, frequency: BaseFrequency): Occurrence[] {
   const { s } = ctx;
   const first = utcToLocal(s.zone, ctx.earliest).date;
   const last = utcToLocal(s.zone, ctx.end - 1).date;
   const hasHours = (d: LocalDate) => (s.hours[h.hours]?.[weekdayOf(d)]?.length ?? 0) > 0;
   const allowed = (d: LocalDate) => !h.starting || d >= h.starting;
   const out: Occurrence[] = [];
-  if (h.frequency.period === "monthly") {
-    return monthlyOccurrences(h.frequency, first, last, hasHours, allowed);
+  if (frequency.period === "monthly") {
+    return monthlyOccurrences(frequency, first, last, hasHours, allowed);
   }
   for (let d = first; d <= last; d = addDays(d, 1)) {
     if (!allowed(d)) continue;
-    if (h.frequency.period === "daily") {
+    if (frequency.period === "daily") {
       if (hasHours(d)) out.push({ date: d, alternatives: [], periodStart: d, periodEnd: d });
       continue;
     }
-    const days = h.frequency.days;
+    const days = frequency.days;
     if (!days.includes(weekdayOf(d))) continue;
     const ws = weekStartDate(ctx, d);
     const alternatives: LocalDate[] = [];
@@ -437,7 +458,7 @@ function habitOccurrences(ctx: Ctx, h: HabitItem): Occurrence[] {
   return out;
 }
 
-type MonthlyFrequency = Extract<HabitFrequency, { period: "monthly" }>;
+type MonthlyFrequency = Extract<BaseFrequency, { period: "monthly" }>;
 
 /**
  * The date a monthly habit selects in the month of `month` (YYYY-MM-01), or
@@ -935,9 +956,9 @@ function hasPerson(e: ExternalEvent, people: string[]): boolean {
   });
 }
 
-/** buffers-travel.md rules 2 and 5. */
+/** buffers-travel.md rule 5: the flight category (also set by hand), the tag, or a flight title. */
 export function isFlight(e: ExternalEvent): boolean {
-  return hasTag(e, "#tl_flight") || isFlightTitle(e.title);
+  return e.category === "flight" || hasTag(e, "#tl_flight") || isFlightTitle(e.title);
 }
 
 export function hasAddress(e: ExternalEvent): boolean {
@@ -1019,10 +1040,12 @@ function placeBuffer(ctx: Ctx, b: BufferItem): void {
     for (const side of sides) {
       const key = `buffer:${b.id}:${a.id}:${side}`;
       if (ctx.fixedKeys.has(key) || ctx.dismissed.has(key)) continue;
+      // Rule 14: a length the user set for this anchor occurrence wins.
+      const kept = ctx.s.bufferLengths?.[key];
       const iv =
         side === "before"
-          ? { start: a.start - b.minutesBefore * MINUTE, end: a.start }
-          : { start: a.end, end: a.end + b.minutesAfter * MINUTE };
+          ? { start: a.start - (kept ?? b.minutesBefore) * MINUTE, end: a.start }
+          : { start: a.end, end: a.end + (kept ?? b.minutesAfter) * MINUTE };
       if (len(iv) <= 0 || iv.start < ctx.earliest || iv.end > ctx.end) continue;
       const ok = ctx.freeOther.contains(iv);
       if (!ok && b.onConflict === "remove") continue;

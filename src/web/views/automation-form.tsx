@@ -3,6 +3,7 @@
 // automation. /automations/new/<type>[?template=<slug>] creates one,
 // /automations/edit/<type>/<id> changes one.
 import { useEffect, useState } from "preact/hooks";
+import type { HabitFrequency } from "../../scheduler/model.ts";
 import {
   defaultEventSettings,
   type EventSettings,
@@ -15,6 +16,7 @@ import { type BufferPreset, entry, freeName, type LibraryEntry } from "../lib/li
 import { navigate, path } from "../lib/router.ts";
 import { LEVEL_NAMES, planNow } from "../lib/state.ts";
 import { EventSettingsFields, eventSettingsFrom, Select } from "./event-settings.tsx";
+import { daysOf, MonthlyFields, readFrequency } from "./habit-editor.tsx";
 
 interface HoursSet {
   id: string;
@@ -275,7 +277,7 @@ function BufferRules({
 }
 
 function HabitRules({ row, hours }: { row: Row; hours: HoursSet[] }) {
-  const frequency = JSON.parse(String(row.frequency)) as { period: string; days?: number[] };
+  const frequency = JSON.parse(String(row.frequency)) as HabitFrequency;
   const words = JSON.parse(String(row.reserved_words ?? "[]")) as string[];
   return (
     <>
@@ -341,14 +343,13 @@ function HabitRules({ row, hours }: { row: Row; hours: HoursSet[] }) {
               type="checkbox"
               name="days"
               value={i + 1}
-              defaultChecked={
-                frequency.period === "weekly" && (frequency.days ?? []).includes(i + 1)
-              }
+              defaultChecked={daysOf(frequency).includes(i + 1)}
             />
             {d}
           </label>
         ))}
       </fieldset>
+      <MonthlyFields preset={frequency} />
       <label class="wide">
         Notes
         <textarea name="notes" rows={2} defaultValue={String(row.notes ?? "")} />
@@ -397,14 +398,13 @@ function rulesBody(kind: SettingsKind, f: FormData, kept: Filter): Record<string
       onConflict: text("onConflict"),
     };
   }
-  const days = f.getAll("days").map(Number);
   return {
     level: num("level"),
     idealTime: text("idealTime"),
     minMinutes: num("minMinutes"),
     maxMinutes: num("maxMinutes"),
     hoursSetId: text("hoursSetId"),
-    frequency: days.length ? { period: "weekly", days } : { period: "daily" },
+    frequency: readFrequency(f),
     defense: text("defense"),
     whenUnplaceable: text("whenUnplaceable"),
     starting: text("starting") || null,

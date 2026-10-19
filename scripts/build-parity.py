@@ -780,6 +780,51 @@ for n in [664, 665, 666, 667, 668]:
     BLOCKED[n] = "The pricing page names it and gives no behavior to build (plans-feature-inventory.md open questions); it also needs meeting notes, transcripts or a room provider"
 # --- end merge ---
 
+# --- U04: habits, focus time and buffers (first half of the partial rows) ---
+T.update({
+    "u4_hours": "a habit uses a named hours set or its own window, and a change of hours moves its events",
+    "u4_custom": "a custom frequency places a habit every N days or every N weeks on its days",
+    "u4_move_day": "a weekly occurrence with no room on its day moves to the nearest other day of that week",
+    "u4_adaptive": "an adaptive habit is free while it has room and turns busy when the calendar fills",
+    "u4_lock": "lock and unlock one habit occurrence from the planner",
+    "u4_progress": "the stats page shows each habit's progress: done and planned occurrences and hours",
+    "u4_focus_len": "focus blocks keep the shortest and longest length and stay in their hours set",
+    "u4_focus_accept": "an accepted invitation over focus time moves it; an unanswered one does not",
+    "u4_focus_lock": "moving a focus event in the calendar locks it; a new event over it does not move it",
+    "u4_focus_order": "focus time is placed after every other item, ranks in P4, and counts as P2 for booking links",
+    "u4_focus_tag": "an event with the focus tag counts toward the weekly goal",
+    "u4_buffers": "a user keeps several buffer automations, each with its own free or busy and visibility",
+    "u4_buffer_prio": "a P1 buffer takes the time of a P3 habit; a P4 buffer gives way to it",
+    "u4_buffer_conflict": "the conflict setting keeps a buffer with the conflict marker or removes it",
+    "u4_travel_len": "the user sets the travel length; travel time is skipped where a busy event blocks it",
+    "u4_flight": "an event set to the flight category by hand gets airport time instead of travel time",
+    "u4_travel_keep": "travel buffers follow their event and keep a length the user changed",
+})
+E2E.update({
+    154: ["u4_hours", "s3_item_hours"], 156: ["habit", "h_weekly", "s2_monthly", "u4_custom"],
+    161: ["u4_move_day"], 165: ["u4_adaptive"], 178: ["u4_lock"], 193: ["u4_progress", "s1_category"],
+    196: ["u4_focus_len"], 197: ["u4_focus_len"], 202: ["u4_focus_accept"], 203: ["u4_focus_lock"],
+    206: ["u4_focus_order"], 209: ["u4_focus_tag"], 219: ["u4_buffers", "u4_buffer_conflict"],
+    225: ["u4_buffer_prio"], 226: ["u4_buffer_conflict"], 228: ["u4_buffers"],
+    238: ["u4_travel_len"], 242: ["u4_flight"], 243: ["u4_travel_keep"], 244: ["u4_travel_len"],
+})
+E2E_NOTES.update({
+    156: "Custom is every N days, weeks or months from the start date (or the day the habit was made), set with Interval in the habit form; the E2E covers every 2 days and every 2 weeks, and every N months uses the same count",
+    193: "Each habit shows its events in the range, how many have ended, and their hours; work and personal habit hours are in the time breakdown",
+    206: "On the booking side a placed focus event counts as P2: a P1 link offers its time and a P2 link does not",
+    238: "The travel length is the before and after minutes in the travel buffer's form (30 by default)",
+    243: "A changed length is kept for that event and the buffer does not lock; a move that keeps the length locks it like other managed events",
+})
+BLOCKED.update({
+    208: "Needs a Google Workspace account: native focus-time events exist only in Google Calendar. Their event type is counted in code, and on CalDAV the focus tag gives the same result (row 209)",
+})
+for _row in [154, 156, 161, 165, 178, 193, 196, 197, 202, 203, 206, 208, 209, 219, 225, 226, 228,
+             238, 242, 243, 244]:
+    PARTIAL.pop(_row, None)
+    UNIT.pop(_row, None)
+    GOOGLE_ROWS.pop(_row, None)
+# --- end U04 ---
+
 GOOGLE_PENDING = "Google E2E pending: the service-account key is not available yet (1Password token missing)."
 
 def status(row_id, spec_file, notes):

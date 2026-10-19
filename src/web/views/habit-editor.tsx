@@ -1,7 +1,7 @@
 // Edit a habit, or make one from a recurring event (habits-automation.md
 // rules 5, 6, 8), and the monthly frequency fields (habits "Frequency").
 import { useEffect, useState } from "preact/hooks";
-import type { HabitFrequency } from "../../scheduler/model.ts";
+import type { BaseFrequency, HabitFrequency } from "../../scheduler/model.ts";
 import { api } from "../lib/api.ts";
 import { hhmm } from "../lib/format.ts";
 import { LEVEL_NAMES, planNow } from "../lib/state.ts";
@@ -23,33 +23,56 @@ const DEFENSE: Record<string, string> = {
   "always-busy": "Always busy",
 };
 
-/** "daily", "Tue, Thu", "monthly on day 15" or "monthly on the 2nd Friday". */
+/** "daily", "Tue, Thu", "monthly on day 15", "monthly on the 2nd Friday" or "every 2 weeks on Tue". */
 export function frequencyText(f: HabitFrequency): string {
+  if (f.period === "custom") {
+    const b = f.of;
+    if (b.period === "daily") return `every ${f.interval} days`;
+    if (b.period === "weekly") return `every ${f.interval} weeks on ${frequencyText(b)}`;
+    return `every ${f.interval} months, ${frequencyText(b).replace("monthly ", "")}`;
+  }
   if (f.period === "daily") return "daily";
   if (f.period === "weekly") return f.days.map((d) => DAY_NAMES[d - 1]).join(", ");
   if ("dayOfMonth" in f) return `monthly on day ${f.dayOfMonth}`;
   return `monthly on the ${ORDINALS[String(f.nth)]} ${WEEKDAYS[f.weekday - 1]}`;
 }
 
-/** The frequency the habit form holds: monthly fields first, then the chosen days. */
+/** The base frequency of a habit: a custom one repeats it every N periods. */
+export const baseOf = (f: HabitFrequency): BaseFrequency => (f.period === "custom" ? f.of : f);
+
+/** The weekdays a weekly or custom weekly frequency uses. */
+export const daysOf = (f: HabitFrequency): number[] => {
+  const b = baseOf(f);
+  return b.period === "weekly" ? b.days : [];
+};
+
+/** The frequency the habit form holds: monthly fields first, then the chosen days, then "Repeat every". */
 export function readFrequency(f: FormData): HabitFrequency {
   const repeat = String(f.get("repeat") ?? "");
-  if (repeat === "day") return { period: "monthly", dayOfMonth: Number(f.get("dayOfMonth")) };
-  if (repeat === "nth") {
-    const n = String(f.get("nth"));
-    return {
-      period: "monthly",
-      nth: n === "last" ? "last" : (Number(n) as 1 | 2 | 3 | 4 | 5),
-      weekday: Number(f.get("weekday")),
-    };
-  }
   const days = f.getAll("days").map(Number);
-  return days.length ? { period: "weekly", days } : { period: "daily" };
+  const base: BaseFrequency =
+    repeat === "day"
+      ? { period: "monthly", dayOfMonth: Number(f.get("dayOfMonth")) }
+      : repeat === "nth"
+        ? {
+            period: "monthly",
+            nth:
+              String(f.get("nth")) === "last"
+                ? "last"
+                : (Number(f.get("nth")) as 1 | 2 | 3 | 4 | 5),
+            weekday: Number(f.get("weekday")),
+          }
+        : days.length
+          ? { period: "weekly", days }
+          : { period: "daily" };
+  const interval = Math.max(1, Math.round(Number(f.get("interval") ?? 1) || 1));
+  return interval > 1 ? { period: "custom", interval, of: base } : base;
 }
 
 /** Repeat choice with the fields of a monthly habit. */
 export function MonthlyFields({ preset }: { preset?: HabitFrequency | undefined }) {
-  const monthly = preset?.period === "monthly" ? preset : null;
+  const base = preset ? baseOf(preset) : null;
+  const monthly = base?.period === "monthly" ? base : null;
   const [repeat, setRepeat] = useState(monthly ? ("dayOfMonth" in monthly ? "day" : "nth") : "");
   const [nth, setNth] = useState(monthly && "nth" in monthly ? String(monthly.nth) : "1");
   const [weekday, setWeekday] = useState(
@@ -57,7 +80,7 @@ export function MonthlyFields({ preset }: { preset?: HabitFrequency | undefined 
   );
   return (
     <fieldset class="wide days">
-      <legend>Monthly habits</legend>
+      <legend>Frequency</legend>
       <label>
         Repeat
         <select name="repeat" value={repeat} onChange={(e) => setRepeat(e.currentTarget.value)}>
@@ -65,6 +88,20 @@ export function MonthlyFields({ preset }: { preset?: HabitFrequency | undefined 
           <option value="day">Monthly on a day</option>
           <option value="nth">Monthly on a weekday</option>
         </select>
+      </label>
+      <label>
+        Interval
+        <input
+          name="interval"
+          type="number"
+          min={1}
+          max={52}
+          step={1}
+          defaultValue={String(preset?.period === "custom" ? preset.interval : 1)}
+        />
+        <span class="meta">
+          1 is every period; 2 is every other day, week or month from the start date
+        </span>
       </label>
       {repeat === "day" && (
         <label>
@@ -316,9 +353,7 @@ export function HabitEditor({ target, onClose }: { target: EditorTarget; onClose
                   type="checkbox"
                   name="days"
                   value={i + 1}
-                  defaultChecked={
-                    draft.frequency.period === "weekly" && draft.frequency.days.includes(i + 1)
-                  }
+                  defaultChecked={daysOf(draft.frequency).includes(i + 1)}
                 />
                 {n}
               </label>

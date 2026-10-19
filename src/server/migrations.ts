@@ -1143,4 +1143,13 @@ export const MIGRATIONS: readonly string[] = [
   `
   ALTER TABLE meeting_overloads ADD COLUMN rank INTEGER NOT NULL DEFAULT 0;
   `,
+  // 27: a buffer length the user set in the calendar, per anchor occurrence (buffers rule 14).
+  `
+  CREATE TABLE buffer_lengths (
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    key TEXT NOT NULL,
+    minutes INTEGER NOT NULL,
+    PRIMARY KEY (user_id, key)
+  ) STRICT;
+  `,
 ];

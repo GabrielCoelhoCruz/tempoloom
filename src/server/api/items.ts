@@ -44,6 +44,28 @@ const taskInput = z.object({
   color: z.enum(ITEM_COLORS).optional(),
 });
 
+/** habits-automation.md "Frequency"; a custom one repeats its unit every `interval` periods. */
+const baseFrequency = [
+  z.object({ period: z.literal("daily") }),
+  z.object({
+    period: z.literal("weekly"),
+    days: z.array(z.number().int().min(1).max(7)).min(1),
+  }),
+  z.object({ period: z.literal("monthly"), dayOfMonth: z.number().int().min(1).max(31) }),
+  z.object({
+    period: z.literal("monthly"),
+    nth: z.union([
+      z.literal(1),
+      z.literal(2),
+      z.literal(3),
+      z.literal(4),
+      z.literal(5),
+      z.literal("last"),
+    ]),
+    weekday: z.number().int().min(1).max(7),
+  }),
+] as const;
+
 const habitInput = z.object({
   title: z.string().trim().min(1).max(255),
   notes: z.string().max(10_000).optional(),
@@ -55,23 +77,11 @@ const habitInput = z.object({
   maxMinutes: minutes,
   frequency: z
     .union([
-      z.object({ period: z.literal("daily") }),
+      ...baseFrequency,
       z.object({
-        period: z.literal("weekly"),
-        days: z.array(z.number().int().min(1).max(7)).min(1),
-      }),
-      z.object({ period: z.literal("monthly"), dayOfMonth: z.number().int().min(1).max(31) }),
-      z.object({
-        period: z.literal("monthly"),
-        nth: z.union([
-          z.literal(1),
-          z.literal(2),
-          z.literal(3),
-          z.literal(4),
-          z.literal(5),
-          z.literal("last"),
-        ]),
-        weekday: z.number().int().min(1).max(7),
+        period: z.literal("custom"),
+        interval: z.number().int().min(1).max(52),
+        of: z.union(baseFrequency),
       }),
     ])
     .optional(),

@@ -104,6 +104,28 @@ export function applyCalendarEdits(
       const moved = cached.start_ms !== row.start_ms || cached.end_ms !== row.end_ms;
       const retitled = row.kind !== "task" && cached.summary !== row.title;
       if (!moved && !retitled) continue;
+      const resized = cached.end_ms - cached.start_ms !== row.end_ms - row.start_ms;
+      if (row.kind === "buffer" && resized && !retitled && cached.end_ms > cached.start_ms) {
+        // Buffers rule 14: keep the new length; the buffer still follows its anchor.
+        run(
+          db,
+          `INSERT INTO buffer_lengths (user_id, key, minutes) VALUES (?, ?, ?)
+           ON CONFLICT (user_id, key) DO UPDATE SET minutes = excluded.minutes`,
+          userId,
+          row.key,
+          Math.round((cached.end_ms - cached.start_ms) / 60_000),
+        );
+        run(
+          db,
+          "UPDATE managed_events SET start_ms = ?, end_ms = ?, etag = ? WHERE id = ?",
+          cached.start_ms,
+          cached.end_ms,
+          cached.etag,
+          row.id,
+        );
+        summary.moved++;
+        continue;
+      }
       if (moved && row.kind === "task") {
         exclude(db, userId, "task", row.source_id, row.start_ms, row.end_ms);
       }

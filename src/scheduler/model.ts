@@ -91,11 +91,20 @@ export interface HabitItem {
 }
 
 /** habits-automation.md "Frequency"; weekday 1 is Monday. */
-export type HabitFrequency =
+export type BaseFrequency =
   | { period: "daily" }
   | { period: "weekly"; days: number[] }
   | { period: "monthly"; dayOfMonth: number }
   | { period: "monthly"; nth: 1 | 2 | 3 | 4 | 5 | "last"; weekday: number };
+
+/**
+ * Custom: every `interval` days, weeks or months, counted from the habit's
+ * start date (or the date it was made). `of` holds the fields of that unit:
+ * daily for days, weekly for weeks, monthly for months.
+ */
+export type HabitFrequency =
+  | BaseFrequency
+  | { period: "custom"; interval: number; of: BaseFrequency };
 
 /** A flexible meeting (docs/specs/meetings-flexible.md); the user is the organizer. */
 export interface MeetingItem {
@@ -226,6 +235,8 @@ export interface Snapshot {
   past?: CurrentPlacement[];
   /** Demand keys the user dismissed (deleted buffers); never placed again. */
   dismissedKeys?: string[];
+  /** Buffer demand key -> minutes the user gave that buffer in the calendar (buffers rule 14). */
+  bufferLengths?: Record<string, number>;
   tasks: TaskItem[];
   habits: HabitItem[];
   meetings: MeetingItem[];
