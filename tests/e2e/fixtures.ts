@@ -369,7 +369,7 @@ export interface Person extends Colleague {
 /** Messages that the instance sent, read from the loopback mail server. */
 export interface Mailbox {
   /** Waits for a message to `to` with a matching subject. */
-  message(to: string, subject: RegExp): Promise<{ subject: string; text: string }>;
+  message(to: string, subject: RegExp): Promise<{ subject: string; text: string; html: string }>;
   /** Number of messages to `to` so far. */
   count(to: string): Promise<number>;
 }
@@ -479,8 +479,11 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
           (v) => expect(v, `mail to ${to} matching ${subject}`).toBeTruthy(),
           20_000,
         );
-        const full = (await (await api(`api/v1/message/${m?.ID}`)).json()) as { Text: string };
-        return { subject: m?.Subject ?? "", text: full.Text };
+        const full = (await (await api(`api/v1/message/${m?.ID}`)).json()) as {
+          Text: string;
+          HTML: string;
+        };
+        return { subject: m?.Subject ?? "", text: full.Text, html: full.HTML };
       },
       count: async (to) => (await list(to)).length,
     });
