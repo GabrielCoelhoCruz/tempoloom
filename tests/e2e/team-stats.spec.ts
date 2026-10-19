@@ -15,6 +15,8 @@
 // - one time zone sets every member's day boundaries and work hours       -> the New York member's late call
 //                                                                             counts on their Monday, outside work
 // - travel time and break time are missing                                -> travel and breaks averages
+// - a range typed right after the page opens is overwritten by the page's
+//   first load (it runs after the first paint, late in a background tab)  -> future week, typed in a background tab
 import { addDays, localToUtc } from "../../src/shared/time.ts";
 import {
   CLIENT,
@@ -165,6 +167,9 @@ test("team stats for a future week count planned tasks, recovery buffers and tra
   );
   await synced(app, [EMAIL, B, C]);
 
+  // Another tab in front delays the page's first paint, as when a user switches tabs.
+  const front = await page.context().newPage();
+  await front.bringToFront();
   await openStats(page, "Team stats");
   const stats = page.getByTestId("team-stats");
   await stats.getByLabel("From").fill(W);
