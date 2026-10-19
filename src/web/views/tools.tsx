@@ -310,7 +310,9 @@ export function Pomodoro() {
   useEffect(() => {
     if (!running) return;
     const t = setInterval(() => {
-      const rest = Math.max(0, Math.round(((endAt.current ?? Date.now()) - Date.now()) / 1000));
+      // Paused or reset: this interval may fire once more before its cleanup runs.
+      if (endAt.current === null) return;
+      const rest = Math.max(0, Math.round((endAt.current - Date.now()) / 1000));
       setLeft(rest);
       if (rest === 0) finish();
     }, 250);
