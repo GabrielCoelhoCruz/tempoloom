@@ -784,9 +784,12 @@ for n in [664, 665, 666, 667, 668]:
 T.update({
     "u03_spacing": "the time between chunks of a task is a setting: once a day puts each chunk on its own day, 2 hours keeps a 2-hour gap",
     "u03_calendar": "each hours set has a calendar for task chunks; chunks of tasks in that set go there",
+    "u03_calendar_keep": "a new calendar for task chunks keeps placed chunks and the saved hours; a calendar that is not the user's is refused",
     "u03_order": "inside one level meetings go first, then habits, then tasks; a higher level goes before all of them",
     "u03_urgency": "the urgency setting decides whether a low task that is short of time goes first",
+    "u03_urgency_48": "with the 48-hour urgency mode a low task due within 48 hours goes up one level, a task due later does not",
     "u03_focus": "focus time goes after a P4 task, keeps the free/busy status set on it, and counts as P2 for booking links",
+    "u03_focus_near": "free focus time stays free inside the 12 hours before it starts",
     "u03_series": "the level of a recurring external event applies to this event or to the whole series",
     "u03_other": "events of another connected calendar stay P1: the control is disabled with a note, and links never offer their time",
     "u03_meeting_hours": "flexible meetings use meeting hours: a change there moves the meeting, and tasks keep work hours",
@@ -795,31 +798,40 @@ T.update({
 })
 E2E.update({
     9: ["u03_spacing"],
-    27: ["u03_calendar"],
+    27: ["u03_calendar", "u03_calendar_keep"],
     55: ["s1_drag"],
     56: ["u03_order"],
-    58: ["u03_urgency"],
+    58: ["u03_urgency", "u03_urgency_48"],
     59: ["u03_focus"],
     60: ["u03_series"],
     61: ["u03_other"],
     70: ["u03_meeting_hours"],
     73: ["u03_ranges"],
-    90: ["u03_order", "u03_focus"],
-    100: ["u03_focus"],
+    100: ["u03_focus", "u03_focus_near"],
     109: ["u03_moved"],
 })
 E2E_NOTES.update({
     9: "The choice is a user task default on the Settings page; existing chunks keep their place while they stay valid",
     27: "A chunk keeps the calendar it was written to; a new choice applies to new chunks",
-    58: "E2E covers the default and priority only; the 48-hour mode has unit tests only",
-    90: "E2E covers tasks, habits, flexible meetings and focus time; buffers inside a level have unit tests only",
+    73: "Copy to all takes Monday's ranges and saves at once",
 })
 PARTIAL.pop(78, None)
 GOOGLE_ROWS.pop(147, None)
 BLOCKED[78] = "Needs a Google account: the zone comes from the Google Calendar setting. The hours page shows the zone that hours apply in and an active trip (E2E on CalDAV: \u201ca browser that reports UTC gets a warning\u2026\u201d)"
-PARTIAL.pop(76, None)
-BLOCKED[76] = "Blocked by the Tempoloom decision in planning-hours.md (item-specific hours): focus time, flexible meetings and booking links do not offer them; building them needs that spec decision changed first. Habits have item-specific hours (E2E on CalDAV: \u201ca habit with item-specific hours is placed in them\u2026\u201d)"
-BLOCKED[147] = "Needs a Google OAuth client and a Google test account: incremental consent can only be built and proven against Google sign-in; today Google sign-in asks for calendar scopes up front"
+BLOCKED[147] = "Needs a Google OAuth client and a Google test account to prove it: incremental consent happens only in Google sign-in. Today Google sign-in asks for calendar scopes up front"
+# Row 90 stays partial: E2E does not cover buffers inside a level.
+UNIT.pop(90, None)
+PARTIAL[90] = "E2E on CalDAV covers flexible meetings, habits, tasks, next-up tasks and focus time in the order (\u201cinside one level meetings go first, then habits, then tasks\u2026\u201d, \u201ca next-up task goes before other tasks of any level\u201d, \u201cfocus time goes after a P4 task\u2026\u201d); buffers inside a level have unit tests only"
+# Row 76 stays partial (standing order 19): the spec says the other kinds do not offer it "yet".
+U03_ROWS = [9, 27, 55, 56, 58, 59, 60, 61, 70, 73, 76, 78, 90, 100, 109, 147]
+for _n in U03_ROWS:
+    if _n in E2E:
+        PARTIAL.pop(_n, None)
+        UNIT.pop(_n, None)
+# Each U03 row is in exactly one status map, so status() reads the intended one.
+for _n in U03_ROWS:
+    _in = [m for m, d in (("E2E", E2E), ("PARTIAL", PARTIAL), ("GOOGLE_ROWS", GOOGLE_ROWS), ("UNIT", UNIT), ("BLOCKED", BLOCKED)) if _n in d]
+    assert len(_in) == 1, f"row {_n} is in {_in}"
 # --- end U03 ---
 
 GOOGLE_PENDING = "Google E2E pending: the service-account key is not available yet (1Password token missing)."
