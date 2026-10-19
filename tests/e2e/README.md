@@ -81,9 +81,19 @@ supports guest invitations. The same test calendar is reused on each run.
 3. Create a web OAuth client with the redirect URI
    `http://127.0.0.1:8798/auth/google/callback`.
 4. Store the downloaded client JSON in 1Password, vault `tempoloom-e2e`, item
-   `google-oauth-client`, field `client.json`. Store the test account's email
-   in the same item, field `test-account-email` (or put the address in
-   `tests/e2e/google-oauth.env.tpl` as `GOOGLE_TEST_ACCOUNT_EMAIL`).
+   `google-oauth-client`, as an attached file named `client.json`. The
+   template reads it as `op://tempoloom-e2e/google-oauth-client/client.json`
+   (for a file, the last part of the reference is the file name). Store the
+   test account's email in the same item, text field `test-account-email`
+   (or put the address in `tests/e2e/google-oauth.env.tpl` as
+   `GOOGLE_TEST_ACCOUNT_EMAIL`).
+
+   If the client JSON is a separate Document item, either attach the file to
+   `google-oauth-client` as `client.json`, or change
+   `GOOGLE_OAUTH_CLIENT_JSON` in your copy of the template to
+   `op://tempoloom-e2e/<document item title>/<file name>` and select it with
+   `TEMPOLOOM_E2E_ENV_TEMPLATE`. The service account must be able to read that
+   item too. Write item titles, never vault or item ids, in a committed file.
 5. Give the read-only 1Password service account access to that item. Save its
    token as described in the service account setup above.
 6. Run the command below.
@@ -114,6 +124,16 @@ select another environment template. The default OAuth template is
 Without either OAuth credentials or a service account key,
 `TEMPOLOOM_E2E_BACKEND=google` fails with
 `No Google credentials; run scripts/e2e-google.sh`.
+
+## Record a Google run in the parity table
+
+`docs/e2e-google-run.md` records the last full Google run (date, commit,
+command, counts) and `docs/e2e-google-run.tsv` lists each test with its
+status. `scripts/build-parity.py` reads the TSV: a row is "done (Google)"
+when it is "done (CalDAV)" and all its tests passed on Google. After a new
+full run, write both files from the run's Playwright JSON (test ids, titles
+and counts only, never the account email or a token), then run
+`python3 scripts/build-parity.py`.
 
 ## Artifacts
 
