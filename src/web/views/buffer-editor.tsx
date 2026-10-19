@@ -193,6 +193,8 @@ export function BufferEditor({
         filter,
         onConflict,
         calendarScope: scope || null,
+        // The library shows "Added" by the entry an automation came from (automations-library.md rule 4).
+        ...(preset ? { templateId: preset.slug } : {}),
       });
       await planNow();
       await onSaved();
