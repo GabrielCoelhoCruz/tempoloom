@@ -113,6 +113,7 @@ When `splitUp` is false, `minChunkMinutes` and `maxChunkMinutes` both equal
 
 - **TSK-10.** Each chunk lasts from `minChunkMinutes` to `maxChunkMinutes`,
   except as stated in TSK-13 (legacy evidence, E-0120, E-0193).
+  `maxChunkMinutes` is always a hard bound.
 - **TSK-11.** Example of a valid result: a 6-hour task with chunks of 1 to
   2 hours can get chunks of 2 h, 1 h, 1.5 h and 1.5 h (legacy evidence,
   E-0120).
@@ -120,7 +121,15 @@ When `splitUp` is false, `minChunkMinutes` and `maxChunkMinutes` both equal
   `remainingMinutes` when space allows (legacy evidence, E-0120).
 - **TSK-13.** When `remainingMinutes` is less than `minChunkMinutes`, the
   scheduler places one chunk of `remainingMinutes`. Proposed default; the
-  evidence is silent.
+  evidence is silent. Tempoloom decision: the same applies to the rest when
+  no split of the remaining work R fits the bounds, that is when
+  `ceil(R / maxChunkMinutes) * minChunkMinutes > R`. Then the scheduler
+  places chunks of `maxChunkMinutes` and the rest as one short chunk (90
+  minutes with chunks of 60 to 60 gives 60 and 30). The short chunk goes in
+  the first free time that holds it, also before the other chunks, and only
+  when all other chunks have a place. When a split exists, no
+  chunk is short (195 minutes with chunks of 60 to 90 gives 75, 60 and 60,
+  not 90, 90 and 15).
 - **TSK-14.** Two chunks of the same task are never back to back. The gap
   between them is at least the `chunkCooldown` value. With `once-per-day`, a
   task gets at most one chunk per calendar day (legacy evidence, E-0056,

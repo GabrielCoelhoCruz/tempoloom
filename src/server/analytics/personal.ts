@@ -4,6 +4,7 @@
 // 12-13) and calendar facts (analytics-weekly-reports.md rule 7). The buckets,
 // sessions and free time come from the member figures that team stats use.
 import { attends } from "../../scheduler/blocking.ts";
+import type { Fact } from "../../shared/facts.ts";
 import { addDays, type LocalDate, localToUtc, utcToLocal, weekdayOf } from "../../shared/time.ts";
 import { all, type Db, one } from "../db.ts";
 import { categoryContext, externalCategory } from "../planner/categories.ts";
@@ -38,6 +39,8 @@ export function personalInsights(
   from: LocalDate,
   to: LocalDate,
   now: number,
+  /** Counts only time before this instant (the weekly report's send time, rule 5). */
+  until?: number,
 ) {
   const user = one<{ time_zone: string; email: string }>(
     db,
@@ -47,8 +50,8 @@ export function personalInsights(
   const zone = user?.time_zone ?? "UTC";
   const self = (user?.email ?? "").toLowerCase();
   const start = localToUtc(zone, from, 0);
-  const end = localToUtc(zone, addDays(to, 1), 0);
-  const days = loadMemberDays(db, userId, from, to);
+  const end = Math.min(localToUtc(zone, addDays(to, 1), 0), until ?? Number.POSITIVE_INFINITY);
+  const days = loadMemberDays(db, userId, from, to, until);
   const sum = (b: Bucket) => days.reduce((a, d) => a + d.minutes[b], 0);
   const meetingsOf = (d: (typeof days)[number]) =>
     d.minutes.oneOnOne + d.minutes.teamMeetings + d.minutes.externalMeetings;
@@ -71,6 +74,7 @@ export function personalInsights(
     attendees: string;
     recurring_id: string | null;
     private_props: string;
+    rsvp_note: string;
   }>(
     db,
     `SELECT e.* FROM events e JOIN calendars c ON c.id = e.calendar_id JOIN accounts a ON a.id = c.account_id
@@ -157,10 +161,9 @@ export function personalInsights(
     w.n++;
     w.solo += d.minutes.deepWork + d.minutes.shallowWork;
     w.meetings += meetingsOf(d);
-    w.busy += BUCKETS.filter((b) => b !== "free" && b !== "vacation").reduce(
-      (a, b) => a + d.minutes[b],
-      0,
-    );
+    w.busy += BUCKETS.filter(
+      (b) => b !== "free" && b !== "vacation" && b !== "personalCommitment",
+    ).reduce((a, b) => a + d.minutes[b], 0);
     w.work += d.work;
   }
   const weekdays = perWeekday.flatMap((w, i) =>
@@ -201,19 +204,21 @@ export function personalInsights(
   const breaks = sum("breaks");
 
   // Calendar facts (weekly report rule 7): up to 4 that apply.
-  const facts = [
-    busiestDate && meetingsOf(busiestDate) > 0
-      ? {
-          kind: "busiest_day",
-          day: WEEKDAY_NAMES[weekdayOf(busiestDate.date)] ?? "",
-          minutes: meetingsOf(busiestDate),
-        }
-      : null,
-    longest > 0 ? { kind: "longest_focus", minutes: longest } : null,
-    bookings > 0 ? { kind: "booked_meetings", count: bookings } : null,
-    breaks > 0 ? { kind: "breaks", minutes: breaks } : null,
-    people.length > 0 ? { kind: "people_met", count: people.length } : null,
-  ]
+  const facts = (
+    [
+      busiestDate && meetingsOf(busiestDate) > 0
+        ? {
+            kind: "busiest_day",
+            day: WEEKDAY_NAMES[weekdayOf(busiestDate.date)] ?? "",
+            minutes: meetingsOf(busiestDate),
+          }
+        : null,
+      longest > 0 ? { kind: "longest_focus", minutes: longest } : null,
+      bookings > 0 ? { kind: "booked_meetings", count: bookings } : null,
+      breaks > 0 ? { kind: "breaks", minutes: breaks } : null,
+      people.length > 0 ? { kind: "people_met", count: people.length } : null,
+    ] satisfies (Fact | null)[]
+  )
     .filter((f) => f !== null)
     .slice(0, 4);
 
@@ -230,6 +235,7 @@ export function personalInsights(
       travel: sum("travel"),
       breaks,
       vacation: sum("vacation"),
+      personal_commitment: sum("personalCommitment"),
       free: sum("free"),
     },
     weekdays,

@@ -160,7 +160,7 @@ test("with no time in a period, 'remove' leaves the period empty and 'keep' keep
   );
   const gone = page.locator('[data-meeting-title="Gone"]').getByTestId("meeting-occurrences");
   const kept = page.locator('[data-meeting-title="Kept"]').getByTestId("meeting-occurrences");
-  const why = "busy all-day events fill the period";
+  const why = "time away (all-day or out-of-office events) fills the period";
   await expect(gone).toContainText(`Not placed: ${why}`, LONG);
   await expect(kept).toContainText(`Conflict: ${why}`, LONG);
   // One attention list for all meetings, with each problem of the week;

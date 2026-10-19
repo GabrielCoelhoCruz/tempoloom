@@ -18,7 +18,7 @@ gets this email.
 
 | Field | Type | Default | Notes |
 |---|---|---|---|
-| `weekly_report_enabled` | boolean | true | Per user, in notification settings. |
+| `weeklyReport` | boolean | true | Per user, a notification preference in personal settings. |
 | work hours | user's work hours set | | Sets the delivery time. |
 | home time zone | user setting | | |
 
@@ -36,6 +36,12 @@ gets this email.
    09:00 on Friday, in the user's home time zone.
 5. The report covers the current work week from its first workday up to the
    send time (proposal; the evidence does not state the cut-off).
+   Tempoloom decision: events count only up to the send time; a later event
+   on the send day is not in that report. A report missed in its send hour
+   (for example, the server was down) is not sent later.
+   Tempoloom decision: only a user who has signed in at least once, is not
+   deactivated, and has at least one calendar account in a working state
+   gets the report.
 
 ### Content
 
@@ -52,9 +58,9 @@ gets this email.
    focus session, number of meetings booked through booking links, hours of
    breaks taken, number of people met.
 
-   Tempoloom decision: until the weekly email exists, the stats page shows
-   these calendar facts for the chosen range, in this order, skipping facts
-   with a zero value.
+   Tempoloom decision: the weekly email (for its week) and the stats page
+   (for the chosen range) show the first 4 of these facts that apply, in
+   this order, and skip facts with a zero value.
 8. Next week preview: the primary calendar's events for next week, by day,
    with the busiest and the lightest day marked. Each day and each event
    links to the planner at that day.
@@ -101,7 +107,8 @@ Not yet observed.
 1. Does the current version still send weekly reports? The current FAQ does
    not mention them; the pricing page still lists them for all tiers.
 2. Which period does the report cover: the full calendar week, or up to the
-   send time?
+   send time? Answered for Tempoloom by the rule 5 decision: up to the send
+   time.
 3. Which calendar facts does the reference choose, and how?
 4. Can a user revoke a shared page?
 5. Is there a team or manager version of the weekly email?
@@ -113,6 +120,8 @@ to Fri 08:00 to 17:00. The test environment can set the server clock
 (proposal for testability). This week U has: 3 h of meetings with other
 invitees, 4 h of events with no invitees, one personal habit of 1 h. Next
 week U has a meeting on Tuesday.
+Tempoloom decision: the server clock is set with `TEST_CLOCK_START`, which
+the server accepts only with `TEMPOLOOM_TEST_MODE=1`.
 
 ### T1. Delivery time and totals
 

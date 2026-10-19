@@ -119,8 +119,8 @@ export function cacheEvent(db: Db, calendarId: string, e: ProviderEvent): void {
     db,
     `INSERT INTO events (calendar_id, event_id, summary, description, location, start_ms, end_ms,
        all_day, busy, event_type, self_response, attendee_count, organizer_self, recurring_id, color_id,
-       etag, updated_ms, private_props, attendees, responses, conference)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       etag, updated_ms, private_props, attendees, responses, conference, rsvp_note)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT (calendar_id, event_id) DO UPDATE SET
        summary = excluded.summary, description = excluded.description, location = excluded.location,
        start_ms = excluded.start_ms, end_ms = excluded.end_ms, all_day = excluded.all_day,
@@ -129,7 +129,7 @@ export function cacheEvent(db: Db, calendarId: string, e: ProviderEvent): void {
        recurring_id = excluded.recurring_id, color_id = excluded.color_id, etag = excluded.etag,
        updated_ms = excluded.updated_ms, private_props = excluded.private_props,
        attendees = excluded.attendees, responses = excluded.responses,
-       conference = excluded.conference`,
+       conference = excluded.conference, rsvp_note = excluded.rsvp_note`,
     calendarId,
     e.id,
     e.summary,
@@ -151,6 +151,7 @@ export function cacheEvent(db: Db, calendarId: string, e: ProviderEvent): void {
     JSON.stringify(e.attendees),
     JSON.stringify(e.responses ?? {}),
     e.conference ?? "",
+    e.rsvpNote ?? "",
   );
   // Alerts on Tempoloom's own events, so a copy that someone gave an alert is written again.
   if (e.privateProps.tl === "1")

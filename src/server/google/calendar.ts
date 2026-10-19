@@ -89,7 +89,8 @@ export interface EventPage {
 }
 
 export interface CalendarApiOptions {
-  getAccessToken: () => Promise<string>;
+  /** With `fresh`, a new token even when the cached one has not expired. */
+  getAccessToken: (fresh?: boolean) => Promise<string>;
   /** Base URL override, used only to point at a recording proxy. */
   baseUrl?: string;
   maxAttempts?: number;
@@ -120,8 +121,11 @@ export class GoogleCalendarApi {
     const url = new URL(this.#opts.baseUrl + path);
     for (const [k, v] of Object.entries(query ?? {}))
       if (v !== undefined) url.searchParams.set(k, v);
+    // Google can drop an access token before its expiry: one 401 gets a new
+    // token and one more try before it counts as a rejected login.
+    let renewed = false;
     for (let attempt = 1; ; attempt++) {
-      const token = await this.#opts.getAccessToken();
+      const token = await this.#opts.getAccessToken(renewed);
       const res = await fetch(url, {
         method,
         headers: {
@@ -139,6 +143,10 @@ export class GoogleCalendarApi {
       const reason = json.error?.errors?.[0]?.reason ?? `http_${res.status}`;
       const message = json.error?.message ?? res.statusText;
       if (res.status === 410) throw new SyncTokenExpiredError(410, reason, message);
+      if (res.status === 401 && !renewed) {
+        renewed = true;
+        continue;
+      }
       const retryable =
         res.status === 429 ||
         res.status >= 500 ||

@@ -353,12 +353,15 @@ export async function googleAccessToken(
     oauth?: OAuthClient | undefined;
     serviceKey?: ServiceAccountKey | undefined;
     now?: number;
+    /** Skip the cached access token: Google refused it. */
+    fresh?: boolean;
   },
 ): Promise<string> {
   const now = opts.now ?? Date.now();
   const row = account(db, accountId);
   if (row.status !== "ok") throw new OAuthError("reauth_required", "Account needs a new login");
-  if (row.access_token && row.access_expires_at > now) return box.open(row.access_token);
+  if (!opts.fresh && row.access_token && row.access_expires_at > now)
+    return box.open(row.access_token);
   let tokens: TokenSet;
   if (row.provider === "google_service") {
     if (!opts.serviceKey) throw new Error("GOOGLE_SERVICE_ACCOUNT_JSON is not configured");
@@ -371,7 +374,13 @@ export async function googleAccessToken(
       tokens = await refreshAccessToken(opts.oauth, refreshToken, now);
     } catch (err) {
       if (err instanceof OAuthError && err.code === "invalid_grant") {
-        run(db, "UPDATE accounts SET status = 'reauth_required' WHERE id = ?", accountId);
+        // Only the refresh token that Google refused: a reconnect saved meanwhile stays.
+        run(
+          db,
+          "UPDATE accounts SET status = 'reauth_required' WHERE id = ? AND credentials IS ?",
+          accountId,
+          row.credentials,
+        );
       }
       throw err;
     }
