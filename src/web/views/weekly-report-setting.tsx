@@ -1,14 +1,25 @@
-// The weekly report email switch (docs/specs/analytics-weekly-reports.md rules 1-2).
+// The weekly report email switch (docs/specs/analytics-weekly-reports.md rules 1-2),
+// with the other emails of settings. It is one of the user's email preferences.
 import { useEffect, useState } from "preact/hooks";
+import type { MeetingPrefs } from "../../server/meeting-prefs.ts";
 import { api } from "../lib/api.ts";
+import { messageOf } from "../lib/save.ts";
 
 export function WeeklyReportSetting() {
   const [enabled, setEnabled] = useState<boolean | null>(null);
-  const [saved, setSaved] = useState(false);
+  const [state, setState] = useState<"idle" | "saved" | { error: string }>("idle");
   useEffect(() => {
-    void api<{ enabled: boolean }>("GET", "/api/weekly-report").then((r) => setEnabled(r.enabled));
+    api<{ prefs: MeetingPrefs }>("GET", "/api/meeting-checks").then(
+      (r) => setEnabled(r.prefs.weeklyReport),
+      (err) => setState({ error: messageOf(err) }),
+    );
   }, []);
-  if (enabled === null) return null;
+  if (enabled === null)
+    return typeof state === "object" ? (
+      <p class="error" role="alert">
+        {state.error}
+      </p>
+    ) : null;
   return (
     <section data-testid="weekly-report">
       <h2>Weekly report</h2>
@@ -24,18 +35,34 @@ export function WeeklyReportSetting() {
             onChange={(e) => {
               const next = e.currentTarget.checked;
               setEnabled(next);
-              setSaved(false);
-              void api("PUT", "/api/weekly-report", { enabled: next }).then(() => setSaved(true));
+              setState("idle");
+              api<{ prefs: MeetingPrefs }>("PATCH", "/api/meeting-prefs", {
+                weeklyReport: next,
+              }).then(
+                (r) => {
+                  setEnabled(r.prefs.weeklyReport);
+                  setState("saved");
+                },
+                (err) => {
+                  setEnabled(!next);
+                  setState({ error: messageOf(err) });
+                },
+              );
             }}
           />
           Weekly report email
         </label>
-        {saved && (
+        {state === "saved" && (
           <span class="status" data-testid="weekly-report-saved">
             Saved
           </span>
         )}
       </div>
+      {typeof state === "object" && (
+        <p class="error" role="alert">
+          {state.error}
+        </p>
+      )}
     </section>
   );
 }

@@ -2,15 +2,9 @@
 // 12-13): deep and shallow work, breaks, travel and time away, weekday panels,
 // people met, insights, and calendar facts (analytics-weekly-reports.md rule 7).
 import { useEffect, useRef, useState } from "preact/hooks";
+import { type Fact, factText } from "../../shared/facts.ts";
 import { api } from "../lib/api.ts";
 import { duration } from "../lib/format.ts";
-
-type Fact =
-  | { kind: "busiest_day"; day: string; minutes: number }
-  | { kind: "longest_focus"; minutes: number }
-  | { kind: "booked_meetings"; count: number }
-  | { kind: "breaks"; minutes: number }
-  | { kind: "people_met"; count: number };
 
 interface Insights {
   categories: Record<string, number>;
@@ -52,21 +46,6 @@ const LABELS: [string, string][] = [
   ["free", "Free work time"],
 ];
 const h = (m: number) => duration(Math.round(m));
-
-function fact(f: Fact): string {
-  switch (f.kind) {
-    case "busiest_day":
-      return `Busiest meeting day: ${f.day} (${h(f.minutes)})`;
-    case "longest_focus":
-      return `Longest focus session: ${h(f.minutes)}`;
-    case "booked_meetings":
-      return `Meetings booked through links: ${f.count}`;
-    case "breaks":
-      return `Breaks taken: ${h(f.minutes)}`;
-    case "people_met":
-      return `People met: ${f.count}`;
-  }
-}
 
 /** Figures of the main stats answer that the highlights and balance panels show. */
 export interface BaseStats {
@@ -259,7 +238,7 @@ export function StatsExtras({ from, to, base }: { from: string; to: string; base
       <ul class="list" data-testid="calendar-facts">
         {data.facts.length === 0 && <li>No facts for this range.</li>}
         {data.facts.map((f) => (
-          <li key={f.kind}>{fact(f)}</li>
+          <li key={f.kind}>{factText(f)}</li>
         ))}
       </ul>
     </>

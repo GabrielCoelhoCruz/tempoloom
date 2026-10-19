@@ -8,7 +8,7 @@ import { TimeSet } from "../../scheduler/timeset.ts";
 import { defaultEventSettings, readEventSettings } from "../../shared/event-settings.ts";
 import { addDays, localToUtc, utcToLocal } from "../../shared/time.ts";
 import type { AppEnv } from "../app.ts";
-import { all, type Db, one, run } from "../db.ts";
+import { all, type Db, one } from "../db.ts";
 import { MANAGED_PROP } from "../planner/push.ts";
 
 export const CATEGORIES = [
@@ -165,26 +165,6 @@ export function statsRoutes(db: Db): Hono<AppEnv> {
     const spanDays = (Date.parse(q.data.to) - Date.parse(q.data.from)) / 86_400_000;
     if (spanDays > 120) return c.json({ error: "range_too_long" }, 400);
     return c.json(computeStats(db, c.get("user").id, q.data.from, q.data.to));
-  });
-  // The weekly report email switch (analytics-weekly-reports.md rules 1-2).
-  r.get("/weekly-report", (c) => {
-    const row = one<{ flag: number }>(
-      db,
-      "SELECT weekly_report_enabled AS flag FROM users WHERE id = ?",
-      c.get("user").id,
-    );
-    return c.json({ enabled: row?.flag === 1 });
-  });
-  r.put("/weekly-report", async (c) => {
-    const body = z.object({ enabled: z.boolean() }).safeParse(await c.req.json().catch(() => null));
-    if (!body.success) return c.json({ error: "invalid_body" }, 400);
-    run(
-      db,
-      "UPDATE users SET weekly_report_enabled = ? WHERE id = ?",
-      body.data.enabled ? 1 : 0,
-      c.get("user").id,
-    );
-    return c.json({ enabled: body.data.enabled });
   });
   return r;
 }

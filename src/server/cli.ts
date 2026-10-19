@@ -8,13 +8,13 @@
 import { parseArgs } from "node:util";
 import { createLoginLink, ensureUser, upsertAccount } from "./accounts.ts";
 import { sendDueReminders } from "./booking-mail.ts";
-import { loadConfig } from "./config.ts";
+import { clockOf, loadConfig } from "./config.ts";
 import { SecretBox } from "./crypto.ts";
+import { DailyMailWorker } from "./daily-mail.ts";
 import { one, openDb, run } from "./db.ts";
 import { parseServiceAccountKey } from "./google/service-account.ts";
 import { instanceLimit, LIMITS, type LimitName, setInstanceLimit } from "./limits.ts";
 import { createMailer } from "./mail.ts";
-import { sendDueWeeklyReports } from "./weekly-report.ts";
 
 const [command, ...rest] = process.argv.slice(2);
 const { values } = parseArgs({
@@ -31,8 +31,8 @@ const config = loadConfig();
 const db = openDb(config.dbPath);
 const box = new SecretBox(config.SECRET_KEY);
 if (command === "booking-reminders") {
-  // Sends the booking reminders due at --now (default: the current time), as the server does each minute.
-  const at = values.now ? Date.parse(values.now) : Date.now();
+  // Sends the booking reminders due at --now (default: the server clock), as the server does each minute.
+  const at = values.now ? Date.parse(values.now) : clockOf(config)();
   if (Number.isNaN(at)) throw new Error("--now must be an ISO date and time");
   const mailer = createMailer(config.SMTP_URL, config.MAIL_FROM);
   const n = await sendDueReminders(db, mailer, config.BASE_URL, at);
@@ -41,11 +41,18 @@ if (command === "booking-reminders") {
   process.exit(0);
 }
 if (command === "weekly-reports") {
-  // Sends the weekly reports due at --now (default: the current time), as the server does each minute.
-  const at = values.now ? Date.parse(values.now) : Date.now();
+  // One run of the server's email worker at --now (default: the server clock):
+  // the weekly reports due then, and the other daily emails due then.
+  const at = values.now ? Date.parse(values.now) : clockOf(config)();
   if (Number.isNaN(at)) throw new Error("--now must be an ISO date and time");
-  const mailer = createMailer(config.SMTP_URL, config.MAIL_FROM);
-  const n = await sendDueWeeklyReports(db, mailer, config.BASE_URL, at);
+  const worker = new DailyMailWorker({
+    db,
+    mailer: createMailer(config.SMTP_URL, config.MAIL_FROM),
+    now: () => at,
+    baseUrl: config.BASE_URL,
+    intervalMs: 60_000,
+  });
+  const n = await worker.tick();
   console.log(`sent ${n} report${n === 1 ? "" : "s"}`);
   db.close();
   process.exit(0);

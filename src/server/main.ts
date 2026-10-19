@@ -1,7 +1,7 @@
 import { serve } from "@hono/node-server";
 import { createApp } from "./app.ts";
 import { sendDueReminders } from "./booking-mail.ts";
-import { loadConfig } from "./config.ts";
+import { clockOf, loadConfig } from "./config.ts";
 import { SecretBox } from "./crypto.ts";
 import { DailyMailWorker } from "./daily-mail.ts";
 import { openDb } from "./db.ts";
@@ -11,16 +11,10 @@ import { createMailer } from "./mail.ts";
 import { ProvisionWorker } from "./provisioning.ts";
 import { SyncService } from "./sync/service.ts";
 import { WebhookWorker } from "./webhooks.ts";
-import { sendDueWeeklyReports } from "./weekly-report.ts";
 
 const config = loadConfig();
-// Tests only: the server clock starts at TEST_CLOCK_START and runs on from there
-// (the acceptance tests of analytics-weekly-reports.md set the server clock).
-if (config.TEST_CLOCK_START) {
-  const offset = Date.parse(config.TEST_CLOCK_START) - Date.now();
-  const real = Date.now;
-  Date.now = () => real() + offset;
-}
+// One clock for the app and its workers; tests may start it at TEST_CLOCK_START.
+const now = clockOf(config);
 const db = openDb(config.dbPath);
 const box = new SecretBox(config.SECRET_KEY);
 const oauth: OAuthClient | undefined =
@@ -40,7 +34,7 @@ const sync = new SyncService({
   box,
   oauth,
   serviceKey,
-  now: Date.now,
+  now,
   intervalMs: config.SYNC_INTERVAL_SECONDS * 1000,
   baseUrl: config.BASE_URL,
   refreshMs: config.GRANT_REFRESH_SECONDS * 1000,
@@ -51,7 +45,7 @@ const webhooks = new WebhookWorker({
   box,
   allowPrivate: config.WEBHOOK_ALLOW_PRIVATE,
   retryBaseMs: config.WEBHOOK_RETRY_BASE_MS,
-  now: Date.now,
+  now,
 });
 const mailer = createMailer(config.SMTP_URL, config.MAIL_FROM);
 const provisioning = new ProvisionWorker({
@@ -59,16 +53,17 @@ const provisioning = new ProvisionWorker({
   box,
   sync,
   perMinute: config.PROVISION_PER_MINUTE,
-  now: Date.now,
+  now,
 });
-const app = createApp({ db, config, box, oauth, sync, webhooks, mailer });
-// Meeting emails: guest updates and the daily digests, checked on the sync interval.
+const app = createApp({ db, config, box, oauth, sync, webhooks, mailer, now });
+// Meeting emails, the daily digests and the weekly report, checked on the sync interval.
 const dailyMail = new DailyMailWorker({
   db,
   mailer,
-  now: Date.now,
+  now,
   baseUrl: config.BASE_URL,
   intervalMs: config.SYNC_INTERVAL_SECONDS * 1000,
+  weeklyReports: config.WEEKLY_REPORTS === "on",
 });
 
 const server = serve({ fetch: app.fetch, port: config.PORT, hostname: config.HOST }, (info) => {
@@ -78,17 +73,11 @@ sync.start();
 webhooks.start();
 provisioning.start();
 dailyMail.start();
-// Booking reminders (booking-links.md rule 21) and weekly reports: checked every minute.
+// Booking reminders (booking-links.md rule 21): checked every minute.
 const reminders = setInterval(() => {
-  sendDueReminders(db, mailer, config.BASE_URL, Date.now()).catch((err) =>
+  sendDueReminders(db, mailer, config.BASE_URL, now()).catch((err) =>
     console.error("booking reminders failed", err),
   );
-  // The weekly report email (analytics-weekly-reports.md rule 3), off with WEEKLY_REPORTS=off.
-  if (config.WEEKLY_REPORTS === "on") {
-    sendDueWeeklyReports(db, mailer, config.BASE_URL, Date.now()).catch((err) =>
-      console.error("weekly reports failed", err),
-    );
-  }
 }, 60_000);
 
 // Stop taking requests, let queued calendar writes finish, then exit.

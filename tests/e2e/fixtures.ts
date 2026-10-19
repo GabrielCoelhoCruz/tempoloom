@@ -370,8 +370,8 @@ export interface Person extends Colleague {
 export interface Mailbox {
   /** Waits for a message to `to` with a matching subject. */
   message(to: string, subject: RegExp): Promise<{ subject: string; text: string; html: string }>;
-  /** Number of messages to `to` so far. */
-  count(to: string): Promise<number>;
+  /** Number of messages to `to` so far, or of those whose subject matches. */
+  count(to: string, subject?: RegExp): Promise<number>;
 }
 
 /** Browser contexts that helpers open for signed-out visitors; closed after each test. */
@@ -490,7 +490,8 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
           html: full.HTML,
         };
       },
-      count: async (to) => (await list(to)).length,
+      count: async (to, subject) =>
+        (await list(to)).filter((m) => !subject || subject.test(m.Subject)).length,
     });
   },
 
@@ -515,8 +516,11 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
       // Webhook tests use a receiver on loopback and short retry delays.
       WEBHOOK_ALLOW_PRIVATE: "1",
       WEBHOOK_RETRY_BASE_MS: "500",
-      // Weekly reports go out only when a test runs the operator command (weekly-report.spec.ts).
+      // Weekly reports go out only when a test runs the operator command or turns them on
+      // (weekly-report.spec.ts).
       WEEKLY_REPORTS: "off",
+      // Tests may set TEST_CLOCK_START (planned-actual.spec.ts, weekly-report.spec.ts).
+      TEMPOLOOM_TEST_MODE: "1",
       SMTP_URL: mailServer.smtpUrl,
       MAIL_FROM: "Tempoloom <noreply@tempoloom.test>",
       ...(SA_JSON ? { GOOGLE_SERVICE_ACCOUNT_JSON: SA_JSON } : {}),
