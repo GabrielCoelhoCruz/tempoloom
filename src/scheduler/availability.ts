@@ -47,6 +47,8 @@ export interface CalendarItem extends Interval {
   level?: Level;
   /** For booked items: the booking that created the event. */
   bookingId?: string;
+  /** The event title, for the availability inspector. */
+  title?: string;
 }
 
 export interface Booking extends Interval {

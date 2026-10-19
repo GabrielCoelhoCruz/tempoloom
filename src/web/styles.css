@@ -800,3 +800,102 @@ li.automation .confirm {
   color: var(--fg);
   font-size: 14px;
 }
+
+/* Booking page options: questions, zone picker, overlay (booking-links-booking-page.md) */
+.field,
+.question {
+  display: grid;
+  gap: 4px;
+}
+.field > label,
+.question > label {
+  color: var(--muted);
+  font-size: 12px;
+}
+.my-events {
+  margin: 0 0 6px;
+  padding-left: 16px;
+  color: var(--muted);
+  font-size: 12px;
+}
+button[data-mine="busy"] {
+  border-style: dashed;
+}
+/* Availability inspector (booking-links-availability.md rules 18-22) */
+button.not-offered {
+  color: var(--muted);
+}
+.dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-left: 4px;
+  vertical-align: middle;
+}
+.dot-grey {
+  background: #9aa0a8;
+}
+.dot-orange {
+  background: #d08a1e;
+}
+.dot-purple {
+  background: #7a52c7;
+}
+.dot-red {
+  background: #c2413a;
+}
+.dot-blue {
+  background: #3b6fd8;
+}
+.inspect-details {
+  margin: 8px 0;
+  padding-left: 16px;
+}
+.inspect-details a {
+  margin-left: 6px;
+}
+/* Links page: one section per booking page (booking-links.md rule 5) */
+.link-section {
+  margin: 16px 0;
+}
+.link-section h2 {
+  font-size: 16px;
+  margin: 0 8px 8px 0;
+}
+fieldset {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
+/* Share panel, personalize and embeds (booking-links-sharing.md) */
+.panel {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px 16px;
+  margin: 12px 0;
+  background: var(--panel);
+}
+.panel h2 {
+  font-size: 16px;
+  margin: 0 0 8px;
+}
+.preview {
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+  padding: 8px 12px;
+}
+.public.embedded {
+  padding: 12px;
+}
+.link-section .row > .actions {
+  align-items: center;
+  justify-content: flex-end;
+  max-width: 600px;
+}
+.tz-picker {
+  align-items: end;
+  margin: 8px 0;
+}

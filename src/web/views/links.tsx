@@ -1,9 +1,22 @@
+import { Fragment } from "preact";
 import { useCallback, useEffect, useState } from "preact/hooks";
 import { api } from "../lib/api.ts";
 import { formatWhen } from "../lib/format.ts";
+import { lazyComponent } from "../lib/lazy.ts";
 import { freeName, templateFromUrl } from "../lib/library.ts";
 import { LEVEL_NAMES, me, zone } from "../lib/state.ts";
 import { type EditableLink, LinkEditor, type PersonOption } from "./link-editor.tsx";
+import { type Group, GroupDelete, GroupEditor, GroupForm } from "./link-groups.tsx";
+
+// Personalize (one-off links and shared times) loads on first use.
+const Personalize = lazyComponent<{
+  link: EditableLink;
+  people: PersonOption[];
+  onClose: () => void;
+}>(() => import("./link-personalize.tsx").then((m) => m.Personalize));
+const SharePanel = lazyComponent<{ title: string; url: string; onClose: () => void }>(() =>
+  import("./link-share.tsx").then((m) => m.SharePanel),
+);
 
 interface Endpoint {
   id: string;
@@ -110,21 +123,31 @@ export function Links() {
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [endpoints, setEndpoints] = useState<Endpoint[]>([]);
   const [editing, setEditing] = useState<string | null>(null);
+  const [groups, setGroups] = useState<Group[]>([]);
+  const [personalizing, setPersonalizing] = useState<string | null>(null);
+  const [sharing, setSharing] = useState<string | null>(null);
+  const [groupForm, setGroupForm] = useState(false);
+  const [groupAction, setGroupAction] = useState<{ id: string; kind: "edit" | "delete" } | null>(
+    null,
+  );
   const [saved, setSaved] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     const [p, l, w] = await Promise.all([
       api<{ slug: string | null; branding: string | null }>("GET", "/api/booking/page"),
-      api<{ links: EditableLink[]; teamLinks: EditableLink[]; people: PersonOption[] }>(
-        "GET",
-        "/api/booking/links",
-      ),
+      api<{
+        links: EditableLink[];
+        groups: Group[];
+        teamLinks: EditableLink[];
+        people: PersonOption[];
+      }>("GET", "/api/booking/links"),
       api<{ endpoints: Endpoint[] }>("GET", "/api/webhooks"),
     ]);
     setPage(p.slug);
     setPageBranding(p.branding);
     setLinks(l.links);
+    setGroups(l.groups);
     setTeamLinks(l.teamLinks);
     setPeople(l.people);
     setEndpoints(w.endpoints);
@@ -134,6 +157,11 @@ export function Links() {
     }
   }, []);
   useEffect(() => void load(), [load]);
+  // ?edit=<link id> opens that link's editor, for links from the availability inspector.
+  useEffect(() => {
+    const id = new URLSearchParams(location.search).get("edit");
+    if (id) setEditing(id);
+  }, []);
 
   const act = async (fn: () => Promise<unknown>) => {
     setError(null);
@@ -149,16 +177,149 @@ export function Links() {
   if (page === undefined) return null;
   const edited = [...links, ...teamLinks].find((l) => l.id === editing);
   const myId = me.value?.user.id;
+  const shareButton = (l: EditableLink) => (
+    <button
+      type="button"
+      onClick={() => {
+        setEditing(null);
+        setPersonalizing(null);
+        setSharing(l.id);
+      }}
+    >
+      Share
+    </button>
+  );
+  const personalizeButton = (l: EditableLink) => (
+    <button
+      type="button"
+      onClick={() => {
+        setEditing(null);
+        setSharing(null);
+        setPersonalizing(l.id);
+      }}
+    >
+      Personalize
+    </button>
+  );
   const editButton = (l: EditableLink) => (
     <button
       type="button"
       onClick={() => {
         setSaved(null);
+        setPersonalizing(null);
+        setSharing(null);
         setEditing(l.id);
       }}
     >
       Edit
     </button>
+  );
+
+  const choices = links.map((l) => ({ id: l.id, title: l.title, page: l.page }));
+  /** One card per link (booking-links.md rule 5): what it is and what you can do with it. */
+  const card = (l: EditableLink) => {
+    const url = bookUrl(l.pageSlug ?? page ?? "", l.slug);
+    return (
+      <div
+        class="row"
+        key={l.id}
+        data-testid="link-row"
+        data-link-title={l.title}
+        data-link-id={l.id}
+      >
+        <div>
+          <div>
+            {l.title} {l.hidden ? <span class="badge">hidden</span> : null}
+          </div>
+          <div class="meta">
+            {LEVEL_NAMES[l.level]} · {l.durations.join(", ")} min ·{" "}
+            <a href={url} data-testid="link-url">
+              {url}
+            </a>
+          </div>
+          {peopleLine(l) && <div class="meta">{peopleLine(l)}</div>}
+          {endpoints.length > 0 && (
+            <div class="meta" data-testid="link-webhooks">
+              Send webhooks to:{" "}
+              {endpoints.map((e) => (
+                <label class="inline" key={e.id}>
+                  <input
+                    type="checkbox"
+                    checked={e.link_ids.includes(l.id)}
+                    onChange={(ev) => {
+                      const on = ev.currentTarget.checked;
+                      const ids = endpoints
+                        .filter((x) => (x.id === e.id ? on : x.link_ids.includes(l.id)))
+                        .map((x) => x.id);
+                      void act(() =>
+                        api("PUT", `/api/booking/links/${l.id}/webhooks`, { endpointIds: ids }),
+                      );
+                    }}
+                  />
+                  {e.name}
+                </label>
+              ))}
+            </div>
+          )}
+        </div>
+        <div class="actions">
+          <label class="inline">
+            Priority
+            <select
+              value={String(l.level)}
+              onChange={(e) => {
+                const level = Number(e.currentTarget.value);
+                void act(() => api("PATCH", `/api/booking/links/${l.id}`, { level }));
+              }}
+            >
+              {[1, 2, 3, 4].map((n) => (
+                <option value={n} key={n}>
+                  {LEVEL_NAMES[n]}
+                </option>
+              ))}
+            </select>
+          </label>
+          <a href={url} target="_blank" rel="noopener">
+            Open booking page
+          </a>
+          <button type="button" onClick={() => copy(url)}>
+            Copy link
+          </button>
+          {editButton(l)}
+          {personalizeButton(l)}
+          {shareButton(l)}
+          <button
+            type="button"
+            class="danger"
+            onClick={() => void act(() => api("DELETE", `/api/booking/links/${l.id}`))}
+          >
+            Delete
+          </button>
+        </div>
+      </div>
+    );
+  };
+  /** The personalize or share panel of a link, right under its card. */
+  const panels = (l: EditableLink, url: string) => (
+    <>
+      {sharing === l.id && (
+        <SharePanel title={l.title} url={url} onClose={() => setSharing(null)} />
+      )}
+      {personalizing === l.id && (
+        <Personalize link={l} people={people} onClose={() => setPersonalizing(null)} />
+      )}
+    </>
+  );
+  const cards = (list: EditableLink[]) => (
+    <div class="list">
+      {list.map((l) => (
+        <Fragment key={l.id}>
+          {card(l)}
+          {panels(l, bookUrl(l.pageSlug ?? page ?? "", l.slug))}
+        </Fragment>
+      ))}
+      {list.length === 0 && <p class="status">No links here.</p>}
+    </div>
   );
 
   const template = templateFromUrl();
@@ -220,7 +381,7 @@ export function Links() {
               bufferAfter: Number(f.get("bufferAfter")),
               maxPerDay: num("maxPerDay"),
               location: String(f.get("location") ?? ""),
-              hidden: f.get("hidden") === "on",
+              page: String(f.get("page") ?? "main"),
             }),
           );
         }}
@@ -279,73 +440,99 @@ export function Links() {
           Location
           <input name="location" />
         </label>
-        <label class="inline">
-          <input name="hidden" type="checkbox" />
-          Hide from my page (direct link only)
-        </label>
+        <div class="field">
+          <label for="new-link-page">Page</label>
+          <select id="new-link-page" name="page">
+            <option value="main">Main page</option>
+            <option value="hidden">Hidden (direct link only)</option>
+            {groups.map((g) => (
+              <option value={g.id} key={g.id}>
+                {g.title}
+              </option>
+            ))}
+          </select>
+        </div>
         <button type="submit" class="primary">
           Add link
         </button>
       </form>
-      <div class="list" data-testid="link-list">
-        {links.map((l) => (
-          <div
-            class="row"
-            key={l.id}
-            data-testid="link-row"
-            data-link-title={l.title}
-            data-link-id={l.id}
-          >
-            <div>
-              <div>
-                {l.title} {l.hidden ? <span class="badge">hidden</span> : null}
-              </div>
-              <div class="meta">
-                {LEVEL_NAMES[l.level]} · {l.durations.join(", ")} min ·{" "}
-                <a href={bookUrl(page, l.slug)} data-testid="link-url">
-                  {bookUrl(page, l.slug)}
-                </a>
-              </div>
-              {peopleLine(l) && <div class="meta">{peopleLine(l)}</div>}
-              {endpoints.length > 0 && (
-                <div class="meta" data-testid="link-webhooks">
-                  Send webhooks to:{" "}
-                  {endpoints.map((e) => (
-                    <label class="inline" key={e.id}>
-                      <input
-                        type="checkbox"
-                        checked={e.link_ids.includes(l.id)}
-                        onChange={(ev) => {
-                          const on = ev.currentTarget.checked;
-                          const ids = endpoints
-                            .filter((x) => (x.id === e.id ? on : x.link_ids.includes(l.id)))
-                            .map((x) => x.id);
-                          void act(() =>
-                            api("PUT", `/api/booking/links/${l.id}/webhooks`, { endpointIds: ids }),
-                          );
-                        }}
-                      />
-                      {e.name}
-                    </label>
-                  ))}
-                </div>
-              )}
-            </div>
+      <div class="actions">
+        <button
+          type="button"
+          onClick={() => {
+            setGroupForm(true);
+            setGroupAction(null);
+          }}
+        >
+          New group
+        </button>
+      </div>
+      {groupForm && (
+        <GroupForm
+          links={choices}
+          onCancel={() => setGroupForm(false)}
+          onDone={() => {
+            setGroupForm(false);
+            void load();
+          }}
+        />
+      )}
+      <div data-testid="link-list">
+        <section class="link-section" data-page="main">
+          <h2>Main page</h2>
+          {cards(links.filter((l) => l.page === "main"))}
+        </section>
+        {groups.map((g) => (
+          <section class="link-section" data-page={g.slug} key={g.id}>
             <div class="actions">
-              <button type="button" onClick={() => copy(bookUrl(page, l.slug))}>
-                Copy link
+              <h2>{g.title}</h2>
+              <a href={bookUrl(g.slug)} data-testid="group-url">
+                {bookUrl(g.slug)}
+              </a>
+              <button type="button" onClick={() => copy(bookUrl(g.slug))}>
+                Copy group URL
               </button>
-              {editButton(l)}
+              <button type="button" onClick={() => setGroupAction({ id: g.id, kind: "edit" })}>
+                Edit group
+              </button>
               <button
                 type="button"
                 class="danger"
-                onClick={() => void act(() => api("DELETE", `/api/booking/links/${l.id}`))}
+                onClick={() => setGroupAction({ id: g.id, kind: "delete" })}
               >
-                Delete
+                Delete group
               </button>
             </div>
-          </div>
+            {groupAction?.id === g.id && groupAction.kind === "edit" && (
+              <GroupEditor
+                group={g}
+                links={choices}
+                onCancel={() => setGroupAction(null)}
+                onDone={() => {
+                  setGroupAction(null);
+                  void load();
+                }}
+              />
+            )}
+            {groupAction?.id === g.id && groupAction.kind === "delete" && (
+              <GroupDelete
+                group={g}
+                groups={groups}
+                onCancel={() => setGroupAction(null)}
+                onDone={() => {
+                  setGroupAction(null);
+                  void load();
+                }}
+              />
+            )}
+            {cards(links.filter((l) => l.page === g.id))}
+          </section>
         ))}
+        <section class="link-section" data-page="hidden">
+          <h2>Hidden</h2>
+          <p class="status">No booking page lists these links; their direct URL works.</p>
+          {cards(links.filter((l) => l.page === "hidden"))}
+        </section>
       </div>
       <p class="status">Team admins manage webhook endpoints in Team settings.</p>
     </>
@@ -395,6 +582,7 @@ export function Links() {
             <LinkEditor
               key={edited.id}
               link={edited}
+              groups={groups}
               people={people}
               isOwner={edited.owner.id === myId}
               onClose={() => setEditing(null)}
@@ -418,37 +606,41 @@ export function Links() {
               <p class="status">Links of teammates where you are an organizer or in the pool.</p>
               <div class="list" data-testid="team-links">
                 {teamLinks.map((l) => (
-                  <div
-                    class="row"
-                    key={l.id}
-                    data-testid="team-link-row"
-                    data-link-title={l.title}
-                    data-link-id={l.id}
-                  >
-                    <div>
-                      <div>{l.title}</div>
-                      <div class="meta">
-                        {LEVEL_NAMES[l.level]} · {l.durations.join(", ")} min · Owned by{" "}
-                        {l.owner.name} ({l.owner.email})
-                      </div>
-                      {l.pageSlug && (
+                  <Fragment key={l.id}>
+                    <div
+                      class="row"
+                      data-testid="team-link-row"
+                      data-link-title={l.title}
+                      data-link-id={l.id}
+                    >
+                      <div>
+                        <div>{l.title}</div>
                         <div class="meta">
-                          <a href={bookUrl(l.pageSlug, l.slug)}>{bookUrl(l.pageSlug, l.slug)}</a>
+                          {LEVEL_NAMES[l.level]} · {l.durations.join(", ")} min · Owned by{" "}
+                          {l.owner.name} ({l.owner.email})
                         </div>
-                      )}
+                        {l.pageSlug && (
+                          <div class="meta">
+                            <a href={bookUrl(l.pageSlug, l.slug)}>{bookUrl(l.pageSlug, l.slug)}</a>
+                          </div>
+                        )}
+                      </div>
+                      <div class="actions">
+                        {l.pageSlug && (
+                          <button
+                            type="button"
+                            onClick={() => copy(bookUrl(l.pageSlug ?? "", l.slug))}
+                          >
+                            Copy link
+                          </button>
+                        )}
+                        {editButton(l)}
+                        {personalizeButton(l)}
+                        {l.pageSlug && shareButton(l)}
+                      </div>
                     </div>
-                    <div class="actions">
-                      {l.pageSlug && (
-                        <button
-                          type="button"
-                          onClick={() => copy(bookUrl(l.pageSlug ?? "", l.slug))}
-                        >
-                          Copy link
-                        </button>
-                      )}
-                      {editButton(l)}
-                    </div>
-                  </div>
+                    {panels(l, bookUrl(l.pageSlug ?? "", l.slug))}
+                  </Fragment>
                 ))}
               </div>
             </section>

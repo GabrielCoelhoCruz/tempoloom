@@ -26,6 +26,19 @@ export interface PoolMember extends Person {
   preferred: boolean;
 }
 
+export interface Question {
+  label: string;
+  type: "singleLine" | "multiLine" | "choice";
+  options: string[];
+  required: boolean;
+}
+
+/** A question as the form edits it: the choices stay text until the save. */
+interface QuestionDraft extends Omit<Question, "options"> {
+  key: number;
+  choices: string;
+}
+
 export interface EditableLink {
   id: string;
   slug: string;
@@ -41,6 +54,19 @@ export interface EditableLink {
   location: string;
   use_recovery_buffer: number;
   branding: string;
+  questions: Question[];
+  reminder_enabled: number;
+  reminder_hours: number;
+  reminder_message: string;
+  redirect_url: string | null;
+  /** "main", "hidden" or a link group id. */
+  page: string;
+  title_template: string;
+  default_duration: number | null;
+  invitee_name: string;
+  invitee_email: string;
+  /** One-off links: when the link stops working. */
+  expiresAt: number | null;
   owner: { id: string; name: string; email: string };
   pageSlug: string | null;
   organizers: Organizer[];
@@ -63,7 +89,123 @@ const ERRORS: Record<string, string> = {
   duplicate_person: "A person can be an organizer or in the pool, not both.",
   slug_taken: "That URL name is taken.",
   forbidden: "Only the owner can change the URL or the page.",
+  redirect_https: "The redirect URL must start with https://.",
 };
+
+const ANSWER_TYPES = [
+  ["singleLine", "Single line"],
+  ["multiLine", "Several lines"],
+  ["choice", "Choice"],
+] as const;
+
+/** Screening questions of a link (booking-links.md, question record). */
+function QuestionsEditor({
+  questions,
+  onChange,
+}: {
+  questions: QuestionDraft[];
+  onChange: (q: QuestionDraft[]) => void;
+}) {
+  const set = (key: number, change: Partial<QuestionDraft>) =>
+    onChange(questions.map((q) => (q.key === key ? { ...q, ...change } : q)));
+  return (
+    <section class="wide" data-testid="questions">
+      <h3>Questions</h3>
+      <p class="status">Bookers answer these on the booking page. Answers go into the event.</p>
+      <div class="list">
+        {questions.map((q, i) => (
+          <div class="row" key={q.key} data-testid={`question-${i + 1}`}>
+            <div class="actions">
+              <label>
+                Question {i + 1}
+                <input
+                  value={q.label}
+                  maxLength={300}
+                  onInput={(e) => set(q.key, { label: e.currentTarget.value })}
+                />
+              </label>
+              <label>
+                Answer type
+                <select
+                  value={q.type}
+                  onChange={(e) =>
+                    set(q.key, { type: e.currentTarget.value as QuestionDraft["type"] })
+                  }
+                >
+                  {ANSWER_TYPES.map(([value, label]) => (
+                    <option value={value} key={value}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {q.type === "choice" && (
+                <label>
+                  Choices (comma list)
+                  <input
+                    value={q.choices}
+                    onInput={(e) => set(q.key, { choices: e.currentTarget.value })}
+                  />
+                </label>
+              )}
+              <label class="inline">
+                <input
+                  type="checkbox"
+                  checked={q.required}
+                  onChange={(e) => set(q.key, { required: e.currentTarget.checked })}
+                />
+                Required
+              </label>
+            </div>
+            <button
+              type="button"
+              onClick={() => onChange(questions.filter((x) => x.key !== q.key))}
+            >
+              Remove question
+            </button>
+          </div>
+        ))}
+      </div>
+      {questions.length < 10 && (
+        <button
+          type="button"
+          onClick={() =>
+            onChange([
+              ...questions,
+              {
+                key: Math.max(0, ...questions.map((q) => q.key)) + 1,
+                label: "",
+                type: "singleLine",
+                choices: "",
+                required: false,
+              },
+            ])
+          }
+        >
+          + Add question
+        </button>
+      )}
+    </section>
+  );
+}
+
+const toDrafts = (questions: Question[]): QuestionDraft[] =>
+  questions.map(({ options, ...q }, i) => ({ ...q, key: i + 1, choices: options.join(", ") }));
+
+const fromDrafts = (drafts: QuestionDraft[]): Question[] =>
+  drafts
+    .filter((q) => q.label.trim())
+    .map(({ key: _key, choices, ...q }) => ({
+      ...q,
+      label: q.label.trim(),
+      options:
+        q.type === "choice"
+          ? choices
+              .split(",")
+              .map((c) => c.trim())
+              .filter(Boolean)
+          : [],
+    }));
 
 function HoursPicker({
   person,
@@ -93,14 +235,125 @@ function HoursPicker({
   );
 }
 
+/**
+ * The organizers of a link, each with their hours, required flag and host
+ * (booking-links-team.md rules 1-3). Used by the link editor and one-off links.
+ */
+export function OrganizersEditor({
+  organizers,
+  people,
+  free,
+  onChange,
+}: {
+  organizers: Organizer[];
+  people: PersonOption[];
+  /** Team members who can still be added. */
+  free: PersonOption[];
+  onChange: (o: Organizer[]) => void;
+}) {
+  const setOrganizers = onChange;
+  const setOrganizer = (userId: string, change: Partial<Organizer>) =>
+    setOrganizers(organizers.map((o) => (o.userId === userId ? { ...o, ...change } : o)));
+  const person = (userId: string): Person => {
+    const p = people.find((x) => x.userId === userId);
+    return { userId, name: p?.name ?? "", email: p?.email ?? "", hoursSetId: null };
+  };
+  return (
+    <section class="wide" data-testid="organizers">
+      <h3>Organizers</h3>
+      <p class="status">
+        Required organizers must be free. Optional organizers are invited but not checked. The host
+        holds the event in their calendar.
+      </p>
+      <div class="list">
+        {organizers.map((o) => (
+          <div class="row" key={o.userId} data-organizer={o.email}>
+            <div class="actions">
+              <span>
+                {o.name} ({o.email})
+              </span>
+              <HoursPicker
+                person={o}
+                people={people}
+                onChange={(id) => setOrganizer(o.userId, { hoursSetId: id })}
+              />
+              <label class="inline">
+                <input
+                  type="checkbox"
+                  checked={o.required}
+                  onChange={(e) => setOrganizer(o.userId, { required: e.currentTarget.checked })}
+                />
+                Required
+              </label>
+              <label class="inline">
+                <input
+                  type="radio"
+                  name="host"
+                  checked={o.isHost}
+                  onChange={() =>
+                    setOrganizers(
+                      organizers.map((x) => ({
+                        ...x,
+                        isHost: x.userId === o.userId,
+                        required: x.userId === o.userId ? true : x.required,
+                      })),
+                    )
+                  }
+                />
+                Host
+              </label>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                const rest = organizers.filter((x) => x.userId !== o.userId);
+                if (o.isHost && rest[0]) rest[0] = { ...rest[0], isHost: true, required: true };
+                setOrganizers(rest);
+              }}
+            >
+              Remove
+            </button>
+          </div>
+        ))}
+      </div>
+      <div class="actions">
+        <label>
+          Add organizer
+          <select
+            value=""
+            onChange={(e) => {
+              const id = e.currentTarget.value;
+              if (!id) return;
+              setOrganizers([
+                ...organizers,
+                { ...person(id), required: true, isHost: organizers.length === 0 },
+              ]);
+            }}
+          >
+            <option value="">Choose a team member</option>
+            {free.map((p) => (
+              <option value={p.userId} key={p.userId}>
+                {p.email}
+              </option>
+            ))}
+          </select>
+        </label>
+        <a href="/team">Invite someone to the team</a>
+      </div>
+    </section>
+  );
+}
+
 export function LinkEditor({
   link,
+  groups,
   people,
   isOwner,
   onSaved,
   onClose,
 }: {
   link: EditableLink;
+  groups: { id: string; title: string }[];
   people: PersonOption[];
   isOwner: boolean;
   onSaved: (title: string) => void;
@@ -108,6 +361,10 @@ export function LinkEditor({
 }) {
   const [organizers, setOrganizers] = useState<Organizer[]>(link.organizers);
   const [pool, setPool] = useState<PoolMember[]>(link.pool);
+  const [questions, setQuestions] = useState<QuestionDraft[]>(() => toDrafts(link.questions));
+  const [pageChoice, setPageChoice] = useState(link.page);
+  // Main and hidden links share the main page URL; a group has its own (sharing rule 5).
+  const urlPage = (p: string) => (p === "main" || p === "hidden" ? "" : p);
   const [error, setError] = useState<string | null>(null);
   const taken = new Set([...organizers, ...pool].map((p) => p.userId));
   const free = people.filter((p) => !taken.has(p.userId));
@@ -115,8 +372,6 @@ export function LinkEditor({
     const p = people.find((x) => x.userId === userId);
     return { userId, name: p?.name ?? "", email: p?.email ?? "", hoursSetId: null };
   };
-  const setOrganizer = (userId: string, change: Partial<Organizer>) =>
-    setOrganizers(organizers.map((o) => (o.userId === userId ? { ...o, ...change } : o)));
   const setMember = (userId: string, change: Partial<PoolMember>) =>
     setPool(pool.map((m) => (m.userId === userId ? { ...m, ...change } : m)));
   const several = organizers.length + (pool.length > 0 ? 1 : 0) > 1;
@@ -146,7 +401,14 @@ export function LinkEditor({
           location: String(f.get("location") ?? ""),
           useRecoveryBuffer: f.get("useRecoveryBuffer") === "on",
           branding: String(f.get("branding")),
-          ...(isOwner ? { slug: String(f.get("slug")), hidden: f.get("hidden") === "on" } : {}),
+          questions: fromDrafts(questions),
+          reminder: {
+            enabled: f.get("reminderEnabled") === "on",
+            hoursBefore: Number(f.get("reminderHours")),
+            message: String(f.get("reminderMessage") ?? ""),
+          },
+          redirectUrl: String(f.get("redirectUrl") ?? ""),
+          ...(isOwner ? { slug: String(f.get("slug")), page: pageChoice } : {}),
           organizers: organizers.map(({ userId, hoursSetId, required, isHost }) => ({
             userId,
             hoursSetId,
@@ -270,10 +532,28 @@ export function LinkEditor({
               defaultValue={link.slug}
             />
           </label>
-          <label class="inline">
-            <input name="hidden" type="checkbox" defaultChecked={link.hidden === 1} />
-            Hide from my page (direct link only)
-          </label>
+          <div class="field">
+            <label for={`page-${link.id}`}>Page</label>
+            <select
+              id={`page-${link.id}`}
+              value={pageChoice}
+              onChange={(e) => setPageChoice(e.currentTarget.value)}
+            >
+              <option value="main">Main page</option>
+              <option value="hidden">Hidden (direct link only)</option>
+              {groups.map((g) => (
+                <option value={g.id} key={g.id}>
+                  {g.title}
+                </option>
+              ))}
+            </select>
+          </div>
+          {urlPage(pageChoice) !== urlPage(link.page) && (
+            <p class="error wide" data-testid="page-warning">
+              Moving the link to another page changes its URL. The URL you shared before will stop
+              working.
+            </p>
+          )}
         </>
       )}
       <div class="wide">
@@ -291,88 +571,52 @@ export function LinkEditor({
         </p>
       </div>
 
-      <section class="wide" data-testid="organizers">
-        <h3>Organizers</h3>
-        <p class="status">
-          Required organizers must be free. Optional organizers are invited but not checked. The
-          host holds the event in their calendar.
+      <QuestionsEditor questions={questions} onChange={setQuestions} />
+
+      <section class="wide form" data-testid="reminder">
+        <h3 class="wide">Reminder and redirect</h3>
+        <label class="inline wide">
+          <input
+            name="reminderEnabled"
+            type="checkbox"
+            defaultChecked={link.reminder_enabled === 1}
+          />
+          Send a reminder email
+        </label>
+        <label>
+          Hours before
+          <input
+            name="reminderHours"
+            type="number"
+            min={1}
+            max={168}
+            defaultValue={String(link.reminder_hours)}
+          />
+        </label>
+        <label class="wide">
+          Reminder message
+          <textarea
+            name="reminderMessage"
+            rows={2}
+            maxLength={1024}
+            defaultValue={link.reminder_message}
+          />
+        </label>
+        <label class="wide">
+          Redirect after booking (https URL)
+          <input name="redirectUrl" defaultValue={link.redirect_url ?? ""} />
+        </label>
+        <p class="status wide">
+          The booking page shows the confirmation, then opens this page 7 seconds later.
         </p>
-        <div class="list">
-          {organizers.map((o) => (
-            <div class="row" key={o.userId} data-organizer={o.email}>
-              <div class="actions">
-                <span>
-                  {o.name} ({o.email})
-                </span>
-                <HoursPicker
-                  person={o}
-                  people={people}
-                  onChange={(id) => setOrganizer(o.userId, { hoursSetId: id })}
-                />
-                <label class="inline">
-                  <input
-                    type="checkbox"
-                    checked={o.required}
-                    onChange={(e) => setOrganizer(o.userId, { required: e.currentTarget.checked })}
-                  />
-                  Required
-                </label>
-                <label class="inline">
-                  <input
-                    type="radio"
-                    name="host"
-                    checked={o.isHost}
-                    onChange={() =>
-                      setOrganizers(
-                        organizers.map((x) => ({
-                          ...x,
-                          isHost: x.userId === o.userId,
-                          required: x.userId === o.userId ? true : x.required,
-                        })),
-                      )
-                    }
-                  />
-                  Host
-                </label>
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  const rest = organizers.filter((x) => x.userId !== o.userId);
-                  if (o.isHost && rest[0]) rest[0] = { ...rest[0], isHost: true, required: true };
-                  setOrganizers(rest);
-                }}
-              >
-                Remove
-              </button>
-            </div>
-          ))}
-        </div>
-        <div class="actions">
-          <label>
-            Add organizer
-            <select
-              value=""
-              onChange={(e) => {
-                const id = e.currentTarget.value;
-                if (!id) return;
-                setOrganizers([
-                  ...organizers,
-                  { ...person(id), required: true, isHost: organizers.length === 0 },
-                ]);
-              }}
-            >
-              <option value="">Choose a team member</option>
-              {free.map((p) => (
-                <option value={p.userId} key={p.userId}>
-                  {p.email}
-                </option>
-              ))}
-            </select>
-          </label>
-          <a href="/team">Invite someone to the team</a>
-        </div>
       </section>
+
+      <OrganizersEditor
+        organizers={organizers}
+        people={people}
+        free={free}
+        onChange={setOrganizers}
+      />
 
       <section class="wide" data-testid="pool">
         <h3>Round-robin pool</h3>

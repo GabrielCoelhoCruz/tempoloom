@@ -1019,6 +1019,48 @@ export const MIGRATIONS: readonly string[] = [
   ALTER TABLE events ADD COLUMN conference TEXT NOT NULL DEFAULT '';
   `,
   // round 3 s6
+  // r3 s6: booking link questions, reminder and redirect; link groups; one-off links; sharing choices
+  `
+  CREATE TABLE booking_groups (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    -- Unique on the instance, together with booking_pages.slug (booking-links-sharing.md).
+    slug TEXT NOT NULL UNIQUE,
+    title TEXT NOT NULL,
+    branding TEXT NOT NULL DEFAULT 'default',
+    created_at INTEGER NOT NULL
+  ) STRICT;
+  CREATE INDEX booking_groups_user ON booking_groups(user_id);
+
+  -- [{label, type: singleLine|multiLine|choice, options, required}]
+  ALTER TABLE booking_links ADD COLUMN questions TEXT NOT NULL DEFAULT '[]';
+  ALTER TABLE booking_links ADD COLUMN reminder_enabled INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE booking_links ADD COLUMN reminder_hours INTEGER NOT NULL DEFAULT 24;
+  ALTER TABLE booking_links ADD COLUMN reminder_message TEXT NOT NULL DEFAULT '';
+  -- When the reminder setting last changed: older bookings get a reminder only if it is still ahead.
+  ALTER TABLE booking_links ADD COLUMN reminder_saved_at INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE booking_links ADD COLUMN redirect_url TEXT;
+  ALTER TABLE booking_links ADD COLUMN default_duration INTEGER;
+  -- NULL: the main page (or hidden). Otherwise the link group that lists the link.
+  ALTER TABLE booking_links ADD COLUMN group_id TEXT REFERENCES booking_groups(id) ON DELETE SET NULL;
+  -- One-off links: the link they personalize (no foreign key: they outlive it) and the invitee.
+  ALTER TABLE booking_links ADD COLUMN source_id TEXT;
+  ALTER TABLE booking_links ADD COLUMN invitee_name TEXT NOT NULL DEFAULT '';
+  ALTER TABLE booking_links ADD COLUMN invitee_email TEXT NOT NULL DEFAULT '';
+  CREATE INDEX booking_links_source ON booking_links(source_id);
+
+  ALTER TABLE bookings ADD COLUMN answers TEXT NOT NULL DEFAULT '[]';
+  -- The zone the booker chose on the page; their emails use it.
+  ALTER TABLE bookings ADD COLUMN time_zone TEXT NOT NULL DEFAULT 'UTC';
+  ALTER TABLE bookings ADD COLUMN reminder_sent_at INTEGER;
+
+  -- The last shared-times template and embed redirect mode of each user.
+  CREATE TABLE booking_share_prefs (
+    user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    times_template TEXT,
+    embed_redirect TEXT NOT NULL DEFAULT 'disabled'
+  ) STRICT;
+  `,
   // round 3 s7
   `
   -- r3 s7: preview mode (staged changes), the event change log, dismissed hints

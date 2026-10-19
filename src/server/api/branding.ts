@@ -44,6 +44,29 @@ export function brandingFor(
   };
 }
 
+/**
+ * A link's own branding mode: the link setting wins; `sameAsGroup` takes its
+ * group's setting, or the owner's main page setting (booking page rule 27).
+ */
+export function resolveLinkBranding(
+  db: Db,
+  link: { user_id: string; branding: Branding; group_id: string | null },
+): Branding {
+  if (link.branding !== "sameAsGroup") return link.branding;
+  const page = link.group_id
+    ? one<{ branding: Branding }>(
+        db,
+        "SELECT branding FROM booking_groups WHERE id = ?",
+        link.group_id,
+      )
+    : one<{ branding: Branding }>(
+        db,
+        "SELECT branding FROM booking_pages WHERE user_id = ?",
+        link.user_id,
+      );
+  return page?.branding ?? "default";
+}
+
 /** The image type from the first bytes: only PNG and JPEG are accepted (edge case 5). */
 function imageType(bytes: Uint8Array): string | null {
   if (bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47)

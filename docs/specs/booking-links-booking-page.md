@@ -68,8 +68,15 @@ banner, or remove branding.
    browser's time zone. When the selected zone differs from the browser's
    zone, or from the logged-in user's calendar zone, the page lists that
    actual zone first so the booker can compare (E-0217).
+   Tempoloom decision: the list starts with the browser's zone and, for a
+   signed-in user whose calendar zone differs, that calendar zone; then all
+   zones. A search field filters the list. The page says which zone the
+   times use and, when it differs, the browser's zone. The chosen zone is
+   kept in the URL (`tz`), so a reload shows the same view.
 7. Time format switch: 12-hour or 24-hour (E-0217). Proposed default: from
    the browser locale.
+   Tempoloom decision: the last choice is kept in the browser (local
+   storage); 12-hour times read like "9:00 AM".
 8. All times on the page are shown in the selected zone. The server works in
    UTC.
 9. URL parameters (E-0063):
@@ -79,10 +86,16 @@ banner, or remove branding.
    - `duration` selects that duration, if the link has it.
    An invalid or unavailable value is ignored, and the page uses its
    default (Proposed).
+   Tempoloom decision: `day` starts the list of dates at that date; `time`
+   opens the details form for that start; a change of duration or zone
+   updates `duration` and `tz` in the URL.
 10. Overlay my calendar: when the booker is logged in to Tempoloom, the page
     shows a switch that overlays the booker's own events next to the
     offered times (E-0217, E-0173). The organizer's calendar is never shown
     to bookers (E-0217).
+    Tempoloom decision: the overlay lists the booker's events of all their
+    connected calendars under each date, and marks offered times that
+    overlap one of them. The switch state is kept in the browser.
 11. Inspect availability: organizers see the inspector switch (SPEC-LINK-02).
 
 ### Details and confirmation
@@ -118,6 +131,13 @@ banner, or remove branding.
     recipient's zone (Proposed: the booker's selected zone for the booker,
     the calendar zone for organizers), the location, and the reschedule and
     cancel links (booker email only).
+    Tempoloom decision: subjects start with "Booked:", "Rescheduled:" or
+    "Cancelled:" for the booker, and "New booking:", "Rescheduled:" or
+    "Cancelled:" for organizers. Organizer emails also have the booker's
+    name, email, message and answers. Each email has a plain text and an
+    HTML part; the HTML part carries the branding with absolute image URLs.
+    The reschedule and cancel links open the manage page in that mode; the
+    cancel link asks before it cancels.
 22. The reminder email follows SPEC-LINK-01 rule 21.
 23. Emails use the branding of the link (E-0055).
 24. A one-off link can prefill name and email (SPEC-LINK-05). The booker can

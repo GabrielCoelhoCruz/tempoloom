@@ -5,6 +5,7 @@ import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { z } from "zod";
 import {
+  type Booking,
   type CalendarItem,
   type OfferedTime,
   type Person,
@@ -14,7 +15,9 @@ import {
 import { hasTag, TAG_FREE } from "../../scheduler/blocking.ts";
 import type { WeeklyHours } from "../../scheduler/hours.ts";
 import type { ExternalEvent, Level } from "../../scheduler/model.ts";
+import { isValidTimeZone } from "../../shared/time.ts";
 import type { AppEnv } from "../app.ts";
+import { type Answer, type BookingChange, notifyBooking } from "../booking-mail.ts";
 import {
   assign,
   bookingHolds,
@@ -28,13 +31,14 @@ import {
 import { all, type Db, one, run, tx } from "../db.ts";
 import { jsonBody, notFound } from "../http.ts";
 import { limitRefusal } from "../limits.ts";
+import type { Mailer } from "../mail.ts";
 import { getPrefs } from "../meeting-prefs.ts";
 import { MANAGED_PROP } from "../planner/push.ts";
 import { getSettings } from "../settings.ts";
 import type { SyncService } from "../sync/service.ts";
 import { membership, sameTeam } from "../teams.ts";
 import { type CustomData, customData, type WebhookType } from "../webhooks.ts";
-import { type Branding, brandingFor } from "./branding.ts";
+import { type Branding, brandingFor, resolveLinkBranding } from "./branding.ts";
 
 export interface LinkRow {
   id: string;
@@ -56,6 +60,18 @@ export interface LinkRow {
   location: string;
   use_recovery_buffer: number;
   branding: Branding;
+  questions: string;
+  reminder_enabled: number;
+  reminder_hours: number;
+  reminder_message: string;
+  reminder_saved_at: number;
+  redirect_url: string | null;
+  default_duration: number | null;
+  group_id: string | null;
+  source_id: string | null;
+  invitee_name: string;
+  invitee_email: string;
+  created_at: number;
 }
 
 interface BookingRow {
@@ -74,6 +90,8 @@ interface BookingRow {
   custom_data: string;
   host_id: string | null;
   assignee_id: string | null;
+  answers: string;
+  time_zone: string;
 }
 
 const slugRe = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
@@ -90,11 +108,89 @@ export function slugify(title: string): string {
   );
 }
 
+/** A screening question (booking-links.md, question record). */
+export interface Question {
+  label: string;
+  type: "singleLine" | "multiLine" | "choice";
+  options: string[];
+  required: boolean;
+}
+
+const question = z
+  .object({
+    label: z.string().trim().min(1).max(300),
+    type: z.enum(["singleLine", "multiLine", "choice"]),
+    options: z.array(z.string().trim().min(1).max(200)).max(20),
+    required: z.boolean(),
+  })
+  .refine((q) => q.type !== "choice" || q.options.length > 0, "A choice question needs choices.");
+
+/** Page slugs with another meaning in /book/... URLs. */
+const RESERVED = new Set(["o", "manage", "embed"]);
+
+/**
+ * True when a page slug is in use: by another user's booking page, another link
+ * group, or the URL scheme. Page and group slugs are unique on the instance
+ * (booking-links-sharing.md edge case 4).
+ */
+export function pageSlugTaken(
+  db: Db,
+  slug: string,
+  mine: { userId?: string; groupId?: string },
+): boolean {
+  if (RESERVED.has(slug)) return true;
+  const page = one<{ user_id: string }>(
+    db,
+    "SELECT user_id FROM booking_pages WHERE slug = ?",
+    slug,
+  );
+  if (page && page.user_id !== mine.userId) return true;
+  const group = one<{ id: string }>(db, "SELECT id FROM booking_groups WHERE slug = ?", slug);
+  return group !== undefined && group.id !== mine.groupId;
+}
+
+/** The page columns of a link: main page, hidden, or a link group of the owner. */
+function pageColumns(
+  db: Db,
+  ownerId: string,
+  b: { page?: string | undefined; hidden?: boolean | undefined },
+): { hidden: number; group_id: string | null } | undefined {
+  if (b.page === undefined) {
+    return b.hidden === undefined ? undefined : { hidden: b.hidden ? 1 : 0, group_id: null };
+  }
+  if (b.page === "main") return { hidden: 0, group_id: null };
+  if (b.page === "hidden") return { hidden: 1, group_id: null };
+  if (!one(db, "SELECT 1 FROM booking_groups WHERE id = ? AND user_id = ?", b.page, ownerId))
+    invalid("unknown_page");
+  return { hidden: 0, group_id: b.page };
+}
+
+/** The slug of the page a link is on: its group's, or the owner's main page. */
+export function linkPageSlug(
+  db: Db,
+  link: { user_id: string; group_id: string | null; source_id: string | null },
+) {
+  // One-off links live at /book/o/<slug> (sharing rule 15).
+  if (link.source_id) return "o";
+  return link.group_id
+    ? (one<{ slug: string }>(db, "SELECT slug FROM booking_groups WHERE id = ?", link.group_id)
+        ?.slug ?? null)
+    : (one<{ slug: string }>(db, "SELECT slug FROM booking_pages WHERE user_id = ?", link.user_id)
+        ?.slug ?? null);
+}
+
 const linkInput = z.object({
   title: z.string().trim().min(1).max(120),
   description: z.string().max(4000).optional(),
   slug: z.string().regex(slugRe).optional(),
   hidden: z.boolean().optional(),
+  /** "main", "hidden" or the id of one of the owner's link groups (sharing rule 2). */
+  page: z.string().max(64).optional(),
+  /** The event title, with {title}, {organizer} and {attendee}. */
+  titleTemplate: z.string().trim().min(1).max(200).optional(),
+  /** One-off links: the invitee the booking page is prefilled with (sharing rule 9). */
+  inviteeName: z.string().trim().max(200).optional(),
+  inviteeEmail: z.union([z.literal(""), z.email()]).optional(),
   durations: z.array(z.number().int().min(5).max(480).multipleOf(5)).min(1).max(3),
   level: z.number().int().min(1).max(4).optional(),
   hoursSetId: z.string().nullable().optional(),
@@ -110,6 +206,17 @@ const linkInput = z.object({
   maxPerDay: z.number().int().min(1).max(50).nullable().optional(),
   maxPerWeek: z.number().int().min(1).max(200).nullable().optional(),
   location: z.string().max(500).optional(),
+  questions: z.array(question).max(10).optional(),
+  reminder: z
+    .object({
+      enabled: z.boolean(),
+      hoursBefore: z.number().int().min(1).max(168),
+      message: z.string().max(1024),
+    })
+    .optional(),
+  /** Must start with https:// (edge case 8); "" or null removes it. */
+  redirectUrl: z.string().max(2000).nullable().optional(),
+  defaultDuration: z.number().int().nullable().optional(),
 });
 
 const BRANDINGS = ["sameAsGroup", "default", "none", "custom"] as const;
@@ -142,6 +249,64 @@ const forbidden = (): never => {
 const invalid = (error: string): never => {
   throw new HTTPException(400, { res: Response.json({ error }, { status: 400 }) });
 };
+
+/** A redirect URL as stored: https only (booking-links.md edge case 8); empty removes it. */
+function redirectValue(v: string | null | undefined): string | null | undefined {
+  if (v === undefined) return undefined;
+  const text = v?.trim() ?? "";
+  if (!text) return null;
+  let url: URL | undefined;
+  try {
+    url = new URL(text);
+  } catch {}
+  if (url?.protocol !== "https:") invalid("redirect_https");
+  return url?.toString() ?? null;
+}
+
+type Options = {
+  [K in "questions" | "reminder" | "redirectUrl" | "defaultDuration" | "durations"]?:
+    | z.infer<typeof linkInput>[K]
+    | undefined;
+};
+
+/**
+ * Columns for the booking page options of a link. The reminder setting records
+ * when it changed: bookings made before get a reminder only if it is still
+ * ahead then (booking-links.md rule 21).
+ */
+function optionColumns(
+  b: Options,
+  current: LinkRow | undefined,
+  now: number,
+): [string, string | number | null | undefined][] {
+  const durations =
+    b.durations ?? (current ? (JSON.parse(current.durations) as number[]) : undefined);
+  let defaultDuration: number | null | undefined;
+  if (b.defaultDuration !== undefined) {
+    if (b.defaultDuration !== null && !durations?.includes(b.defaultDuration))
+      invalid("default_duration");
+    defaultDuration = b.defaultDuration;
+  } else if (current?.default_duration && !durations?.includes(current.default_duration)) {
+    // The old default is no longer one of the durations: the first one is the default again.
+    defaultDuration = null;
+  }
+  const r = b.reminder;
+  const changed =
+    r !== undefined &&
+    (!current ||
+      current.reminder_enabled !== (r.enabled ? 1 : 0) ||
+      current.reminder_hours !== r.hoursBefore ||
+      current.reminder_message !== r.message);
+  return [
+    ["questions", b.questions && JSON.stringify(b.questions)],
+    ["reminder_enabled", r === undefined ? undefined : r.enabled ? 1 : 0],
+    ["reminder_hours", r?.hoursBefore],
+    ["reminder_message", r?.message],
+    ["reminder_saved_at", changed ? now : undefined],
+    ["redirect_url", redirectValue(b.redirectUrl)],
+    ["default_duration", defaultDuration],
+  ];
+}
 
 /** Classifies the owner's events for availability (class table of the spec). */
 export function calendarItems(db: Db, userId: string, from: number, to: number): CalendarItem[] {
@@ -176,7 +341,7 @@ export function calendarItems(db: Db, userId: string, from: number, to: number):
   )) {
     const props = JSON.parse(e.private_props) as Record<string, string>;
     if (props[MANAGED_PROP] === "1") continue;
-    const span = { start: e.start_ms, end: e.end_ms };
+    const span = { start: e.start_ms, end: e.end_ms, title: e.summary };
     if (props.tl_booking === "1") {
       items.push({
         ...span,
@@ -228,14 +393,15 @@ export function calendarItems(db: Db, userId: string, from: number, to: number):
     end_ms: number;
     busy: number;
     locked: number;
+    title: string;
   }>(
     db,
-    "SELECT kind, source_id, start_ms, end_ms, busy, locked FROM managed_events WHERE user_id = ? AND end_ms > ? AND start_ms < ?",
+    "SELECT kind, source_id, start_ms, end_ms, busy, locked, title FROM managed_events WHERE user_id = ? AND end_ms > ? AND start_ms < ?",
     userId,
     from,
     to,
   )) {
-    const span = { start: m.start_ms, end: m.end_ms };
+    const span = { start: m.start_ms, end: m.end_ms, title: m.title };
     if (m.locked) items.push({ ...span, cls: "fixed" });
     else if (!m.busy) items.push({ ...span, cls: "free" });
     else {
@@ -245,7 +411,7 @@ export function calendarItems(db: Db, userId: string, from: number, to: number):
     }
   }
   for (const h of bookingHolds(db, userId, from, to)) {
-    items.push({ start: h.start, end: h.end, cls: "booked", bookingId: h.id });
+    items.push({ start: h.start, end: h.end, cls: "booked", bookingId: h.id, title: h.title });
   }
   return items;
 }
@@ -281,22 +447,26 @@ function linkTeam(db: Db, link: LinkRow): { people: LinkPerson[]; usable: boolea
   return { people: people.filter((p) => p.kind === "organizer" || inTeam(p)), usable };
 }
 
-/** Times of one link, each with the pool members who pass (round robin). */
-export function linkTimes(
+/** What availability needs for one link and duration: rules, people and bookings. */
+export function linkInputs(
   db: Db,
   link: LinkRow,
   duration: number,
   from: number,
   to: number,
   now: number,
-  rescheduling?: string,
-): OfferedTime[] {
+): { rules: TeamRules; required: Person[]; pool: Person[]; bookings: Booking[] } | null {
   const { people, usable } = linkTeam(db, link);
-  if (!usable) return [];
+  if (!usable) return null;
+  // A one-off link and its source share their limits (sharing rule 16).
+  const family = link.source_id ?? link.id;
   const bookings = all<{ id: string; start_ms: number; end_ms: number }>(
     db,
-    "SELECT id, start_ms, end_ms FROM bookings WHERE link_id = ? AND status = 'booked' AND end_ms > ?",
-    link.id,
+    `SELECT id, start_ms, end_ms FROM bookings
+     WHERE link_id IN (SELECT id FROM booking_links WHERE id = ? OR source_id = ?)
+       AND status = 'booked' AND end_ms > ?`,
+    family,
+    family,
     now - 8 * 86_400_000,
   ).map((b) => ({ id: b.id, start: b.start_ms, end: b.end_ms }));
   // The booked meeting as the recovery buffer filters see it (availability rule 10).
@@ -325,26 +495,64 @@ export function linkTimes(
     recoveryMinutes: link.use_recovery_buffer ? recoveryMinutes(db, p.userId, meeting) : 0,
     startMinutes: getPrefs(db, p.userId).startMinutes,
   });
-  return teamOffers(
-    rulesFor(db, link, duration),
-    organizers.filter((p) => p.required).map(person),
-    people.filter((p) => p.kind === "pool").map(person),
+  return {
+    rules: rulesFor(db, link, duration),
+    required: organizers.filter((p) => p.required).map(person),
+    pool: people.filter((p) => p.kind === "pool").map(person),
     bookings,
-    now,
-    from,
-    to,
-    rescheduling,
-  );
+  };
+}
+
+/** Times of one link, each with the pool members who pass (round robin). */
+export function linkTimes(
+  db: Db,
+  link: LinkRow,
+  duration: number,
+  from: number,
+  to: number,
+  now: number,
+  rescheduling?: string,
+): OfferedTime[] {
+  const inputs = linkInputs(db, link, duration, from, to, now);
+  if (!inputs) return [];
+  const { rules, required, pool, bookings } = inputs;
+  return teamOffers(rules, required, pool, bookings, now, from, to, rescheduling);
 }
 
 function publicLink(link: LinkRow) {
+  const durations = JSON.parse(link.durations) as number[];
   return {
     slug: link.slug,
     title: link.title,
     description: link.description,
-    durations: JSON.parse(link.durations) as number[],
+    durations,
+    defaultDuration:
+      link.default_duration && durations.includes(link.default_duration)
+        ? link.default_duration
+        : (durations[0] ?? null),
     location: link.location,
+    questions: JSON.parse(link.questions) as Question[],
+    redirectUrl: link.redirect_url,
+    prefill:
+      link.invitee_name || link.invitee_email
+        ? { name: link.invitee_name, email: link.invitee_email }
+        : null,
   };
+}
+
+/** The booker's answers, in question order; null when one is missing or not a choice. */
+function checkAnswers(link: LinkRow, given: string[]): { answers: Answer[] } | { error: string } {
+  const questions = JSON.parse(link.questions) as Question[];
+  if (given.length > questions.length) return { error: "invalid_answer" };
+  const answers: Answer[] = [];
+  for (const [i, q] of questions.entries()) {
+    const answer = (given[i] ?? "").trim();
+    if (q.required && !answer) return { error: "answer_required" };
+    if (q.type === "choice" && answer && !q.options.includes(answer))
+      return { error: "invalid_answer" };
+    answers.push({ question: q.label, answer });
+  }
+  return { answers };
 }
 
 /** Names the booker may see before confirming: organizers only, never the pool (team rule 15). */
@@ -369,7 +577,7 @@ interface PersonView {
 }
 
 /** A link as its owner and co-organizers see it, with its people. */
-function linkView(db: Db, link: LinkRow) {
+function linkView(db: Db, link: LinkRow, oneOffDays: number) {
   const user = (id: string) =>
     one<{ name: string; email: string }>(db, "SELECT name, email FROM users WHERE id = ?", id) ?? {
       name: "",
@@ -384,10 +592,11 @@ function linkView(db: Db, link: LinkRow) {
   return {
     ...link,
     durations: JSON.parse(link.durations) as number[],
+    questions: JSON.parse(link.questions) as Question[],
     owner: { id: link.user_id, ...user(link.user_id) },
-    pageSlug:
-      one<{ slug: string }>(db, "SELECT slug FROM booking_pages WHERE user_id = ?", link.user_id)
-        ?.slug ?? null,
+    page: link.group_id ?? (link.hidden ? "hidden" : "main"),
+    pageSlug: linkPageSlug(db, link),
+    expiresAt: oneOffExpiry(link, oneOffDays),
     organizers: people
       .filter((p) => p.kind === "organizer")
       .map((p) => ({ ...view(p), required: p.required, isHost: p.isHost })),
@@ -424,7 +633,7 @@ function checkPeople(
   }
 }
 
-export function bookingRoutes(db: Db, now: () => number): Hono<AppEnv> {
+export function bookingRoutes(db: Db, now: () => number, oneOffDays: number): Hono<AppEnv> {
   const r = new Hono<AppEnv>();
 
   r.get("/page", (c) => {
@@ -440,12 +649,7 @@ export function bookingRoutes(db: Db, now: () => number): Hono<AppEnv> {
   r.post("/page", async (c) => {
     const user = c.get("user");
     const { slug } = await jsonBody(c, z.object({ slug: z.string().regex(slugRe) }));
-    const taken = one<{ user_id: string }>(
-      db,
-      "SELECT user_id FROM booking_pages WHERE slug = ?",
-      slug,
-    );
-    if (taken && taken.user_id !== user.id) return c.json({ error: "slug_taken" }, 409);
+    if (pageSlugTaken(db, slug, { userId: user.id })) return c.json({ error: "slug_taken" }, 409);
     // A new page copies the team's branding default (booking page rule 28).
     const teamDefault =
       one<{ mode: string }>(
@@ -504,7 +708,7 @@ export function bookingRoutes(db: Db, now: () => number): Hono<AppEnv> {
       id,
       userId,
       slug,
-      b.hidden ? 1 : 0,
+      pageColumns(db, userId, b)?.hidden ?? 0,
       b.title,
       b.description ?? "",
       "{title} with {attendee}",
@@ -520,6 +724,21 @@ export function bookingRoutes(db: Db, now: () => number): Hono<AppEnv> {
       b.location ?? "",
       now(),
     );
+    const options = [
+      ["group_id", pageColumns(db, userId, b)?.group_id ?? undefined] as [
+        string,
+        string | undefined,
+      ],
+      ...optionColumns(b, undefined, now()),
+    ].filter(([, v]) => v !== undefined);
+    if (options.length > 0) {
+      run(
+        db,
+        `UPDATE booking_links SET ${options.map(([k]) => `${k} = ?`).join(", ")} WHERE id = ?`,
+        ...options.map(([, v]) => v ?? null),
+        id,
+      );
+    }
     // A personal link: the creator is its only organizer and its host.
     run(
       db,
@@ -559,7 +778,7 @@ export function bookingRoutes(db: Db, now: () => number): Hono<AppEnv> {
     const user = c.get("user");
     const links = all<LinkRow>(
       db,
-      "SELECT * FROM booking_links WHERE user_id = ? ORDER BY level, created_at",
+      "SELECT * FROM booking_links WHERE user_id = ? AND source_id IS NULL ORDER BY level, created_at",
       user.id,
     );
     // Team links page group: links where the user is a co-organizer or in the pool (sharing spec).
@@ -568,7 +787,8 @@ export function bookingRoutes(db: Db, now: () => number): Hono<AppEnv> {
       db,
       `SELECT l.* FROM booking_links l JOIN booking_link_people p ON p.link_id = l.id
        JOIN team_members m ON m.user_id = l.user_id
-       WHERE p.user_id = ? AND l.user_id <> ? AND m.team_id = ? ORDER BY l.level, l.created_at`,
+       WHERE p.user_id = ? AND l.user_id <> ? AND m.team_id = ? AND l.source_id IS NULL
+       ORDER BY l.level, l.created_at`,
       user.id,
       user.id,
       team.id,
@@ -586,8 +806,13 @@ export function bookingRoutes(db: Db, now: () => number): Hono<AppEnv> {
       team.id,
     );
     return c.json({
-      links: links.map((l) => linkView(db, l)),
-      teamLinks: teamLinks.map((l) => linkView(db, l)),
+      links: links.map((l) => linkView(db, l, oneOffDays)),
+      groups: all<{ id: string; slug: string; title: string; branding: string }>(
+        db,
+        "SELECT id, slug, title, branding FROM booking_groups WHERE user_id = ? ORDER BY created_at",
+        user.id,
+      ),
+      teamLinks: teamLinks.map((l) => linkView(db, l, oneOffDays)),
       people: members.map((m) => ({
         ...m,
         hoursSets: sets
@@ -620,18 +845,33 @@ export function bookingRoutes(db: Db, now: () => number): Hono<AppEnv> {
   });
 
   /** Changes a link. Only the owner may change its URL, its page and delete it (team rules 10, 22). */
-  r.patch("/links/:id", async (c) => {
-    const user = c.get("user");
-    const { link, owner } = editable(c.req.param("id"), user.id);
-    const b = await jsonBody(c, linkChanges);
-    if (!owner && (b.slug !== undefined || b.hidden !== undefined)) forbidden();
-    if (
-      b.slug &&
-      b.slug !== link.slug &&
-      one(db, "SELECT 1 FROM booking_links WHERE user_id = ? AND slug = ?", link.user_id, b.slug)
-    ) {
-      return c.json({ error: "slug_taken" }, 409);
-    }
+  const slugTaken = (): never => {
+    throw new HTTPException(409, {
+      res: Response.json({ error: "slug_taken" }, { status: 409 }),
+    });
+  };
+  /** A link slug is unique for its owner; a one-off slug also among all one-off links. */
+  const slugInUse = (link: LinkRow, slug: string) =>
+    one(
+      db,
+      "SELECT 1 FROM booking_links WHERE user_id = ? AND slug = ? AND id <> ?",
+      link.user_id,
+      slug,
+      link.id,
+    ) !== undefined ||
+    (link.source_id !== null &&
+      one(
+        db,
+        "SELECT 1 FROM booking_links WHERE source_id IS NOT NULL AND slug = ? AND id <> ?",
+        slug,
+        link.id,
+      ) !== undefined);
+
+  /** Saves changes to a link, or the settings of a new one-off link. */
+  function applyChanges(link: LinkRow, b: Changes): void {
+    // One-off links are on no page (sharing rule 11).
+    const page = link.source_id ? undefined : pageColumns(db, link.user_id, b);
+    if (b.slug && b.slug !== link.slug && slugInUse(link, b.slug)) slugTaken();
     const organizers =
       b.organizers ??
       linkPeople(db, link.id)
@@ -647,7 +887,8 @@ export function bookingRoutes(db: Db, now: () => number): Hono<AppEnv> {
       ["title", b.title],
       ["description", b.description],
       ["slug", b.slug],
-      ["hidden", b.hidden === undefined ? undefined : b.hidden ? 1 : 0],
+      ["hidden", page?.hidden],
+      ["group_id", page?.group_id],
       ["durations", b.durations && JSON.stringify(b.durations)],
       ["level", b.level],
       ["notice_minutes", b.noticeMinutes],
@@ -662,6 +903,10 @@ export function bookingRoutes(db: Db, now: () => number): Hono<AppEnv> {
         b.useRecoveryBuffer === undefined ? undefined : b.useRecoveryBuffer ? 1 : 0,
       ],
       ["branding", b.branding],
+      ["title_template", b.titleTemplate],
+      ["invitee_name", link.source_id ? b.inviteeName : undefined],
+      ["invitee_email", link.source_id ? b.inviteeEmail?.toLowerCase() : undefined],
+      ...optionColumns(b, link, now()),
     ];
     const set = columns.filter(([, v]) => v !== undefined);
     tx(db, () => {
@@ -698,8 +943,74 @@ export function bookingRoutes(db: Db, now: () => number): Hono<AppEnv> {
         });
       }
     });
+  }
+
+  r.get("/links/:id", (c) => {
+    const { link } = editable(c.req.param("id"), c.get("user").id);
+    return c.json({ link: linkView(db, link, oneOffDays) });
+  });
+
+  /** Changes a link. Only the owner may change its URL, its page and delete it (team rules 10, 22). */
+  r.patch("/links/:id", async (c) => {
+    const user = c.get("user");
+    const { link, owner } = editable(c.req.param("id"), user.id);
+    const b = await jsonBody(c, linkChanges);
+    if (!owner && (b.slug !== undefined || b.hidden !== undefined || b.page !== undefined))
+      forbidden();
+    applyChanges(link, b);
     const saved = one<LinkRow>(db, "SELECT * FROM booking_links WHERE id = ?", link.id);
-    return c.json({ link: saved && linkView(db, saved) });
+    return c.json({ link: saved && linkView(db, saved, oneOffDays) });
+  });
+
+  /**
+   * Personalize: a one-off link that copies the source link and changes some
+   * settings for one meeting (sharing rules 8-16). The creator owns it.
+   */
+  r.post("/links/:id/oneoff", async (c) => {
+    const user = c.get("user");
+    const { link: source } = editable(c.req.param("id"), user.id);
+    if (source.source_id) return c.json({ error: "one_off_source" }, 400);
+    const b = await jsonBody(c, linkChanges);
+    const id = randomUUID();
+    // Proposed default: a random token of 16 lowercase letters and digits (rule 15).
+    const token = () => {
+      const abc = "abcdefghijklmnopqrstuvwxyz0123456789";
+      return [...randomBytes(16)].map((n) => abc[n % abc.length]).join("");
+    };
+    const slug = b.slug ?? token();
+    tx(db, () => {
+      run(
+        db,
+        `INSERT INTO booking_links (id, user_id, slug, hidden, title, description, title_template, durations,
+           level, hours_set_id, notice_minutes, range_end_days, buffer_before, buffer_after, max_per_day,
+           max_per_week, location, created_at, use_recovery_buffer, branding, questions, reminder_enabled,
+           reminder_hours, reminder_message, reminder_saved_at, redirect_url, default_duration, source_id)
+         SELECT ?, ?, ?, 1, title, description, title_template, durations, level, hours_set_id,
+           notice_minutes, range_end_days, buffer_before, buffer_after, max_per_day, max_per_week, location,
+           ?, use_recovery_buffer, branding, questions, reminder_enabled, reminder_hours, reminder_message,
+           ?, redirect_url, default_duration, id
+         FROM booking_links WHERE id = ?`,
+        id,
+        user.id,
+        `tmp-${id}`,
+        now(),
+        now(),
+        source.id,
+      );
+      run(
+        db,
+        `INSERT INTO booking_link_people (link_id, user_id, kind, hours_set_id, required, is_host, preferred, position)
+         SELECT ?, user_id, kind, hours_set_id, required, is_host, preferred, position
+         FROM booking_link_people WHERE link_id = ?`,
+        id,
+        source.id,
+      );
+      const created = one<LinkRow>(db, "SELECT * FROM booking_links WHERE id = ?", id);
+      if (!created) throw new Error("one-off link missing");
+      applyChanges(created, { ...b, slug });
+    });
+    const saved = one<LinkRow>(db, "SELECT * FROM booking_links WHERE id = ?", id);
+    return c.json({ link: saved && linkView(db, saved, oneOffDays) }, 201);
   });
 
   r.delete("/links/:id", (c) => {
@@ -745,7 +1056,7 @@ export function bookingRoutes(db: Db, now: () => number): Hono<AppEnv> {
         links: m.slug
           ? all<{ title: string; slug: string; durations: string }>(
               db,
-              "SELECT title, slug, durations FROM booking_links WHERE user_id = ? AND hidden = 0 ORDER BY level, created_at",
+              "SELECT title, slug, durations FROM booking_links WHERE user_id = ? AND hidden = 0 AND group_id IS NULL ORDER BY level, created_at",
               m.id,
             ).map((l) => ({ ...l, durations: JSON.parse(l.durations) as number[] }))
           : [],
@@ -769,6 +1080,7 @@ interface MeetingFacts {
   custom: CustomData;
   hostId: string;
   participants: string[];
+  answers: Answer[];
   rescheduled?: number;
   cancelled?: number;
 }
@@ -811,7 +1123,9 @@ function meetingObject(db: Db, link: LinkRow, b: MeetingFacts, baseUrl: string) 
     ccs: [],
     message: b.message,
     location: link.location ? { text: link.location } : null,
-    answers: [],
+    answers: b.answers
+      .filter((a) => a.answer)
+      .map((a) => ({ question: a.question, answer: a.answer })),
     custom_data: b.custom,
   };
 }
@@ -856,6 +1170,42 @@ const contact = (db: Db, id: string | null) =>
       null)
     : null;
 
+const zoneInput = z.string().max(64).refine(isValidTimeZone).optional();
+
+/**
+ * The link at a booking page URL: /book/<page slug>/<link slug>. The page is
+ * the owner's main page (main and hidden links) or a link group (its links).
+ */
+export function resolveLink(db: Db, page: string, link: string): LinkRow | undefined {
+  if (page === "o") {
+    return one<LinkRow>(
+      db,
+      "SELECT * FROM booking_links WHERE source_id IS NOT NULL AND slug = ?",
+      link,
+    );
+  }
+  return (
+    one<LinkRow>(
+      db,
+      `SELECT l.* FROM booking_links l JOIN booking_pages p ON p.user_id = l.user_id
+       WHERE p.slug = ? AND l.slug = ? AND l.group_id IS NULL AND l.source_id IS NULL`,
+      page,
+      link,
+    ) ??
+    one<LinkRow>(
+      db,
+      `SELECT l.* FROM booking_links l JOIN booking_groups g ON g.id = l.group_id
+       WHERE g.slug = ? AND l.slug = ?`,
+      page,
+      link,
+    )
+  );
+}
+
+/** When a one-off link stops working: its creation plus the instance's lifetime (sharing rule 14). */
+export const oneOffExpiry = (link: LinkRow, days: number) =>
+  link.source_id ? link.created_at + days * 86_400_000 : null;
+
 /** Public booking API: no session; the page and link slugs or a manage token identify the data. */
 export function publicBookingRoutes(
   db: Db,
@@ -863,34 +1213,57 @@ export function publicBookingRoutes(
   baseUrl: string,
   now: () => number,
   onEvent: OnEvent,
+  mailer: Mailer,
+  oneOffDays: number,
 ): Hono {
   const r = new Hono();
-  const findLink = (page: string, link: string) =>
-    one<LinkRow>(
+  const findLink = (page: string, link: string) => resolveLink(db, page, link);
+  const expired = (link: LinkRow) => {
+    const at = oneOffExpiry(link, oneOffDays);
+    return at !== null && now() >= at;
+  };
+  // A one-off link fires its source link's webhooks (sharing rule 16).
+  const event: OnEvent = (linkId, type, body) => {
+    const l = one<{ source_id: string | null }>(
       db,
-      `SELECT l.* FROM booking_links l JOIN booking_pages p ON p.user_id = l.user_id WHERE p.slug = ? AND l.slug = ?`,
-      page,
-      link,
+      "SELECT source_id FROM booking_links WHERE id = ?",
+      linkId,
     );
-  const pageBranding = (userId: string) =>
-    one<{ branding: string }>(db, "SELECT branding FROM booking_pages WHERE user_id = ?", userId)
-      ?.branding ?? "default";
+    onEvent(l?.source_id ?? linkId, type, body);
+  };
 
+  /** A main booking page or a link group page, with the links it lists (sharing rules 1, 3). */
   r.get("/pages/:page", (c) => {
-    const page = one<{ user_id: string; slug: string; branding: Branding }>(
+    const slug = c.req.param("page");
+    const main = one<{ user_id: string; slug: string; branding: Branding }>(
       db,
       "SELECT user_id, slug, branding FROM booking_pages WHERE slug = ?",
-      c.req.param("page"),
+      slug,
     );
+    const group = main
+      ? undefined
+      : one<{ id: string; user_id: string; slug: string; title: string; branding: Branding }>(
+          db,
+          "SELECT id, user_id, slug, title, branding FROM booking_groups WHERE slug = ?",
+          slug,
+        );
+    const page = main ?? group;
     if (!page) notFound("page");
     const owner = one<{ name: string }>(db, "SELECT name FROM users WHERE id = ?", page.user_id);
-    const links = all<LinkRow>(
-      db,
-      "SELECT * FROM booking_links WHERE user_id = ? AND hidden = 0 ORDER BY level, created_at",
-      page.user_id,
-    );
+    const links = group
+      ? all<LinkRow>(
+          db,
+          "SELECT * FROM booking_links WHERE group_id = ? ORDER BY level, created_at",
+          group.id,
+        )
+      : all<LinkRow>(
+          db,
+          "SELECT * FROM booking_links WHERE user_id = ? AND hidden = 0 AND group_id IS NULL ORDER BY level, created_at",
+          page.user_id,
+        );
     return c.json({
       name: owner?.name ?? "",
+      title: group?.title ?? null,
       slug: page.slug,
       links: links.map(publicLink),
       branding: brandingFor(db, page.user_id, page.branding),
@@ -900,13 +1273,14 @@ export function publicBookingRoutes(
   r.get("/pages/:page/:link", (c) => {
     const link = findLink(c.req.param("page"), c.req.param("link"));
     if (!link) notFound("link");
-    // Link setting first; sameAsGroup takes the page's (booking page rule 27).
-    const mode = link.branding === "sameAsGroup" ? pageBranding(link.user_id) : link.branding;
     return c.json({
       link: publicLink(link),
       organizers: organizerNames(db, link),
       timeZone: zoneOf(db, link.user_id),
-      branding: brandingFor(db, link.user_id, mode as Branding),
+      branding: brandingFor(db, link.user_id, resolveLinkBranding(db, link)),
+      oneOff: link.source_id
+        ? { expiresAt: oneOffExpiry(link, oneOffDays), expired: expired(link) }
+        : null,
     });
   });
 
@@ -938,6 +1312,8 @@ export function publicBookingRoutes(
           link.id,
         )?.id
       : undefined;
+    // An expired one-off link offers no times; its bookings can still move (rule 14).
+    if (expired(link) && !resched) return c.json({ times: [] });
     // The pool members stay on the server: the booker sees no host before confirming.
     return c.json({
       times: linkTimes(db, link, q.data.duration, q.data.from, q.data.to, now(), resched).map(
@@ -952,6 +1328,8 @@ export function publicBookingRoutes(
     name: z.string().trim().min(1).max(200),
     email: z.email(),
     message: z.string().max(4000).optional(),
+    answers: z.array(z.string().max(4000)).max(10).optional(),
+    timeZone: zoneInput,
     params: z
       .array(z.tuple([z.string().max(200), z.string().max(2000)]))
       .max(100)
@@ -963,19 +1341,61 @@ export function publicBookingRoutes(
       (t) => t.start === start,
     );
 
-  function manageText(token: string): string {
+  /** The event description: message, answers, then the booker's actions (rule 12). */
+  function description(message: string, answers: Answer[], token: string): string {
     const url = new URL(`/book/manage/${token}`, baseUrl).toString();
-    return `Reschedule or cancel: ${url}`;
+    return [
+      message,
+      ...answers.filter((a) => a.answer).map((a) => `${a.question}\n${a.answer}`),
+      `Reschedule: ${url}?action=reschedule\nCancel: ${url}?action=cancel`,
+    ]
+      .filter(Boolean)
+      .join("\n\n");
   }
+
+  const mail = (
+    change: BookingChange,
+    link: LinkRow,
+    b: {
+      start: number;
+      end: number;
+      name: string;
+      email: string;
+      zone: string;
+      message: string;
+      answers: Answer[];
+      people: string[];
+      token: string | null;
+    },
+  ) =>
+    notifyBooking(db, mailer, baseUrl, change, {
+      link,
+      title: link.title,
+      start: b.start,
+      end: b.end,
+      location: link.location,
+      bookerName: b.name,
+      bookerEmail: b.email,
+      bookerZone: b.zone,
+      message: b.message,
+      answers: b.answers,
+      people: b.people,
+      token: b.token,
+    });
 
   const noCalendar = (err: unknown) => err instanceof Error && err.message === "no_calendar";
 
   r.post("/pages/:page/:link/book", async (c) => {
     const link = findLink(c.req.param("page"), c.req.param("link"));
     if (!link) notFound("link");
+    if (expired(link)) return c.json({ error: "expired" }, 410);
     const body = await jsonBody(c, bookInput);
     if (!(JSON.parse(link.durations) as number[]).includes(body.duration))
       return c.json({ error: "invalid_duration" }, 400);
+    const checked = checkAnswers(link, body.answers ?? []);
+    if ("error" in checked) return c.json(checked, 400);
+    const { answers } = checked;
+    const zone = body.timeZone ?? zoneOf(db, link.user_id);
     const result = await sync.exclusive(link.user_id, async () => {
       // Check again inside the owner's queue so two bookers cannot take one slot.
       const slot = slotAt(link, body.start, body.duration);
@@ -989,8 +1409,8 @@ export function publicBookingRoutes(
       run(
         db,
         `INSERT INTO bookings (id, link_id, user_id, start_ms, end_ms, name, email, message, token_hash, status,
-           created_at, updated_at, custom_data, host_id, assignee_id, assigned_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'booked', ?, ?, ?, ?, ?, ?)`,
+           created_at, updated_at, custom_data, host_id, assignee_id, assigned_at, answers, time_zone)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'booked', ?, ?, ?, ?, ?, ?, ?, ?)`,
         id,
         link.id,
         link.user_id,
@@ -1006,6 +1426,8 @@ export function publicBookingRoutes(
         plan.hostId,
         plan.assignee,
         plan.assignee ? now() : null,
+        JSON.stringify(answers),
+        zone,
       );
       let placed: { calendarId: string; eventId: string } | null;
       try {
@@ -1014,7 +1436,7 @@ export function publicBookingRoutes(
           parties: plan.parties,
           event: {
             summary: title,
-            description: [body.message ?? "", manageText(token)].filter(Boolean).join("\n\n"),
+            description: description(body.message ?? "", answers, token),
             start: body.start,
             end,
             location: link.location,
@@ -1033,7 +1455,8 @@ export function publicBookingRoutes(
         placed?.eventId ?? null,
         id,
       );
-      onEvent(link.id, "booking_link.meeting.created", {
+      const people = [plan.hostId, ...plan.parties.map((p) => p.userId)];
+      event(link.id, "booking_link.meeting.created", {
         meeting: meetingObject(
           db,
           link,
@@ -1049,9 +1472,21 @@ export function publicBookingRoutes(
             custom,
             hostId: plan.hostId,
             participants: plan.parties.map((p) => p.userId),
+            answers,
           },
           baseUrl,
         ),
+      });
+      mail("created", link, {
+        start: body.start,
+        end,
+        name: body.name,
+        email: body.email,
+        zone,
+        message: body.message ?? "",
+        answers,
+        people,
+        token,
       });
       return {
         token,
@@ -1069,6 +1504,13 @@ export function publicBookingRoutes(
   const byToken = (token: string) =>
     one<BookingRow>(db, "SELECT * FROM bookings WHERE token_hash = ?", hash(token));
 
+  const participants = (b: BookingRow) =>
+    all<{ user_id: string }>(
+      db,
+      "SELECT user_id FROM booking_participants WHERE booking_id = ?",
+      b.id,
+    ).map((p) => p.user_id);
+
   const facts = (b: BookingRow, title: string) => ({
     id: b.id,
     title,
@@ -1078,11 +1520,8 @@ export function publicBookingRoutes(
     created: b.created_at,
     custom: JSON.parse(b.custom_data) as CustomData,
     hostId: b.host_id ?? b.user_id,
-    participants: all<{ user_id: string }>(
-      db,
-      "SELECT user_id FROM booking_participants WHERE booking_id = ?",
-      b.id,
-    ).map((p) => p.user_id),
+    participants: participants(b),
+    answers: JSON.parse(b.answers) as Answer[],
   });
 
   r.get("/bookings/:token", (c) => {
@@ -1091,15 +1530,16 @@ export function publicBookingRoutes(
     const link = b.link_id
       ? one<LinkRow>(db, "SELECT * FROM booking_links WHERE id = ?", b.link_id)
       : undefined;
-    const page = one<{ slug: string }>(
-      db,
-      "SELECT slug FROM booking_pages WHERE user_id = ?",
-      b.user_id,
-    );
     return c.json({
-      booking: { start: b.start_ms, end: b.end_ms, name: b.name, status: b.status },
+      booking: {
+        start: b.start_ms,
+        end: b.end_ms,
+        name: b.name,
+        status: b.status,
+        timeZone: b.time_zone,
+      },
       link: link ? publicLink(link) : null,
-      page: page?.slug ?? null,
+      page: link ? linkPageSlug(db, link) : null,
       assignee: contact(db, b.assignee_id),
     });
   });
@@ -1110,7 +1550,11 @@ export function publicBookingRoutes(
     if (!b || b.status !== "booked" || !b.link_id) notFound("booking");
     const link = one<LinkRow>(db, "SELECT * FROM booking_links WHERE id = ?", b.link_id);
     if (!link) notFound("link");
-    const { start } = await jsonBody(c, z.object({ start: z.number().int() }));
+    const { start, timeZone } = await jsonBody(
+      c,
+      z.object({ start: z.number().int(), timeZone: zoneInput }),
+    );
+    const zone = timeZone ?? b.time_zone;
     const duration = (b.end_ms - b.start_ms) / 60_000;
     const end = start + duration * 60_000;
     const result = await sync.exclusive(b.user_id, async () => {
@@ -1131,7 +1575,7 @@ export function publicBookingRoutes(
             parties: plan.parties,
             event: {
               summary: title,
-              description: [b.message, manageText(token)].filter(Boolean).join("\n\n"),
+              description: description(b.message, before.answers, token),
               start,
               end,
               location: link.location,
@@ -1143,10 +1587,12 @@ export function publicBookingRoutes(
         if (noCalendar(err)) return { error: "no_event" as const };
         throw err;
       }
+      // A moved booking gets its reminder again for the new time (rule 21).
       run(
         db,
         `UPDATE bookings SET start_ms = ?, end_ms = ?, updated_at = ?, calendar_id = ?, event_id = ?,
-           host_id = ?, assignee_id = ?, assigned_at = CASE WHEN assignee_id IS ? THEN assigned_at ELSE ? END
+           host_id = ?, assignee_id = ?, assigned_at = CASE WHEN assignee_id IS ? THEN assigned_at ELSE ? END,
+           time_zone = ?, reminder_sent_at = NULL
          WHERE id = ?`,
         start,
         end,
@@ -1157,10 +1603,11 @@ export function publicBookingRoutes(
         plan.assignee,
         plan.assignee,
         now(),
+        zone,
         b.id,
       );
       const after = facts({ ...b, host_id: plan.hostId }, title);
-      onEvent(link.id, "booking_link.meeting.updated", {
+      event(link.id, "booking_link.meeting.updated", {
         previous_meeting: meetingObject(
           db,
           link,
@@ -1169,6 +1616,17 @@ export function publicBookingRoutes(
         ),
         new_meeting: meetingObject(db, link, { ...after, start, end, rescheduled: now() }, baseUrl),
         change_reason: "rescheduled",
+      });
+      mail("rescheduled", link, {
+        start,
+        end,
+        name: b.name,
+        email: b.email,
+        zone,
+        message: b.message,
+        answers: before.answers,
+        people: [plan.hostId, ...plan.parties.map((p) => p.userId)],
+        token,
       });
       return { start, end, assignee: contact(db, plan.assignee) };
     });
@@ -1196,13 +1654,24 @@ export function publicBookingRoutes(
       );
       run(db, "UPDATE bookings SET status = 'cancelled', updated_at = ? WHERE id = ?", now(), b.id);
       if (link) {
-        onEvent(link.id, "booking_link.meeting.cancelled", {
+        event(link.id, "booking_link.meeting.cancelled", {
           meeting: meetingObject(
             db,
             link,
             { ...before, start: b.start_ms, end: b.end_ms, cancelled: now() },
             baseUrl,
           ),
+        });
+        mail("cancelled", link, {
+          start: b.start_ms,
+          end: b.end_ms,
+          name: b.name,
+          email: b.email,
+          zone: b.time_zone,
+          message: b.message,
+          answers: before.answers,
+          people: [before.hostId, ...before.participants],
+          token: null,
         });
       }
     });

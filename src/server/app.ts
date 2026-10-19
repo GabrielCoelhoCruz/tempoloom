@@ -23,6 +23,8 @@ import { accountRoutes } from "./api/account.ts";
 import { analyticsRoutes } from "./api/analytics.ts";
 import { automationRoutes } from "./api/automations.ts";
 import { bookingRoutes, publicBookingRoutes } from "./api/booking.ts";
+import { bookingShareRoutes } from "./api/booking-share.ts";
+import { bookingViewerRoutes } from "./api/booking-viewer.ts";
 import { brandingRoutes, publicBrandingRoutes } from "./api/branding.ts";
 import { bufferFilterRoutes } from "./api/buffer-filters.ts";
 import { calendarRoutes } from "./api/calendars.ts";
@@ -54,6 +56,7 @@ import type { SecretBox } from "./crypto.ts";
 import { all, type Db, one, openDb, run } from "./db.ts";
 import { ownersOf, sessionIdentity } from "./delegation.ts";
 import { isDeactivated } from "./directory.ts";
+import { embedRoutes } from "./embed.ts";
 import {
   buildAuthRequest,
   exchangeCode,
@@ -288,13 +291,22 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   };
   app.route(
     "/pub",
-    publicBookingRoutes(db, sync, config.BASE_URL, now, (linkId, type, body) => {
-      enqueueBookingEvent(webhookDeps, linkId, type, body);
-      deps.webhooks.kick();
-    }),
+    publicBookingRoutes(
+      db,
+      sync,
+      config.BASE_URL,
+      now,
+      (linkId, type, body) => {
+        enqueueBookingEvent(webhookDeps, linkId, type, body);
+        deps.webhooks.kick();
+      },
+      deps.mailer,
+      config.ONEOFF_LINK_DAYS,
+    ),
   );
 
   app.route("/pub", publicInviteRoutes(db));
+  app.route("/", embedRoutes());
   app.route("/pub", publicBrandingRoutes(db));
   app.route("/scim/v2", scimRoutes(db, config.BASE_URL, now));
   const ssoDeps = {
@@ -385,7 +397,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   app.route("/api", itemRoutes(db, sync, now));
   app.route("/api", meetingRoutes(db, sync, now));
   app.route("/api/planner", plannerRoutes(db, sync, now));
-  app.route("/api/booking", bookingRoutes(db, now));
+  app.route("/api/booking", bookingRoutes(db, now, config.ONEOFF_LINK_DAYS));
   app.route("/api", webhookRoutes(db, box, config.WEBHOOK_ALLOW_PRIVATE, now));
   app.route("/api", statsRoutes(db));
   app.route("/api", analyticsRoutes(db, now));
@@ -443,6 +455,8 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
     calendarRoutes({ db, box, sync, allowPrivate: config.WEBHOOK_ALLOW_PRIVATE, now }),
   );
   app.route("/api", mirrorRoutes(db, sync, now));
+  app.route("/api/booking", bookingViewerRoutes(db, now));
+  app.route("/api/booking", bookingShareRoutes(db, now));
 
   // Static client with a single-page fallback. Text files are compressed once
   // per encoding and kept in memory; the build output does not change at run time.

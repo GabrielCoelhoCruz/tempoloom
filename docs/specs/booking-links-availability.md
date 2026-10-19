@@ -151,6 +151,9 @@ Notes on classes:
 19. With the switch on, the date picker allows every date from today to
     the link's range end plus 14 days (Proposed range), and each day lists
     every candidate start, including the ones that are not offered (E-0198).
+    Tempoloom decision: a day lists every 15-minute start from the first
+    start to the last end of the hours of all the link's people on that day,
+    so the night is not listed; a day without hours lists no times.
 20. Each time that is not offered shows one colored dot per failed check
     (E-0198). Proposed colors: grey for `past`, `beforeRangeStart`,
     `afterRangeEnd`; orange for `limitReached`, `startInterval`,
@@ -163,6 +166,14 @@ Notes on classes:
     organizer's start minutes, the organizer's hours, buffer settings, the
     blocking event's Planner entry (to lower its priority), the link
     priority.
+    Tempoloom decision: the viewer sees event titles only of their own
+    events; another organizer's event shows as "a busy event". Setting
+    links: range, limits and buffers open the link editor; hours open the
+    viewer's Settings (own hours only); a conflict or higher-priority event
+    of the viewer opens the Planner week of that event; higher priority also
+    links the link editor (link priority). Past times are marked `past`
+    only, not also `beforeRangeStart`. The switch state is kept in the URL
+    (`inspect=1`).
 22. The inspector never changes availability. It only shows it.
 
 ### Scheduler and other calendars

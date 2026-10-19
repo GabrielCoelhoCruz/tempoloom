@@ -1,5 +1,6 @@
 import { serve } from "@hono/node-server";
 import { createApp } from "./app.ts";
+import { sendDueReminders } from "./booking-mail.ts";
 import { loadConfig } from "./config.ts";
 import { SecretBox } from "./crypto.ts";
 import { DailyMailWorker } from "./daily-mail.ts";
@@ -69,10 +70,17 @@ sync.start();
 webhooks.start();
 provisioning.start();
 dailyMail.start();
+// Booking reminders (booking-links.md rule 21): checked every minute.
+const reminders = setInterval(() => {
+  sendDueReminders(db, mailer, config.BASE_URL, Date.now()).catch((err) =>
+    console.error("booking reminders failed", err),
+  );
+}, 60_000);
 
 // Stop taking requests, let queued calendar writes finish, then exit.
 async function shutdown() {
   server.close();
+  clearInterval(reminders);
   await provisioning.stop();
   await dailyMail.stop();
   await sync.stop();

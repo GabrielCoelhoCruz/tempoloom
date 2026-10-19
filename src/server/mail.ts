@@ -8,6 +8,8 @@ export interface Message {
   text: string;
   /** An iCalendar invitation (iMIP), for example a meeting update. */
   icalEvent?: { method: string; content: string };
+  /** An HTML part besides the text, for example with branding. */
+  html?: string;
 }
 
 export interface Mailer {

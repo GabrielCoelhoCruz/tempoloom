@@ -134,7 +134,7 @@ export async function addLink(
   if (l.durations) await form.getByLabel(/Durations/).fill(l.durations);
   if (l.level) await form.getByLabel("Priority").selectOption(String(l.level));
   if (l.maxPerDay) await form.getByLabel("Most bookings per day").fill(String(l.maxPerDay));
-  if (l.hidden) await form.getByLabel(/Hide from my page/).check();
+  if (l.hidden) await form.getByLabel("Page", { exact: true }).selectOption("hidden");
   await form.getByRole("button", { name: "Add link" }).click();
   await expect(page.locator(`[data-link-title="${l.title}"]`)).toBeVisible();
 }

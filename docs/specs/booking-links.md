@@ -99,6 +99,12 @@ The main organizer is the user who created the link.
 | `options` | list of strings | empty | only for `choice` (Proposed) |
 | `required` | boolean | false | E-0173 |
 
+Tempoloom decision: the answer types are `singleLine`, `multiLine` and
+`choice` (with up to 20 choices). The booking page refuses to book while a
+required question has no answer, and so does the API; a `choice` answer must
+be one of the choices. The event description lists each answered question on
+one line and its answer below it.
+
 ## Behavior
 
 ### Setup and link list
@@ -123,6 +129,9 @@ The main organizer is the user who created the link.
    the title, durations and priority, and has actions: edit, copy URL,
    change priority, open booking page, personalize (SPEC-LINK-05) and share
    (SPEC-LINK-05) (E-0173, E-0165).
+   Tempoloom decision: the page sections are Main page, one per link group,
+   Hidden, and Team links. The card has a priority select that saves at
+   once; open booking page opens a new tab; the card also has delete.
 6. A link on the `hidden` page is listed on no booking page. Its direct URL
    works (E-0063, E-0163, E-0205).
 7. Tempoloom sets no limit on the number of links. The reference limits
@@ -165,6 +174,7 @@ The main organizer is the user who created the link.
 15. The page then shows the confirmation (SPEC-LINK-03). With a
     `redirectUrl`, the page goes to that URL 7 seconds after the booking
     (E-0217).
+    Tempoloom decision: the confirmation says where the page goes and when.
 
 ### Reschedule and cancel
 
@@ -192,6 +202,12 @@ The main organizer is the user who created the link.
     The setting applies to all future bookings of the link. A booking that
     already exists gets the reminder only if its reminder time is still in
     the future when the setting is saved (E-0063).
+    Tempoloom decision: the server sends due reminders every minute, each
+    once. An operator can send the reminders due at a given time with
+    `node src/server/cli.ts booking-reminders [--now <ISO time>]`. A
+    rescheduled booking gets a reminder for its new time. The reminder goes
+    to the booker only and has the message, the title, the time in the
+    booker's zone and the location.
 
 ### Scheduler and other calendars
 

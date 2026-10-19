@@ -39,6 +39,8 @@ const schema = z.object({
   MCP_WRITE_ENABLED: z.stringbool().default(true),
   /** Where users ask for help, shown on the help page (support-troubleshooting.md rule 4). */
   SUPPORT_URL: z.url({ protocol: /^https?$/ }).optional(),
+  /** Days a one-off booking link works after it is made (booking-links-sharing.md rule 14). */
+  ONEOFF_LINK_DAYS: z.coerce.number().int().min(0).max(365).default(30),
 });
 
 export type Config = z.infer<typeof schema> & { dbPath: string };
