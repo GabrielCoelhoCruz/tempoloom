@@ -438,6 +438,36 @@ describe("task chunks", () => {
     for (const c of chunks) expect(c.start % (15 * MIN)).toBe(0);
   });
 
+  it("splits a 60-minute task when less than an hour of today's hours is left (SCH-90; sso.spec Board deck)", () => {
+    // The E2E adds a 60-minute task with the 30/120 default chunk bounds on a
+    // Monday. Placed at 16:05 the day has 45 minutes left, so SCH-90 gives a
+    // 30-minute chunk today (no 15-minute stub) and the rest tomorrow. Placed
+    // earlier, or with splitting off, the task is one event.
+    const MONDAY = "2026-10-19";
+    const due = at("2026-10-30", "17:00");
+    const at1605 = (over: Partial<TaskItem> = {}) =>
+      plan(
+        snapshot({
+          now: at(MONDAY, "16:05"),
+          tasks: [task({ id: "deck", startAfter: at(MONDAY, "16:05"), dueAt: due, ...over })],
+        }),
+      );
+    expect(spans(of(at1605(), "deck"))).toEqual([
+      `${MONDAY}T16:15/16:45`,
+      "2026-10-20T09:00/09:30",
+    ]);
+    expect(spans(of(at1605({ minChunkMinutes: 60, maxChunkMinutes: 60 }), "deck"))).toEqual([
+      "2026-10-20T09:00/10:00",
+    ]);
+    const earlier = plan(
+      snapshot({
+        now: at(MONDAY, "14:25"),
+        tasks: [task({ id: "deck", startAfter: at(MONDAY, "14:25"), dueAt: due })],
+      }),
+    );
+    expect(spans(of(earlier, "deck"))).toEqual([`${MONDAY}T14:30/15:30`]);
+  });
+
   it("places one chunk per day with the once-per-day cooldown", () => {
     const result = plan(
       snapshot({

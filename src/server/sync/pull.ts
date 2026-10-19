@@ -2,7 +2,12 @@
 import { randomUUID } from "node:crypto";
 import { DAY } from "../../shared/time.ts";
 import { all, type Db, one, run, tx } from "../db.ts";
-import { type CalendarProvider, ProviderError, type ProviderEvent } from "../providers/types.ts";
+import {
+  type CalendarProvider,
+  type ProviderCalendar,
+  ProviderError,
+  type ProviderEvent,
+} from "../providers/types.ts";
 
 /** Events from 12 weeks ago (the stats range) to 120 days ahead are cached. */
 const WINDOW_PAST = 84 * DAY;
@@ -50,23 +55,7 @@ export async function syncCalendarList(
   const entries = keep ? listed.map((c) => ({ ...c, primary: c.id === keep })) : listed;
   tx(db, () => {
     for (const c of entries) {
-      run(
-        db,
-        `INSERT INTO calendars (id, account_id, provider_id, name, time_zone, writable, is_primary, color, check_availability)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT (account_id, provider_id) DO UPDATE SET
-           name = excluded.name, time_zone = excluded.time_zone, writable = excluded.writable,
-           is_primary = excluded.is_primary, color = excluded.color`,
-        randomUUID(),
-        accountId,
-        c.id,
-        c.name,
-        c.timeZone,
-        c.writable ? 1 : 0,
-        c.primary ? 1 : 0,
-        c.color,
-        c.primary ? 1 : 0,
-      );
+      writeCalendar(db, accountId, c);
       if (c.primary && c.timeZone) {
         run(db, "UPDATE users SET time_zone = ? WHERE id = ?", c.timeZone, userId);
       }
@@ -80,6 +69,45 @@ export async function syncCalendarList(
       if (!ids.has(row.provider_id)) run(db, "DELETE FROM calendars WHERE id = ?", row.id);
     }
   });
+}
+
+/**
+ * Makes `c` the account's only primary calendar, the one the planner writes
+ * to, and the only one checked for availability (operator pin, src/server/cli.ts).
+ * The sync keeps a primary that is still listed and adds new calendars unchecked.
+ * Call it inside the caller's transaction.
+ */
+export function pinCalendar(db: Db, accountId: string, c: ProviderCalendar): void {
+  writeCalendar(db, accountId, { ...c, primary: true });
+  run(
+    db,
+    `UPDATE calendars SET is_primary = (provider_id = ?), check_availability = (provider_id = ?)
+     WHERE account_id = ?`,
+    c.id,
+    c.id,
+    accountId,
+  );
+}
+
+/** Inserts or updates one listed calendar; a new primary calendar starts checked. */
+function writeCalendar(db: Db, accountId: string, c: ProviderCalendar): void {
+  run(
+    db,
+    `INSERT INTO calendars (id, account_id, provider_id, name, time_zone, writable, is_primary, color, check_availability)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT (account_id, provider_id) DO UPDATE SET
+       name = excluded.name, time_zone = excluded.time_zone, writable = excluded.writable,
+       is_primary = excluded.is_primary, color = excluded.color`,
+    randomUUID(),
+    accountId,
+    c.id,
+    c.name,
+    c.timeZone,
+    c.writable ? 1 : 0,
+    c.primary ? 1 : 0,
+    c.color,
+    c.primary ? 1 : 0,
+  );
 }
 
 export function cacheEvent(db: Db, calendarId: string, e: ProviderEvent): void {

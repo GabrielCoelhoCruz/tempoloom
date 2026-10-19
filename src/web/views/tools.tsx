@@ -3,6 +3,7 @@
 // Both work without sign-in; the timer keeps its data in this browser only.
 import { render } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
+import { duration } from "../lib/format.ts";
 
 const OCCURRENCES = {
   every_weekday: 240,
@@ -120,6 +121,8 @@ interface TimerSettings {
   long: number;
   autoStart: boolean;
   sound: boolean;
+  /** The alarm at the end of a phase (settings `alarm_sound`). */
+  alarm: Alarm;
   /** Rule 14: an ambient track during work sessions. */
   bgAudio: boolean;
   bgTrack: Track;
@@ -139,6 +142,7 @@ const load = (): { settings: TimerSettings; log: TimerLog } => {
       long: 15,
       autoStart: false,
       sound: true,
+      alarm: "bell" as Alarm,
       bgAudio: false,
       bgTrack: "white" as Track,
     },
@@ -158,14 +162,37 @@ const load = (): { settings: TimerSettings; log: TimerLog } => {
 };
 const dayStr = (t: number) => new Date(t).toLocaleDateString("sv-SE");
 
-function beep(): void {
+// Alarm sounds made in the browser: each is a list of [hertz, start, length] tones.
+type Alarm = "bell" | "chime" | "digital";
+const ALARMS: Record<Alarm, { name: string; tones: [number, number, number][] }> = {
+  bell: { name: "Bell", tones: [[880, 0, 0.4]] },
+  chime: {
+    name: "Chime",
+    tones: [
+      [660, 0, 0.3],
+      [990, 0.3, 0.5],
+    ],
+  },
+  digital: {
+    name: "Digital",
+    tones: [
+      [1200, 0, 0.1],
+      [1200, 0.2, 0.1],
+      [1200, 0.4, 0.1],
+    ],
+  },
+};
+
+function beep(alarm: Alarm): void {
   try {
     const ctx = new AudioContext();
-    const osc = ctx.createOscillator();
-    osc.frequency.value = 880;
-    osc.connect(ctx.destination);
-    osc.start();
-    osc.stop(ctx.currentTime + 0.4);
+    for (const [hz, at, len] of (ALARMS[alarm] ?? ALARMS.bell).tones) {
+      const osc = ctx.createOscillator();
+      osc.frequency.value = hz;
+      osc.connect(ctx.destination);
+      osc.start(ctx.currentTime + at);
+      osc.stop(ctx.currentTime + at + len);
+    }
   } catch {}
 }
 
@@ -258,6 +285,139 @@ export function counters(log: TimerLog, now: number) {
   };
 }
 
+const DAY = 86_400_000;
+type Grouping = "day" | "week" | "month";
+const startOfDay = (t: number) => {
+  const d = new Date(t);
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+};
+const startOfWeek = (t: number) => {
+  const d = new Date(t);
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate() - ((d.getDay() + 6) % 7)).getTime();
+};
+
+/** Rule 17: the stats view, from the log of this browser. */
+export function timerStats(log: TimerLog, now: number, by: Grouping) {
+  const c = counters(log, now);
+  const today = dayStr(now);
+  const since = startOfDay(now) - 29 * DAY;
+  const recent = log.sessions.filter((s) => s.at >= since);
+  const recentMinutes = recent.reduce((a, s) => a + s.minutes, 0);
+  const started = log.started.filter((t) => t >= since).length;
+  const breaks = log.breaks.filter((b) => dayStr(b.at) === today);
+  const minutesIn = (from: number, to: number) =>
+    log.sessions.filter((s) => s.at >= from && s.at < to).reduce((a, s) => a + s.minutes, 0);
+  const n = new Date(now);
+  const bars =
+    by === "day"
+      ? [6, 5, 4, 3, 2, 1, 0].map((k) => {
+          const from = new Date(n.getFullYear(), n.getMonth(), n.getDate() - k).getTime();
+          const to = new Date(n.getFullYear(), n.getMonth(), n.getDate() - k + 1).getTime();
+          const label = new Date(from).toLocaleDateString("en-GB", {
+            weekday: "short",
+            day: "numeric",
+            month: "short",
+          });
+          return { label, minutes: minutesIn(from, to) };
+        })
+      : by === "week"
+        ? [3, 2, 1, 0].map((k) => {
+            const w = new Date(startOfWeek(now));
+            const from = new Date(w.getFullYear(), w.getMonth(), w.getDate() - 7 * k).getTime();
+            const to = new Date(w.getFullYear(), w.getMonth(), w.getDate() - 7 * k + 7).getTime();
+            const day = new Date(from).toLocaleDateString("en-GB", {
+              day: "numeric",
+              month: "short",
+            });
+            return { label: `Week of ${day}`, minutes: minutesIn(from, to) };
+          })
+        : [2, 1, 0].map((k) => {
+            const from = new Date(n.getFullYear(), n.getMonth() - k, 1).getTime();
+            const to = new Date(n.getFullYear(), n.getMonth() - k + 1, 1).getTime();
+            const label = new Date(from).toLocaleDateString("en-GB", { month: "long" });
+            return { label, minutes: minutesIn(from, to) };
+          });
+  return {
+    ...c,
+    workToday: log.sessions
+      .filter((s) => dayStr(s.at) === today)
+      .reduce((a, s) => a + s.minutes, 0),
+    avgWorkPerDay: Math.round(recentMinutes / 30),
+    tasksToday: log.tasks.filter((t) => t.doneAt && dayStr(t.doneAt) === today).length,
+    avgSessionsPerDay: (recent.length / 30).toFixed(1),
+    avgLength: log.sessions.length
+      ? Math.round(log.sessions.reduce((a, s) => a + s.minutes, 0) / log.sessions.length)
+      : 0,
+    completion: started
+      ? `${Math.round((Math.min(recent.length, started) / started) * 100)}%`
+      : "–",
+    breaksToday: breaks.length,
+    breakMinutesToday: breaks.reduce((a, b) => a + b.minutes, 0),
+    bars,
+  };
+}
+
+function TimerStats({ log }: { log: TimerLog }) {
+  const [by, setBy] = useState<Grouping>("day");
+  const st = timerStats(log, Date.now(), by);
+  const max = Math.max(1, ...st.bars.map((b) => b.minutes));
+  const rows: [string, string, string | number][] = [
+    ["today", "Sessions today", st.today],
+    ["week", "Sessions this week", st.week],
+    ["month", "Sessions this month", st.month],
+    ["work-today", "Work-session time today", duration(st.workToday)],
+    [
+      "avg-work-day",
+      "Average work-session time per day (last 30 days)",
+      duration(st.avgWorkPerDay),
+    ],
+    ["tasks-today", "Tasks checked off today", st.tasksToday],
+    ["streak", "Streak (days in a row)", st.streak],
+    ["avg-sessions-day", "Average sessions per day (last 30 days)", st.avgSessionsPerDay],
+    ["avg-length", "Average work-session length", duration(st.avgLength)],
+    ["completion", "Completion rate (last 30 days)", st.completion],
+    ["breaks-today", "Breaks today", st.breaksToday],
+    ["break-minutes-today", "Break time today", duration(st.breakMinutesToday)],
+  ];
+  return (
+    <div data-testid="timer-stats-view">
+      <h2>Stats</h2>
+      <div class="list">
+        {rows.map(([id, label, value]) => (
+          <div class="row" key={id}>
+            <span>{label}</span>
+            <strong data-testid={`st-${id}`}>{value}</strong>
+          </div>
+        ))}
+      </div>
+      <label>
+        Chart by
+        <select value={by} onChange={(e) => setBy(e.currentTarget.value as Grouping)}>
+          <option value="day">Day</option>
+          <option value="week">Week</option>
+          <option value="month">Month</option>
+        </select>
+      </label>
+      <div class="list">
+        {st.bars.map((b) => (
+          <div class="row" key={b.label} data-testid="st-bar">
+            <span>{b.label}</span> <span>{duration(b.minutes)}</span>
+            <span
+              aria-hidden="true"
+              style={{
+                display: "inline-block",
+                height: "8px",
+                width: `${Math.round((b.minutes / max) * 160)}px`,
+                background: "var(--focus)",
+              }}
+            />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function Pomodoro() {
   const initial = useRef(load()).current;
   const [settings, setSettings] = useState(initial.settings);
@@ -267,6 +427,7 @@ export function Pomodoro() {
   const [running, setRunning] = useState(false);
   const [sinceLong, setSinceLong] = useState(0);
   const [showSettings, setShowSettings] = useState(false);
+  const [showStats, setShowStats] = useState(false);
   const [mini, setMini] = useState<Window | null>(null);
   const endAt = useRef<number | null>(null);
 
@@ -280,7 +441,7 @@ export function Pomodoro() {
   const finish = () => {
     const cur = live.current;
     const len = (p: Phase) => cur.settings[p] * 60;
-    if (cur.settings.sound) beep();
+    if (cur.settings.sound) beep(cur.settings.alarm);
     let next: Phase;
     if (cur.phase === "work") {
       cur.sinceLong += 1;
@@ -378,6 +539,9 @@ export function Pomodoro() {
         <span data-testid="count-week">Week {c.week}</span>
         <span data-testid="count-month">Month {c.month}</span>
         <span data-testid="count-streak">Streak {c.streak}</span>
+        <button type="button" onClick={() => setShowStats(!showStats)}>
+          Stats
+        </button>
         <button type="button" onClick={() => setShowSettings(!showSettings)}>
           Settings
         </button>
@@ -434,9 +598,12 @@ export function Pomodoro() {
                 min={1}
                 max={180}
                 value={settings[k]}
-                onChange={(e) => {
-                  const v = Math.max(1, Number(e.currentTarget.value) || 1);
-                  setSettings({ ...settings, [k]: v });
+                // onInput: a value typed and not yet committed must survive another
+                // setting's change, which renders this controlled field again.
+                onInput={(e) => {
+                  const v = Math.round(Number(e.currentTarget.value));
+                  if (!(v >= 1)) return;
+                  setSettings((cur) => ({ ...cur, [k]: v }));
                   if (k === phase && !running) setLeft(v * 60);
                 }}
               />
@@ -457,6 +624,22 @@ export function Pomodoro() {
               onChange={(e) => setSettings({ ...settings, sound: e.currentTarget.checked })}
             />
             Play a sound at the end of a phase
+          </label>
+          <label>
+            Alarm sound
+            <select
+              value={settings.alarm}
+              onChange={(e) => {
+                const alarm = e.currentTarget.value as Alarm;
+                setSettings({ ...settings, alarm });
+              }}
+            >
+              {(Object.keys(ALARMS) as Alarm[]).map((a) => (
+                <option value={a} key={a}>
+                  {ALARMS[a].name}
+                </option>
+              ))}
+            </select>
           </label>
           <label class="inline">
             <input
@@ -525,6 +708,7 @@ export function Pomodoro() {
           </label>
         ))}
       </div>
+      {showStats && <TimerStats log={log} />}
       <h2>Today</h2>
       <p class="status" data-testid="timer-stats">
         {todaySessions.length} sessions, {todaySessions.reduce((a, s) => a + s.minutes, 0)} minutes

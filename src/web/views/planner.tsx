@@ -294,7 +294,7 @@ export function Planner() {
               ))}
             </select>
           </label>
-          {selected.kind === "external" && selected.levelEditable && (
+          {selected.kind === "external" && !selected.levelFixed && (
             <form
               class="form"
               data-testid="external-priority"
@@ -340,16 +340,18 @@ export function Planner() {
               </p>
             </form>
           )}
-          {selected.kind === "external" && !selected.levelEditable && (
-            <div class="form" data-testid="fixed-priority">
+          {selected.kind === "external" && selected.levelFixed && (
+            <div class="form" data-testid="external-priority-fixed">
               <label>
                 Priority for booking links
-                <select disabled>
-                  <option>P1</option>
+                <select disabled value="1">
+                  <option value="1">P1</option>
                 </select>
               </label>
               <p class="status wide">
-                Events from other calendars, their mirrored copies and booked meetings stay P1.
+                {selected.levelFixed === "booking-link"
+                  ? "Meetings booked through a booking link stay P1: they are fixed."
+                  : "Events from other calendars stay P1: only events on your main calendar can change."}
               </p>
             </div>
           )}

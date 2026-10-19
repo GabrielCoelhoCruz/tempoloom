@@ -10,6 +10,7 @@ import { addDays, localToUtc, utcToLocal } from "../../shared/time.ts";
 import type { AppEnv } from "../app.ts";
 import { all, type Db, one } from "../db.ts";
 import { MANAGED_PROP } from "../planner/push.ts";
+import { plainTitle } from "../preview.ts";
 
 export const CATEGORIES = [
   "oneOnOne",
@@ -27,7 +28,7 @@ export type Category = (typeof CATEGORIES)[number];
 type Minutes = Record<Category, number>;
 const empty = (): Minutes => Object.fromEntries(CATEGORIES.map((c) => [c, 0])) as Minutes;
 
-export function computeStats(db: Db, userId: string, from: string, to: string) {
+export function computeStats(db: Db, userId: string, from: string, to: string, now: number) {
   const zone =
     one<{ time_zone: string }>(db, "SELECT time_zone FROM users WHERE id = ?", userId)?.time_zone ??
     "UTC";
@@ -75,13 +76,14 @@ export function computeStats(db: Db, userId: string, from: string, to: string) {
     spans.push({ cat, start: e.start_ms, end: e.end_ms });
   }
   // A habit's category (work or personal) decides its group; it starts from its hours.
+  const habitRows = all<{ id: string; title: string; kind: string; event_settings: string }>(
+    db,
+    `SELECT h.id, h.title, s.kind, h.event_settings FROM habits h JOIN hours_sets s ON s.id = h.hours_set_id
+     WHERE h.user_id = ?`,
+    userId,
+  );
   const habitKind = new Map(
-    all<{ id: string; kind: string; event_settings: string }>(
-      db,
-      `SELECT h.id, s.kind, h.event_settings FROM habits h JOIN hours_sets s ON s.id = h.hours_set_id
-       WHERE h.user_id = ?`,
-      userId,
-    ).map((h) => [
+    habitRows.map((h) => [
       h.id,
       readEventSettings(
         h.event_settings,
@@ -89,13 +91,40 @@ export function computeStats(db: Db, userId: string, from: string, to: string) {
       ).category,
     ]),
   );
-  for (const m of all<{ kind: string; source_id: string; start_ms: number; end_ms: number }>(
+  const habitTitle = new Map(habitRows.map((h) => [h.id, h.title]));
+  // Habit progress: occurrences in the range, the ended ones, and the time with
+  // logged work. A logged block is not an occurrence; a deleted habit keeps its past.
+  const progress = new Map<
+    string,
+    { id: string; title: string; events: number; done: number; minutes: number }
+  >();
+  for (const m of all<{
+    kind: string;
+    key: string;
+    title: string;
+    source_id: string;
+    start_ms: number;
+    end_ms: number;
+  }>(
     db,
-    "SELECT kind, source_id, start_ms, end_ms FROM managed_events WHERE user_id = ? AND kind <> 'mirror' AND end_ms > ? AND start_ms < ?",
+    "SELECT kind, key, title, source_id, start_ms, end_ms FROM managed_events WHERE user_id = ? AND kind <> 'mirror' AND end_ms > ? AND start_ms < ?",
     userId,
     start,
     end,
   )) {
+    if (m.kind === "habit") {
+      let p = progress.get(m.source_id);
+      if (!p) {
+        const title = habitTitle.get(m.source_id) ?? plainTitle(db, userId, m.title);
+        p = { id: m.source_id, title, events: 0, done: 0, minutes: 0 };
+        progress.set(m.source_id, p);
+      }
+      p.minutes += (Math.min(m.end_ms, end) - Math.max(m.start_ms, start)) / 60_000;
+      if (!m.key.includes(":log-")) {
+        p.events++;
+        if (m.end_ms <= now) p.done++;
+      }
+    }
     const cat: Category =
       m.kind === "task"
         ? "tasks"
@@ -143,7 +172,9 @@ export function computeStats(db: Db, userId: string, from: string, to: string) {
     ),
   ).clip(start, end);
   const outside = meetings.total() - meetings.intersect(work).total();
+  const habits = [...progress.values()].sort((a, b) => a.title.localeCompare(b.title));
   return {
+    habits,
     from,
     to,
     days,
@@ -157,14 +188,14 @@ export function computeStats(db: Db, userId: string, from: string, to: string) {
   };
 }
 
-export function statsRoutes(db: Db): Hono<AppEnv> {
+export function statsRoutes(db: Db, now: () => number): Hono<AppEnv> {
   const r = new Hono<AppEnv>();
   r.get("/stats", (c) => {
     const q = z.object({ from: z.iso.date(), to: z.iso.date() }).safeParse(c.req.query());
     if (!q.success || q.data.to < q.data.from) return c.json({ error: "invalid_range" }, 400);
     const spanDays = (Date.parse(q.data.to) - Date.parse(q.data.from)) / 86_400_000;
     if (spanDays > 120) return c.json({ error: "range_too_long" }, 400);
-    return c.json(computeStats(db, c.get("user").id, q.data.from, q.data.to));
+    return c.json(computeStats(db, c.get("user").id, q.data.from, q.data.to, now()));
   });
   return r;
 }

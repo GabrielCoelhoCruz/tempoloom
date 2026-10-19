@@ -122,13 +122,13 @@ test("an event of another connected calendar, which a copy mirrors to the main c
     // The main calendar's own event can change.
     await page.locator(".ev-external", { hasText: "Planning" }).click();
     await expect(page.getByTestId("external-priority")).toBeVisible();
-    await expect(page.getByTestId("fixed-priority")).toHaveCount(0);
+    await expect(page.getByTestId("external-priority-fixed")).toHaveCount(0);
     // The connected calendar's event, which the copy mirrors, cannot.
     await expect(page.locator(`.ev[data-start="${at(W, "09:00")}"]`)).toHaveCount(1);
     await page.locator(".ev-external", { hasText: "Dentist" }).click();
-    const fixed = page.getByTestId("fixed-priority");
+    const fixed = page.getByTestId("external-priority-fixed");
     await expect(fixed).toContainText(
-      "Events from other calendars, their mirrored copies and booked meetings stay P1.",
+      "Events from other calendars stay P1: only events on your main calendar can change.",
     );
     await expect(fixed.getByLabel("Priority for booking links")).toBeDisabled();
     await expect(page.getByTestId("external-priority")).toHaveCount(0);
