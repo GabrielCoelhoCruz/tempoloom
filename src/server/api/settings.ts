@@ -3,9 +3,11 @@ import { randomUUID } from "node:crypto";
 import { Hono } from "hono";
 import { z } from "zod";
 import type { AppEnv } from "../app.ts";
-import { all, type Db, one, run } from "../db.ts";
+import { all, type Db, one, run, tx } from "../db.ts";
 import { jsonBody, notFound } from "../http.ts";
 import { instanceLimit, limitMessage } from "../limits.ts";
+import { writeCalendar } from "../planner/replan.ts";
+import { writableCalendar, writableCalendars } from "../planner/write.ts";
 import { getSettings, updateSettings } from "../settings.ts";
 import type { SyncService } from "../sync/service.ts";
 import { badRequest } from "./items.ts";
@@ -14,6 +16,14 @@ const range = z
   .tuple([z.number().int().min(0).max(1439), z.number().int().min(1).max(1440)])
   .refine(([s, e]) => e > s, "A range must end after it starts");
 const weekly = z.partialRecord(z.enum(["1", "2", "3", "4", "5", "6", "7"]), z.array(range).max(12));
+
+type Weekly = Partial<Record<string, [number, number][]>>;
+
+/** Two week patterns with the same ranges per day, whatever the key order or empty days. */
+function sameWeek(a: Weekly, b: Weekly): boolean {
+  const days = (w: Weekly) => ["1", "2", "3", "4", "5", "6", "7"].map((d) => w[d] ?? []);
+  return JSON.stringify(days(a)) === JSON.stringify(days(b));
+}
 
 export function settingsRoutes(db: Db, sync: SyncService, now: () => number): Hono<AppEnv> {
   const scopeChanges = new Map<string, number[]>();
@@ -66,8 +76,10 @@ export function settingsRoutes(db: Db, sync: SyncService, now: () => number): Ho
     return c.json({ settings: parsed });
   });
 
-  r.get("/hours", (c) =>
-    c.json({
+  r.get("/hours", (c) => {
+    const userId = c.get("user").id;
+    const main = writeCalendar(db, userId)?.id;
+    return c.json({
       hours: all<{
         id: string;
         kind: string;
@@ -77,10 +89,12 @@ export function settingsRoutes(db: Db, sync: SyncService, now: () => number): Ho
       }>(
         db,
         "SELECT id, kind, name, weekly, task_calendar_id FROM hours_sets WHERE user_id = ? AND item_specific = 0 ORDER BY created_at",
-        c.get("user").id,
+        userId,
       ).map((h) => ({ ...h, weekly: JSON.parse(h.weekly) })),
-    }),
-  );
+      // HRS-12: the calendars that can take task chunks, besides the main one.
+      taskCalendars: writableCalendars(db, userId).filter((cal) => cal.id !== main),
+    });
+  });
 
   r.post("/hours", async (c) => {
     const user = c.get("user");
@@ -101,47 +115,41 @@ export function settingsRoutes(db: Db, sync: SyncService, now: () => number): Ho
   r.put("/hours/:id", async (c) => {
     const user = c.get("user");
     const id = c.req.param("id");
-    const set = one<{ weekly: string; name: string }>(
-      db,
-      "SELECT weekly, name FROM hours_sets WHERE id = ? AND user_id = ?",
-      id,
-      user.id,
-    );
-    if (!set) notFound("hours set");
+    // Read the body first: the set is read and written in one step below, so a
+    // save that waits for its body never writes back ranges saved meanwhile.
     const body = await jsonBody(
       c,
       z.object({
         name: z.string().trim().min(1).max(100).optional(),
         weekly: weekly.optional(),
-        taskCalendarId: z.string().nullable().optional(),
+        taskCalendarId: z.string().min(1).nullable().optional(),
       }),
     );
     // HRS-12: task chunks go to a calendar of this user that takes events.
-    if (
-      body.taskCalendarId &&
-      !one(
-        db,
-        `SELECT 1 FROM calendars c JOIN accounts a ON a.id = c.account_id
-         WHERE c.id = ? AND a.user_id = ? AND c.writable = 1`,
-        body.taskCalendarId,
-        user.id,
-      )
-    )
+    if (body.taskCalendarId && !writableCalendar(db, user.id, body.taskCalendarId))
       badRequest("taskCalendarId", "Unknown calendar, or a calendar that takes no events");
-    const nextWeekly = body.weekly ? JSON.stringify(body.weekly) : set.weekly;
-    run(
-      db,
-      "UPDATE hours_sets SET weekly = ?, name = ? WHERE id = ?",
-      nextWeekly,
-      body.name ?? set.name,
-      id,
-    );
-    if (body.taskCalendarId !== undefined) {
-      run(db, "UPDATE hours_sets SET task_calendar_id = ? WHERE id = ?", body.taskCalendarId, id);
-    }
-    // HRS-7: a change of ranges applies to existing events; re-place everything
-    // that uses the set. A new name or task calendar places nothing again.
-    if (nextWeekly !== set.weekly) {
+    tx(db, () => {
+      const set = one<{ weekly: string }>(
+        db,
+        "SELECT weekly FROM hours_sets WHERE id = ? AND user_id = ?",
+        id,
+        user.id,
+      );
+      if (!set) notFound("hours set");
+      run(
+        db,
+        `UPDATE hours_sets SET weekly = COALESCE(?, weekly), name = COALESCE(?, name),
+           task_calendar_id = CASE WHEN ? THEN ? ELSE task_calendar_id END
+         WHERE id = ?`,
+        body.weekly ? JSON.stringify(body.weekly) : null,
+        body.name ?? null,
+        body.taskCalendarId !== undefined ? 1 : 0,
+        body.taskCalendarId ?? null,
+        id,
+      );
+      // HRS-7: a change of ranges applies to existing events; re-place everything
+      // that uses the set. A new name or task calendar places nothing again.
+      if (!body.weekly || sameWeek(body.weekly, JSON.parse(set.weekly))) return;
       const t = now();
       for (const table of ["tasks", "habits", "focus_goals"]) {
         run(
@@ -152,7 +160,7 @@ export function settingsRoutes(db: Db, sync: SyncService, now: () => number): Ho
           id,
         );
       }
-    }
+    });
     sync.request(user.id);
     return c.json({ ok: true });
   });
