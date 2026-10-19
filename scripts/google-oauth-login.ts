@@ -8,7 +8,7 @@
 // The OAuth client must list http://127.0.0.1:<PORT>/auth/google/callback as a
 // redirect URI. Open the printed URL in a browser that reaches that port, and
 // sign in as GOOGLE_TEST_ACCOUNT_EMAIL; another account stops the run.
-import { spawn } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
 import { createServer } from "node:http";
 import {
   buildAuthRequest,
@@ -100,6 +100,7 @@ const tokens = await new Promise<TokenSet>((resolve, reject) => {
 
 const refreshToken = tokens.refreshToken;
 if (!refreshToken) throw new Error("Google returned no refresh token");
+let child: ChildProcess | undefined;
 let finished = false;
 /** Revokes the grant (and the refresh token with it), then exits. */
 const finish = async (code: number, why?: string): Promise<void> => {
@@ -114,24 +115,46 @@ const finish = async (code: number, why?: string): Promise<void> => {
   }
   process.exit(code);
 };
+// From here on, every way out revokes the token. The child runs in its own
+// process group, so a Ctrl-C reaches only this process: the first signal goes
+// once to the child's group and the token is revoked when the child exits; a
+// second signal stops the child and revokes at once.
+let forwarded = false;
+for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
+  process.on(signal, () => {
+    const pid = child?.exitCode === null ? child.pid : undefined;
+    if (pid && !forwarded) {
+      forwarded = true;
+      process.kill(-pid, signal);
+      return;
+    }
+    if (pid) process.kill(-pid, "SIGKILL");
+    void finish(1, `Stopped by ${signal}.`);
+  });
+}
+process.on("uncaughtException", (err) => void finish(1, `Failed: ${err.message}`));
+process.on("unhandledRejection", (err) => void finish(1, `Failed: ${String(err)}`));
 
-if (!tokens.idToken) await finish(1, "Google returned no ID token");
-const identity = identityFromIdToken(tokens.idToken as string);
-if (identity.email.toLowerCase() !== expected)
-  await finish(1, `Signed in as ${identity.email}, not ${expected}; stopped.`);
-if (!identity.emailVerified) await finish(1, `Google has not verified ${identity.email}; stopped.`);
-console.log("Consent done. Running the command.");
-
-const child = spawn(command[0] as string, command.slice(1), {
-  stdio: "inherit",
-  env: {
-    ...process.env,
-    GOOGLE_CLIENT_ID: client.clientId,
-    GOOGLE_CLIENT_SECRET: client.clientSecret,
-    GOOGLE_REFRESH_TOKEN: refreshToken,
-  },
-});
-// Ctrl-C reaches the child too; wait for it to exit so the token is revoked.
-for (const signal of ["SIGINT", "SIGTERM"] as const) process.on(signal, () => child.kill(signal));
-child.on("error", (err) => void finish(1, `Could not run ${command[0]}: ${err.message}`));
-child.on("exit", (code) => void finish(code ?? 1));
+try {
+  if (!tokens.idToken) throw new Error("Google returned no ID token");
+  const identity = identityFromIdToken(tokens.idToken);
+  if (identity.email.toLowerCase() !== expected)
+    throw new Error(`Signed in as ${identity.email}, not ${expected}; stopped.`);
+  if (!identity.emailVerified)
+    throw new Error(`Google has not verified ${identity.email}; stopped.`);
+  console.log("Consent done. Running the command.");
+  child = spawn(command[0] as string, command.slice(1), {
+    stdio: "inherit",
+    detached: true,
+    env: {
+      ...process.env,
+      GOOGLE_CLIENT_ID: client.clientId,
+      GOOGLE_CLIENT_SECRET: client.clientSecret,
+      GOOGLE_REFRESH_TOKEN: refreshToken,
+    },
+  });
+  child.on("error", (err) => void finish(1, `Could not run ${command[0]}: ${err.message}`));
+  child.on("exit", (code, signal) => void finish(code ?? (signal ? 1 : 0)));
+} catch (err) {
+  await finish(1, (err as Error).message);
+}
