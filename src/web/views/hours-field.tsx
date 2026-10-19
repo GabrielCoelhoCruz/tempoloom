@@ -40,15 +40,34 @@ export function itemHoursFrom(f: FormData): Record<string, [number, number][]> {
   return Object.fromEntries(f.getAll("itemDays").map((d) => [String(d), [range]]));
 }
 
+/** Item-specific hours as the form shows them: the checked days and one range. */
+export interface ItemRange {
+  days: number[];
+  from: string;
+  to: string;
+}
+
+/** The form's view of stored item-specific hours: its days and its first range. */
+export function itemRangeOf(weekly: Record<string, [number, number][]>): ItemRange {
+  const days = Object.keys(weekly)
+    .filter((d) => (weekly[d]?.length ?? 0) > 0)
+    .map(Number);
+  const [s, e] = weekly[String(days[0])]?.[0] ?? [540, 1020];
+  return { days, from: hhmm(s), to: hhmm(e % 1440) };
+}
+
 export function HoursField({
   sets,
   initial = "",
   allowItem,
+  item,
 }: {
   sets: HoursChoice[];
   /** The chosen set id; "" means work hours. */
   initial?: string;
   allowItem: boolean;
+  /** The item-specific hours the fields start with, when `initial` is ITEM. */
+  item?: ItemRange;
 }) {
   const [chosen, setChosen] = useState(initial);
   const [preview, setPreview] = useState(false);
@@ -102,17 +121,22 @@ export function HoursField({
           <legend>Item-specific hours</legend>
           {DAYS.map((d, i) => (
             <label class="inline" key={d}>
-              <input type="checkbox" name="itemDays" value={i + 1} />
+              <input
+                type="checkbox"
+                name="itemDays"
+                value={i + 1}
+                defaultChecked={item?.days.includes(i + 1) ?? false}
+              />
               {d}
             </label>
           ))}
           <label class="inline">
             From
-            <input name="itemFrom" type="time" step={900} defaultValue="09:00" />
+            <input name="itemFrom" type="time" step={900} defaultValue={item?.from ?? "09:00"} />
           </label>
           <label class="inline">
             To
-            <input name="itemTo" type="time" step={900} defaultValue="17:00" />
+            <input name="itemTo" type="time" step={900} defaultValue={item?.to ?? "17:00"} />
           </label>
         </fieldset>
       )}

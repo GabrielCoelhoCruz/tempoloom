@@ -3,6 +3,7 @@ import { api } from "../lib/api.ts";
 import {
   freeName,
   GROUP_NAMES,
+  itemHoursOf,
   LIBRARY,
   type LibraryEntry,
   type LibraryGroup,
@@ -23,19 +24,25 @@ const FORM_PAGE: Partial<Record<LibraryEntry["kind"], string>> = {
 };
 
 /** Kinds whose automations remember the entry they came from (rule 4). */
-const BY_TEMPLATE = new Set<LibraryEntry["kind"]>(["habit", "buffer", "focus_time"]);
+const BY_TEMPLATE = new Set<LibraryEntry["kind"]>([
+  "habit",
+  "buffer",
+  "focus_time",
+  "calendar_mirroring",
+]);
 
 /**
  * Names of the user's automations, booking links and meeting overloads, and
- * the entries their automations came from. A habit, buffer or focus entry
- * shows "Added" when an automation came from it; other kinds when one has the
- * entry's name (rule 4).
+ * the entries their automations came from. A habit, buffer, focus or mirroring
+ * entry shows "Added" when an automation came from it; other kinds when one has
+ * the entry's name (rule 4).
  */
 async function automationNames(): Promise<{ names: string[]; templates: string[] }> {
-  const [a, l, o] = await Promise.all([
+  const [a, l, o, m] = await Promise.all([
     api<{ automations: { name: string; templateId: string | null }[] }>("GET", "/api/automations"),
     api<{ links: { title: string }[] }>("GET", "/api/booking/links").catch(() => ({ links: [] })),
     api<{ overloads: { title: string }[] }>("GET", "/api/meeting-overloads"),
+    api<{ mirrors: { template_id: string | null }[] }>("GET", "/api/mirrors"),
   ]);
   return {
     names: [
@@ -43,7 +50,9 @@ async function automationNames(): Promise<{ names: string[]; templates: string[]
       ...l.links.map((x) => x.title),
       ...o.overloads.map((x) => x.title),
     ],
-    templates: a.automations.flatMap((x) => (x.templateId ? [x.templateId] : [])),
+    templates: [...a.automations, ...m.mirrors.map((x) => ({ templateId: x.template_id }))].flatMap(
+      (x) => (x.templateId ? [x.templateId] : []),
+    ),
   };
 }
 
@@ -95,7 +104,14 @@ export function Library() {
     const base = { title, templateId: e.slug };
     try {
       if (e.kind === "buffer") await api("POST", "/api/buffers", { ...base, ...e.preset });
-      else if (e.kind === "focus_time") await api("POST", "/api/focus", { ...base, ...e.preset });
+      else if (e.kind === "focus_time") {
+        const { window, ...rules } = e.preset;
+        await api("POST", "/api/focus", {
+          ...base,
+          ...rules,
+          ...(window ? { itemHours: itemHoursOf(window) } : {}),
+        });
+      }
       await planNow();
       await load();
     } catch (err) {

@@ -750,6 +750,43 @@ E2E_NOTES.update({
 PARTIAL.pop(299, None)
 # --- end s8 ---
 
+# --- U09: library entries, stats panels, tools ---
+T.update({
+    "u9_lib_habits1": "library habit entries 11, 35, 36, 43, 45, 46 add habits with their presets: wrap-up at the end of work hours, Lunch inside 11:30 to 14:00",
+    "u9_lib_habits2": "library habit entries 40, 41, 42, 44 add habits with their presets: walk, exercise in personal hours, coding at P2, email at P4",
+    "u9_lib_buffers": "library buffer entries 1, 10, 19 add buffers after large meetings, around flights and after long meetings only",
+    "u9_lib_external": "library buffer entries 28, 29, 30 anchor on external meetings: travel only at an address, prep before, debrief after",
+    "u9_lib_focus": "library focus entries 7 and 23 place their weekly goal inside the 09:00 to 12:00 window, and the window stays on edit",
+    "u9_lib_meetings": "library entries 32, 34 and 37: flexible meetings repeat at their period with the guests, and the priority link offers time over P3 and P4 habits",
+    "u9_lib_mirror": "library mirroring entries 38 and 39 copy busy time only between job calendars, both ways, never copying a copy",
+})
+E2E.update({
+    719: ["u9_lib_buffers"], 728: ["u9_lib_buffers"], 737: ["u9_lib_buffers"],
+    725: ["u9_lib_focus"], 741: ["u9_lib_focus"],
+    746: ["u9_lib_external"], 747: ["u9_lib_external"], 748: ["u9_lib_external"],
+    729: ["u9_lib_habits1"], 753: ["u9_lib_habits1"], 754: ["u9_lib_habits1"], 761: ["u9_lib_habits1"],
+    763: ["u9_lib_habits1"], 764: ["u9_lib_habits1", "lib_habit"],
+    758: ["u9_lib_habits2"], 759: ["u9_lib_habits2", "lib_habit"], 760: ["u9_lib_habits2"],
+    762: ["u9_lib_habits2"],
+    750: ["u9_lib_meetings"], 752: ["u9_lib_meetings"], 755: ["u9_lib_meetings"],
+    756: ["u9_lib_mirror"], 757: ["u9_lib_mirror"],
+})
+E2E_NOTES.update({
+    725: "Mornings are a one-off window (item-specific hours) of 09:00 to 12:00 on workdays, which the user can change in the form",
+    741: "The ideal window is a one-off window (item-specific hours) of 09:00 to 12:00 on workdays, which the user can change in the form",
+    729: "The ideal time is read from the user's work hours when the form opens",
+    764: "The 11:30 to 14:00 window is item-specific hours on workdays",
+    746: "An external meeting with an address: the buffer filter is the external meeting category and an address",
+    737: "A meeting has at least one other attendee",
+    750: "The form needs at least one guest; the entry does not check that the guests are external",
+    756: "The entry fills the mirroring form with busy-only copies; the user adds one policy in each direction",
+    757: "The entry fills the mirroring form with busy-only copies; the user adds one policy for each pair of calendars",
+})
+for n in [719, 725, 728, 729, 737, 741, 746, 747, 748, 750, 752, 753, 754, 755, 756, 757, 758,
+          759, 760, 761, 762, 763, 764]:
+    PARTIAL.pop(n, None)
+# --- end U09 ---
+
 # --- merge: rows that need the work of more than one stream ---
 E2E.update({282: ["s1_habit_es", "s1_task_color", "s4_labels"]})
 E2E_NOTES.update({282: "Habits, focus time, buffers and tasks have their own color (stream s1); a mirroring policy has a color override (stream s4)"})
