@@ -39,7 +39,7 @@ import {
   planNow,
   test,
 } from "./fixtures.ts";
-import { addTask, titled, W } from "./helpers.ts";
+import { addHabit, addTask, titled, W } from "./helpers.ts";
 
 test.skip(BACKEND === "google", "These checks read the CalDAV event data (VALARM, CLASS, COLOR).");
 
@@ -389,4 +389,15 @@ test("a habit's category decides its stats group and whether it counts toward fo
   await stats("workHabits");
   await page.reload();
   await expect(page.getByTestId("stat-workHabits")).toHaveText("5 h");
+
+  // A new habit on personal hours is personal unless the user picks a category.
+  await addHabit(page, {
+    title: "Piano",
+    ideal: "19:00",
+    min: 30,
+    max: 30,
+    hours: "Personal hours",
+  });
+  const piano = await edit(page, "Piano");
+  await expect(piano.getByLabel("Category")).toHaveValue("personal");
 });

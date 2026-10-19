@@ -85,8 +85,10 @@ export function EventSettingsFields({
         <Select
           id="es-category"
           label="Category"
-          initial={initial.category}
+          // A new habit follows its hours (personal hours: personal) until the user picks one.
+          initial={editing || initial.category === "personal" ? initial.category : ""}
           options={[
+            ...(editing ? [] : [["", "By its hours"] as [string, string]]),
             ["work", "Work"],
             ["personal", "Personal"],
           ]}
