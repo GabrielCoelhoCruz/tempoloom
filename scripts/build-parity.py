@@ -4,6 +4,8 @@ and the status map below. Run: python3 scripts/build-parity.py
 
 Status rules:
   done (CalDAV) = a full UI E2E test passes against a real CalDAV server (E2E map).
+  done (Google) = done (CalDAV), and every test of the row also passed in the recorded
+                  Google Calendar run (GOOGLE_PROVEN, read from docs/e2e-google-run.tsv).
   partial       = implemented in part, or proven by unit tests only (PARTIAL, UNIT,
                   GOOGLE_ROWS); the reason says what is missing.
   blocked       = not implemented yet, or a non-goal; the reason says which.
@@ -338,9 +340,9 @@ UNIT = StatusMap("UNIT", {
 })
 
 GOOGLE_ROWS = StatusMap("GOOGLE_ROWS", {
-    510: "Google sign-in (OAuth with PKCE) and Google Calendar sync are implemented; Google E2E pending: needs a service-account key, and the consent screen needs a one-time check by a person. Microsoft is not implemented.",
-    513: "Google and CalDAV accounts can be connected; a second CalDAV account is added in the UI with CalDAV E2E (\u201ca user adds a second CalDAV account and removes it after a confirmation\u201d); Microsoft is not implemented. Google E2E pending.",
-    518: "All calendar scopes are asked at sign-in; incremental consent not implemented. Google E2E pending.",
+    510: "Google sign-in (OAuth with PKCE) and Google Calendar sync are implemented. The Google E2E run (docs/e2e-google-run.md) used a person's OAuth consent and synced a Google Calendar in 128 passed tests, but the Tempoloom sign-in page itself is not E2E-tested with Google. Microsoft is not implemented.",
+    513: "Google and CalDAV accounts can be connected; a second CalDAV account is added in the UI with CalDAV E2E (\u201ca user adds a second CalDAV account and removes it after a confirmation\u201d); Microsoft is not implemented. Connecting a Google account from the accounts page has no Google E2E (the Google run connects its account with an operator command).",
+    518: "All calendar scopes are asked at sign-in; incremental consent not implemented. The Google E2E run (docs/e2e-google-run.md) approved all scopes at once.",
 })
 
 # Round 3 rows. Each block adds rows with T.update, E2E.update, E2E_NOTES.update,
@@ -934,12 +936,137 @@ BLOCKED.update({
 })
 # --- end U04 ---
 
-GOOGLE_PENDING = "Google E2E pending: the service-account key is not available yet (1Password token missing)."
+# Google Calendar proof. docs/e2e-google-run.tsv records a full E2E run on Google
+# (status, test id, title per line; docs/e2e-google-run.md says how it ran). A test key
+# is proven on Google when its test passed in that run. The test of a key is the one
+# whose title starts with T[key], or TEST_OF[key] ("file \u203a title start") when T
+# rewords the title. A key with no test in the run (a test added later) is not proven.
+TEST_OF = {
+    "lib_other": "library.spec.ts › buffer and focus entries add their automation as set;",
+    "s1_list": "automations.spec.ts › the automation list groups every type by priority,",
+    "s1_drag": "automations.spec.ts › dragging an automation changes its rank or its",
+    "s1_off": "automations.spec.ts › turning an automation off removes its future events",
+    "s1_added": "automations.spec.ts › a library entry opens the shared form with its preset;",
+    "s1_habit_es": "event-settings.spec.ts › a habit puts its emoji, category, color, visibility,",
+    "s1_focus_es": "event-settings.spec.ts › a focus automation writes its title, emoji,",
+    "s1_kinds": "event-settings.spec.ts › each managed event kind starts with its reminders and",
+    "s1_task_color": "event-settings.spec.ts › a task color overrides the category color of its",
+    "s1_category": "event-settings.spec.ts › a habit's category decides its stats group and whether",
+    "s1_done": "title-markers.spec.ts › an ended habit event gets the done marker; an ended",
+    "s1_types": "title-markers.spec.ts › travel buffers, flights Tempoloom may edit and",
+    "s1_emoji": "title-markers.spec.ts › a template's emoji shows in the form and can be",
+    "s2_make_habit": "habit-actions.spec.ts › a solo recurring event becomes a habit from the",
+    "s2_reschedule": "habit-actions.spec.ts › reschedule places one occurrence at the legal slot",
+    "s2_edit_habit": "habit-actions.spec.ts › edit habit opens the habit of any of its events; the",
+    "s2_done": "habit-actions.spec.ts › an ended habit occurrence gets the done marker; future",
+    "s2_monthly": "habit-actions.spec.ts › a monthly habit is placed once a month, on a day of",
+    "s2_habit_tasks": "habit-actions.spec.ts › a habit carries a saved task search: its events list",
+    "s2_focus_modes": "focus-modes.spec.ts › proactive focus stops at the daily limit and shows the",
+    "s2_focus_tasks": "focus-modes.spec.ts › focus time carries one task search: every focus event",
+    "s2_overload_daily": "meeting-overload.spec.ts › a daily meeting limit turns the rest of that day into",
+    "s2_filter_describe": "buffer-filters.spec.ts › the executive prep entry needs people; a",
+    "s2_scope": "buffer-filters.spec.ts › calendar scope: a buffer for one calendar skips",
+    "s2_runs": "buffer-filters.spec.ts › the meeting runs entry adds recovery after a run of",
+    "s2_mirror_travel": "buffer-filters.spec.ts › travel time follows what a mirrored copy shows: a copy",
+    "s3_another": "task-flow.spec.ts › the New task form keeps open for the next task with",
+    "s3_suggest": "task-flow.spec.ts › suggestions-only mode removes task events and lists",
+    "s3_nextup": "task-flow.spec.ts › the next-up task is the one in progress, else the",
+    "s3_focus_tasks": "task-flow.spec.ts › in suggestions mode, focus time lists the tasks to",
+    "s3_blocks": "task-flow.spec.ts › Block time proposes work blocks as a preview; Discard",
+    "s3_timer": "task-timer.spec.ts › the task timer logs the recorded time as a past event",
+    "s3_logged": "task-timer.spec.ts › time logged with the timer on a task and on a habit",
+    "s3_delete_hours": "hours-sets.spec.ts › deleting a custom set in use asks for a replacement",
+    "s3_item_hours": "hours-sets.spec.ts › a habit can use item-specific hours that tasks and",
+    "s3_preview": "hours-sets.spec.ts › the hours menu of an item editor previews the chosen",
+    "s3_review": "hours-sets.spec.ts › a new user is asked once to review work, meeting and",
+    "s3_utc": "travel.spec.ts › a browser that reports UTC gets a warning and never",
+    "s3_join": "planner-now.spec.ts › the planner shows the current or next meeting and",
+    "s3_alert": "planner-now.spec.ts › an event start flashes the tab title, and plays the",
+    "s3_blocked": "planner-now.spec.ts › a chime the browser blocks shows a hint (NTF-2)",
+    "s3_conflict": "planner-now.spec.ts › overlapping external events are flagged with a",
+    "s3_markdown": "event-content.spec.ts › task notes keep their markdown in the calendar, render",
+    "s3_timer_link": "event-content.spec.ts › a timer link in the focus time description and in",
+    "s3_profile": "profile.spec.ts › the profile shows account fields read-only and saves",
+    "s3_travel": "travel.spec.ts › a travel zone places habits in its local time on its",
+    "s3_travel_prompt": "travel.spec.ts › the planner prompts for a travel zone when the browser",
+    "s3_bg_audio": "pomodoro-extras.spec.ts › background audio plays the chosen track during work",
+    "s3_mini": "pomodoro-extras.spec.ts › the mini window shows the running timer and controls",
+    "s4_mesh": "mirror-policies.spec.ts › three calendars that block each other take six",
+    "s4_alerts": "mirror-policies.spec.ts › copies never alert: an alert added to a copy is",
+    "s4_shared": "connected-calendars.spec.ts › a calendar shared with full access can be added,",
+    "s4_taken": "sign-in-emails.spec.ts › an email that is main in another account cannot become",
+    "s4_win_limit": "instance-limits.spec.ts › a window limit caps planning but never booking links",
+    "s4_cal_limit": "instance-limits.spec.ts › a connected calendar limit refuses one more, and a",
+    "s4_counts": "instance-limits.spec.ts › limits on mirroring policies, booking links and",
+    "s5_checks": "meeting-checks.spec.ts › each built-in check raises its issue in the planner",
+    "s5_ignore": "meeting-checks.spec.ts › checks are on for a new user; ignore hides one event",
+    "s5_digest": "meeting-checks.spec.ts › library entry 'Flag meeting problems' turns on the",
+    "s5_company": "meeting-checks.spec.ts › a company check from a team admin flags only the",
+    "s5_agenda": "meeting-checks.spec.ts › library entry 'Agenda drafts' stages a draft that is",
+    "s5_limit": "meeting-moves.spec.ts › the move limit: with 1 move per day a second conflict",
+    "s5_adopt": "meeting-moves.spec.ts › meeting rules attach to an existing recurring meeting",
+    "s5_daily": "meeting-moves.spec.ts › the daily emails list meetings at risk in the next 14",
+    "s5_starts": "start-intervals.spec.ts › start times limit flexible meetings and booking pages",
+    "s5_nomeet": "no-meeting-weekly.spec.ts › the weekly no-meeting day from the library writes one",
+    "s6_questions": "booking-options.spec.ts › screening questions: the owner adds them, the booker",
+    "s6_redirect": "booking-options.spec.ts › redirect after booking: the confirmation shows, then",
+    "s6_emails": "booking-emails.spec.ts › booking, reschedule and cancel email the booker and",
+    "s6_mail_brand": "booking-emails.spec.ts › booking emails use the link's branding: the team logo",
+    "s6_zone": "booking-page-view.spec.ts › time zone picker and time format: the actual zones",
+    "s6_params": "booking-page-view.spec.ts › URL parameters choose the time zone, duration, day and",
+    "s6_overlay": "booking-page-view.spec.ts › overlay my calendar: a signed-in booker sees their own",
+    "s6_inspect": "booking-inspector.spec.ts › the availability inspector shows organizers every time",
+    "s6_cards": "link-cards.spec.ts › link cards show title, durations and priority with",
+    "s6_groups": "link-groups.spec.ts › a link group gets its own booking page with its links,",
+    "s6_groups_edit": "link-groups.spec.ts › editing a group warns before it breaks URLs; old URLs",
+    "s6_oneoff": "oneoff-links.spec.ts › a one-off link has its own settings and prefilled",
+    "s6_expiry": "oneoff-links.spec.ts › a one-off link expires 30 days after creation: its URL",
+    "s6_times": "oneoff-links.spec.ts › shared times: up to 5 dates, offered times as buttons",
+    "s6_share": "embeds.spec.ts › the share menu copies the URL and opens an email draft",
+    "s6_embed": "embeds.spec.ts › website embeds: script, object, iframe and URL load",
+    "s6_embed_redirect": "embeds.spec.ts › embed redirect modes: none stays, top page sends the",
+    "s7_mcp_read": "mcp.spec.ts › an MCP client with an API key reads the schedule, free",
+    "s7_mcp_stage": "mcp.spec.ts › a write from an MCP client is staged, not written; the",
+    "s7_final": "mcp.spec.ts › the final list applies only what stays in it;",
+    "s7_stale": "mcp.spec.ts › a staged change whose event moved after staging is",
+    "s7_readonly": "mcp.spec.ts › a read-only server lists no write tools, refuses a",
+    "s7_manual": "preview.spec.ts › preview mode turned on by hand stages a drag; turning",
+    "s7_auto": "preview.spec.ts › with preview mode on, a new habit shows its calendar",
+    "s7_help": "help.spec.ts › the help index groups common problems and links each",
+    "s7_lookup": "help.spec.ts › looking up an event by its link shows what Tempoloom",
+    "s7_stats": "stats-extras.spec.ts › stats split solo work into deep and shallow, count",
+    "s8_types": "automation-types.spec.ts › the list shows all six types: meeting overload pinned",
+    "s8_overload": "automation-types.spec.ts › a meeting overload's list entry opens its editor,",
+    "s8_checks": "automation-types.spec.ts › a built-in meeting check turns off and on from the",
+    "s8_company": "automation-types.spec.ts › a company check shows locked in the Meeting quality",
+}
+GOOGLE_RUN = os.path.join(ROOT, "docs/e2e-google-run.tsv")
 
-def e2e_status(row_id, tests):
-    tests = "; ".join(f"\u201c{T[k]}\u201d" for k in tests)
+def google_proven():
+    run = [line.rstrip("\n").split("\t") for line in open(GOOGLE_RUN, encoding="utf8") if line.strip()]
+    proven = set()
+    for key, text in T.items():
+        if key in TEST_OF:
+            file, start = TEST_OF[key].split(" \u203a ", 1)
+            hits = [st for st, test_id, title in run if test_id.startswith(f"tests/e2e/{file}:") and title.startswith(start)]
+        else:
+            hits = [st for st, test_id, title in run if title.startswith(text)]
+        if len(hits) > 1:
+            sys.exit(f"test key {key} matches {len(hits)} tests in docs/e2e-google-run.tsv")
+        if hits == ["passed"]:
+            proven.add(key)
+    return proven
+
+GOOGLE_PROVEN = google_proven()
+
+def e2e_status(row_id, keys):
+    tests = "; ".join(f"\u201c{T[k]}\u201d" for k in keys)
     note = f" {E2E_NOTES[row_id]}." if row_id in E2E_NOTES else ""
-    return "done (CalDAV)", f"Full UI E2E passes on CalDAV (Radicale): {tests}.{note} Google Calendar run pending (service-account key)."
+    missing = [k for k in keys if k not in GOOGLE_PROVEN]
+    if not missing:
+        return "done (Google)", f"Full UI E2E passes on CalDAV (Radicale) and on Google Calendar (docs/e2e-google-run.md): {tests}.{note}"
+    return "done (CalDAV)", (f"Full UI E2E passes on CalDAV (Radicale): {tests}.{note} Not proven on Google Calendar: "
+                             f"{len(missing)} of these tests did not pass in the Google run (skipped there, or added after it; docs/e2e-google-run.md).")
 
 def unit_status(row_id, extra):
     return "partial", "Implemented; unit or property tests only, no E2E yet." + (f" Limits: {extra}." if extra else "")
@@ -995,20 +1122,21 @@ def main():
             if spec_file.endswith(".md"):
                 link = f"[{spec}](specs/{spec.replace(' ', '')})"
             rows.append((group, n, feature, evidence, link, st, why))
-    counts = {"done (CalDAV)": 0, "partial": 0, "blocked": 0}
+    counts = {"done (Google)": 0, "done (CalDAV)": 0, "partial": 0, "blocked": 0}
     for r in rows:
         counts[r[5]] += 1
     header = open(f"{STAGING}/parity-header.md", encoding="utf8").read().rstrip()
     out = [header, "", "## Summary", "",
            f"- Rows: {len(rows)}",
            f"- done (CalDAV): {counts['done (CalDAV)']}",
-           "- done (Google): 0",
+           f"- done (Google): {counts['done (Google)']}",
            f"- partial: {counts['partial']}",
            f"- blocked: {counts['blocked']}", "",
            "\"done (CalDAV)\" means a full UI E2E test passes against a real CalDAV server (Radicale in a",
            "loopback container): Playwright drives the Tempoloom UI, the real API and scheduler write to the",
            "calendar, and the test checks the calendar, a page reload and persistence. The suite runs in CI",
-           "on every push. No row is done on Google Calendar yet: that run needs a service-account key.",
+           "on every push. \"done (Google)\" rows passed the same tests against Google Calendar too, in the",
+           "run recorded in docs/e2e-google-run.md; rows whose tests skip on Google stay \"done (CalDAV)\".",
            "",
            "Evidence basis: every row comes from public evidence only (marketing pages and help docs). No",
            "logged-in observation of the reference product was made, so behavior that only a logged-in",
