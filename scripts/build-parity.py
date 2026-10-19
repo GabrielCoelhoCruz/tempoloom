@@ -776,14 +776,13 @@ E2E.update({
     456: ["u8_resync"], 467: ["u8_allday"], 468: ["u8_hours"], 470: ["u8_answers"],
     471: ["u8_answers"], 472: ["u8_answers"], 473: ["m_follow", "u8_answers", "u8_privacy"],
     475: ["u8_privacy"], 476: ["u8_privacy"], 480: ["u8_type"], 506: ["u8_taskcal"],
-    517: ["u8_reconnect"], 934: ["u8_urls"], 936: ["u8_timeout"], 938: ["u8_suspend"],
+    934: ["u8_urls"], 936: ["u8_timeout"], 938: ["u8_suspend"],
 })
 E2E_NOTES.update({
     471: "One setting on the Settings page for every policy, stored with the account settings",
     473: "Label and busy-only copies skip free events; details copies are free",
     476: "Copies get the private class (CalDAV CLASS:PRIVATE, Google visibility private)",
     506: "Each hours set has a calendar for task chunks on the Settings page",
-    517: "On CalDAV the server rejects the stored password and the user types a new one; a Google account reconnects through Google sign-in again",
     934: "The E2E server runs with private receivers off for this test (WEBHOOK_ALLOW_PRIVATE)",
     938: "The 24-hour period is a setting (WEBHOOK_SUSPEND_AFTER_SECONDS), 4 seconds in the test",
 })
@@ -792,6 +791,10 @@ BLOCKED[510] = ("Needs a Microsoft 365 account and a Microsoft Graph provider, w
 BLOCKED[513] = ("Needs a Microsoft 365 account and a Microsoft Graph provider, which is not built; a second CalDAV account "
                 "is added with CalDAV E2E (\u201ca user adds a second CalDAV account and removes it after a confirmation\u201d), "
                 "and Google accounts connect through Google sign-in (Google E2E needs a Google account)")
+PARTIAL[517] = ("Disconnect, paused policies and reconnect have full UI E2E on CalDAV (\u201c" + T["u8_reconnect"] + "\u201d): "
+                "the server rejects the stored password and the user types a new one; a Google account reconnects through Google sign-in "
+                "with the account's email as the hint and refuses another identity (unit tests). Items that write to a calendar of the "
+                "disconnected account show no error state yet (rule 16): their events stay as they are")
 # --- end U08 ---
 
 # --- U03: core planning ---
