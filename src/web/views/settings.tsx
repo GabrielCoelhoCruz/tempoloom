@@ -110,6 +110,51 @@ export function HoursEditor({
   );
 }
 
+/**
+ * The calendar for task chunks of an hours set (accounts-connected-calendars.md
+ * rule 21). Its own component: the calendar list changes while the page loads,
+ * and only this select should draw again then.
+ */
+function TaskCalendarPicker({
+  set,
+  act,
+}: {
+  set: HoursSet;
+  act: (fn: () => Promise<unknown>) => Promise<void>;
+}) {
+  return (
+    <label class="inline">
+      Task calendar
+      <select
+        aria-label={`Task calendar for ${set.name.toLowerCase()}`}
+        value={set.task_calendar_id ?? ""}
+        onChange={(e) => {
+          const taskCalendarId = e.currentTarget.value || null;
+          void act(() =>
+            api("PUT", `/api/hours/${set.id}`, { weekly: set.weekly, taskCalendarId }),
+          );
+        }}
+      >
+        <option value="">Main calendar</option>
+        {calendarList.value
+          .filter(
+            (c) =>
+              c.provider !== "ics" &&
+              c.writable === 1 &&
+              c.main !== 1 &&
+              (c.check_availability === 1 || c.id === set.task_calendar_id),
+          )
+          .map((c) => (
+            <option value={c.id} key={c.id}>
+              {c.name}
+              {c.email ? ` (${c.email})` : ""}
+            </option>
+          ))}
+      </select>
+    </label>
+  );
+}
+
 export function Settings() {
   const [settings, setSettings] = useState<UserSettings | null>(null);
   const [windowLimit, setWindowLimit] = useState<number | null>(null);
@@ -278,35 +323,7 @@ export function Settings() {
             set={h}
             onSave={(weekly) => act(() => api("PUT", `/api/hours/${h.id}`, { weekly }))}
           >
-            <label class="inline">
-              Task calendar
-              <select
-                aria-label={`Task calendar for ${h.name.toLowerCase()}`}
-                value={h.task_calendar_id ?? ""}
-                onChange={(e) => {
-                  const taskCalendarId = e.currentTarget.value || null;
-                  void act(() =>
-                    api("PUT", `/api/hours/${h.id}`, { weekly: h.weekly, taskCalendarId }),
-                  );
-                }}
-              >
-                <option value="">Main calendar</option>
-                {calendarList.value
-                  .filter(
-                    (c) =>
-                      c.provider !== "ics" &&
-                      c.writable === 1 &&
-                      c.main !== 1 &&
-                      (c.check_availability === 1 || c.id === h.task_calendar_id),
-                  )
-                  .map((c) => (
-                    <option value={c.id} key={c.id}>
-                      {c.name}
-                      {c.email ? ` (${c.email})` : ""}
-                    </option>
-                  ))}
-              </select>
-            </label>
+            <TaskCalendarPicker set={h} act={act} />
             {h.kind === "custom" && <DeleteHoursSet set={h} sets={hours} act={act} />}
           </HoursEditor>
         ))}
