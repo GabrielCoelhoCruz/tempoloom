@@ -771,3 +771,12 @@ fieldset {
 .public.embedded {
   padding: 12px;
 }
+.link-section .row > .actions {
+  align-items: center;
+  justify-content: flex-end;
+  max-width: 600px;
+}
+.tz-picker {
+  align-items: end;
+  margin: 8px 0;
+}

@@ -1,3 +1,4 @@
+import { Fragment } from "preact";
 import { useCallback, useEffect, useState } from "preact/hooks";
 import { api } from "../lib/api.ts";
 import { formatWhen } from "../lib/format.ts";
@@ -124,7 +125,7 @@ export function Links() {
   const [editing, setEditing] = useState<string | null>(null);
   const [groups, setGroups] = useState<Group[]>([]);
   const [personalizing, setPersonalizing] = useState<string | null>(null);
-  const [sharing, setSharing] = useState<{ title: string; url: string } | null>(null);
+  const [sharing, setSharing] = useState<string | null>(null);
   const [groupForm, setGroupForm] = useState(false);
   const [groupAction, setGroupAction] = useState<{ id: string; kind: "edit" | "delete" } | null>(
     null,
@@ -176,13 +177,13 @@ export function Links() {
   if (page === undefined) return null;
   const edited = [...links, ...teamLinks].find((l) => l.id === editing);
   const myId = me.value?.user.id;
-  const shareButton = (l: EditableLink, url: string) => (
+  const shareButton = (l: EditableLink) => (
     <button
       type="button"
       onClick={() => {
         setEditing(null);
         setPersonalizing(null);
-        setSharing({ title: l.title, url });
+        setSharing(l.id);
       }}
     >
       Share
@@ -262,7 +263,7 @@ export function Links() {
           )}
         </div>
         <div class="actions">
-          <label>
+          <label class="inline">
             Priority
             <select
               value={String(l.level)}
@@ -286,7 +287,7 @@ export function Links() {
           </button>
           {editButton(l)}
           {personalizeButton(l)}
-          {shareButton(l, url)}
+          {shareButton(l)}
           <button
             type="button"
             class="danger"
@@ -298,9 +299,25 @@ export function Links() {
       </div>
     );
   };
+  /** The personalize or share panel of a link, right under its card. */
+  const panels = (l: EditableLink, url: string) => (
+    <>
+      {sharing === l.id && (
+        <SharePanel title={l.title} url={url} onClose={() => setSharing(null)} />
+      )}
+      {personalizing === l.id && (
+        <Personalize link={l} people={people} onClose={() => setPersonalizing(null)} />
+      )}
+    </>
+  );
   const cards = (list: EditableLink[]) => (
     <div class="list">
-      {list.map(card)}
+      {list.map((l) => (
+        <Fragment key={l.id}>
+          {card(l)}
+          {panels(l, bookUrl(l.pageSlug ?? page ?? "", l.slug))}
+        </Fragment>
+      ))}
       {list.length === 0 && <p class="status">No links here.</p>}
     </div>
   );
@@ -576,22 +593,6 @@ export function Links() {
               }}
             />
           )}
-          {sharing && (
-            <SharePanel
-              key={sharing.url}
-              title={sharing.title}
-              url={sharing.url}
-              onClose={() => setSharing(null)}
-            />
-          )}
-          {personalizing && [...links, ...teamLinks].some((l) => l.id === personalizing) && (
-            <Personalize
-              key={personalizing}
-              link={[...links, ...teamLinks].find((l) => l.id === personalizing) as EditableLink}
-              people={people}
-              onClose={() => setPersonalizing(null)}
-            />
-          )}
           {saved !== null && (
             <p class="status" data-testid="link-saved">
               Saved {saved}.
@@ -605,39 +606,41 @@ export function Links() {
               <p class="status">Links of teammates where you are an organizer or in the pool.</p>
               <div class="list" data-testid="team-links">
                 {teamLinks.map((l) => (
-                  <div
-                    class="row"
-                    key={l.id}
-                    data-testid="team-link-row"
-                    data-link-title={l.title}
-                    data-link-id={l.id}
-                  >
-                    <div>
-                      <div>{l.title}</div>
-                      <div class="meta">
-                        {LEVEL_NAMES[l.level]} · {l.durations.join(", ")} min · Owned by{" "}
-                        {l.owner.name} ({l.owner.email})
-                      </div>
-                      {l.pageSlug && (
+                  <Fragment key={l.id}>
+                    <div
+                      class="row"
+                      data-testid="team-link-row"
+                      data-link-title={l.title}
+                      data-link-id={l.id}
+                    >
+                      <div>
+                        <div>{l.title}</div>
                         <div class="meta">
-                          <a href={bookUrl(l.pageSlug, l.slug)}>{bookUrl(l.pageSlug, l.slug)}</a>
+                          {LEVEL_NAMES[l.level]} · {l.durations.join(", ")} min · Owned by{" "}
+                          {l.owner.name} ({l.owner.email})
                         </div>
-                      )}
+                        {l.pageSlug && (
+                          <div class="meta">
+                            <a href={bookUrl(l.pageSlug, l.slug)}>{bookUrl(l.pageSlug, l.slug)}</a>
+                          </div>
+                        )}
+                      </div>
+                      <div class="actions">
+                        {l.pageSlug && (
+                          <button
+                            type="button"
+                            onClick={() => copy(bookUrl(l.pageSlug ?? "", l.slug))}
+                          >
+                            Copy link
+                          </button>
+                        )}
+                        {editButton(l)}
+                        {personalizeButton(l)}
+                        {l.pageSlug && shareButton(l)}
+                      </div>
                     </div>
-                    <div class="actions">
-                      {l.pageSlug && (
-                        <button
-                          type="button"
-                          onClick={() => copy(bookUrl(l.pageSlug ?? "", l.slug))}
-                        >
-                          Copy link
-                        </button>
-                      )}
-                      {editButton(l)}
-                      {personalizeButton(l)}
-                      {l.pageSlug && shareButton(l, bookUrl(l.pageSlug, l.slug))}
-                    </div>
-                  </div>
+                    {panels(l, bookUrl(l.pageSlug ?? "", l.slug))}
+                  </Fragment>
                 ))}
               </div>
             </section>

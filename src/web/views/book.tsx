@@ -144,7 +144,7 @@ function ZonePicker({
     (z) => !mine.includes(z) && (z === zone || !q || z.toLowerCase().includes(q)),
   );
   return (
-    <div class="actions" data-testid="tz-picker">
+    <div class="actions tz-picker" data-testid="tz-picker">
       <label>
         Search time zones
         <input type="search" value={query} onInput={(e) => setQuery(e.currentTarget.value)} />

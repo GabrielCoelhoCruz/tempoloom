@@ -32,13 +32,18 @@ async function personalize(p: Page, title: string): Promise<void> {
   await expect(p.getByTestId("personalize")).toBeVisible();
 }
 
+/** The clipboard as text and HTML; empty while a copy is still being written. */
 const clipboard = (p: Page) =>
   p.evaluate(async () => {
-    const [item] = await navigator.clipboard.read();
-    const html = item?.types.includes("text/html")
-      ? await (await item.getType("text/html")).text()
-      : "";
-    return { text: await navigator.clipboard.readText(), html };
+    try {
+      const [item] = await navigator.clipboard.read();
+      const html = item?.types.includes("text/html")
+        ? await (await item.getType("text/html")).text()
+        : "";
+      return { text: await navigator.clipboard.readText(), html };
+    } catch {
+      return { text: "", html: "" };
+    }
   });
 
 test("a one-off link has its own settings and prefilled invitee, stays unlisted, leaves the source unchanged, counts against its limits, and the creator edits it from its URL (sharing rules 8-13, 16, 31-32)", async ({
