@@ -567,9 +567,10 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
     const itemKey = `${p.kind}:${p.itemId}`;
     const es = eventSettings.get(itemKey);
     // HRS-7, HRS-12: unlocked task chunks follow the calendar of their hours
-    // set, also when it changes; they keep their times. Other events stay where they are.
+    // set, also when it changes; they keep their times. A chunk on a calendar
+    // that cannot be written now stays, and other events stay where they are.
     const taskCalendarId =
-      p.kind === "task" && !row?.locked
+      p.kind === "task" && !row?.locked && (!row || writable(row.calendar_id))
         ? (writable(taskCalendar.get(taskHours.get(p.itemId) ?? "")) ?? target.id)
         : undefined;
     const calendarId = taskCalendarId ?? row?.calendar_id ?? chosenCalendar(es) ?? target.id;
