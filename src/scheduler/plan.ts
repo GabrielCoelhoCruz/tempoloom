@@ -239,6 +239,20 @@ function greedyChunks(
   r: ChunkRules,
   usedDays: Set<number>,
 ): { chunks: Interval[]; missing: number } {
+  const rest = need - (Math.ceil(need / r.max) - 1) * r.max;
+  if (!splits(need, r) && rest < need) {
+    // No split (TSK-13): place the max-length chunks first, then the rest as
+    // one short chunk in the first room that holds it. A replan keeps the
+    // full chunks and looks for the rest the same way, so the plans agree.
+    const full = greedyChunks(ctx, free, need - rest, r, usedDays);
+    if (full.missing > 0) return { chunks: full.chunks, missing: full.missing + rest };
+    const left = minus(
+      free,
+      full.chunks.map((c) => ({ start: c.start - r.gap, end: c.end + r.gap })),
+    );
+    const tail = greedyChunks(ctx, left, rest, r, usedDays);
+    return { chunks: [...full.chunks, ...tail.chunks], missing: tail.missing };
+  }
   const chunks: Interval[] = [];
   const step = ctx.step;
   for (const iv of free.intervals()) {

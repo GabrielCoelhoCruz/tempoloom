@@ -160,8 +160,15 @@ type ValueOf<A> = A extends fc.Arbitrary<infer T> ? T : never;
 const overlaps = (a: { start: number; end: number }, b: { start: number; end: number }) =>
   a.start < b.end && b.start < a.end;
 const live = (ps: Placement[]) => ps.filter((p) => !p.conflict);
+// PLAN_RUNS=3000 PLAN_SEED=<n> raise the run count and fix the seed. The
+// overlap test spends most of its time in its pairwise expect() calls (about
+// 1.3 ms per run; plan() takes about 0.2 ms), so long runs get a long timeout.
+const runs = (n: number) => ({
+  numRuns: Number(process.env.PLAN_RUNS) || n,
+  ...(process.env.PLAN_SEED ? { seed: Number(process.env.PLAN_SEED) } : {}),
+});
 
-describe("plan() invariants", () => {
+describe("plan() invariants", { timeout: process.env.PLAN_RUNS ? 300_000 : 5_000 }, () => {
   it("never overlaps blocking events or other placements, and keeps each item in its hours", () => {
     fc.assert(
       fc.property(snapshotArb, (s) => {
@@ -188,7 +195,7 @@ describe("plan() invariants", () => {
           }
         }
       }),
-      { numRuns: 150 },
+      runs(150),
     );
   });
 
@@ -215,7 +222,7 @@ describe("plan() invariants", () => {
           }
         }
       }),
-      { numRuns: 3000 },
+      runs(3000),
     );
   });
 
@@ -244,7 +251,7 @@ describe("plan() invariants", () => {
         });
         expect(shuffled).toEqual(first);
       }),
-      { numRuns: 100 },
+      runs(100),
     );
   });
 });

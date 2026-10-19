@@ -492,6 +492,38 @@ describe("task chunks", () => {
     expect(spans(of(result, "t")).sort()).toEqual([`${MON}T14:00/14:30`, `${day(1)}T09:00/10:00`]);
   });
 
+  it("places the short rest in a hole too small for a full chunk, so a replan keeps it (TSK-13, SCH-88)", () => {
+    // 240 minutes with chunks of exactly 45: no split exists, so the plan is
+    // five 45-minute chunks and a 15-minute rest. Monday has a 30-minute
+    // hole before the room for the full chunks. The first plan must put the
+    // rest there; else a replan from the five chunks finds the hole and adds
+    // a chunk that the first plan did not have.
+    const events = [
+      ...fill(MON, ["09:00", "09:30"]),
+      ...fill(day(1), ["09:00", "13:45"]),
+      ...[2, 3, 4, 7, 8, 9, 10, 11, 14, 15, 16, 17, 18].flatMap((d) => fill(day(d))),
+    ];
+    const t = task({ id: "t", remainingMinutes: 240, minChunkMinutes: 45, maxChunkMinutes: 45 });
+    const first = plan(snapshot({ events, tasks: [t] }));
+    expect(spans(of(first, "t"))).toEqual([
+      `${MON}T09:00/09:15`,
+      `${day(1)}T09:00/09:45`,
+      `${day(1)}T10:00/10:45`,
+      `${day(1)}T11:00/11:45`,
+      `${day(1)}T12:00/12:45`,
+      `${day(1)}T13:00/13:45`,
+    ]);
+    expect(first.report.filter((r) => r.itemId === "t")).toEqual([]);
+    const current = first.placements.map((p) => ({
+      key: p.key,
+      itemId: p.itemId,
+      start: p.start,
+      end: p.end,
+      locked: false,
+    }));
+    expect(plan(snapshot({ events, tasks: [t], current })).placements).toEqual(first.placements);
+  });
+
   it("places one chunk per day with the once-per-day cooldown", () => {
     const result = plan(
       snapshot({

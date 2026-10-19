@@ -378,6 +378,13 @@ Proposed defaults:
       drop a sticky chunk that would leave a rest with no split when the
       need before it had one (TSK-13)
   need = need - kept minutes
+  if ceil(need / maxChunk) * minChunk > need and need > maxChunk:
+      # no split (TSK-13): rest = need - (ceil(need / maxChunk) - 1) * maxChunk
+      place need - rest with the loop below
+      if all of it is placed: place rest with the loop below, in the
+          free intervals minus the new chunks and their cooldown gap
+      else: rest is unplaced
+      stop
   for each free interval I in time order:
       cursor = I.start
       while need > 0 and cursor < I.end:
@@ -390,7 +397,7 @@ Proposed defaults:
               if ceil(rest / maxChunk) * minChunk > rest:
                   len = need - ceil(rest / maxChunk) * minChunk
                                              # keep the rest splittable
-          # else: maxChunk chunks, then the rest as one short chunk
+          # else: need < minChunk, one short chunk of need
           if len < minChunk and not (need < minChunk and len == need):
               break                          # interval too small
           place chunk [cursor, cursor + len]

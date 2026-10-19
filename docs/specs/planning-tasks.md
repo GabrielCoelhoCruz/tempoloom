@@ -125,7 +125,9 @@ When `splitUp` is false, `minChunkMinutes` and `maxChunkMinutes` both equal
   no split of the remaining work R fits the bounds, that is when
   `ceil(R / maxChunkMinutes) * minChunkMinutes > R`. Then the scheduler
   places chunks of `maxChunkMinutes` and the rest as one short chunk (90
-  minutes with chunks of 60 to 60 gives 60 and 30). When a split exists, no
+  minutes with chunks of 60 to 60 gives 60 and 30). The short chunk goes in
+  the first free time that holds it, also before the other chunks, and only
+  when all other chunks have a place. When a split exists, no
   chunk is short (195 minutes with chunks of 60 to 90 gives 75, 60 and 60,
   not 90, 90 and 15).
 - **TSK-14.** Two chunks of the same task are never back to back. The gap
