@@ -271,7 +271,9 @@ export function loginTarget(
 /**
  * Creates or updates the user and Google account after a successful login.
  * Google returns a refresh token only on first consent, so an existing one is kept.
- * A new user joins `teamId` when given (SSO domain capture).
+ * A new user joins `teamId` when given (SSO domain capture). With `forUserId`
+ * (the operator CLI), the account goes to that user, and an account that
+ * another user holds is an error.
  */
 export function upsertGoogleLogin(
   db: Db,
@@ -280,6 +282,7 @@ export function upsertGoogleLogin(
   tokens: TokenSet,
   now = Date.now(),
   teamId?: string,
+  forUserId?: string,
 ): { user: User; accountId: string } {
   return tx(db, () => {
     const existing = one<AccountRow>(
@@ -287,13 +290,14 @@ export function upsertGoogleLogin(
       "SELECT * FROM accounts WHERE provider = 'google' AND external_id = ? ORDER BY is_main DESC, created_at LIMIT 1",
       identity.sub,
     );
-    const user = existing
-      ? (one<User>(
-          db,
-          "SELECT id, email, name, time_zone FROM users WHERE id = ?",
-          existing.user_id,
-        ) as User)
+    if (existing && forUserId && existing.user_id !== forUserId) {
+      throw new Error(`Google account ${identity.email} belongs to another user`);
+    }
+    const userId = existing?.user_id ?? forUserId;
+    const user = userId
+      ? one<User>(db, "SELECT id, email, name, time_zone FROM users WHERE id = ?", userId)
       : ensureUser(db, identity.email, identity.name, now, teamId);
+    if (!user) throw new Error(`No user ${userId}`);
     const previous = existing
       ? (JSON.parse(box.open(existing.credentials)) as { refreshToken?: string })
       : {};

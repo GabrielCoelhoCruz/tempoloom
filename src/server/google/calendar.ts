@@ -6,6 +6,9 @@ const API = "https://www.googleapis.com/calendar/v3";
 export interface GoogleCalendarListEntry {
   id: string;
   summary: string;
+  description?: string;
+  /** Email of the account that owns the calendar; set only on secondary calendars. */
+  dataOwner?: string;
   primary?: boolean;
   accessRole: "freeBusyReader" | "reader" | "writer" | "owner";
   timeZone?: string;
@@ -162,8 +165,16 @@ export class GoogleCalendarApi {
   }
 
   /** Creates a secondary calendar owned by the authenticated account. */
-  createCalendar(summary: string, timeZone: string): Promise<{ id: string; summary: string }> {
-    return this.#request("POST", "/calendars", undefined, { summary, timeZone });
+  createCalendar(
+    summary: string,
+    timeZone: string,
+    description?: string,
+  ): Promise<{ id: string; summary: string }> {
+    return this.#request("POST", "/calendars", undefined, {
+      summary,
+      timeZone,
+      ...(description === undefined ? {} : { description }),
+    });
   }
 
   async deleteCalendar(calendarId: string): Promise<void> {
@@ -178,18 +189,19 @@ export class GoogleCalendarApi {
   /**
    * Lists events with recurring series expanded into instances. Without a sync
    * token it runs a full sync of the window; with one it returns only changes
-   * (cancelled events included) since that token was issued.
+   * (cancelled events included) since that token was issued. With `masters`,
+   * it lists each recurring series once and leaves out cancelled events.
    */
   async listEvents(
     calendarId: string,
-    opts: { syncToken?: string; timeMin?: number; timeMax?: number },
+    opts: { syncToken?: string; timeMin?: number; timeMax?: number; masters?: boolean },
   ): Promise<EventPage> {
     const events: GoogleEvent[] = [];
     let pageToken: string | undefined;
     for (;;) {
       const query: Record<string, string | undefined> = {
-        singleEvents: "true",
-        showDeleted: "true",
+        singleEvents: opts.masters ? "false" : "true",
+        showDeleted: opts.masters ? "false" : "true",
         maxResults: "2500",
         pageToken,
       };

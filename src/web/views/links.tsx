@@ -380,7 +380,6 @@ export function Links() {
               bufferBefore: Number(f.get("bufferBefore")),
               bufferAfter: Number(f.get("bufferAfter")),
               maxPerDay: num("maxPerDay"),
-              location: String(f.get("location") ?? ""),
               page: String(f.get("page") ?? "main"),
             }),
           );
@@ -435,10 +434,6 @@ export function Links() {
         <label>
           Most bookings per day
           <input name="maxPerDay" type="number" min={1} max={50} />
-        </label>
-        <label>
-          Location
-          <input name="location" />
         </label>
         <div class="field">
           <label for="new-link-page">Page</label>

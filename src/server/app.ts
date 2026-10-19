@@ -399,7 +399,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
 
   app.route("/api", settingsRoutes(db, sync, now));
   app.route("/api", itemRoutes(db, sync, now));
-  app.route("/api", meetingRoutes(db, sync, now));
+  app.route("/api", meetingRoutes(db, sync, now, deps.mailer));
   app.route("/api/planner", plannerRoutes(db, sync, now));
   app.route("/api/booking", bookingRoutes(db, now, config.ONEOFF_LINK_DAYS));
   app.route("/api", webhookRoutes(db, box, config.WEBHOOK_ALLOW_PRIVATE, now));
