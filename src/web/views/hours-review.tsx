@@ -50,9 +50,16 @@ export function HoursReview({ onClose }: { onClose: () => void }) {
             set={s}
             onSave={async (weekly) => {
               setMessage(null);
-              await api("PUT", `/api/hours/${s.id}`, { weekly });
-              await planNow();
-              setMessage("Saved");
+              try {
+                await api("PUT", `/api/hours/${s.id}`, { weekly });
+                await planNow();
+                setMessage("Saved");
+                return true;
+              } catch (err) {
+                const body = (err as { body?: { message?: string } }).body;
+                setMessage(body?.message ?? (err instanceof Error ? err.message : String(err)));
+                return false;
+              }
             }}
           />
         ))}
