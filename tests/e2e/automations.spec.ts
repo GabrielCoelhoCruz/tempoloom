@@ -52,7 +52,7 @@ test("the automation list groups every type by priority, filters by type, and ke
   await blockUntil(cal, W);
   await signIn();
   await addHabit(page, { title: "Read", ideal: "09:00", min: 30, max: 30, level: 2 });
-  await addHabit(page, { title: "Walk", ideal: "16:00", min: 30, max: 30 });
+  await addHabit(page, { title: "Walk", ideal: "16:00", min: 30, max: 30, level: 3 });
   await addHabit(page, { title: "Email", ideal: "16:30", min: 30, max: 30, level: 4 });
   await page.getByRole("link", { name: "Meetings" }).click();
   const meeting = page.getByTestId("meeting-form");

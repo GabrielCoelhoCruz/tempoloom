@@ -1,58 +1,50 @@
 import { useCallback, useEffect, useState } from "preact/hooks";
 import { api } from "../lib/api.ts";
-import {
-  freeName,
-  GROUP_NAMES,
-  LIBRARY,
-  type LibraryEntry,
-  type LibraryGroup,
-} from "../lib/library.ts";
+import { GROUP_NAMES, LIBRARY, type LibraryEntry, type LibraryGroup } from "../lib/library.ts";
 import { navigate } from "../lib/router.ts";
-import { planNow } from "../lib/state.ts";
 
 const FORM_PAGE: Partial<Record<LibraryEntry["kind"], string>> = {
   habit: "/habits",
+  buffer: "/automations/new/buffer",
+  focus_time: "/automations/new/focus_time",
   flexible_meeting: "/meetings",
   booking_link: "/links",
   calendar_mirroring: "/settings",
 };
 
-/** Names of the user's automations; an entry with the same name shows "Added" (rule 4). */
-async function automationNames(): Promise<string[]> {
-  const [h, b, f, m, l] = await Promise.all([
-    api<{ habits: { title: string }[] }>("GET", "/api/habits"),
-    api<{ buffers: { title: string }[] }>("GET", "/api/buffers"),
-    api<{ focus: { title: string }[] }>("GET", "/api/focus"),
-    api<{ meetings: { title: string }[] }>("GET", "/api/meetings"),
+/** Kinds whose automations remember the entry they came from (rule 4). */
+const BY_TEMPLATE = new Set<LibraryEntry["kind"]>(["habit", "buffer", "focus_time"]);
+
+/**
+ * Names of the user's automations and booking links, and the entries their
+ * automations came from. A habit, buffer or focus entry shows "Added" when an
+ * automation came from it; other kinds when one has the entry's name (rule 4).
+ */
+async function automationNames(): Promise<{ names: string[]; templates: string[] }> {
+  const [a, l] = await Promise.all([
+    api<{ automations: { name: string; templateId: string | null }[] }>("GET", "/api/automations"),
     api<{ links: { title: string }[] }>("GET", "/api/booking/links").catch(() => ({ links: [] })),
   ]);
-  return [...h.habits, ...b.buffers, ...f.focus, ...m.meetings, ...l.links].map((x) => x.title);
+  return {
+    names: [...a.automations.map((x) => x.name), ...l.links.map((x) => x.title)],
+    templates: a.automations.flatMap((x) => (x.templateId ? [x.templateId] : [])),
+  };
 }
 
 export function Library() {
   const [tab, setTab] = useState<LibraryGroup | "all">("all");
-  const [names, setNames] = useState<string[]>([]);
-  const [error, setError] = useState<string | null>(null);
+  const [known, setKnown] = useState<{ names: string[]; templates: string[] }>({
+    names: [],
+    templates: [],
+  });
 
-  const load = useCallback(async () => setNames(await automationNames()), []);
+  const load = useCallback(async () => setKnown(await automationNames()), []);
   useEffect(() => void load(), [load]);
 
-  const added = (e: LibraryEntry) => names.some((n) => n.toLowerCase() === e.name.toLowerCase());
-
-  /** Buffers and focus time have no form of their own yet: the entry adds them as they are. */
-  const addNow = async (e: LibraryEntry) => {
-    setError(null);
-    const title = freeName(e.name, names);
-    try {
-      if (e.kind === "buffer") await api("POST", "/api/buffers", { title, ...e.preset });
-      else if (e.kind === "focus_time") await api("POST", "/api/focus", { title, ...e.preset });
-      await planNow();
-      await load();
-    } catch (err) {
-      const body = (err as { body?: { issues?: { message: string }[] } }).body;
-      setError(body?.issues?.[0]?.message ?? String(err));
-    }
-  };
+  const added = (e: LibraryEntry) =>
+    BY_TEMPLATE.has(e.kind)
+      ? known.templates.includes(e.slug)
+      : known.names.some((n) => n.toLowerCase() === e.name.toLowerCase());
 
   const shown = LIBRARY.filter((e) => tab === "all" || e.group === tab);
   return (
@@ -72,11 +64,6 @@ export function Library() {
           </button>
         ))}
       </div>
-      {error && (
-        <p class="error" role="alert">
-          {error}
-        </p>
-      )}
       <div class="list" data-testid="library-list">
         {shown.map((e) => {
           const page = FORM_PAGE[e.kind];
@@ -93,11 +80,6 @@ export function Library() {
                 {page && (
                   <button type="button" onClick={() => navigate(`${page}?template=${e.slug}`)}>
                     Use
-                  </button>
-                )}
-                {(e.kind === "buffer" || e.kind === "focus_time") && (
-                  <button type="button" onClick={() => void addNow(e)}>
-                    Add
                   </button>
                 )}
               </div>

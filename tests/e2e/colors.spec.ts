@@ -125,7 +125,11 @@ test("a buffer for external meetings adds prep before a meeting with another dom
   await page.getByRole("link", { name: "Library" }).click();
   await page.getByRole("tab", { name: "Buffers" }).click();
   const entry = page.locator('[data-entry="Prep before customer meetings"]');
-  await entry.getByRole("button", { name: "Add" }).click();
+  // The entry opens the shared automation form with its preset.
+  await entry.getByRole("button", { name: "Use" }).click();
+  await page.getByTestId("automation-form").getByRole("button", { name: "Save" }).click();
+  await expect(page.getByTestId("automations-page")).toBeVisible();
+  await page.getByRole("link", { name: "Library" }).click();
   await expect(entry).toContainText("Added");
   await eventually(
     () => week(cal),

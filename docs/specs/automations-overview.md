@@ -42,11 +42,18 @@ time first.
 | `rules` | object | Type-specific limits, such as the window, the shortest length, or the event filter (E-0043). |
 | `template_id` | id or none | The library template it came from. |
 
+Tempoloom decision: the name and the event title are one field, Title. The
+event settings are an emoji (put after the state marker), a color, the
+visibility and the reminders; habits add a category, a calendar and a
+location; focus time adds a calendar and a description. The calendar is set
+at creation only for both.
+
 ## Behavior
 
 ### Creating
 
 1. The user can create an automation in three ways: from the library, from the top-bar "create" button, or by asking the assistant chat (E-0043).
+   Tempoloom decision: the create button is a menu: Habit and Flexible meeting open their own pages; Focus time and Buffer open the shared form. Assistant chat is not built.
 2. The library groups templates by type: habits, buffers, focus, flexible meetings and meeting quality (E-0043). A template that the user has already added shows an "added" badge (E-0043). The library catalog and its presets are in `automations-library.md`.
 3. The user may add the same template more than once. Proposed (several buffer automations are expected, E-0051).
 4. Saving a new automation, or saving changes to one, stages its effect in preview mode: the managed events that Tempoloom will add, move or remove in the scheduling window. The user applies or discards the staged changes as defined in `assistant-preview-mode.md`. Discarding all of them leaves the calendar unchanged (E-0043, E-0081, E-0077, E-0070, E-0051).
@@ -55,13 +62,18 @@ time first.
 ### The list
 
 6. The planner has an "Automations" sidebar. It shows four groups, P1 (critical) at the top, then P2, P3, P4 (E-0043, E-0141).
+   Tempoloom decision: the list is its own page, Automations, in the main navigation, so the planner page loads nothing more and stays fast.
 7. Inside a group, the order is the rank. The user drags an automation to change its rank or to move it to another group, which changes its priority (E-0043, E-0141).
+   Tempoloom decision: all types in one group share one rank order. A drop saves the whole group's order. Until the user reorders, ties in rank go meetings, buffers, habits, then the oldest first: the scheduler's order. A priority menu and move up and down buttons on each entry do the same by keyboard.
 8. Focus automations stay in the P4 group. The user cannot drag them to another group, but can rank them inside P4. Proposed for rank (E-0077).
+   Tempoloom decision: the list refuses the drop, the entry's priority menu is disabled, and the server refuses an order that puts focus time in another group.
 9. Meeting quality automations show in their own "Meeting quality" section below the priority groups (E-0134).
 10. The user can filter the list by type (E-0043).
+    Tempoloom decision: the chosen type is kept in the page address, so it stays after a reload.
 11. Each list entry offers edit, change priority, disable or enable, and remove (E-0043).
 12. Disable pauses the automation and keeps its settings. Tempoloom deletes its future managed events. Past events stay (E-0043, E-0072).
 13. Remove deletes the automation and its future managed events after a confirm dialog. Past events stay.
+    Tempoloom decision: the confirm shows inside the entry: "Remove <name> and its future events?" with "Yes, remove" and "Cancel". Automations from a team policy have no Remove.
 
 ### Scheduler interaction
 

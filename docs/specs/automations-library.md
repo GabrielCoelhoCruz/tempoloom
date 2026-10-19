@@ -95,8 +95,16 @@ have none (`automations-overview.md`), so their presets set no priority.
 3. The library has one tab per `group`. The user can browse all entries or
    one group.
 4. An entry whose `added` value is true shows an "Added" badge.
+   Tempoloom decision: a habit, focus time or buffer automation remembers the
+   entry it came from, so the badge stays after a rename and does not show for
+   a hand-made automation with the entry's name. Flexible meetings, booking
+   links and mirroring still match the entry by name.
 5. Selecting an automation entry opens the form of its kind, filled with the
    preset. The user can change any value, including the name.
+   Tempoloom decision: focus time and buffer entries open the shared
+   automation form (`automations-overview.md`); habit entries open the habit
+   form. An entry's emoji fills the form's Emoji field. After a habit from an
+   entry is saved, the habit form is blank again.
 6. Saving the form stages the automation and the calendar changes it causes in preview
    mode (`assistant-preview-mode.md`). Nothing changes on the calendar
    until the user applies.
