@@ -134,9 +134,8 @@ const inputArb = fc.record({
   habits: fc.array(habitArb, { maxLength: 3 }),
   breakMinutes: fc.constantFrom(0, 15),
 });
-const toSnapshot =
-  (sticky: boolean) =>
-  (r: ValueOf<typeof inputArb>): Snapshot => ({
+const snapshotArb = inputArb.map(
+  (r): Snapshot => ({
     now,
     zone: ZONE,
     weekStart: 1,
@@ -148,15 +147,14 @@ const toSnapshot =
     hours: { work, lunch },
     workHours: ["work"],
     events: r.events.map(toEvent),
-    current: sticky ? r.tasks.flatMap(toCurrent) : [],
+    current: r.tasks.flatMap(toCurrent),
     tasks: r.tasks.map(toTask),
     habits: r.habits.map(toHabit),
     meetings: [],
     buffers: [],
     focus: [],
-  });
-const snapshotArb = inputArb.map(toSnapshot(false));
-const stickySnapshotArb = inputArb.map(toSnapshot(true));
+  }),
+);
 
 type ValueOf<A> = A extends fc.Arbitrary<infer T> ? T : never;
 const overlaps = (a: { start: number; end: number }, b: { start: number; end: number }) =>
@@ -196,7 +194,7 @@ describe("plan() invariants", () => {
 
   it("respects chunk bounds and never places more than the remaining work", () => {
     fc.assert(
-      fc.property(stickySnapshotArb, (s) => {
+      fc.property(snapshotArb, (s) => {
         const { placements } = plan(s);
         for (const t of s.tasks) {
           const chunks = placements.filter((p) => p.itemId === t.id);

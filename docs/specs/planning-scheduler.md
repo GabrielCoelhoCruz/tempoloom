@@ -370,8 +370,9 @@ Proposed defaults:
 
   ```
   need = remainingMinutes - minutes of locked future chunks
-  keep the valid sticky chunks (SCH-88) first, oldest start first, while
-  their sum <= need;
+  keep the valid sticky chunks (SCH-88) first, oldest start first (a chunk
+  shorter than minChunk last: it is the rest, TSK-13), while their
+  sum <= need;
       if the next sticky chunk would exceed need, shorten it to the rest
       when the rest >= minChunk, else drop it;
       drop a sticky chunk that would leave a rest with no split when the

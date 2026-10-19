@@ -327,7 +327,13 @@ function placeTask(ctx: Ctx, t: TaskItem): void {
     ? []
     : mine
         .filter((c) => !ctx.fixedKeys.has(c.key))
-        .sort((a, b) => a.start - b.start || a.key.localeCompare(b.key));
+        // A short chunk (TSK-13) is the rest, so it is kept last.
+        .sort(
+          (a, b) =>
+            Number(len(a) < rules.min) - Number(len(b) < rules.min) ||
+            a.start - b.start ||
+            a.key.localeCompare(b.key),
+        );
   let result = attempt(sticky);
   const late = (r: typeof result) =>
     r.missing > 0 ||

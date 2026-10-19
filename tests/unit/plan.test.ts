@@ -478,6 +478,20 @@ describe("task chunks", () => {
     },
   );
 
+  it("keeps a short sticky chunk that lies before a full chunk (TSK-13, SCH-88)", () => {
+    const t = task({ id: "t", remainingMinutes: 90, minChunkMinutes: 60, maxChunkMinutes: 60 });
+    const chunk = (n: number, date: string, from: string, to: string) => ({
+      key: `task:t:${n}`,
+      itemId: "t",
+      start: at(date, from),
+      end: at(date, to),
+      locked: false,
+    });
+    const current = [chunk(0, day(1), "09:00", "10:00"), chunk(1, MON, "14:00", "14:30")];
+    const result = plan(snapshot({ current, tasks: [t] }));
+    expect(spans(of(result, "t")).sort()).toEqual([`${MON}T14:00/14:30`, `${day(1)}T09:00/10:00`]);
+  });
+
   it("places one chunk per day with the once-per-day cooldown", () => {
     const result = plan(
       snapshot({
