@@ -144,6 +144,9 @@ export function Meetings() {
   const [series, setSeries] = useState<Series[]>([]);
   // The recurring meeting the form was filled from (meetings-flexible.md rule 1).
   const [seed, setSeed] = useState<Series | null>(null);
+  // A new key after each save gives a fresh form: form.reset() would pick the
+  // first option of each select, because Preact sets `selected` as a property.
+  const [saved, setSaved] = useState(0);
 
   const load = useCallback(async () => {
     setMeetings((await api<{ meetings: Meeting[] }>("GET", "/api/meetings")).meetings);
@@ -239,13 +242,13 @@ export function Meetings() {
       <form
         class="form"
         data-testid="meeting-form"
-        key={seed ? `series-${seed.key}` : template ? `${template.slug}-${meetings.length}` : "new"}
+        key={`${seed ? `series-${seed.key}` : template ? `${template.slug}-${meetings.length}` : "new"}-${saved}`}
         onSubmit={(e) => {
           e.preventDefault();
           const form = e.currentTarget as HTMLFormElement;
           void act(async () => {
             await api("POST", "/api/meetings", body(form));
-            form.reset();
+            setSaved((n) => n + 1);
             setPeople([]);
             setPreview(null);
             setSeed(null);
