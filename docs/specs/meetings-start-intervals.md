@@ -34,6 +34,11 @@ The setting is per user. It is not per meeting or per link.
 5. The minute is evaluated in each owner's calendar time zone (Proposed).
    In a zone with an offset of 30 or 45 minutes from UTC, the same instant
    can match for one organizer and not for another.
+   Tempoloom decision: the default set is all four minutes, and the settings
+   page refuses an empty set with "Keep at least one start time." For
+   flexible meetings only the organizer's set applies (SPEC-MEET-01 open
+   question 5). An occurrence that stays at its time is not checked again
+   (rule 6).
 6. A change of the set applies only to meetings placed or booked after the
    change. Tempoloom does not move existing occurrences or booked events
    because of it (E-0167).

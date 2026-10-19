@@ -36,6 +36,12 @@ import from a closed competitor, which Tempoloom does not need.
 5. Recommendations and issues: conflicts, days with too many meetings,
    a focus goal not met, skipped habits, and meetings with no agenda or no
    video link.
+   Tempoloom decision: a panel under the planner's week view has two tabs.
+   "Issues" lists the meeting check issues (`automations-meeting-quality.md`:
+   conflicts, no video link, no agenda and the other checks). "Recommendations"
+   lists the planner's report (skipped habits, focus goals not met, tasks and
+   flexible meetings without time) and each day in the next 7 days with 6 hours
+   or more of meetings (events with other people that the user attends).
 6. Insights, built on the legacy personal and team stats, with org-level
    grouping for companies (`analytics-personal-stats.md`,
    `analytics-team-stats.md`, `analytics-organization.md`).
