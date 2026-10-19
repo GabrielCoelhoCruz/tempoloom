@@ -6,6 +6,8 @@ export interface Message {
   to: string;
   subject: string;
   text: string;
+  /** An HTML part besides the text, for example with branding. */
+  html?: string;
 }
 
 export interface Mailer {
