@@ -19,6 +19,7 @@ import { createApiKey } from "../../src/server/api-keys.ts";
 import type { AppEnv } from "../../src/server/app.ts";
 import { one, openDb, run } from "../../src/server/db.ts";
 import { mcpRoutes } from "../../src/server/mcp.ts";
+import { CHECK_IDS } from "../../src/server/meeting-prefs.ts";
 import { createPreview, type PreviewDeps } from "../../src/server/preview.ts";
 
 const T0 = Date.parse("2026-10-19T08:00:00Z");
@@ -197,6 +198,16 @@ function seedAutomations({ db, user, hours }: Setup) {
     T0,
     T0,
   );
+  run(
+    db,
+    `INSERT INTO meeting_overloads (id, user_id, title, hours_set_id, daily_max_minutes, min_block_minutes,
+       created_at, rules_changed_at)
+     VALUES ('overload-0', ?, 'Meeting limit', ?, 240, 60, ?, ?)`,
+    user.id,
+    hours,
+    T0,
+    T0,
+  );
 }
 
 /** Calls a list tool page by page and returns the ids of every page. */
@@ -353,10 +364,36 @@ describe("MCP list pages", () => {
     const s = setup();
     seedAutomations(s);
     const all = await pages(s, "list_automations", "automations", { limit: 2 });
-    expect(all.map((p) => p.length)).toEqual([2, 2, 2, 1]);
+    expect(all.map((p) => p.length)).toEqual([2, 2, 2, 2, 2, 2, 1]);
     expect(all.flat().sort()).toEqual(
-      ["buffer-0", "focus-0", "focus-1", "habit-0", "habit-1", "habit-2", "meeting-0"].sort(),
+      [
+        "buffer-0",
+        "focus-0",
+        "focus-1",
+        "habit-0",
+        "habit-1",
+        "habit-2",
+        "meeting-0",
+        "overload-0",
+        ...CHECK_IDS,
+      ].sort(),
     );
+  });
+
+  it("list_automations lists the meeting overload at P4 and the meeting checks last, without priority", async () => {
+    const s = setup();
+    seedAutomations(s);
+    const r = await s.tool<{ automations: { type: string; id: string; level: number | null }[] }>(
+      "list_automations",
+      { limit: 100 },
+    );
+    expect(r.automations.find((a) => a.id === "overload-0")).toMatchObject({
+      type: "meeting_overload",
+      level: 4,
+    });
+    const checks = r.automations.slice(-CHECK_IDS.length);
+    expect(checks.map((a) => a.id)).toEqual([...CHECK_IDS]);
+    expect(checks.every((a) => a.type === "meeting_check" && a.level === null)).toBe(true);
   });
 
   it("list_staged_changes returns every change exactly once over its pages, also when one is staged between pages", async () => {

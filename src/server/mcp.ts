@@ -12,6 +12,7 @@ import type { ExternalEvent } from "../scheduler/model.ts";
 import type { TimeSet } from "../scheduler/timeset.ts";
 import { addDays, localToUtc, utcToLocal, weekdayOf } from "../shared/time.ts";
 import { hashToken, type User } from "./accounts.ts";
+import { listAutomations } from "./api/automations.ts";
 import { plannerEvents } from "./api/planner.ts";
 import { CATEGORIES, computeStats } from "./api/stats.ts";
 import { apiKeyUser } from "./api-keys.ts";
@@ -120,7 +121,14 @@ function page<T>(
 
 // --------------------------------------------------------- output schemas
 
-const AUTOMATION_TYPES = ["habit", "focus_time", "buffer", "flexible_meeting"] as const;
+const AUTOMATION_TYPES = [
+  "flexible_meeting",
+  "buffer",
+  "habit",
+  "meeting_overload",
+  "focus_time",
+  "meeting_check",
+] as const;
 const instant = z.string().describe("ISO 8601 UTC");
 const date = z.string().describe("YYYY-MM-DD");
 const stagedOutput = z.object({
@@ -397,7 +405,7 @@ export function mcpRoutes(deps: McpDeps): Hono {
       name: "list_automations",
       title: "List automations",
       description:
-        "Habits, focus time goals, buffers and flexible meetings, with type, priority and whether each is on. One page per call.",
+        "Flexible meetings, buffers, habits, meeting overloads, focus time goals and meeting checks, with type, priority and whether each is on, in the order of the automation list. One page per call.",
       input: z.object(pageInput),
       output: z.object({
         automations: z.array(
@@ -405,44 +413,33 @@ export function mcpRoutes(deps: McpDeps): Hono {
             type: z.enum(AUTOMATION_TYPES),
             id: z.string(),
             title: z.string(),
-            level: z.number().nullable().describe("Priority; focus time has none"),
+            level: z.number().nullable().describe("Priority 1 to 4; meeting checks have none"),
             enabled: z.boolean(),
           }),
         ),
         next_cursor: nextCursor,
       }),
       run: ({ user }, a) => {
-        type Row = {
-          id: string;
-          title: string;
-          level: number | null;
-          rank: number;
-          enabled: number;
-        };
-        const rows = (type: (typeof AUTOMATION_TYPES)[number], table: string, level: string) =>
-          all<Row>(
-            db,
-            `SELECT id, title, ${level} AS level, rank, enabled FROM ${table} WHERE user_id = ?`,
-            user.id,
-          ).map((r) => ({ ...r, type }));
+        // The list order (automations-overview.md): priority, rank, type, age; meeting checks last.
         const p = page(
-          [
-            ...rows("habit", "habits", "level"),
-            ...rows("focus_time", "focus_goals", "NULL"),
-            ...rows("buffer", "buffers", "level"),
-            ...rows("flexible_meeting", "meetings", "level"),
+          listAutomations(db, user.id),
+          (r) => [
+            r.level ?? 9,
+            r.rank,
+            AUTOMATION_TYPES.indexOf(r.type as (typeof AUTOMATION_TYPES)[number]),
+            r.createdAt,
+            r.id,
           ],
-          (r) => [AUTOMATION_TYPES.indexOf(r.type), r.level ?? 0, r.rank, r.id],
-          z.tuple([z.number(), z.number(), z.number(), z.string()]),
+          z.tuple([z.number(), z.number(), z.number(), z.number(), z.string()]),
           a,
         );
         return {
           automations: p.rows.map((r) => ({
-            type: r.type,
+            type: r.type as (typeof AUTOMATION_TYPES)[number],
             id: r.id,
-            title: r.title,
+            title: r.name,
             level: r.level,
-            enabled: r.enabled === 1,
+            enabled: r.enabled,
           })),
           ...(p.next_cursor ? { next_cursor: p.next_cursor } : {}),
         };
