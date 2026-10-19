@@ -10,7 +10,7 @@ import { addDays } from "../../src/shared/time.ts";
 const ROOT = join(import.meta.dirname, "../..");
 
 /** The Radicale password of the user who owns a calendar URL (scripts/caldav-server.sh env). */
-function credentials(calendarUrl: string): string {
+export function credentials(calendarUrl: string): string {
   const username = new URL(calendarUrl).pathname.split("/")[1] ?? "";
   const env = Object.fromEntries(
     execFileSync(join(ROOT, "scripts/caldav-server.sh"), ["env"], { encoding: "utf8" })
