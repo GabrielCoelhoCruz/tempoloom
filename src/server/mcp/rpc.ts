@@ -66,6 +66,15 @@ export const fail = (id: unknown, code: number, message: string) => ({
   error: { code, message },
 });
 
+/** The result of a tool that failed on the server, by its effect. */
+const FAILED: Record<Effect, string> = {
+  read: "The tool failed on the server",
+  stage:
+    "The tool failed on the server, and the change may have been staged. Call list_staged_changes to check before you try again.",
+  apply:
+    "The tool failed on the server, and some changes may have been applied. Call list_staged_changes to see which are still open, and list_events to check the calendar, before you try again.",
+};
+
 /** Answers one JSON-RPC message with the given tools; null for a notification or a response. */
 export function rpcHandler(tools: Tool[], writeEnabled: boolean) {
   const visible = () => tools.filter((t) => writeEnabled || t.effect === "read");
@@ -133,16 +142,17 @@ export function rpcHandler(tools: Tool[], writeEnabled: boolean) {
             isError: true,
           });
         }
+        // A server failure after a write tool ran may come after its change was
+        // staged or applied: say so, so the client checks before it tries again.
+        const failed = () =>
+          reply(m.id, { content: [{ type: "text", text: FAILED[t.effect] }], isError: true });
         try {
           // The result must match the outputSchema that tools/list gave: parse
           // drops other keys, and a wrong type is a server failure, not a result.
           const out = t.output.safeParse(await t.run(caller, args.data as never));
           if (!out.success) {
             console.error(`MCP tool ${name} returned a result outside its outputSchema`, out.error);
-            return reply(m.id, {
-              content: [{ type: "text", text: "The tool failed on the server" }],
-              isError: true,
-            });
+            return failed();
           }
           const data = out.data;
           return reply(m.id, {
@@ -152,10 +162,7 @@ export function rpcHandler(tools: Tool[], writeEnabled: boolean) {
         } catch (err) {
           if (!(err instanceof ToolError)) {
             console.error(`MCP tool ${name} failed`, err);
-            return reply(m.id, {
-              content: [{ type: "text", text: "The tool failed on the server" }],
-              isError: true,
-            });
+            return failed();
           }
           return reply(m.id, { content: [{ type: "text", text: err.message }], isError: true });
         }

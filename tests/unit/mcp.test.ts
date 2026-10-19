@@ -15,6 +15,9 @@
 // 7. A tool's run returns a key or a type that its outputSchema does not have,
 //    and tools/call sends it on as structuredContent.
 // 8. list_automations pages in another order than the automation list.
+// 10. A write tool fails after it staged or applied a change and says only
+//    "failed": the client retries and stages a duplicate, or tells the user
+//    nothing changed while the calendar did.
 // 9. list_staged_changes pages in another order than the preview panel
 //    (openChanges): oldest first, and in staging order at one created_at.
 import { Ajv2020 } from "ajv/dist/2020.js";
@@ -104,7 +107,7 @@ function setup() {
     return r.structuredContent as T;
   };
   const listTools = async () => (await rpc("tools/list")).result?.tools as ListedTool[];
-  return { db, user, hours, rpc, call, tool, listTools };
+  return { db, user, hours, preview, rpc, call, tool, listTools };
 }
 
 type Setup = ReturnType<typeof setup>;
@@ -387,6 +390,49 @@ describe("MCP output schemas", () => {
       isError: true,
     });
     expect(stats.computeStats).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe("MCP write tools that fail on the server", () => {
+  it("say that the change may have been staged or applied, and where to check", async () => {
+    const s = setup();
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const realStage = s.preview.stage;
+    // The change is staged, then the result does not match the outputSchema.
+    vi.spyOn(s.preview, "stage").mockImplementationOnce((...args) => ({
+      ...realStage(...args),
+      id: 42 as unknown as string,
+    }));
+    const create = await s.call("propose_create_event", {
+      title: "Write report",
+      start: new Date(T0 + DAY).toISOString(),
+      end: new Date(T0 + DAY + HOUR).toISOString(),
+    });
+    expect(create.isError).toBe(true);
+    expect(create.content[0]?.text).toMatch(/may have been staged.*list_staged_changes/);
+    const { changes } = await s.tool<{ changes: { id: string }[] }>("list_staged_changes");
+    expect(changes).toHaveLength(1);
+
+    // apply_staged_changes fails after it applied the change.
+    const realApply = s.preview.apply;
+    vi.spyOn(s.preview, "apply").mockImplementationOnce(async (...args) => {
+      await realApply(...args);
+      throw new Error("lost connection");
+    });
+    const apply = await s.call("apply_staged_changes", { ids: [changes[0]?.id] });
+    expect(apply.isError).toBe(true);
+    expect(apply.content[0]?.text).toMatch(/may have been applied.*list_staged_changes/);
+
+    // A read tool that fails changed nothing: the plain message stays.
+    vi.mocked(stats.computeStats).mockImplementationOnce(() => {
+      throw new Error("boom");
+    });
+    const read = await s.call("get_stats", { start_date: "2026-10-12", end_date: "2026-10-18" });
+    error.mockRestore();
+    expect(read).toEqual({
+      content: [{ type: "text", text: "The tool failed on the server" }],
+      isError: true,
+    });
   });
 });
 
