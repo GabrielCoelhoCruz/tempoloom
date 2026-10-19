@@ -36,6 +36,7 @@ import {
   type CalendarDriver,
   eventually,
   expect,
+  planNow,
   test,
 } from "./fixtures.ts";
 import { addTask, titled, W } from "./helpers.ts";
@@ -307,4 +308,31 @@ test("each managed event kind starts with its reminders and visibility, and a bu
   await expect(shown.getByLabel("Reminders")).toHaveValue("custom");
   await expect(shown.getByLabel("Remind me (minutes)")).toHaveValue("5");
   await expect(shown.getByLabel("Visibility")).toHaveValue("private");
+});
+
+test("a task color overrides the category color of its chunks, in every plan run (colors rule 9)", async ({
+  page,
+  cal,
+  signIn,
+}) => {
+  await blockUntil(cal, W);
+  await signIn();
+  await page.getByRole("link", { name: "Tasks" }).click();
+  const form = page.getByTestId("task-form");
+  await form.getByLabel("Color").selectOption({ label: "Tomato" });
+  await addTask(page, { title: "AT-Red", minutes: 60, split: false, due: "" });
+  await form.getByLabel("Color").selectOption({ label: "Category color" });
+  await addTask(page, { title: "AT-Plain", minutes: 60, split: false, due: "" });
+  const colors = (l: Evs) => ({
+    red: titled(l, "AT-Red").map((e) => e.colorId),
+    plain: titled(l, "AT-Plain").map((e) => e.colorId),
+  });
+  // Solo work is Sage (2) by default.
+  await eventually(
+    () => week(cal),
+    (l) => expect(colors(l)).toEqual({ red: ["11"], plain: ["2"] }),
+  );
+  await page.reload();
+  await planNow(page);
+  expect(colors(await week(cal))).toEqual({ red: ["11"], plain: ["2"] });
 });
