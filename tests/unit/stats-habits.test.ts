@@ -34,7 +34,7 @@ function setup() {
     db,
     "SELECT id FROM hours_sets WHERE user_id = ? AND kind = 'work'",
     user.id,
-  )?.id;
+  )?.id ?? "";
   const habit = (id: string, title: string) =>
     run(
       db,
