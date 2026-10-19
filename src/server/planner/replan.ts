@@ -129,6 +129,7 @@ export function loadSnapshot(
     weekly_max_minutes: number | null;
     heavy_day_minutes: number | null;
     min_block_minutes: number;
+    rank: number;
     created_at: number;
     rules_changed_at: number;
   }>(db, "SELECT * FROM meeting_overloads WHERE user_id = ? AND enabled = 1", userId);
@@ -371,6 +372,7 @@ export function loadSnapshot(
     return {
       id: o.id,
       title: o.title,
+      rank: o.rank,
       createdAt: o.created_at,
       hours: o.hours_set_id,
       dailyMaxMinutes: o.daily_max_minutes,

@@ -3,17 +3,10 @@
 import { useCallback, useEffect, useState } from "preact/hooks";
 import type { CompanyCheck, CompanyConditions } from "../../server/meeting-checks.ts";
 import type { CheckId, MeetingPrefs } from "../../server/meeting-prefs.ts";
+import { CHECK_NAMES } from "../../shared/meeting-checks.ts";
 import { api } from "../lib/api.ts";
 import { templateFromUrl } from "../lib/library.ts";
 import { useSave } from "../lib/save.ts";
-
-export const CHECK_NAMES: Record<CheckId, string> = {
-  conflict: "Overlapping commitments",
-  attendee_availability: "Attendee declined or not free",
-  rsvp_reminder: "Unanswered invitations",
-  video_link: "Missing video link",
-  agenda: "Agenda drafts",
-};
 
 interface ChecksData {
   prefs: MeetingPrefs;

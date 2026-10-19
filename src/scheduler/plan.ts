@@ -1403,19 +1403,21 @@ export function plan(s: Snapshot): Plan {
       .sort(taskKey);
     for (const t of band) placeTask(ctx, t);
   }
-  // Both focus automations come after every other item; overload goes first (focus edge case 5).
+  // Both focus automations come after every other item, in their P4 rank order;
+  // at one rank the meeting overload goes first (focus edge case 5).
   const overloads = s.overloads ?? [];
-  if (overloads.length > 0) {
-    const meetings = meetingTime(ctx);
-    for (const o of [...overloads].sort(
-      (a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id),
-    ))
-      placeOverload(ctx, o, meetings);
-  }
-  const focus = [...s.focus].sort(
-    (a, b) => a.rank - b.rank || a.createdAt - b.createdAt || a.id.localeCompare(b.id),
+  const meetings = overloads.length > 0 ? meetingTime(ctx) : TimeSet.empty();
+  const focus = [
+    ...overloads.map((o) => ({ item: o, type: 0, place: () => placeOverload(ctx, o, meetings) })),
+    ...s.focus.map((f) => ({ item: f, type: 1, place: () => placeFocus(ctx, f) })),
+  ].sort(
+    (a, b) =>
+      a.item.rank - b.item.rank ||
+      a.type - b.type ||
+      a.item.createdAt - b.item.createdAt ||
+      a.item.id.localeCompare(b.item.id),
   );
-  for (const f of focus) placeFocus(ctx, f);
+  for (const f of focus) f.place();
   setStatus(ctx);
   return {
     placements: ctx.placements.sort((a, b) => a.start - b.start || a.key.localeCompare(b.key)),

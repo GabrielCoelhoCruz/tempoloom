@@ -1,6 +1,6 @@
 // Focus time options (mode, auto-decline, task search) and the meeting
 // overload automation (docs/specs/focus-time.md rules 1-16, 23, 24).
-import { useCallback, useEffect, useState } from "preact/hooks";
+import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import { api } from "../lib/api.ts";
 import { duration } from "../lib/format.ts";
 import { templateFromUrl } from "../lib/library.ts";
@@ -109,6 +109,8 @@ interface Overload {
   min_block_minutes: number;
   decline_enabled: number;
   decline_message: string;
+  hours_set_id: string;
+  task_search_id: string | null;
 }
 
 const h = (m: number) => `${Math.round((m / 60) * 10) / 10} h`;
@@ -134,7 +136,33 @@ export function MeetingOverloadSection() {
   const [hours, setHours] = useState<{ id: string; kind: string; name: string }[]>([]);
   const [decline, setDecline] = useState(false);
   const [searchId, setSearchId] = useState<string | null>(null);
+  const [hoursChoice, setHoursChoice] = useState("");
+  /** The overload whose settings the form changes; null: the form adds one. */
+  const [editing, setEditing] = useState<Overload | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const section = useRef<HTMLElement>(null);
+
+  const startEdit = (o: Overload, kinds: { id: string; kind: string }[]) => {
+    setEditing(o);
+    setDecline(o.decline_enabled === 1);
+    setSearchId(o.task_search_id);
+    setHoursChoice(
+      kinds.find((x) => x.id === o.hours_set_id)?.kind === "work" ? "" : o.hours_set_id,
+    );
+    section.current?.scrollIntoView();
+  };
+  const stopEdit = () => {
+    setEditing(null);
+    setDecline(false);
+    setSearchId(null);
+    setHoursChoice("");
+    const url = new URL(location.href);
+    url.searchParams.delete("overload");
+    history.replaceState(null, "", url.pathname + url.search);
+  };
+
+  // The automation list's Edit opens /settings?overload=<id> (automations-overview.md rule 11).
+  const opened = useRef(false);
   const load = useCallback(async () => {
     const [o, hs] = await Promise.all([
       api<{ overloads: Overload[] }>("GET", "/api/meeting-overloads"),
@@ -142,6 +170,12 @@ export function MeetingOverloadSection() {
     ]);
     setRows(o.overloads);
     setHours(hs.hours);
+    if (!opened.current) {
+      opened.current = true;
+      const id = new URLSearchParams(location.search).get("overload");
+      const row = o.overloads.find((x) => x.id === id);
+      if (row) startEdit(row, hs.hours);
+    }
   }, []);
   useEffect(() => void load(), [load]);
 
@@ -157,34 +191,49 @@ export function MeetingOverloadSection() {
     }
   };
 
-  const add = (e: Event) => {
+  const submit = (e: Event) => {
     e.preventDefault();
     const f = new FormData(e.currentTarget as HTMLFormElement);
     const minutes = (k: string) => {
       const v = String(f.get(k) ?? "").trim();
       return v === "" ? null : Math.round(Number(v) * 60);
     };
-    void act(() =>
-      api("POST", "/api/meeting-overloads", {
-        title: String(f.get("title") ?? "").trim(),
-        dailyMaxMinutes: minutes("daily"),
-        weeklyMaxMinutes: minutes("weekly"),
-        heavyDayMinutes: minutes("heavy"),
-        minBlockMinutes: Number(f.get("minBlock")),
-        ...(f.get("hoursSetId") ? { hoursSetId: String(f.get("hoursSetId")) } : {}),
-        autoDecline: { enabled: decline, message: String(f.get("message") ?? "").trim() },
-        taskSearchId: searchId,
-      }),
-    );
+    // "Work hours" is the default for a new one; a change back to it names the set.
+    const chosen =
+      String(f.get("hoursSetId") ?? "") ||
+      (editing ? hours.find((x) => x.kind === "work")?.id : undefined);
+    const body = {
+      title: String(f.get("title") ?? "").trim(),
+      dailyMaxMinutes: minutes("daily"),
+      weeklyMaxMinutes: minutes("weekly"),
+      heavyDayMinutes: minutes("heavy"),
+      minBlockMinutes: Number(f.get("minBlock")),
+      ...(chosen ? { hoursSetId: chosen } : {}),
+      autoDecline: { enabled: decline, message: String(f.get("message") ?? "").trim() },
+      taskSearchId: searchId,
+    };
+    const id = editing?.id;
+    void act(async () => {
+      if (!id) return api("POST", "/api/meeting-overloads", body);
+      await api("PATCH", `/api/meeting-overloads/${id}`, body);
+      stopEdit();
+    });
   };
+  const hoursText = (m: number | null | undefined) => (m ? String(m / 60) : "");
 
   return (
-    <section data-testid="overload-section">
+    <section data-testid="overload-section" ref={section}>
       <h2>Meeting overload</h2>
       <p class="status">
         When meetings reach a daily or weekly limit, the rest of that time becomes focus time.
       </p>
-      <form class="form" data-testid="overload-form" onSubmit={add} key={template?.slug ?? "new"}>
+      <form
+        class="form"
+        data-testid="overload-form"
+        onSubmit={submit}
+        key={editing?.id ?? template?.slug ?? "new"}
+      >
+        {editing && <p class="status wide">Changing {editing.title}</p>}
         <label class="wide">
           Title
           <input
@@ -192,7 +241,11 @@ export function MeetingOverloadSection() {
             required
             maxLength={255}
             defaultValue={
-              template?.kind === "meeting_overload" ? template.name : "Meeting overload"
+              editing
+                ? editing.title
+                : template?.kind === "meeting_overload"
+                  ? template.name
+                  : "Meeting overload"
             }
           />
         </label>
@@ -204,7 +257,13 @@ export function MeetingOverloadSection() {
             min={0.5}
             max={24}
             step={0.5}
-            defaultValue={preset?.dailyMaxHours ? String(preset.dailyMaxHours) : ""}
+            defaultValue={
+              editing
+                ? hoursText(editing.daily_max_minutes)
+                : preset?.dailyMaxHours
+                  ? String(preset.dailyMaxHours)
+                  : ""
+            }
           />
         </label>
         <label>
@@ -215,7 +274,13 @@ export function MeetingOverloadSection() {
             min={0.5}
             max={168}
             step={0.5}
-            defaultValue={preset?.weeklyMaxHours ? String(preset.weeklyMaxHours) : ""}
+            defaultValue={
+              editing
+                ? hoursText(editing.weekly_max_minutes)
+                : preset?.weeklyMaxHours
+                  ? String(preset.weeklyMaxHours)
+                  : ""
+            }
           />
         </label>
         <label>
@@ -226,16 +291,33 @@ export function MeetingOverloadSection() {
             min={0.5}
             max={24}
             step={0.5}
-            defaultValue={preset?.heavyDayHours ? String(preset.heavyDayHours) : ""}
+            defaultValue={
+              editing
+                ? hoursText(editing.heavy_day_minutes)
+                : preset?.heavyDayHours
+                  ? String(preset.heavyDayHours)
+                  : ""
+            }
           />
         </label>
         <label>
           Shortest focus block (minutes)
-          <input name="minBlock" type="number" min={15} max={480} step={15} defaultValue="30" />
+          <input
+            name="minBlock"
+            type="number"
+            min={15}
+            max={480}
+            step={15}
+            defaultValue={String(editing?.min_block_minutes ?? 30)}
+          />
         </label>
         <label>
           Hours
-          <select name="hoursSetId">
+          <select
+            name="hoursSetId"
+            value={hoursChoice}
+            onChange={(e) => setHoursChoice(e.currentTarget.value)}
+          >
             <option value="">Work hours</option>
             {hours
               .filter((x) => x.kind !== "work")
@@ -256,7 +338,12 @@ export function MeetingOverloadSection() {
         </label>
         <label class="wide">
           Decline message
-          <input name="message" maxLength={500} placeholder={DEFAULT_MESSAGE} />
+          <input
+            name="message"
+            maxLength={500}
+            placeholder={DEFAULT_MESSAGE}
+            defaultValue={editing?.decline_message ?? ""}
+          />
         </label>
         {decline && (
           <p class="meta warning wide">Tempoloom sends these declines to other people.</p>
@@ -264,9 +351,16 @@ export function MeetingOverloadSection() {
         <div class="wide">
           <TaskSearchPicker value={searchId} onChange={setSearchId} />
         </div>
-        <button type="submit" class="primary">
-          Add meeting overload
-        </button>
+        <div class="actions wide">
+          <button type="submit" class="primary">
+            {editing ? "Save changes" : "Add meeting overload"}
+          </button>
+          {editing && (
+            <button type="button" onClick={stopEdit}>
+              Cancel
+            </button>
+          )}
+        </div>
       </form>
       {error && (
         <p class="error" role="alert">
@@ -281,6 +375,9 @@ export function MeetingOverloadSection() {
               <div class="meta">{summary(o)}</div>
             </div>
             <div class="actions">
+              <button type="button" onClick={() => startEdit(o, hours)}>
+                Edit
+              </button>
               <button
                 type="button"
                 onClick={() =>
@@ -294,7 +391,12 @@ export function MeetingOverloadSection() {
               <button
                 type="button"
                 class="danger"
-                onClick={() => void act(() => api("DELETE", `/api/meeting-overloads/${o.id}`))}
+                onClick={() =>
+                  void act(async () => {
+                    await api("DELETE", `/api/meeting-overloads/${o.id}`);
+                    if (editing?.id === o.id) stopEdit();
+                  })
+                }
               >
                 Delete
               </button>

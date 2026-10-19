@@ -193,6 +193,8 @@ export interface FocusItem {
 export interface OverloadItem {
   id: string;
   title: string;
+  /** Its rank inside P4, shared with focus goals (automations-overview.md rule 8). */
+  rank: number;
   createdAt: number;
   hours: string;
   dailyMaxMinutes: number | null;

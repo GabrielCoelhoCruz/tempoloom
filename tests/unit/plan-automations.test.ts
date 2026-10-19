@@ -235,6 +235,7 @@ describe("meeting overload", () => {
   const cap = (over: Partial<OverloadItem> = {}): OverloadItem => ({
     id: "cap",
     title: "Cap",
+    rank: 0,
     createdAt: 0,
     hours: "work",
     dailyMaxMinutes: 120,

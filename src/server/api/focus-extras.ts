@@ -272,17 +272,59 @@ export function focusExtraRoutes(db: Db, sync: SyncService, now: () => number): 
     return c.json({ overload: overloadRow(id) }, 201);
   });
 
+  /** Turns it off or on, or changes any field of the form (the editor of the automation list's Edit). */
   r.patch("/meeting-overloads/:id", async (c) => {
     const user = c.get("user");
     const id = c.req.param("id");
-    if (!one(db, "SELECT 1 FROM meeting_overloads WHERE id = ? AND user_id = ?", id, user.id))
-      notFound("meeting overload");
-    const { enabled } = await jsonBody(c, z.object({ enabled: z.boolean() }));
+    const cur = one<{ daily_max_minutes: number | null; weekly_max_minutes: number | null }>(
+      db,
+      "SELECT daily_max_minutes, weekly_max_minutes FROM meeting_overloads WHERE id = ? AND user_id = ?",
+      id,
+      user.id,
+    );
+    if (!cur) notFound("meeting overload");
+    const body = await jsonBody(c, overloadInput.partial());
+    const daily = body.dailyMaxMinutes === undefined ? cur.daily_max_minutes : body.dailyMaxMinutes;
+    const weekly =
+      body.weeklyMaxMinutes === undefined ? cur.weekly_max_minutes : body.weeklyMaxMinutes;
+    if (daily === null && weekly === null) {
+      badRequest("dailyMaxMinutes", "Set a daily or a weekly meeting limit");
+    }
+    if (
+      body.taskSearchId &&
+      !one(
+        db,
+        "SELECT 1 FROM task_searches WHERE id = ? AND user_id = ?",
+        body.taskSearchId,
+        user.id,
+      )
+    ) {
+      notFound("task search");
+    }
+    const set: Record<string, string | number | null | undefined> = {
+      title: body.title,
+      enabled: body.enabled === undefined ? undefined : body.enabled ? 1 : 0,
+      hours_set_id:
+        body.hoursSetId === undefined
+          ? undefined
+          : hoursSetId(db, user.id, body.hoursSetId, "work"),
+      daily_max_minutes: body.dailyMaxMinutes,
+      weekly_max_minutes: body.weeklyMaxMinutes,
+      heavy_day_minutes: body.heavyDayMinutes,
+      min_block_minutes: body.minBlockMinutes,
+      decline_enabled:
+        body.autoDecline === undefined ? undefined : body.autoDecline.enabled ? 1 : 0,
+      decline_message: body.autoDecline?.message,
+      task_search_id: body.taskSearchId,
+      rules_changed_at: now(),
+    };
+    const cols = Object.entries(set).filter(
+      (e): e is [string, string | number | null] => e[1] !== undefined,
+    );
     run(
       db,
-      "UPDATE meeting_overloads SET enabled = ?, rules_changed_at = ? WHERE id = ?",
-      enabled ? 1 : 0,
-      now(),
+      `UPDATE meeting_overloads SET ${cols.map(([k]) => `${k} = ?`).join(", ")} WHERE id = ?`,
+      ...cols.map(([, v]) => v),
       id,
     );
     changed(user.id);

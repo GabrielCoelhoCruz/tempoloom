@@ -69,10 +69,13 @@ at creation only for both.
    Tempoloom decision: all types in one group share one rank order. A drop saves the whole group's order. Until the user reorders, ties in rank go meetings, buffers, habits, then the oldest first: the scheduler's order. A priority menu and move up and down buttons on each entry do the same by keyboard.
 8. Focus automations stay in the P4 group. The user cannot drag them to another group, but can rank them inside P4. Proposed for rank (E-0077).
    Tempoloom decision: the list refuses the drop, the entry's priority menu is disabled, and the server refuses an order that puts focus time in another group.
+   Tempoloom decision: the meeting overload is a focus automation too. It stays in P4 in the same way and ranks inside P4 with the other entries there. The P4 order of focus goals and meeting overloads is the order in which they get the free time left (rule 15). At one rank the meeting overload goes first, so its protected time counts toward a focus goal (`focus-time.md` "Counted time").
 9. Meeting quality automations show in their own "Meeting quality" section below the priority groups (E-0134).
+   Tempoloom decision: the section has one entry per built-in check of `automations-meeting-quality.md`, in the order conflict, attendee availability, unanswered invitation, video link, agenda drafts, then one entry per company check of the user's team. Every user keeps the built-in checks, so their entries offer edit and turn off or on (meeting quality rule 2), but no remove. A company check entry shows a lock. For a team admin it offers edit, turn off or on, and remove; remove deletes the check for every member after the confirm "Remove <name> for every team member?". A member gets no actions (meeting quality rule 11).
 10. The user can filter the list by type (E-0043).
     Tempoloom decision: the chosen type is kept in the page address, so it stays after a reload.
 11. Each list entry offers edit, change priority, disable or enable, and remove (E-0043).
+    Tempoloom decision: edit opens the type's own editor: the shared form for habits, focus time and buffers, the Meetings page for flexible meetings, the meeting overload's form in the Meeting overload section of Settings, and the meeting checks page for meeting checks.
 12. Disable pauses the automation and keeps its settings. Tempoloom deletes its future managed events. Past events stay (E-0043, E-0072).
 13. Remove deletes the automation and its future managed events after a confirm dialog. Past events stay.
     Tempoloom decision: the confirm shows inside the entry: "Remove <name> and its future events?" with "Yes, remove" and "Cancel". Automations from a team policy have no Remove.

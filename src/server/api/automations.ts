@@ -4,14 +4,21 @@
 // lists them and changes their priority and rank.
 import { Hono } from "hono";
 import { z } from "zod";
+import { CHECK_NAMES } from "../../shared/meeting-checks.ts";
 import type { AppEnv } from "../app.ts";
 import { all, type Db, one, run, tx } from "../db.ts";
 import { jsonBody } from "../http.ts";
+import { companyChecks } from "../meeting-checks.ts";
+import { CHECK_IDS, getPrefs } from "../meeting-prefs.ts";
 import { meetingPeers } from "../planner/meetings.ts";
 import type { SyncService } from "../sync/service.ts";
 import { badRequest } from "./items.ts";
+import { adminTeam } from "./meeting-checks.ts";
 
-/** One automation type. A new type adds one entry here and one in src/web/views/automations.tsx. */
+/**
+ * One automation type with a table. A new type adds one entry here and one in
+ * src/web/views/automations.tsx. Meeting checks have no table; see meetingCheckEntries.
+ */
 export interface ListedType {
   type: string;
   table: string;
@@ -27,8 +34,16 @@ export const LISTED_TYPES: ListedType[] = [
   { type: "flexible_meeting", table: "meetings", order: 0, settings: false },
   { type: "buffer", table: "buffers", order: 1, settings: true },
   { type: "habit", table: "habits", order: 2, settings: true },
-  // Rule 15: placed after every other request, whatever its rank.
-  { type: "focus_time", table: "focus_goals", order: 3, fixedLevel: 4, settings: true },
+  // Rule 15: both focus automations are placed after every other request, in
+  // their P4 order; at one rank the meeting overload goes first.
+  {
+    type: "meeting_overload",
+    table: "meeting_overloads",
+    order: 3,
+    fixedLevel: 4,
+    settings: false,
+  },
+  { type: "focus_time", table: "focus_goals", order: 4, fixedLevel: 4, settings: true },
 ];
 
 export interface ListedAutomation {
@@ -42,12 +57,44 @@ export interface ListedAutomation {
   rank: number;
   templateId: string | null;
   createdAt: number;
+  /**
+   * Meeting checks only: a built-in check, which every user keeps, or a
+   * company check, which only team admins change (automations-meeting-quality.md rules 2, 11).
+   */
+  check?: { kind: "built_in" | "company"; locked: boolean };
+}
+
+/** Rule 9: the meeting checks, without priority: each built-in check, then the team's company checks. */
+function meetingCheckEntries(db: Db, userId: string): ListedAutomation[] {
+  const on = getPrefs(db, userId).checks;
+  const locked = adminTeam(db, userId) === null;
+  const entry = (id: string, name: string, enabled: boolean, rank: number) => ({
+    type: "meeting_check",
+    id,
+    name,
+    emoji: "",
+    enabled,
+    level: null,
+    rank,
+    templateId: null,
+    createdAt: 0,
+  });
+  return [
+    ...CHECK_IDS.map((id, i) => ({
+      ...entry(id, CHECK_NAMES[id], on[id], i),
+      check: { kind: "built_in" as const, locked: false },
+    })),
+    ...companyChecks(db, userId).map((c, i) => ({
+      ...entry(`company:${c.id}`, c.name, c.enabled, CHECK_IDS.length + i),
+      check: { kind: "company" as const, locked },
+    })),
+  ];
 }
 
 const levelOf = (t: ListedType) =>
   t.fixedLevel === undefined ? "level" : t.fixedLevel === null ? "NULL" : String(t.fixedLevel);
 
-/** All automations in list order: priority, rank, then the scheduler's type order and age. */
+/** All automations in list order: priority, rank, then the scheduler's type order and age; meeting checks last. */
 export function listAutomations(db: Db, userId: string): ListedAutomation[] {
   const out: (ListedAutomation & { order: number })[] = [];
   for (const t of LISTED_TYPES) {
@@ -83,7 +130,7 @@ export function listAutomations(db: Db, userId: string): ListedAutomation[] {
       });
     }
   }
-  return out
+  const ranked = out
     .sort(
       (a, b) =>
         (a.level ?? 9) - (b.level ?? 9) ||
@@ -93,6 +140,7 @@ export function listAutomations(db: Db, userId: string): ListedAutomation[] {
         a.id.localeCompare(b.id),
     )
     .map(({ order: _, ...a }) => a);
+  return [...ranked, ...meetingCheckEntries(db, userId)];
 }
 
 const orderInput = z.object({
