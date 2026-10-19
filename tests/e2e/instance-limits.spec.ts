@@ -106,15 +106,17 @@ test("a connected calendar limit refuses one more, and a lower limit turns the e
 
   // The operator lowers the limit to 2: the last calendar is turned off and stops blocking.
   setLimit(app, "max_connected_calendars", 2);
-  await eventually(
-    () => allEvents(cal),
-    (l) => expect(local(titled(l, "AT-Limit")[0]?.start ?? 0)).toBe(`${W} 09:00`),
-  );
   await openSettings(page);
   await page.reload();
   await expect(calendarRow(page, "Work").getByRole("checkbox")).toBeChecked();
   await expect(calendarRow(page, "Private").getByRole("checkbox")).toBeChecked();
   await expect(calendarRow(page, "Side").getByRole("checkbox")).not.toBeChecked();
+  await addTask(page, { title: "AT-After", minutes: 60, split: false, due: "" });
+  await eventually(
+    () => allEvents(cal),
+    (l) => expect(local(titled(l, "AT-After")[0]?.start ?? 0)).toBe(`${W} 09:00`),
+  );
+  await openSettings(page);
 
   // One more is refused with a message that names the limit.
   await calendarRow(page, "Side").getByRole("checkbox").click();

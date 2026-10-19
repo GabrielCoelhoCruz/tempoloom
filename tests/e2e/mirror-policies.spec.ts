@@ -362,10 +362,8 @@ test("copies never alert: an alert added to a copy is removed; the full reconcil
     () => week(cal),
     (l) => expect(copies(l).map((e) => e.colorId)).toEqual(["5"]),
   );
-  await openSettings(page);
-  const last = page.getByTestId("mirror-reconciled");
-  await expect(last).toHaveText(/^Last full check: \d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
   await page.reload();
+  const last = page.getByTestId("mirror-reconciled");
   await expect(last).toHaveText(/^Last full check: \d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
 });
 
@@ -373,9 +371,16 @@ test("guidance covers family calendars and duplicate views; a declined or tagged
   page,
   cal,
   signIn,
+  people,
+  radicale,
 }) => {
+  const six = radicale?.users[6];
+  if (!radicale || !six) throw new Error("This test needs the CalDAV backend.");
+  // The family calendar lives in another added account, whose owner gets the invitations.
+  const extra = await people(6);
   await signIn();
-  const family = await cal.newCalendar("Family");
+  await addCalDavAccount(page, { ...six, email: extra.email });
+  const family = await extra.cal.newCalendar("Family");
   const soccer = await family.addEvent({
     title: "Soccer practice",
     start: at(W, "17:00"),
@@ -389,9 +394,9 @@ test("guidance covers family calendars and duplicate views; a declined or tagged
   };
   const playId = await invitation(family.calendarId, {
     ...play,
-    attendees: [{ email: EMAIL, answer: "ACCEPTED" }],
+    attendees: [{ email: extra.email, answer: "ACCEPTED" }],
   });
-  await addPolicy(page, { from: "Family", to: "Work" });
+  await addPolicy(page, { from: "Family", to: `Work (${EMAIL})` });
   const tips = page.getByTestId("mirror-tips");
   await expect(tips).toContainText(
     "A copy goes away for good when you decline or delete the original event, or add #tl_nosync to it.",
@@ -414,7 +419,7 @@ test("guidance covers family calendars and duplicate views; a declined or tagged
   });
   await invitation(
     family.calendarId,
-    { ...play, attendees: [{ email: EMAIL, answer: "DECLINED" }] },
+    { ...play, attendees: [{ email: extra.email, answer: "DECLINED" }] },
     playId,
   );
   await eventually(
@@ -466,6 +471,7 @@ test("mirroring keeps copies 12 months ahead while planning stops at its own win
   const near = await cal.events(Date.now(), Date.now() + 100 * DAY);
   expect(near.filter((e) => e.summary.includes("AT-Later"))).toHaveLength(0);
   await page.reload();
+  await openSettings(page);
   await expect(page.getByLabel("Plan ahead (weeks)")).toHaveValue("1");
   await planNow(page);
   expect(copies(await far()).map((e) => local(e.start))).toEqual([
