@@ -301,7 +301,7 @@ export class SyncService {
         },
         userId,
       );
-      if (fullMirror && result)
+      if (fullMirror)
         run(db, "UPDATE users SET mirror_reconciled_at = ? WHERE id = ?", now, userId);
       // Team out-of-office calendars this user owns (teams-ooo-calendar.md).
       await syncOutOfOffice(db, userId, pool, this.#deps.now());

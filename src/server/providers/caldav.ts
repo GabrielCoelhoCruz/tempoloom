@@ -352,11 +352,11 @@ export class CalDavProvider implements CalendarProvider {
     const cals = (
       await retryRead(() => client.fetchCalendars(account ? { account } : undefined))
     ).filter((c) => !c.components || c.components.includes("VEVENT"));
-    const ownHome = home ?? client.account?.homeUrl;
-    this.#access = ownHome ? await this.#accessUnder(ownHome) : new Map();
+    this.#access = new Map();
     for (const url of this.#creds.sharedUrls ?? []) {
       if (cals.some((c) => c.url === url)) continue;
-      const shared = await this.describe(url).catch(() => null);
+      // A share that is gone drops out; a network error fails the read, so nothing is lost.
+      const shared = await this.describe(url);
       if (!shared || shared.access === "none") continue;
       this.#access.set(url, shared.access);
       cals.push({
@@ -408,6 +408,7 @@ export class CalDavProvider implements CalendarProvider {
     url: string,
   ): Promise<{ name: string; tag: string | null; access: "write" | "read" | "none" } | null> {
     const res = await this.#propfind(url, "0");
+    if (res.status >= 500) throw new ProviderError("other", res.status, `PROPFIND ${res.status}`);
     if (res.status !== 207) return null;
     const xml = await res.text();
     if (!/<(?:[\w-]+:)?calendar\s*\/>/i.test(xml)) return null;
@@ -428,6 +429,8 @@ export class CalDavProvider implements CalendarProvider {
 
   async listCalendars(): Promise<ProviderCalendar[]> {
     const cals = (await this.#fetchCalendars()).sort((a, b) => a.url.localeCompare(b.url));
+    const home = (await this.#connect()).account?.homeUrl;
+    const own = home && !this.#creds.homeUrl ? await this.#accessUnder(home) : new Map();
     // The first calendar of the own home is the primary one; a shared calendar never is.
     const shared = new Set(this.#creds.sharedUrls ?? []);
     const primary = cals.find((c) => !shared.has(c.url));
@@ -437,7 +440,8 @@ export class CalDavProvider implements CalendarProvider {
       primary: c === primary,
       // A server that reports no privileges keeps today's rule: the own home is writable.
       writable:
-        this.#creds.homeUrl === undefined && (this.#access.get(c.url) ?? "write") === "write",
+        this.#creds.homeUrl === undefined &&
+        (this.#access.get(c.url) ?? own.get(c.url) ?? "write") === "write",
       timeZone: null,
       color: c.calendarColor ?? null,
     }));
