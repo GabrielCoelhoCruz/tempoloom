@@ -69,7 +69,7 @@ async function expectDetails(page: Page, text: string, shown: string) {
   await drawer.getByRole("button", { name: "Close", exact: true }).click();
 }
 
-test("travel tags in the title, the description and the user's own RSVP note add travel time; #tl_flight adds airport time and #tl_trip only the travel category; a removed tag removes its buffers (events-tags rules 16-18, places 1-3, edge cases 4-5)", async ({
+test("travel tags in the title, the description and the user's own RSVP note add travel time; #tl_flight adds airport time and #tl_trip only the travel category, also at an address; a removed tag removes its buffers (events-tags rules 16-18, places 1-3, edge cases 4-5)", async ({
   page,
   cal,
   signIn,
@@ -97,10 +97,12 @@ test("travel tags in the title, the description and the user's own RSVP note add
   await invitation(cal, "Partner review", at(day(3), "14:00"), at(day(3), "15:00"), {
     "otto@example-c.test": "#tl_travel",
   });
+  // An address alone would add travel time; the trip tag makes the event travel itself.
   await cal.addEvent({
-    title: "Ride Ana home #tl_trip",
+    title: "Drop off parcels #tl_trip",
     start: at(day(4), "16:00"),
     end: at(day(4), "17:00"),
+    location: "1 Oak Ave, Springfield, IL 62701",
   });
   await cal.addEvent({
     title: "City tour #tl_travels",
@@ -108,6 +110,9 @@ test("travel tags in the title, the description and the user's own RSVP note add
     end: at(day(4), "11:00"),
   });
   await signIn();
+  // Rule 16: with travel off, the tags add nothing.
+  await planNow(page);
+  expect(titled(await week(cal), "Travel")).toHaveLength(0);
   await page.getByRole("link", { name: "Settings" }).click();
   await page.getByRole("button", { name: "Add travel time (30 min)" }).click();
   await expect(page.getByTestId("buffer-list")).toContainText("Travel");
@@ -136,7 +141,7 @@ test("travel tags in the title, the description and the user's own RSVP note add
   // The categories show in the planner and stay after a reload.
   const categories = async () => {
     await openWeek(page);
-    await expectDetails(page, "Ride Ana home", "Travel");
+    await expectDetails(page, "Drop off parcels", "Travel");
     await expectDetails(page, "Lisbon trip", "Flight");
     await expectDetails(page, "City tour", "Solo work");
   };

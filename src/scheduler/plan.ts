@@ -950,7 +950,14 @@ export function hasAddress(e: ExternalEvent): boolean {
 export function matchesFilter(f: BufferFilter, e: ExternalEvent): boolean {
   if (f.categories && !(e.category && f.categories.includes(e.category))) return false;
   if (f.flight && !isFlight(e)) return false;
-  if (f.travel && (isFlight(e) || !(hasAddress(e) || hasTag(e, "#tl_travel")))) return false;
+  // events-tags.md rule 18: #tl_trip makes the event travel itself, with no buffer.
+  if (
+    f.travel &&
+    (isFlight(e) ||
+      !(hasAddress(e) || hasTag(e, "#tl_travel")) ||
+      (hasTag(e, "#tl_trip") && !hasTag(e, "#tl_travel")))
+  )
+    return false;
   if (f.text) {
     const fields = f.text.fields.length > 0 ? f.text.fields : (["title"] as const);
     const hay = fields.map((k) => e[k].toLowerCase());
