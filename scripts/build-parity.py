@@ -781,9 +781,7 @@ E2E.update({
     357: ["u7_notice"],
     359: ["s5_limit"],
     360: ["u7_notime", "s5_daily"],
-    364: ["u7_manual"],
     367: ["u7_manual"],
-    368: ["u7_manual", "m_sync"],
     372: ["u7_delete"],
     374: ["u7_notime"],
     383: ["u7_url"],
@@ -792,23 +790,25 @@ E2E.update({
     388: ["u7_range"],
     389: ["u7_range"],
     390: ["u7_buffers", "tl_recovery"],
-    392: ["u7_locations"],
-    398: ["u7_locations", "b_book"],
     408: ["u7_focus"],
     412: ["u7_preferred"],
-    420: ["u7_locations", "s6_questions"],
+    420: ["u7_locations", "s6_questions", "s6_emails"],
 })
 E2E_NOTES.update({
     359: "The flag shows on the meeting in the Meetings page with up to 3 suggested times",
-    364: "On CalDAV each occurrence of a meeting made in Tempoloom is its own event (row 320), so a calendar resize changes one occurrence; the planner has no resize handle",
-    368: "Tempoloom writes no visibility for meetings yet (row 342), so free/busy is the value it writes back",
     372: "Tempoloom sends the cancel email itself, because it writes calendars without the provider's guest emails; it needs SMTP_URL",
     374: "The attention list is at the top of the Meetings page",
     389: "The date replaces the rolling days; it is not limited to 100 days",
     390: "Recovery buffers: \u201ca team link keeps the longest recovery buffer among its organizers free\u201d; travel time uses the person's travel buffer automations",
-    392: "Address, phone and other (text or URL) options; Meet, Zoom and Gong need vendor apps and test accounts (integrations-video-conferencing.md), so a video room is an Other URL",
-    398: "The event carries the chosen location; a generated conference link needs Meet or Zoom, which need vendor apps",
     420: "CC guests are invited to the event; the location choice shows when the link has several",
+})
+PARTIAL.update({
+    364: "A resize of one occurrence in the calendar is kept and locks it, with full UI E2E on CalDAV (\u201c" + T["u7_manual"] + "\u201d); a resize of the following or all occurrences of a series does not change the meeting's duration yet",
+    368: "Title and time edits in the calendar are kept and free/busy is written back, with full UI E2E on CalDAV (\u201c" + T["u7_manual"] + "\u201d); privacy is not written back, because meetings have no visibility setting yet (row 342)",
+})
+BLOCKED.update({
+    392: "Meet, Zoom and Gong options need the vendors' developer apps and test accounts (integrations-video-conferencing.md). The other options have full UI E2E on CalDAV: address, phone and other (text or URL), with a default and the booker's choice (\u201c" + T["u7_locations"] + "\u201d)",
+    398: "A conference link needs Meet or Zoom, which need the vendors' developer apps and test accounts. The rest has full UI E2E on CalDAV: a busy event with the booker and CC guests invited, the chosen location and the manage links (\u201c" + T["u7_locations"] + "\u201d; \u201c" + T["b_book"] + "\u201d)",
 })
 # --- end U07 ---
 

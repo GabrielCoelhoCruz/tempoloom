@@ -25,6 +25,7 @@ import {
   eventually,
   expect,
   local,
+  planNow,
   test,
 } from "./fixtures.ts";
 import { openWeek, titled, W } from "./helpers.ts";
@@ -202,7 +203,9 @@ test("manual actions: lock and unlock from the planner hold and free an occurren
     },
   );
   await cal.addEvent({ title: "Clash", start: at(day(1), "10:00"), end: at(day(1), "10:30") });
-  await page.waitForTimeout(12_000);
+  // Two full sync and plan runs after the clash (each call waits for its run).
+  await planNow(page);
+  await planNow(page);
   expect(starts(await twoWeeks(cal), "Sync")[0]).toBe(`${day(1)} 10:00-10:30`);
   await page.reload();
   await expect(page.locator(".ev-meeting.ev-locked", { hasText: "Sync" })).toBeVisible();
@@ -290,18 +293,20 @@ test("delete asks first: with email the guests get the cancelled times, without 
   const retro = page.locator('[data-meeting-title="Retro"]');
 
   // Keep it closes the question and changes nothing.
-  await sync.getByRole("button", { name: "Delete" }).click();
-  await expect(sync.getByTestId("meeting-delete")).toContainText(
-    "Delete Sync and its future times?",
+  await retro.getByRole("button", { name: "Delete" }).click();
+  await expect(retro.getByTestId("meeting-delete")).toContainText(
+    "Delete Retro and its future times?",
   );
-  await sync.getByRole("button", { name: "Keep it" }).click();
-  await expect(sync.getByTestId("meeting-delete")).toHaveCount(0);
-  await sync.getByRole("button", { name: "Delete" }).click();
-  await sync.getByRole("button", { name: "Delete and email guests" }).click();
-  await expect(sync).toHaveCount(0);
+  await retro.getByRole("button", { name: "Keep it" }).click();
+  await expect(retro.getByTestId("meeting-delete")).toHaveCount(0);
+  await expect(retro).toBeVisible();
+  // Retro first, without email; then Sync with email.
   await retro.getByRole("button", { name: "Delete" }).click();
   await retro.getByRole("button", { name: "Delete without email" }).click();
   await expect(retro).toHaveCount(0);
+  await sync.getByRole("button", { name: "Delete" }).click();
+  await sync.getByRole("button", { name: "Delete and email guests" }).click();
+  await expect(sync).toHaveCount(0);
 
   await eventually(
     () => twoWeeks(cal),
@@ -313,8 +318,7 @@ test("delete asks first: with email the guests get the cancelled times, without 
   const notice = await mail.message("ana@example.com", /Cancelled: Sync/);
   expect(notice.text).toContain(`${day(1)} 10:00`);
   expect(notice.text).toContain(`${day(8)} 10:00`);
-  // Ben's notice would have gone out with Ana's.
-  await page.waitForTimeout(3000);
+  // Ben's email would have gone out before Ana's, which has arrived.
   expect(await mail.count("ben@example.com")).toBe(0);
 
   await page.reload();
