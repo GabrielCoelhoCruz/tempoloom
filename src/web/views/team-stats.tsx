@@ -132,8 +132,9 @@ export function TeamStats() {
       setError(RANGE_ERRORS[code ?? ""] ?? "Could not load team stats.");
     }
   };
+  // The first load runs after the first paint; a choice made before it wins.
   useEffect(() => {
-    void load(range, grouping);
+    if (latest.current === 0) void load(range, grouping);
   }, []);
 
   const unit = data?.grouping ?? "day";

@@ -255,8 +255,9 @@ export function OrgAnalytics() {
       setError(RANGE_ERRORS[code ?? ""] ?? "Could not load the report.");
     }
   };
+  // The first load runs after the first paint; a choice made before it wins.
   useEffect(() => {
-    void load(controls);
+    if (latest.current === 0) void load(controls);
   }, []);
 
   const shell = (body: ComponentChildren) => (
