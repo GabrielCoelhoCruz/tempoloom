@@ -41,6 +41,7 @@ import {
   eventually,
   expect,
   local,
+  planNow,
   test,
 } from "./fixtures.ts";
 import {
@@ -73,6 +74,17 @@ async function openSettings(page: Page): Promise<void> {
 async function setRange(set: Locator, testId: string, from: string, to: string) {
   await set.getByTestId(testId).locator("input").first().fill(from);
   await set.getByTestId(testId).locator("input").last().fill(to);
+}
+
+/** Work hours cover the whole day, every day, so items can be placed close to now. */
+async function allDayWorkHours(page: Page) {
+  await openSettings(page);
+  const work = page.getByTestId("hours-work");
+  await setRange(work, "range-work-1-0", "00:00", "23:59");
+  for (const d of [5, 6])
+    await work.locator(".hours-day").nth(d).getByRole("button", { name: "+" }).click();
+  await work.getByRole("button", { name: "Copy to all" }).click();
+  await expect(page.getByTestId("settings-message")).toHaveText("Saved");
 }
 
 /** Adds a second calendar after sign-in, so the main calendar stays the main one. */
@@ -170,6 +182,64 @@ test("each hours set has a calendar for task chunks; chunks of tasks in that set
   // Only the work hours set points at the other calendar.
   expect(titled(main, "AT-Elsewhere")).toHaveLength(0);
   expect(titled(await week(tasks), "AT-Personal")).toHaveLength(0);
+});
+
+test("a new calendar for task chunks keeps placed chunks and the saved hours; a calendar that is not the user's is refused (HRS-12, TSK-50)", async ({
+  page,
+  cal,
+  signIn,
+}) => {
+  await blockUntil(cal, W);
+  const early = await cal.addEvent({ title: "Early", start: at(W, "09:00"), end: at(W, "10:00") });
+  await signIn();
+  await addTask(page, { title: "AT-Stay", minutes: 60, split: false, due: "" });
+  await eventually(
+    () => week(cal),
+    (l) => expect(titled(l, "AT-Stay").map(span)).toEqual([`${W} 10:00-11:00`]),
+  );
+  // 09:00 is free now, but a valid placement stays where it is.
+  await cal.remove(early);
+  await planNow(page);
+  expect(titled(await week(cal), "AT-Stay").map(span)).toEqual([`${W} 10:00-11:00`]);
+
+  const other = await secondCalendar(page, cal, "Chunks");
+  await page.reload();
+  await page.getByTestId("hours-work").getByLabel("Calendar for task chunks").selectOption({
+    label: "Chunks",
+  });
+  await expect(page.getByTestId("settings-message")).toHaveText("Saved");
+  // The menu changes no hours, so the chunk is not placed again.
+  await planNow(page);
+  expect(titled(await week(cal), "AT-Stay").map(span)).toEqual([`${W} 10:00-11:00`]);
+  expect(titled(await week(other), "AT-Stay")).toHaveLength(0);
+  await page.reload();
+  const monday = page.getByTestId("hours-work").getByTestId("range-work-1-0").locator("input");
+  await expect(monday.first()).toHaveValue("09:00");
+  await expect(monday.last()).toHaveValue("17:00");
+  await expect(
+    page.getByTestId("hours-work").getByLabel("Calendar for task chunks"),
+  ).not.toHaveValue("");
+
+  // The API refuses a calendar id that is not one of the user's calendars.
+  const put = (body: unknown) =>
+    page.evaluate(async (b) => {
+      const sets = (await (await fetch("/api/hours")).json()) as {
+        hours: { id: string; kind: string }[];
+      };
+      const work = sets.hours.find((h) => h.kind === "work");
+      const r = await fetch(`/api/hours/${work?.id}`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(b),
+      });
+      return r.status;
+    }, body);
+  expect(await put({ taskCalendarId: "not-a-calendar" })).toBe(400);
+  expect(await put({ taskCalendarId: null })).toBe(200);
+  await page.reload();
+  await expect(page.getByTestId("hours-work").getByLabel("Calendar for task chunks")).toHaveValue(
+    "",
+  );
 });
 
 test("inside one level meetings go first, then habits, then tasks; a higher level goes before all of them (PRI-1, PRI-3, SCH-62, SCH-64, SCH-70)", async ({
@@ -312,6 +382,53 @@ test("the urgency setting decides whether a low task that is short of time goes 
   await expect(page.getByLabel("Urgency")).toHaveValue("priority-only");
 });
 
+test("with the 48-hour urgency mode a low task due within 48 hours goes up one level, a task due later does not (SCH-78)", async ({
+  page,
+  cal,
+  signIn,
+}) => {
+  await signIn();
+  await allDayWorkHours(page);
+  // Nothing is placed before the next midnight, B.
+  const today = local(Date.now()).slice(0, 10);
+  const b = addDays(today, 1);
+  await cal.addEvent({ title: "E2E blocker", start: Date.now() - 3_600_000, end: at(b, "00:00") });
+  await openSettings(page);
+  await page.getByLabel("Urgency").selectOption({ label: "Raise tasks due within 48 hours" });
+  await expect(page.getByTestId("settings-message")).toHaveText("Saved");
+
+  const near = () => cal.events(at(b, "00:00"), at(addDays(b, 1), "00:00"));
+  await addTask(page, { title: "AT-Plenty", minutes: 120, split: false, due: "", level: 3 });
+  await eventually(near, (l) =>
+    expect(titled(l, "AT-Plenty").map(span)).toEqual([`${b} 00:00-02:00`]),
+  );
+  // Due 16 hours after B: less than 48 hours from now, but with 8 times the
+  // room it needs, so the default mode would not raise it.
+  await addTask(page, {
+    title: "AT-Soon",
+    minutes: 120,
+    split: false,
+    due: `${b}T16:00`,
+    level: 4,
+  });
+  // Due 50 hours after B: more than 48 hours from now.
+  await addTask(page, {
+    title: "AT-Later",
+    minutes: 60,
+    split: false,
+    due: `${addDays(b, 2)}T02:00`,
+    level: 4,
+  });
+  await eventually(near, (l) => {
+    expect(titled(l, "AT-Soon").map(span)).toEqual([`${b} 00:00-02:00`]);
+    expect(titled(l, "AT-Plenty").map(span)).toEqual([`${b} 02:00-04:00`]);
+    expect(titled(l, "AT-Later").map(span)).toEqual([`${b} 04:00-05:00`]);
+  });
+  await page.reload();
+  await openSettings(page);
+  await expect(page.getByLabel("Urgency")).toHaveValue("due-date");
+});
+
 test("focus time goes after a P4 task, keeps the free/busy status set on it, and counts as P2 for booking links (PRI-20, PRI-21, DEF-40)", async ({
   page,
   browser,
@@ -388,6 +505,36 @@ test("focus time goes after a P4 task, keeps the free/busy status set on it, and
   await expect(page.getByTestId("automation-form").getByLabel("Show as")).toHaveValue("free");
 });
 
+test("free focus time stays free inside the 12 hours before it starts (DEF-40)", async ({
+  page,
+  cal,
+  signIn,
+}) => {
+  await signIn();
+  // Focus time can start soon.
+  await allDayWorkHours(page);
+
+  const focus = await create(page, "Focus time");
+  await focus.getByLabel("Title").fill("AT-Near");
+  await focus.getByLabel("Weekly goal (hours)").fill("2");
+  await focus.getByLabel("Daily maximum (hours)").fill("1");
+  await focus.getByLabel("Shortest block (minutes)").fill("60");
+  await focus.getByLabel("Longest block (minutes)").fill("60");
+  await focus.getByLabel("Show as").selectOption({ label: "Free" });
+  await save(focus);
+  const soon = () => cal.events(Date.now() - 3_600_000, Date.now() + 2 * 24 * 60 * MIN);
+  const check = (l: Evs) => {
+    const near = titled(l, "AT-Near").filter((e) => e.start - Date.now() < 12 * 60 * MIN);
+    expect(near.length).toBeGreaterThan(0);
+    for (const e of titled(l, "AT-Near")) expect(e.busy).toBe(false);
+  };
+  await eventually(soon, check);
+  // A new plan run after a reload keeps it free.
+  await page.reload();
+  await planNow(page);
+  check(await soon());
+});
+
 test("the level of a recurring external event applies to this event or to the whole series (events-external-priority rule 3, PRI-41)", async ({
   page,
   browser,
@@ -406,12 +553,14 @@ test("the level of a recurring external event applies to this event or to the wh
   await signIn();
   await claimPage(page, "sera");
   const v = await visitor(browser);
-  const offered = async (when: number) => {
-    await v.goto("/book/sera/important-meeting");
-    await expect(v.getByTestId("times")).toBeVisible();
-    return slot(v, when).count();
-  };
-  expect(await offered(at(W, "09:00"))).toBe(0);
+  /** Whether the link offers the 09:00 time of a day; read until it settles. */
+  const offers = (link: string, date: string) =>
+    expect.poll(async () => {
+      await v.goto(`/book/sera/${link}`);
+      await expect(v.getByTestId("times")).toBeVisible();
+      return (await slot(v, at(date, "09:00")).count()) > 0;
+    });
+  await offers("important-meeting", W).toBe(false);
 
   const setLevel = async (date: string, level: string, series: boolean) => {
     await openWeek(page);
@@ -419,26 +568,36 @@ test("the level of a recurring external event applies to this event or to the wh
     const form = page.getByTestId("external-priority");
     await form.getByLabel("Priority for booking links").selectOption(level);
     if (series) await form.getByLabel("All events in the series").check();
+    const saved = page.waitForResponse(
+      (r) => r.request().method() === "POST" && r.url().includes("/priority"),
+    );
     await form.getByRole("button", { name: "Save priority" }).click();
+    expect((await saved).status()).toBe(200);
   };
 
-  // This event only: Monday opens to the P1 link, Tuesday stays closed.
+  // This event only: Monday becomes P3, so the P1 link and the P2 link offer
+  // it; Tuesday stays P1 and closed.
   await setLevel(W, "3", false);
-  expect(await offered(at(W, "09:00"))).toBe(1);
-  expect(await offered(at(day(1), "09:00"))).toBe(0);
+  await offers("important-meeting", W).toBe(true);
+  await offers("meeting", W).toBe(true);
+  await offers("important-meeting", day(1)).toBe(false);
 
-  // All events: every day of the series opens.
+  // All events at P2: every day opens to the P1 link. The series level
+  // replaces Monday's own P3, so the P2 link no longer offers Monday.
   await setLevel(day(1), "2", true);
-  for (const n of [0, 1, 2, 3, 4]) expect(await offered(at(day(n), "09:00"))).toBe(1);
+  for (const n of [0, 1, 2, 3, 4]) await offers("important-meeting", day(n)).toBe(true);
+  for (const n of [0, 1, 4]) await offers("meeting", day(n)).toBe(false);
 
   // Tempoloom never moves the series; the level survives a reload.
   const standups = (await week(cal)).filter((e) => e.summary === "AT-Standup");
   expect(standups.map((e) => local(e.start).slice(11))).toEqual(Array(5).fill("09:00"));
   await page.reload();
-  await page.locator(`.ev-external[data-start="${at(day(2), "09:00")}"]`).click();
-  await expect(
-    page.getByTestId("external-priority").getByLabel("Priority for booking links"),
-  ).toHaveValue("2");
+  for (const date of [W, day(2)]) {
+    await page.locator(`.ev-external[data-start="${at(date, "09:00")}"]`).click();
+    await expect(
+      page.getByTestId("external-priority").getByLabel("Priority for booking links"),
+    ).toHaveValue("2");
+  }
 });
 
 test("events of another connected calendar stay P1: the control is disabled with a note, and links never offer their time (events-external-priority rule 4, PRI-42)", async ({
@@ -511,7 +670,6 @@ test("flexible meetings use meeting hours: a change there moves the meeting, and
   const meeting = page.getByTestId("hours-meeting");
   await setRange(meeting, "range-meeting-1-0", "14:00", "16:00");
   await meeting.getByRole("button", { name: "Copy to all" }).click();
-  await meeting.getByRole("button", { name: "Save meeting hours" }).click();
   await expect(page.getByTestId("settings-message")).toHaveText("Saved");
   await eventually(
     () => week(cal),
@@ -542,8 +700,12 @@ test("a day can have several ranges and copy to all copies them to every day tha
   await setRange(work, "range-work-1-0", "09:00", "12:00");
   await work.locator(".hours-day").first().getByRole("button", { name: "+" }).click();
   await setRange(work, "range-work-1-1", "13:00", "17:00");
+  // HRS-6: copy to all saves at once, with no press on the save button.
+  const saved1 = page.waitForResponse(
+    (r) => r.request().method() === "PUT" && r.url().includes("/api/hours/"),
+  );
   await work.getByRole("button", { name: "Copy to all" }).click();
-  await work.getByRole("button", { name: "Save work hours" }).click();
+  expect((await saved1).status()).toBe(200);
   await expect(page.getByTestId("settings-message")).toHaveText("Saved");
   await page.reload();
   const saved = page.getByTestId("hours-work");
@@ -558,6 +720,15 @@ test("a day can have several ranges and copy to all copies them to every day tha
   // Saturday and Sunday were off and stay off.
   await expect(saved.getByTestId("range-work-6-0")).toHaveCount(0);
   await expect(saved.getByTestId("range-work-7-0")).toHaveCount(0);
+  // HRS-5: the source is the first day in the list, Monday. Personal hours
+  // with Monday off and other hours on Tuesday have nothing to copy.
+  const personal = page.getByTestId("hours-personal");
+  const mondayP = personal.locator(".hours-day").first();
+  while ((await mondayP.locator(".range").count()) > 0)
+    await mondayP.locator(".range").first().getByRole("button", { name: "−" }).click();
+  await setRange(personal, "range-personal-2-0", "06:00", "07:00");
+  await expect(personal.getByRole("button", { name: "Copy to all" })).toBeDisabled();
+  await page.reload();
 
   await addTask(page, { title: "AT-Ranges", minutes: 420, min: 60, max: 240, due: "" });
   const evs = await eventually(
@@ -577,6 +748,7 @@ test("a day can have several ranges and copy to all copies them to every day tha
 
 test("a chunk moved in the calendar leaves its old time closed to that task only (CED-10)", async ({
   page,
+  app,
   cal,
   signIn,
 }) => {
@@ -617,8 +789,28 @@ test("a chunk moved in the calendar leaves its old time closed to that task only
     },
   );
   for (const e of titled(evs, "AT-Mover")) expect(overlaps(e, old.start, old.end)).toBe(false);
+
+  // The closed time is stored: after a server restart, with the other task
+  // deleted and the old time free, more work still goes elsewhere.
+  await app.restart();
   await page.reload();
-  await expect(page.locator('[data-task-title="AT-Mover"]')).toBeVisible();
-  const again = await week(cal);
+  await page.getByRole("link", { name: "Tasks" }).click();
+  await page
+    .locator('[data-task-title="AT-Other"]')
+    .getByRole("button", { name: "Delete" })
+    .click();
+  await expect(page.locator('[data-task-title="AT-Other"]')).toHaveCount(0);
+  await page
+    .locator('[data-task-title="AT-Mover"]')
+    .getByRole("button", { name: "+30 min" })
+    .click();
+  await planNow(page);
+  const again = await eventually(
+    () => week(cal),
+    (l) => {
+      expect(titled(l, "AT-Other")).toHaveLength(0);
+      expect(titled(l, "AT-Mover").reduce((a, e) => a + (e.end - e.start), 0)).toBe(180 * MIN);
+    },
+  );
   for (const e of titled(again, "AT-Mover")) expect(overlaps(e, old.start, old.end)).toBe(false);
 });

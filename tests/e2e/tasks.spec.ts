@@ -251,3 +251,38 @@ test("a task on personal hours is placed in the evening (HRS-1)", async ({ page,
   const [e] = titled(evs, "AT-Evening");
   expect(inHours(e?.start ?? 0, e?.end ?? 0, "18:00", "22:00")).toBe(true);
 });
+
+test("a title typed while the last task is still being planned is kept", async ({
+  page,
+  cal,
+  signIn,
+}) => {
+  await blockUntil(cal, W);
+  await signIn();
+  await page.getByRole("link", { name: "Tasks" }).click();
+  // Hold the plan run that follows the save until the next title is typed.
+  let release = () => {};
+  const held = new Promise<void>((r) => {
+    release = r;
+  });
+  let holding: () => void = () => {};
+  const reached = new Promise<void>((r) => {
+    holding = r;
+  });
+  await page.route("**/api/planner/sync", async (route) => {
+    holding();
+    await held;
+    await route.continue();
+  });
+  const form = page.getByTestId("task-form");
+  await form.getByLabel("Title").fill("AT-First");
+  await form.getByRole("button", { name: "Add task" }).click();
+  await reached;
+  await form.getByLabel("Title").fill("AT-Second");
+  const done = page.waitForResponse((r) => r.url().includes("/api/planner/sync"));
+  release();
+  await done;
+  await expect(page.locator('[data-task-title="AT-First"]')).toBeVisible();
+  await expect(form.getByLabel("Title")).toHaveValue("AT-Second");
+  await page.unroute("**/api/planner/sync");
+});
