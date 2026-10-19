@@ -17,9 +17,19 @@ export function hasTag(
   e: Pick<ExternalEvent, "title" | "description"> & { rsvpNote?: string | undefined },
   tag: string,
 ): boolean {
-  const t = tag.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const re = new RegExp(`(^|[^\\p{L}\\p{N}_])${t}(?![\\p{L}\\p{N}_])`, "iu");
+  const re = tagPattern(tag);
   return [e.title, e.description, e.rsvpNote ?? ""].some((text) => re.test(text));
+}
+
+const patterns = new Map<string, RegExp>();
+function tagPattern(tag: string): RegExp {
+  let re = patterns.get(tag);
+  if (!re) {
+    const t = tag.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    re = new RegExp(`(^|[^\\p{L}\\p{N}_])${t}(?![\\p{L}\\p{N}_])`, "iu");
+    patterns.set(tag, re);
+  }
+  return re;
 }
 
 /** True when the user takes part: organizer, own event, or answered yes or maybe. */
