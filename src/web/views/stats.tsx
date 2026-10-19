@@ -6,9 +6,10 @@ import { lazyComponent } from "../lib/lazy.ts";
 import { zone } from "../lib/state.ts";
 import { StatsTabs } from "./stats-tabs.tsx";
 
-const StatsExtras = lazyComponent<{ from: string; to: string }>(() =>
+const StatsExtras = lazyComponent<{ from: string; to: string; base: Base }>(() =>
   import("./stats-extras.tsx").then((m) => m.StatsExtras),
 );
+type Base = import("./stats-extras.tsx").BaseStats;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 type Category =
@@ -199,28 +200,11 @@ export function StatsPage() {
               </div>
             ))}
           </div>
-          <h2>Highlights</h2>
-          <div class="list" data-testid="highlights">
-            <div class="row">
-              <span>Meetings</span>
-              <strong data-testid="hl-meetings">{round(stats.highlights.meetingMinutes)}</strong>
-            </div>
-            <div class="row">
-              <span>Meetings outside work hours</span>
-              <strong data-testid="hl-outside">
-                {round(stats.highlights.meetingMinutesOutsideWorkHours)}
-              </strong>
-            </div>
-            <div class="row">
-              <span>Focus time held</span>
-              <strong data-testid="hl-focus">{round(stats.highlights.focusMinutes)}</strong>
-            </div>
-            <div class="row">
-              <span>Meetings booked through links</span>
-              <strong data-testid="hl-bookings">{stats.highlights.bookings}</strong>
-            </div>
-          </div>
-          <StatsExtras from={range[0]} to={range[1]} />
+          <StatsExtras
+            from={range[0]}
+            to={range[1]}
+            base={{ ...stats.highlights, personalHabits: stats.totals.personalHabits }}
+          />
         </>
       )}
     </div>

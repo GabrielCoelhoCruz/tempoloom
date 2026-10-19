@@ -68,7 +68,16 @@ function fact(f: Fact): string {
   }
 }
 
-export function StatsExtras({ from, to }: { from: string; to: string }) {
+/** Figures of the main stats answer that the highlights and balance panels show. */
+export interface BaseStats {
+  meetingMinutes: number;
+  meetingMinutesOutsideWorkHours: number;
+  focusMinutes: number;
+  bookings: number;
+  personalHabits: number;
+}
+
+export function StatsExtras({ from, to, base }: { from: string; to: string; base: BaseStats }) {
   const [data, setData] = useState<Insights | null>(null);
   const seq = useRef(0);
   useEffect(() => {
@@ -157,8 +166,20 @@ export function StatsExtras({ from, to }: { from: string; to: string }) {
         ))}
       </div>
 
-      <h2>Breaks and travel</h2>
-      <div class="list">
+      <h2>Highlights</h2>
+      <div class="list" data-testid="highlights">
+        <div class="row">
+          <span>Meetings</span>
+          <strong data-testid="hl-meetings">{h(base.meetingMinutes)}</strong>
+        </div>
+        <div class="row">
+          <span>Focus time held</span>
+          <strong data-testid="hl-focus">{h(base.focusMinutes)}</strong>
+        </div>
+        <div class="row">
+          <span>Meetings booked through links</span>
+          <strong data-testid="hl-bookings">{base.bookings}</strong>
+        </div>
         <div class="row">
           <span>Breaks between meetings</span>
           <strong data-testid="hl-breaks">{h(data.highlights.breaks)}</strong>
@@ -166,6 +187,22 @@ export function StatsExtras({ from, to }: { from: string; to: string }) {
         <div class="row">
           <span>Travel buffers</span>
           <strong data-testid="hl-travel">{h(data.highlights.travelBuffers)}</strong>
+        </div>
+      </div>
+
+      <h2>Work-life balance</h2>
+      <div class="list" data-testid="work-life-balance">
+        <div class="row">
+          <span>Personal habits</span>
+          <strong data-testid="wl-personal-habits">{h(base.personalHabits)}</strong>
+        </div>
+        <div class="row">
+          <span>Meetings outside work hours</span>
+          <strong data-testid="hl-outside">{h(base.meetingMinutesOutsideWorkHours)}</strong>
+        </div>
+        <div class="row">
+          <span>Time away</span>
+          <strong data-testid="wl-time-away">{h(data.categories.vacation ?? 0)}</strong>
         </div>
       </div>
 

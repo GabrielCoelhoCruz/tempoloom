@@ -759,6 +759,7 @@ T.update({
     "u9_lib_focus": "library focus entries 7 and 23 place their weekly goal inside the 09:00 to 12:00 window, and the window stays on edit",
     "u9_lib_meetings": "library entries 32, 34 and 37: flexible meetings repeat at their period with the guests, and the priority link offers time over P3 and P4 habits",
     "u9_lib_mirror": "library mirroring entries 38 and 39 copy busy time only between job calendars, both ways, never copying a copy",
+    "u9_balance": "stats show work-life balance (personal habits, meetings outside work hours, time away) and highlights (focus held, link bookings, breaks, travel) for a chosen range",
 })
 E2E.update({
     719: ["u9_lib_buffers"], 728: ["u9_lib_buffers"], 737: ["u9_lib_buffers"],
@@ -770,6 +771,7 @@ E2E.update({
     762: ["u9_lib_habits2"],
     750: ["u9_lib_meetings"], 752: ["u9_lib_meetings"], 755: ["u9_lib_meetings"],
     756: ["u9_lib_mirror"], 757: ["u9_lib_mirror"],
+    604: ["u9_balance"], 607: ["u9_balance", "s7_stats"],
 })
 E2E_NOTES.update({
     725: "Mornings are a one-off window (item-specific hours) of 09:00 to 12:00 on workdays, which the user can change in the form",
@@ -781,10 +783,20 @@ E2E_NOTES.update({
     750: "The form needs at least one guest; the entry does not check that the guests are external",
     756: "The entry fills the mirroring form with busy-only copies; the user adds one policy in each direction",
     757: "The entry fills the mirroring form with busy-only copies; the user adds one policy for each pair of calendars",
+    604: "Time away is the work hours that out-of-office time covers",
+    607: "Focus time held is the time of focus events; work habits and tasks that count toward the goal are not added",
 })
 for n in [719, 725, 728, 729, 737, 741, 746, 747, 748, 750, 752, 753, 754, 755, 756, 757, 758,
           759, 760, 761, 762, 763, 764]:
     PARTIAL.pop(n, None)
+for n in [604, 607]:
+    UNIT.pop(n, None)
+GOOGLE_ROWS.pop(638, None)
+BLOCKED[638] = (
+    "Needs a Google OAuth client and a Google test account for the E2E of Google sign-in, which is "
+    "built and follows the team's SSO rules; Microsoft sign-in needs a Microsoft app registration, "
+    "a Microsoft 365 account and a Microsoft Graph provider, which is not built"
+)
 # --- end U09 ---
 
 # --- merge: rows that need the work of more than one stream ---
