@@ -1,13 +1,23 @@
 // Troubleshooting (docs/specs/support-troubleshooting.md): the support contact,
-// the event lookup, and the planner's onboarding hints (platform-current-version.md rule 17).
+// the event lookup, and the planner's onboarding hints (platform-current-version.md rule 17;
+// the first mirroring policy, sync-calendar-mirroring.md rule 11).
 import { Hono } from "hono";
 import type { AppEnv } from "../app.ts";
-import { all, type Db, run } from "../db.ts";
+import { all, type Db, one, run } from "../db.ts";
 import { lookupEvent } from "../diagnosis.ts";
 import { notFound } from "../http.ts";
+import { listedCalendars } from "./calendars.ts";
 
-/** Hints the planner shows until the user dismisses them. */
-const HINTS = ["other-tools"] as const;
+type Hint = "other-tools" | "first-mirror";
+
+/** Hints the planner shows until the user dismisses them, each while its test holds. */
+const hints = (db: Db): Record<Hint, (userId: string) => boolean> => ({
+  "other-tools": () => true,
+  // The first policy is offered while the user has none and two calendars to link.
+  "first-mirror": (userId) =>
+    !one(db, "SELECT 1 FROM mirror_policies WHERE user_id = ?", userId) &&
+    listedCalendars(db, userId).filter((cal) => cal.provider !== "ics").length > 1,
+});
 
 export function helpRoutes(
   db: Db,
@@ -15,6 +25,7 @@ export function helpRoutes(
   now: () => number,
 ): Hono<AppEnv> {
   const r = new Hono<AppEnv>();
+  const shown = hints(db);
 
   r.get("/help", (c) => c.json({ supportUrl: supportUrl ?? null }));
 
@@ -33,12 +44,15 @@ export function helpRoutes(
         c.get("user").id,
       ).map((h) => h.hint),
     );
-    return c.json({ hints: HINTS.filter((h) => !dismissed.has(h)) });
+    const userId = c.get("user").id;
+    return c.json({
+      hints: (Object.keys(shown) as Hint[]).filter((h) => !dismissed.has(h) && shown[h](userId)),
+    });
   });
 
   r.post("/hints/:hint/dismiss", (c) => {
     const hint = c.req.param("hint");
-    if (!(HINTS as readonly string[]).includes(hint)) notFound("hint");
+    if (!Object.hasOwn(shown, hint)) notFound("hint");
     run(
       db,
       "INSERT OR IGNORE INTO dismissed_hints (user_id, hint, dismissed_at) VALUES (?, ?, ?)",
