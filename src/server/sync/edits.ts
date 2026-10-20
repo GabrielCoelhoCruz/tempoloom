@@ -23,13 +23,39 @@ function exclude(db: Db, userId: string, kind: string, itemId: string, start: nu
 }
 
 /**
+ * CED-11: when the user moves the task's first chunk, its new start becomes the
+ * task's start. Later chunks then go after it; an earlier move starts the task sooner.
+ */
+export function moveTaskStart(db: Db, userId: string, row: ManagedRow, start: number): void {
+  if (row.kind !== "task") return;
+  const earlier = one(
+    db,
+    "SELECT 1 FROM managed_events WHERE user_id = ? AND kind = 'task' AND source_id = ? AND id <> ? AND start_ms < ?",
+    userId,
+    row.source_id,
+    row.id,
+    row.start_ms,
+  );
+  if (earlier) return;
+  run(
+    db,
+    "UPDATE tasks SET start_after = ? WHERE id = ? AND user_id = ?",
+    start,
+    row.source_id,
+    userId,
+  );
+}
+
+/**
  * Applies the user's calendar edits to managed events of the given calendars:
  * a moved or resized event locks at its new time (CED-1, CED-2), except a
  * buffer resized at its free edge, which keeps the new length and still
  * follows its anchor (buffers rule 14); a moved task
  * chunk leaves an exclusion at its old time (CED-10); a deleted event leaves an
- * exclusion or a dismissed key by kind (CED-20, CED-24, CED-25); a title edit
- * of a non-task event locks it (CED-40).
+ * exclusion or a dismissed key by kind (CED-20, CED-24, CED-25); a deleted past
+ * chunk gives its minutes back and reopens a done task (CED-21, CED-22); a move
+ * of a task's first chunk sets the task's start (CED-11); a title edit of a
+ * non-task event locks it (CED-40).
  */
 export function applyCalendarEdits(
   db: Db,
@@ -98,6 +124,15 @@ export function applyCalendarEdits(
           } else {
             exclude(db, userId, row.kind, row.source_id, row.start_ms, row.end_ms);
           }
+        } else if (row.kind === "task") {
+          // "This work did not happen": the minutes go back to the task, which is open again.
+          run(
+            db,
+            "UPDATE tasks SET status = 'open', rules_changed_at = ? WHERE id = ? AND user_id = ? AND status = 'done'",
+            now,
+            row.source_id,
+            userId,
+          );
         }
         run(db, "DELETE FROM managed_events WHERE id = ?", row.id);
         summary.deleted++;
@@ -133,6 +168,7 @@ export function applyCalendarEdits(
       }
       if (moved && row.kind === "task") {
         exclude(db, userId, "task", row.source_id, row.start_ms, row.end_ms);
+        if (cached.start_ms !== row.start_ms) moveTaskStart(db, userId, row, cached.start_ms);
       }
       run(
         db,

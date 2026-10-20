@@ -2,6 +2,7 @@
 import { all, one, run } from "../db.ts";
 import { enforceCalendarLimit } from "../limits.ts";
 import { oooOwnersOf, syncOutOfOffice } from "../ooo.ts";
+import { autoLock } from "../planner/auto-lock.ts";
 import { observeMeetings } from "../planner/meeting-log.ts";
 import { meetingPeers } from "../planner/meetings.ts";
 import { finishPaint, type PaintJob, writePaint } from "../planner/repaint.ts";
@@ -10,6 +11,7 @@ import { enforceAgendas } from "../policies/agendas.ts";
 import { applyPolicies } from "../policies/apply.ts";
 import { type ProviderDeps, ProviderPool } from "../providers/index.ts";
 import { ProviderError } from "../providers/types.ts";
+import { getSettings } from "../settings.ts";
 import { applyCalendarEdits } from "./edits.ts";
 import { MIRROR_READ_AHEAD, pullEvents, syncCalendarList } from "./pull.ts";
 
@@ -356,6 +358,8 @@ export class SyncService {
         user.time_zone,
         now,
       );
+      // The daily or weekly auto-lock run (planning-locks.md LCK-30, LCK-31).
+      autoLock(db, userId, user.time_zone, getSettings(db, userId), now);
       // Team policies (teams-policies.md rules 3, 14-17): automations, then agendas.
       // A policy failure never stops the member's own planning.
       try {

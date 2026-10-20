@@ -6,6 +6,7 @@ import type { AppEnv } from "../app.ts";
 import { all, type Db, one, run, tx } from "../db.ts";
 import { jsonBody, notFound } from "../http.ts";
 import { instanceLimit, limitMessage } from "../limits.ts";
+import { AUTO_LOCK_KINDS, autoLock } from "../planner/auto-lock.ts";
 import { wakeOrganizers } from "../planner/meetings.ts";
 import { requestRepaint } from "../planner/repaint.ts";
 import { writeCalendar } from "../planner/replan.ts";
@@ -91,6 +92,7 @@ export function settingsRoutes(db: Db, sync: SyncService, now: () => number): Ho
       const message = limitMessage("max_scheduling_window_weeks", windowLimit);
       return c.json({ error: "limit_reached", message }, 400);
     }
+    const before = getSettings(db, user.id).autoLock;
     const parsed = (() => {
       try {
         return updateSettings(db, user.id, body);
@@ -100,6 +102,11 @@ export function settingsRoutes(db: Db, sync: SyncService, now: () => number): Ho
     })();
     if (parsed instanceof Error)
       return c.json({ error: "invalid_body", message: parsed.message }, 400);
+    // LCK-32: a kind turned on, or changed, locks its current day or week at once.
+    const changed = AUTO_LOCK_KINDS.filter(
+      (k) => parsed.autoLock[k] !== "off" && parsed.autoLock[k] !== before[k],
+    );
+    if (changed.length > 0) autoLock(db, user.id, user.time_zone, parsed, now(), changed);
     sync.request(user.id);
     return c.json({ settings: parsed });
   });

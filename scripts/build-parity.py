@@ -1059,6 +1059,26 @@ BLOCKED[322] = ("Not built: the scheduler reads the availability of attendees wh
 BLOCKED[345] = "Needs Google Meet (a Google account), the Zoom vendor app and Google Workspace room resources; an address or a custom text or link is written as the location of every occurrence (E2E: \u201c" + T["mr_settings"] + "\u201d)"
 # --- end U06 ---
 
+# --- U32: calendar edits and locks, part A (tests/e2e/chunk-edits.spec.ts, auto-lock.spec.ts) ---
+T.update({
+    "u32_autolock": "auto-lock per kind: week locks the current week, day locks today, off locks nothing; later events wait until the setting is turned off and on (LCK-30 to LCK-32)",
+    "u32_unlock": "a delete, a reschedule and a decline end a lock: the item is placed again away from the locked time (LCK-40, CED-27, CED-30)",
+    "u32_first": "moving the first chunk later moves the task's start, so no chunk goes before it; moving it earlier sets an earlier start (CED-11)",
+    "u32_due": "a chunk moved past the due date makes every chunk of its task busy (CED-12, DEF-12)",
+    "u32_resize": "a shorter chunk gives its minutes back to the task and a longer chunk takes them from the rest (CED-13, CED-14)",
+    "u32_past": "past chunks: a delete brings the work back and reopens a done task; a shorter past chunk gives its minutes back (CED-13, CED-21, CED-22)",
+})
+E2E.update({
+    99: ["mr_prio", "mr_defense"], 106: ["u32_autolock"], 107: ["u32_unlock"], 110: ["u32_first"],
+    111: ["u32_due"], 112: ["u32_resize", "u32_past"], 114: ["u32_past"],
+})
+E2E_NOTES.update({
+    99: "The same rule as row 341: busy within 12 hours (DEF-30) or when the occurrence has the last free slot of its day",
+    106: "The lock run starts at 01:00 in the user's time zone (LCK-31, proposed default); a week starts on the week start of Settings",
+    107: "A deleted task chunk is placed again from the next day; a habit reschedule and a required guest's decline move the locked occurrence",
+})
+# --- end U32 ---
+
 # Google Calendar proof. docs/e2e-google-run.tsv records a full E2E run on Google
 # (status, test id, title per line; docs/e2e-google-run.md says how it ran and how to
 # regenerate the file). Each T[key] is the exact title of one test in tests/e2e, and the
