@@ -134,36 +134,54 @@ function responseOf(a: ICAL.Property): ResponseStatus {
         : "needsAction";
 }
 
-/** The user's addresses, lower case, without `mailto:`. */
-const selfSet = (addresses: string | readonly string[]) =>
-  new Set((typeof addresses === "string" ? [addresses] : addresses).map(mailto).filter(Boolean));
+/**
+ * The user's addresses, lower case, without `mailto:`. The first one is the
+ * account's own address.
+ */
+interface Self {
+  primary: string;
+  all: ReadonlySet<string>;
+}
+const selfOf = (addresses: readonly string[]): Self => {
+  const all = addresses.map(mailto).filter(Boolean);
+  return { primary: all[0] ?? "", all: new Set(all) };
+};
 
-function attendeeFacts(ev: ICAL.Component, self: ReadonlySet<string>) {
+/**
+ * The user's own attendee line: the line of the account's address, else the
+ * first line of another address of the user.
+ */
+function selfLine(ev: ICAL.Component, self: Self): ICAL.Property | undefined {
+  const lines = ev.getAllProperties("attendee");
+  const own = self.primary
+    ? lines.find((a) => mailto(a.getFirstValue()) === self.primary)
+    : undefined;
+  if (own) return own;
+  return lines.find((a) => self.all.has(mailto(a.getFirstValue())));
+}
+
+function attendeeFacts(ev: ICAL.Component, self: Self) {
   const attendees = ev.getAllProperties("attendee");
-  let selfResponse: ResponseStatus | null = null;
-  let note = "";
   const responses: Record<string, ResponseStatus> = {};
   for (const a of attendees) {
     const email = mailto(a.getFirstValue());
     if (email) responses[email] = responseOf(a);
-    if (self.has(email)) {
-      selfResponse = responseOf(a);
-      note = String(a.getParameter("x-response-comment") ?? "");
-    }
   }
+  const own = selfLine(ev, self);
   const organizer = ev.getFirstPropertyValue("organizer");
   // The user's RSVP note (events-tags.md) is the X-RESPONSE-COMMENT of the
   // user's own attendee line. A COMMENT on the event is the organizer's text
   // (edge case 5: someone else's note is ignored).
   const organizerSelf =
-    organizer === null || organizer === undefined || self.has(mailto(organizer));
+    organizer === null || organizer === undefined || self.all.has(mailto(organizer));
   return {
-    selfResponse,
-    rsvpNote: note,
+    selfResponse: own ? responseOf(own) : null,
+    rsvpNote: own ? String(own.getParameter("x-response-comment") ?? "") : "",
     responses,
     attendeeCount: attendees.length,
     attendees: attendees.map((a) => mailto(a.getFirstValue())).filter(Boolean),
     organizerSelf,
+    organizerEmail: mailto(organizer),
   };
 }
 
@@ -177,7 +195,7 @@ function baseEvent(
   comp: ICAL.Component,
   id: string,
   etag: string | null,
-  self: ReadonlySet<string>,
+  self: Self,
 ): Omit<ProviderEvent, "start" | "end" | "allDay"> {
   const str = (name: string) => {
     const v = comp.getFirstPropertyValue(name);
@@ -227,6 +245,11 @@ export function addressesIn(xml: string): string[] {
 /** The user's addresses of each CalDAV account, read once (server and user name as key). */
 const addressCache = new Map<string, Promise<string[]>>();
 
+/** Forgets every cached address set (tests). */
+export function forgetAddresses(): void {
+  addressCache.clear();
+}
+
 const PROPFIND_ACCESS =
   '<?xml version="1.0" encoding="utf-8"?><d:propfind xmlns:d="DAV:" xmlns:cs="http://calendarserver.org/ns/"><d:prop><d:displayname/><d:resourcetype/><d:current-user-privilege-set/><d:sync-token/><cs:getctag/></d:prop></d:propfind>';
 
@@ -264,10 +287,10 @@ export function eventsFromObject(
   from: number,
   to: number,
   zone: string,
-  /** The user's addresses (`mailto:` forms allowed, any case). */
-  selfAddresses: string | readonly string[],
+  /** The user's addresses, the account's own first (`mailto:` forms allowed, any case). */
+  selfAddresses: readonly string[],
 ): ProviderEvent[] {
-  const self = selfSet(selfAddresses);
+  const self = selfOf(selfAddresses);
   const root = new ICAL.Component(ICAL.parse(data));
   for (const tz of root.getAllSubcomponents("vtimezone")) {
     ICAL.TimezoneService.register(new ICAL.Timezone(tz));
@@ -878,7 +901,7 @@ export class CalDavProvider implements CalendarProvider {
       ev.removeAllProperties("dtstart");
       ev.addPropertyWithValue("dtstart", toUtcTime(change.start));
     }
-    const self = selfSet(addresses);
+    const self = selfOf(addresses);
     if (change.guests) {
       const { add, remove } = change.guests;
       const gone = new Set(remove.map((e) => e.toLowerCase()));
@@ -900,7 +923,7 @@ export class CalDavProvider implements CalendarProvider {
     // A new time asks the guests again (RFC 5546 3.2.2: a new SEQUENCE).
     if (retimed) {
       for (const a of ev.getAllProperties("attendee"))
-        if (!self.has(mailto(a.getFirstValue()))) a.removeParameter("partstat");
+        if (!self.all.has(mailto(a.getFirstValue()))) a.removeParameter("partstat");
       const sequence = Number(ev.getFirstPropertyValue("sequence") ?? 0);
       ev.removeAllProperties("sequence");
       ev.addPropertyWithValue("sequence", sequence + 1);
@@ -912,9 +935,8 @@ export class CalDavProvider implements CalendarProvider {
         declined: "DECLINED",
         tentative: "TENTATIVE",
       }[change.selfResponse];
-      for (const a of ev.getAllProperties("attendee")) {
-        if (self.has(mailto(a.getFirstValue()))) a.setParameter("partstat", partstat);
-      }
+      // One line only: a second address in the set may be a shared mailbox.
+      selfLine(ev, self)?.setParameter("partstat", partstat);
       // The note goes with the answer, as an iCalendar COMMENT of the user's copy.
       if (change.comment !== undefined) set("comment", change.comment);
     }

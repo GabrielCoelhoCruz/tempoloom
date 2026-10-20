@@ -16,7 +16,11 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { blocksPlanning } from "../../src/scheduler/blocking.ts";
 import type { ExternalEvent } from "../../src/scheduler/model.ts";
 import type { GoogleEvent } from "../../src/server/google/calendar.ts";
-import { CalDavProvider, eventsFromObject } from "../../src/server/providers/caldav.ts";
+import {
+  CalDavProvider,
+  eventsFromObject,
+  forgetAddresses,
+} from "../../src/server/providers/caldav.ts";
 import { fromGoogleEvent } from "../../src/server/providers/google.ts";
 import type { ProviderEvent } from "../../src/server/providers/types.ts";
 
@@ -80,6 +84,20 @@ describe("Google invitations", () => {
     expect(blocksPlanning(external(e))).toBe(true);
   });
 
+  it("the user's line with self: true decides when the user is listed twice", () => {
+    const e = fromGoogleEvent(
+      {
+        ...google({ email: "boss@example.com" }, "accepted"),
+        attendees: [
+          { email: ME, self: true, responseStatus: "accepted" },
+          { email: "me.alias@example.org", responseStatus: "needsAction" },
+        ],
+      },
+      "UTC",
+    );
+    expect(e.selfResponse).toBe("accepted");
+  });
+
   it("an organizer with self false is someone else", () => {
     const e = fromGoogleEvent(
       google({ email: "x@example.com", self: false }, "needsAction"),
@@ -135,6 +153,29 @@ describe("CalDAV invitations to another address of the user", () => {
     expect(blocksPlanning(external(e))).toBe(false);
   });
 
+  it("the account's own address decides when the user is listed twice", () => {
+    const e = read(
+      invitation("mailto:boss@example.com", [
+        `ATTENDEE;PARTSTAT=ACCEPTED;X-RESPONSE-COMMENT="Mine":mailto:${ME}`,
+        `ATTENDEE;PARTSTAT=NEEDS-ACTION;X-RESPONSE-COMMENT="Alias":mailto:${ALIAS}`,
+      ]),
+      [ME, ALIAS],
+    );
+    expect(e.selfResponse).toBe("accepted");
+    expect(e.rsvpNote).toBe("Mine");
+  });
+
+  it("without the account's address, the first line of another address decides", () => {
+    const e = read(
+      invitation("mailto:boss@example.com", [
+        `ATTENDEE;PARTSTAT=TENTATIVE:mailto:${ALIAS}`,
+        "ATTENDEE;PARTSTAT=NEEDS-ACTION:mailto:me.third@example.net",
+      ]),
+      [ME, ALIAS, "me.third@example.net"],
+    );
+    expect(e.selfResponse).toBe("tentative");
+  });
+
   it("a meeting the user organizes from another address is the user's", () => {
     const e = read(
       invitation(`MAILTO:${ALIAS.toUpperCase()}`, [
@@ -154,6 +195,15 @@ describe("CalDAV provider reads the principal's addresses", () => {
   let server: Server;
   let base = "";
   let addressReads = 0;
+  /** Status of the next address-set reads; 207 when empty. */
+  let addressStatus: number[] = [];
+  const startObject = () =>
+    invitation("mailto:boss@example.com", [
+      "ATTENDEE;PARTSTAT=ACCEPTED:mailto:boss@example.com",
+      `ATTENDEE;PARTSTAT=ACCEPTED:mailto:${ALIAS}`,
+    ]);
+  let stored = startObject();
+  let puts: string[] = [];
   let addressSet = `<C:calendar-user-address-set><D:href>mailto:${ME}</D:href><D:href>MAILTO:${ALIAS.toUpperCase()}</D:href><D:href>/principals/me/</D:href></C:calendar-user-address-set>`;
   const body = (req: IncomingMessage) =>
     new Promise<string>((resolve) => {
@@ -173,17 +223,22 @@ describe("CalDAV provider reads the principal's addresses", () => {
       const text = await body(req);
       const url = req.url ?? "/";
       res.setHeader("content-type", "application/xml; charset=utf-8");
+      if (req.method === "PUT") {
+        stored = text;
+        puts.push(text);
+        res.setHeader("etag", `"${puts.length + 1}"`);
+        res.statusCode = 204;
+        res.end();
+        return;
+      }
       if (req.method === "REPORT") {
-        const ics = invitation("mailto:boss@example.com", [
-          "ATTENDEE;PARTSTAT=ACCEPTED:mailto:boss@example.com",
-          `ATTENDEE;PARTSTAT=ACCEPTED:mailto:${ALIAS}`,
-        ]);
+        const ics = stored;
         res.statusCode = 207;
         res.end(
           ms(
             resp(
               "/cal/me/work/inv-1.ics",
-              `<D:getetag>"1"</D:getetag><C:calendar-data><![CDATA[${ics}]]></C:calendar-data>`,
+              `<D:getetag>"${puts.length + 1}"</D:getetag><C:calendar-data><![CDATA[${ics}]]></C:calendar-data>`,
             ),
           ),
         );
@@ -197,6 +252,12 @@ describe("CalDAV provider reads the principal's addresses", () => {
       res.statusCode = 207;
       if (/calendar-user-address-set/.test(text)) {
         addressReads++;
+        const status = addressStatus.shift() ?? 207;
+        if (status !== 207) {
+          res.statusCode = status;
+          res.end();
+          return;
+        }
         res.end(ms(resp(url, addressSet)));
       } else if (/calendar-home-set/.test(text)) {
         res.end(
@@ -227,10 +288,14 @@ describe("CalDAV provider reads the principal's addresses", () => {
   });
   afterAll(() => new Promise<void>((r) => server.close(() => r())));
   beforeEach(() => {
+    forgetAddresses();
     addressReads = 0;
+    addressStatus = [];
+    stored = startObject();
+    puts = [];
   });
 
-  const provider = (username: string) =>
+  const provider = (username = "u1") =>
     new CalDavProvider({ serverUrl: base, username, password: "pw", email: ME }, "UTC");
   const invite = async (p: CalDavProvider) => {
     const [cal] = await p.listCalendars();
@@ -241,16 +306,24 @@ describe("CalDAV provider reads the principal's addresses", () => {
     });
     return events[0] as ProviderEvent;
   };
+  /** PARTSTAT of the attendee line of `email` in a written object, or null. */
+  const partstat = (ics: string, email: string) => {
+    const line = ics
+      .replace(/\r\n[ \t]/g, "")
+      .split(/\r\n/)
+      .find((l) => /^ATTENDEE/i.test(l) && l.toLowerCase().endsWith(`:mailto:${email}`));
+    return line ? (/;PARTSTAT=([A-Z-]+)/i.exec(line)?.[1] ?? null) : null;
+  };
 
   it("an invitation accepted at another address of the user blocks time", async () => {
-    const e = await invite(provider("u1"));
+    const e = await invite(provider());
     expect(e.selfResponse).toBe("accepted");
     expect(blocksPlanning(external(e))).toBe(true);
   });
 
   it("reads the address set once per account", async () => {
-    await invite(provider("u2"));
-    await invite(provider("u2"));
+    await invite(provider());
+    await invite(provider());
     expect(addressReads).toBe(1);
   });
 
@@ -258,11 +331,59 @@ describe("CalDAV provider reads the principal's addresses", () => {
     const saved = addressSet;
     addressSet = "";
     try {
-      const e = await invite(provider("u3"));
+      const e = await invite(provider());
       // The invitation is to the alias the server did not name: no line of the user.
       expect(e.selfResponse).toBe(null);
     } finally {
       addressSet = saved;
     }
+  });
+
+  it("reads the address set again after a server error, and uses the email meanwhile", async () => {
+    addressStatus = [500];
+    expect((await invite(provider())).selfResponse).toBe(null);
+    expect((await invite(provider())).selfResponse).toBe("accepted");
+    expect(addressReads).toBe(2);
+    expect((await invite(provider())).selfResponse).toBe("accepted");
+    expect(addressReads).toBe(2);
+  });
+
+  it("an answer to an invitation at another address goes on that address's line", async () => {
+    const p = provider();
+    const e = await invite(p);
+    const [cal] = await p.listCalendars();
+    const back = await p.editExternal(cal?.id ?? "", e.id, { selfResponse: "declined" }, e.etag);
+    expect(puts).toHaveLength(1);
+    expect(partstat(puts[0] ?? "", ALIAS)).toBe("DECLINED");
+    expect(partstat(puts[0] ?? "", "boss@example.com")).toBe("ACCEPTED");
+    expect(back.selfResponse).toBe("declined");
+  });
+
+  it("an answer goes on one line only when the user is listed twice", async () => {
+    stored = invitation("mailto:boss@example.com", [
+      "ATTENDEE;PARTSTAT=ACCEPTED:mailto:boss@example.com",
+      `ATTENDEE;PARTSTAT=NEEDS-ACTION:mailto:${ALIAS}`,
+      `ATTENDEE;PARTSTAT=NEEDS-ACTION:mailto:${ME}`,
+    ]);
+    const p = provider();
+    const e = await invite(p);
+    const [cal] = await p.listCalendars();
+    await p.editExternal(cal?.id ?? "", e.id, { selfResponse: "accepted" }, e.etag);
+    expect(partstat(puts[0] ?? "", ME)).toBe("ACCEPTED");
+    expect(partstat(puts[0] ?? "", ALIAS)).toBe("NEEDS-ACTION");
+  });
+
+  it("a new time asks the guests again but keeps the answer on the user's alias line", async () => {
+    const p = provider();
+    const e = await invite(p);
+    const [cal] = await p.listCalendars();
+    await p.editExternal(
+      cal?.id ?? "",
+      e.id,
+      { start: e.start + 3_600_000, end: e.end + 3_600_000 },
+      e.etag,
+    );
+    expect(partstat(puts[0] ?? "", ALIAS)).toBe("ACCEPTED");
+    expect(partstat(puts[0] ?? "", "boss@example.com")).toBe(null);
   });
 });

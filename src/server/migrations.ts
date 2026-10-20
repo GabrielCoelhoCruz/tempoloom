@@ -1258,4 +1258,14 @@ export const MIGRATIONS: readonly string[] = [
   ALTER TABLE oauth_tokens ADD COLUMN used_at INTEGER;
   ALTER TABLE oauth_states ADD COLUMN return_to TEXT;
   `,
+  // 40 (39 on main is the task start mode): the organizer's email, so
+  // auto-decline skips the user's own meetings on other calendars (focus-time.md
+  // rule 23). Google events read before stored organizer_self = 1 for every
+  // event, and CalDAV events missed the user's other addresses (SCH-21): each
+  // calendar is read in full once. A second clear of the sync tokens (for
+  // example migration 36 of another change) only adds one more full read.
+  `
+  ALTER TABLE events ADD COLUMN organizer_email TEXT NOT NULL DEFAULT '';
+  UPDATE calendars SET sync_token = NULL;
+  `,
 ];
