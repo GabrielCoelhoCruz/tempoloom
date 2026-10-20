@@ -21,6 +21,7 @@ import {
 } from "../planner/write.ts";
 import { getSettings } from "../settings.ts";
 import type { SyncService } from "../sync/service.ts";
+import { markTaskDone } from "../task-order.ts";
 import { planningZone } from "../travel.ts";
 
 type Kind = "task" | "habit";
@@ -149,13 +150,7 @@ export function taskTimeRoutes(
     };
     await writeLocked(db, sync, user.id, body.calendarId, [event]);
     run(db, "DELETE FROM item_timers WHERE user_id = ?", user.id);
-    if (body.markDone && t.kind === "task")
-      run(
-        db,
-        "UPDATE tasks SET status = 'done', rules_changed_at = ? WHERE id = ?",
-        now(),
-        t.item_id,
-      );
+    if (body.markDone && t.kind === "task") markTaskDone(db, t.item_id, now());
     sync.request(user.id, 0);
     return c.json({ ok: true });
   });
