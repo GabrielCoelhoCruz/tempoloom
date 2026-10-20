@@ -1454,13 +1454,17 @@ function setStatus(ctx: Ctx): void {
       byTask.set(p.itemId, list);
     }
   }
+  // DEF-12, CED-12: a chunk after the due date, locked ones too, makes all chunks busy.
+  const late = new Set(
+    ctx.placements.filter((p) => p.kind === "task" && p.afterDue).map((p) => p.itemId),
+  );
   for (const [id, chunks] of byTask) {
     const t = tasks.get(id);
     const seen = ctx.taskSeen.get(id);
     if (!t || !seen) continue;
     const due = t.dueAt;
     if (due === null) continue;
-    if (chunks.some((c) => c.afterDue)) {
+    if (late.has(id)) {
       for (const c of chunks) c.busy = true;
       continue;
     }

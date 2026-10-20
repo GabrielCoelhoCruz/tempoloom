@@ -19,6 +19,7 @@ import { jsonBody, notFound } from "../http.ts";
 import { createItemHours, dropItemHours, itemHoursSchema, saveItemHours } from "../item-hours.ts";
 import { automationCount, limitRefusal } from "../limits.ts";
 import type { SyncService } from "../sync/service.ts";
+import { markTaskDone, taskOrderChanged } from "../task-order.ts";
 import { createTask, deleteTask } from "../tasks.ts";
 
 const level = z.number().int().min(1).max(4);
@@ -348,6 +349,7 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
     const dueAt = body.dueAt === undefined ? task.due_at : body.dueAt;
     if (dueAt !== null && dueAt <= startAfter)
       badRequest("dueAt", "Due date must be after the start date");
+    taskOrderChanged(db, user.id, task.id, (body.level ?? task.level) > task.level, now());
     run(
       db,
       `UPDATE tasks SET title = ?, notes = ?, level = ?, total_minutes = ?, min_chunk_minutes = ?, max_chunk_minutes = ?,
@@ -374,7 +376,7 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
     const user = c.get("user");
     const id = c.req.param("id");
     if (!one(db, "SELECT 1 FROM tasks WHERE id = ? AND user_id = ?", id, user.id)) notFound("task");
-    run(db, "UPDATE tasks SET status = 'done', rules_changed_at = ? WHERE id = ?", now(), id);
+    markTaskDone(db, id, now());
     changed(user.id);
     return c.json({ ok: true });
   });

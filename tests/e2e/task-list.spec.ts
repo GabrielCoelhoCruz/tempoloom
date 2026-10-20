@@ -30,9 +30,10 @@ import { addTask, allEvents, inHours, MIN, openWeek, titled, W } from "./helpers
 
 const day = (n: number) => addDays(W, n);
 const row = (page: Page, title: string) => page.locator(`[data-task-title="${title}"]`);
+// The rows in page order: the next-up queue area (NXT-5), then the task list.
 const listed = (page: Page) =>
   page
-    .getByTestId("task-list")
+    .getByTestId("tasks-page")
     .locator("[data-task-title]")
     .evaluateAll((els) => els.map((e) => e.getAttribute("data-task-title")));
 
@@ -54,6 +55,7 @@ test("the task list filters by state, hours set, due date and start date, and so
   await signIn();
   // Due date order: FA, FB, FE, FC (no due date: oldest first). Priority: FB, FC, FA, FE.
   // Scheduling order (next up first, then level): FC, FB, FA, FE.
+  // FC is next up, so it shows first, in the next-up queue area, in each sort.
   await addTask(page, { title: "FA", minutes: 60, split: false, level: 3, due: `${day(1)}T17:00` });
   await page.goto("/tasks");
   await addTask(page, {
@@ -89,9 +91,9 @@ test("the task list filters by state, hours set, due date and start date, and so
   expect(titled(evs, "FE")).toHaveLength(0);
 
   const filters = page.getByTestId("task-filters");
-  await expect.poll(() => listed(page)).toEqual(["FA", "FB", "FE", "FC"]);
+  await expect.poll(() => listed(page)).toEqual(["FC", "FA", "FB", "FE"]);
   await filters.getByLabel("Sort").selectOption({ label: "Priority" });
-  await expect.poll(() => listed(page)).toEqual(["FB", "FC", "FA", "FE"]);
+  await expect.poll(() => listed(page)).toEqual(["FC", "FB", "FA", "FE"]);
   await filters.getByLabel("Sort").selectOption({ label: "Scheduling order" });
   await expect.poll(() => listed(page)).toEqual(["FC", "FB", "FA", "FE"]);
 

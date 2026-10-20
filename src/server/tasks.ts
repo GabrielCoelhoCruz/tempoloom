@@ -6,6 +6,7 @@ import { badRequest, hoursSetId, type TaskInput } from "./api/items.ts";
 import { all, type Db, one, run, tx } from "./db.ts";
 import { getSettings } from "./settings.ts";
 import type { SyncService } from "./sync/service.ts";
+import { lastQueueRank } from "./task-order.ts";
 
 /**
  * Creates a task, every empty field from the user task defaults at this time
@@ -49,14 +50,7 @@ export function createTask(
       ? d.hoursSetId
       : undefined;
   const hours = hoursSetId(db, user.id, body.hoursSetId ?? defaultSet, "work");
-  const rank =
-    (body.nextUp ?? d.nextUp)
-      ? (one<{ r: number | null }>(
-          db,
-          "SELECT MAX(next_up_rank) AS r FROM tasks WHERE user_id = ?",
-          user.id,
-        )?.r ?? -1) + 1
-      : null;
+  const rank = (body.nextUp ?? d.nextUp) ? lastQueueRank(db, user.id) + 1 : null;
   run(
     db,
     `INSERT INTO tasks (id, user_id, title, notes, level, total_minutes, min_chunk_minutes, max_chunk_minutes,

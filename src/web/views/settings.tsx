@@ -14,6 +14,7 @@ import { FocusOptionsList, MeetingOverloadSection } from "./focus-options.tsx";
 import { MeetingSettings } from "./meeting-settings.tsx";
 import {
   AlertSettings,
+  AutoLockSettings,
   DeleteHoursSet,
   FocusNotes,
   HoursZoneNote,
@@ -381,6 +382,7 @@ export function Settings() {
       </section>
 
       <TaskDefaults settings={settings} hours={hours} act={act} />
+      <AutoLockSettings settings={settings} act={act} />
 
       <AlertSettings settings={settings} act={act} />
 

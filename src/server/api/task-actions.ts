@@ -9,6 +9,7 @@ import { jsonBody, notFound } from "../http.ts";
 import { getSettings } from "../settings.ts";
 import { SNOOZE_CHOICES, snoozeUntil } from "../snooze.ts";
 import type { SyncService } from "../sync/service.ts";
+import { markTaskDone, taskOrderChanged } from "../task-order.ts";
 import { deleteTask } from "../tasks.ts";
 import { planningZone } from "../travel.ts";
 import { badRequest, type TaskRow } from "./items.ts";
@@ -58,21 +59,33 @@ export function taskActionRoutes(db: Db, sync: SyncService, now: () => number): 
         if (dueAt !== null && dueAt <= startAfter)
           badRequest("dueAt", `Due date must be after the start date (${task.title})`);
       }
+    const t = now();
+    if (ch.action === "done") {
+      // TSK-40 and NXT-11: a done task leaves the next-up queue.
+      tx(db, () => {
+        for (const task of rows) markTaskDone(db, task.id, t);
+      });
+      sync.request(user.id);
+      return c.json({ ok: true, count: rows.length });
+    }
     const [column, value] =
       ch.action === "level"
         ? ["level", ch.level]
         : ch.action === "start"
           ? ["start_after", ch.startAfter]
-          : ch.action === "due"
-            ? ["due_at", ch.dueAt]
-            : ["status", "done"];
-    run(
-      db,
-      `UPDATE tasks SET ${column} = ?, rules_changed_at = ? WHERE id IN (${rows.map(() => "?").join(", ")})`,
-      value,
-      now(),
-      ...rows.map((t) => t.id),
-    );
+          : ["due_at", ch.dueAt];
+    tx(db, () => {
+      // PRI-50: a level change is a task order change.
+      if (ch.action === "level")
+        for (const task of rows) taskOrderChanged(db, user.id, task.id, ch.level > task.level, t);
+      run(
+        db,
+        `UPDATE tasks SET ${column} = ?, rules_changed_at = ? WHERE id IN (${rows.map(() => "?").join(", ")})`,
+        value,
+        t,
+        ...rows.map((r) => r.id),
+      );
+    });
     sync.request(user.id);
     return c.json({ ok: true, count: rows.length });
   });

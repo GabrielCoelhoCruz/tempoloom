@@ -1,9 +1,11 @@
 // Converts a Playwright JSON report of the Google Calendar E2E run into
-// docs/e2e-google-run.tsv: one line per test with its status, test id
+// docs/e2e-google-run.tsv: a first line "# commit <sha>" with the full commit
+// the run tested, then one line per test with its status, test id
 // (tests/e2e/<file>:<line>) and title, sorted by file name (punctuation ignored),
-// then line.
+// then line. scripts/build-parity.py compares each passed test with its source at
+// that commit.
 //
-//   node scripts/google-run-tsv.ts <report.json> > docs/e2e-google-run.tsv
+//   node scripts/google-run-tsv.ts <report.json> <commit> > docs/e2e-google-run.tsv
 //
 // The status is the status of the test's last result (passed, skipped, failed,
 // timedOut or interrupted). A test with no result did not run (the run stopped
@@ -15,9 +17,9 @@ type Result = { status: string };
 type Spec = { title: string; line: number; tests: { results: Result[] }[] };
 type Suite = { title: string; file: string; specs?: Spec[]; suites?: Suite[] };
 
-const path = process.argv[2];
-if (!path) {
-  console.error("usage: node scripts/google-run-tsv.ts <playwright-report.json>");
+const [path, commit] = process.argv.slice(2);
+if (!path || !commit || !/^[0-9a-f]{40}$/.test(commit)) {
+  console.error("usage: node scripts/google-run-tsv.ts <playwright-report.json> <full commit sha>");
   process.exit(2);
 }
 const report = JSON.parse(readFileSync(path, "utf8")) as { suites: Suite[] };
@@ -45,5 +47,6 @@ for (const row of rows) {
     throw new Error(`a tab or newline in the title of ${row.file}:${row.line}`);
 }
 process.stdout.write(
-  rows.map((r) => `${r.status}\ttests/e2e/${r.file}:${r.line}\t${r.title}\n`).join(""),
+  `# commit ${commit}\n` +
+    rows.map((r) => `${r.status}\ttests/e2e/${r.file}:${r.line}\t${r.title}\n`).join(""),
 );

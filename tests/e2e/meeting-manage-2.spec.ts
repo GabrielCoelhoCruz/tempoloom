@@ -32,8 +32,13 @@ import {
   test,
 } from "./fixtures.ts";
 import { openWeek, titled, W } from "./helpers.ts";
-import { allDayBusy, credentials } from "./ics.ts";
-import { addMeeting as fillMeeting, type MeetingForm, putMeeting } from "./meeting-helpers.ts";
+import { allDayBusy } from "./ics.ts";
+import {
+  editRaw,
+  addMeeting as fillMeeting,
+  type MeetingForm,
+  putMeeting,
+} from "./meeting-helpers.ts";
 
 test.skip(BACKEND === "google", "Meeting E2E writes raw iCalendar objects to CalDAV.");
 
@@ -55,22 +60,6 @@ async function addMeeting(
   if (m.notice !== undefined) await form.getByLabel("Move notice (hours)").fill(String(m.notice));
   if (m.noTime) await form.getByLabel("When there is no time").selectOption({ label: m.noTime });
   await fillMeeting(page, m);
-}
-
-/** Replaces lines of a stored event, as another calendar app edits it. */
-async function editRaw(calendarUrl: string, id: string, edit: (lines: string[]) => string[]) {
-  const url = id.split("#")[0] ?? id;
-  const auth = { authorization: credentials(calendarUrl) };
-  const res = await fetch(url, { headers: auth });
-  if (!res.ok) throw new Error(`GET ${url} failed: ${res.status}`);
-  const etag = res.headers.get("etag");
-  const lines = edit((await res.text()).replace(/\r?\n[ \t]/g, "").split(/\r?\n/));
-  const put = await fetch(url, {
-    method: "PUT",
-    headers: { ...auth, "content-type": "text/calendar", ...(etag ? { "if-match": etag } : {}) },
-    body: lines.join("\r\n"),
-  });
-  if (!put.ok) throw new Error(`PUT ${url} failed: ${put.status}`);
 }
 
 test("the move notice: an automatic move never starts sooner than the notice after the move, and a meeting with notice 0 takes the nearest time (MEET-02 rule 8)", async ({

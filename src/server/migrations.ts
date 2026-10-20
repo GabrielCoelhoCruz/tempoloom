@@ -1195,7 +1195,25 @@ export const MIGRATIONS: readonly string[] = [
   -- The attendees' meeting hours and time zones the last plan used (rule 11).
   ALTER TABLE meetings ADD COLUMN attendee_hours TEXT NOT NULL DEFAULT '';
   `,
-  // 34: task visibility (planning-event-content.md CNT-20, CNT-24) and the scheduling order.
+  // 34: the visibility of Tempoloom's own events as the calendar has it, so a
+  // privacy edit of a meeting occurrence is written back (MEET-02 rule 22).
+  // Other events keep NULL. NULL also means "not read since this migration":
+  // no write-back until the next read of that event, so no burst of writes.
+  `
+  ALTER TABLE events ADD COLUMN own_visibility TEXT
+    CHECK (own_visibility IN ('default', 'public', 'private', 'confidential'));
+  `,
+  // 35: the last auto-lock run per item kind (planning-locks.md LCK-30, LCK-32):
+  // the day or week it locked, so it runs once per period.
+  `
+  CREATE TABLE auto_lock_runs (
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,
+    period TEXT NOT NULL,
+    PRIMARY KEY (user_id, kind)
+  ) STRICT;
+  `,
+  // 36: task visibility (planning-event-content.md CNT-20, CNT-24) and the scheduling order.
   `
   ALTER TABLE tasks ADD COLUMN visibility TEXT NOT NULL DEFAULT 'calendar_default'
     CHECK (visibility IN ('calendar_default', 'private'));

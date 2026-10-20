@@ -70,6 +70,7 @@ const lite = (t: OpenTask) => ({
   level: t.level,
   dueAt: t.due_at,
   remainingMinutes: t.remaining,
+  nextUp: t.next_up_rank !== null,
 });
 export type TaskLite = ReturnType<typeof lite>;
 
