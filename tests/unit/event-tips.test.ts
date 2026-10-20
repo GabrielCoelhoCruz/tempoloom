@@ -255,8 +255,9 @@ describe("the now line (PLN-6, PLN-7)", () => {
 });
 
 describe("the CalDAV server's scheduling (RFC 6638)", () => {
-  async function server(dav: string) {
+  async function server(dav: string, statuses: number[] = []) {
     const srv = createServer((req, res) => {
+      res.statusCode = statuses.shift() ?? 200;
       res.setHeader("DAV", dav);
       res.end(req.method);
     });
@@ -272,6 +273,15 @@ describe("the CalDAV server's scheduling (RFC 6638)", () => {
   it("mails guests when the server has calendar-auto-schedule", async () => {
     const s = await server("1, 2, 3, calendar-access, calendar-auto-schedule");
     expect(await s.notifies()).toBe(true);
+    s.close();
+  });
+
+  it("counts an error answer (405, 500) as mailing guests, and asks again later", async () => {
+    const s = await server("1, 2, 3, calendar-access", [405, 500]);
+    expect(await s.notifies()).toBe(true);
+    expect(await s.notifies()).toBe(true);
+    // Only a definite answer is kept: the next 200 without scheduling counts.
+    expect(await s.notifies()).toBe(false);
     s.close();
   });
 

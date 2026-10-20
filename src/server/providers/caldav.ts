@@ -375,7 +375,7 @@ export class CalDavProvider implements CalendarProvider {
   #calendars = new Map<string, DAVCalendar>();
   /** Write access of each listed calendar, when the server reports it. */
   #access = new Map<string, "write" | "read" | "none">();
-  /** Whether the server mails guests (calendar-auto-schedule), read once. */
+  /** Whether the server mails guests (calendar-auto-schedule), kept once definite. */
   #scheduling: Promise<boolean> | undefined;
 
   constructor(creds: CalDavCredentials, zone: string, now: () => number = Date.now) {
@@ -721,18 +721,32 @@ export class CalDavProvider implements CalendarProvider {
 
   /**
    * A server that has calendar-auto-schedule in its DAV header (RFC 6638)
-   * mails the guests on each change of an event with attendees.
+   * mails the guests on each change of an event with attendees. An error
+   * answer or a network error counts as yes and is not kept, so a later call
+   * asks again; only a definite answer is kept.
    */
   notifiesGuests(calendarId: string): Promise<boolean> {
-    this.#scheduling ??= fetch(calendarId, {
+    if (this.#scheduling) return this.#scheduling;
+    const ask = fetch(calendarId, {
       method: "OPTIONS",
       headers: {
         authorization: `Basic ${Buffer.from(`${this.#creds.username}:${this.#creds.password}`).toString("base64")}`,
       },
-    })
-      .then((res) => /\bcalendar-auto-schedule\b/i.test(res.headers.get("dav") ?? ""))
-      .catch(() => true);
-    return this.#scheduling;
+    }).then(
+      (res) => {
+        if (!res.ok) {
+          this.#scheduling = undefined;
+          return true;
+        }
+        return /\bcalendar-auto-schedule\b/i.test(res.headers.get("dav") ?? "");
+      },
+      () => {
+        this.#scheduling = undefined;
+        return true;
+      },
+    );
+    this.#scheduling = ask;
+    return ask;
   }
 
   async editExternal(
