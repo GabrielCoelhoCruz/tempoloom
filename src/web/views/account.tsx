@@ -99,25 +99,25 @@ function ResetSteps() {
       </p>
       <ol>
         <li>
-          Turn off each calendar mirroring policy in <Go href="/settings">Settings</Go>.
+          Turn off each calendar mirroring policy in the <Go href="/settings">mirroring setup</Go>.
         </li>
         <li>
-          Turn off each habit on the <Go href="/habits">Habits</Go> page.
+          Turn off each habit on the <Go href="/habits">habit list</Go>.
         </li>
         <li>
-          Delete open tasks or mark them done on the <Go href="/tasks">Tasks</Go> page; their future
+          Delete open tasks or mark them done on the <Go href="/tasks">task list</Go>; their future
           chunks go away.
         </li>
         <li>Turn off task integrations: delete the API keys that other tools use, above.</li>
         <li>
-          Turn off flexible meetings you own on the <Go href="/meetings">Meetings</Go> page; decline
+          Turn off flexible meetings you own on the <Go href="/meetings">meeting list</Go>; decline
           those you attend.
         </li>
         <li>
-          Turn off recovery and travel buffers in <Go href="/settings">Settings</Go>.
+          Turn off recovery and travel buffers in the <Go href="/settings">buffer setup</Go>.
         </li>
         <li>
-          Turn off focus time in <Go href="/settings">Settings</Go>.
+          Turn off focus time in the <Go href="/settings">focus time setup</Go>.
         </li>
       </ol>
     </Section>
