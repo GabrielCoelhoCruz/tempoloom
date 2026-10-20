@@ -853,6 +853,9 @@ T.update({
     "u7_reminder_loc": "the reminder names the location the booker chose, not the link's default",
     "u7_cc_mail": "CC guests get the booked, rescheduled and cancelled emails with the chosen location and without the booker's links; an organizer in CC gets no second copy",
     "u25_privacy": "privacy and free/busy edits in the calendar are written back from the meeting's event settings; the organizer's description, location, color, note and guest edits are kept",
+    "u25_move": "an automatic move, a lock and an unlock after the organizer's edits write only Tempoloom's own fields: the description, location, color, note and added guest stay",
+    "u25_description": "a description edit alone in the calendar is kept with no lock and no write; lock and unlock keep it, and a later description edit in the form reaches every occurrence",
+    "u25_settings": "a visibility change and a guest removal in the meeting settings write only those fields: the organizer's description, location, color, note and added guest stay",
     "u7_delete_series": "delete on rules attached to an existing series offers no cancel email: the series stays on the calendar and the guests get nothing",
 })
 E2E.update({
@@ -882,7 +885,7 @@ E2E_NOTES.update({
 })
 PARTIAL.update({
     364: "A resize of one occurrence in the calendar is kept and locks it, with full UI E2E on CalDAV (\u201c" + T["u7_manual"] + "\u201d). A resize of the following or all occurrences is not built: that scope is a choice of a recurring-series edit, and Tempoloom writes each occurrence as its own event (row 320), so no calendar offers the scope on its events",
-    368: "Edits of title, time and length, description, location, color, note and guests are kept, and privacy (CLASS) and free/busy are written back from the meeting's event settings, with full UI E2E on CalDAV (\u201c" + T["u7_manual"] + "\u201d; \u201c" + T["u25_privacy"] + "\u201d). Not built: recurrence edits and the scope choice (one, following or all occurrences), because Tempoloom writes each occurrence as its own event, not as one recurring series (row 320)",
+    368: "Full UI E2E on CalDAV proves: a title edit and a resize are kept and lock the occurrence (\u201c" + T["u7_manual"] + "\u201d); privacy (CLASS) and free/busy edits are written back from the meeting's event settings, and the organizer's edits of description, location, color (COLOR), note (COMMENT) and an added guest stay through that write-back (\u201c" + T["u25_privacy"] + "\u201d), through an automatic move, a lock and an unlock (\u201c" + T["u25_move"] + "\u201d), and through a visibility change and a guest removal in the meeting settings (\u201c" + T["u25_settings"] + "\u201d); a description edit alone does not lock and gets no write, and a later description edit in the form replaces it on every following occurrence (rule 23; \u201c" + T["u25_description"] + "\u201d). Tempoloom writes only the fields it changed, through the provider's patch call, also on Google and on instances of an adopted series; these two have no E2E here. Not tested: a guest removed by the organizer. Not built: recurrence edits and the scope choice (one, following or all occurrences), because Tempoloom writes each occurrence as its own event, not as one recurring series (row 320)",
 })
 BLOCKED.update({
     392: "Meet, Zoom and Gong options need the vendors' developer apps and test accounts (integrations-video-conferencing.md). The other options have full UI E2E on CalDAV: address, phone and other (text or URL), with a default and the booker's choice (\u201c" + T["u7_locations"] + "\u201d)",

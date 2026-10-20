@@ -12,6 +12,9 @@ export interface ProviderCalendar {
 
 export type ResponseStatus = "needsAction" | "declined" | "tentative" | "accepted";
 
+/** Who sees an event's details: CalDAV CLASS, or Google visibility. */
+export type Visibility = "default" | "public" | "private";
+
 export interface ProviderEvent {
   id: string;
   cancelled: boolean;
@@ -44,7 +47,7 @@ export interface ProviderEvent {
   /** The event alerts: a VALARM, or Google reminders. Mirroring copies never do. */
   alerts?: boolean;
   /** The event privacy: CalDAV CLASS, or Google visibility. */
-  visibility?: "default" | "public" | "private" | "confidential";
+  visibility: Visibility | "confidential";
 }
 
 export interface EventWrite {
@@ -72,7 +75,7 @@ export interface EventWrite {
    */
   reminders?: { useDefault: true } | { minutes: number[] };
   /** Who sees the details (planning-event-content.md CNT-24). Missing: the calendar's default. */
-  visibility?: "default" | "public" | "private";
+  visibility?: Visibility;
 }
 
 /** A change to an event someone else may organize; every other field stays as it is. */
@@ -89,8 +92,17 @@ export interface ExternalChange {
   end?: number;
   /** A new start, for an event the user organizes (preview mode apply). */
   start?: number;
-  /** Privacy written back on a meeting occurrence (MEET-02 rule 22). */
-  visibility?: "default" | "public" | "private";
+  /**
+   * The fields below change only what Tempoloom owns on a meeting occurrence,
+   * so the organizer's other edits stay (meetings-flexible-rescheduling.md rule 22).
+   */
+  visibility?: Visibility;
+  location?: string;
+  colorId?: string | null;
+  /** Replaces the event's alerts; `{ minutes: [] }` removes them. */
+  reminders?: NonNullable<EventWrite["reminders"]>;
+  /** Guests to add (or to change between required and optional) and guests to remove. */
+  guests?: { add: { email: string; optional: boolean }[]; remove: string[] };
 }
 
 export interface EventChanges {
@@ -149,9 +161,10 @@ export interface CalendarProvider {
     etag: string | null,
   ): Promise<ProviderEvent>;
   /**
-   * Changes the title, the user's answer, the description or the end of one event
-   * (teams-policies.md rules 15-17). With an etag, fails with precondition_failed
-   * if the event changed.
+   * Changes only the given fields of one event, also of one instance of a
+   * series (teams-policies.md rules 15-17; meetings-flexible-rescheduling.md
+   * rule 22). A new time asks the guests again. With an etag, fails with
+   * precondition_failed if the event changed.
    */
   editExternal(
     calendarId: string,

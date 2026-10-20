@@ -158,9 +158,9 @@ export function cacheEvent(db: Db, calendarId: string, e: ProviderEvent): void {
   if (e.privateProps.tl === "1")
     run(
       db,
-      "UPDATE events SET alerts = ?, visibility = ? WHERE calendar_id = ? AND event_id = ?",
+      "UPDATE events SET alerts = ?, own_visibility = ? WHERE calendar_id = ? AND event_id = ?",
       e.alerts ? 1 : 0,
-      e.visibility ?? "default",
+      e.visibility,
       calendarId,
       e.id,
     );
