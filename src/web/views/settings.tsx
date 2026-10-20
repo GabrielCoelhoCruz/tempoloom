@@ -21,6 +21,7 @@ import {
   PlacementSetting,
   TravelSettings,
 } from "./settings-extra.tsx";
+import { TaskDefaults } from "./task-defaults.tsx";
 import { WeeklyReportSetting } from "./weekly-report-setting.tsx";
 
 interface HoursSet {
@@ -380,6 +381,7 @@ export function Settings() {
         </div>
       </section>
 
+      <TaskDefaults settings={settings} hours={hours} act={act} />
       <AutoLockSettings settings={settings} act={act} />
 
       <AlertSettings settings={settings} act={act} />

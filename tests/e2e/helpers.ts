@@ -45,6 +45,7 @@ export interface TaskForm {
   hours?: string;
   nextUp?: boolean;
   notes?: string;
+  visibility?: "Calendar default" | "Private";
 }
 
 /** Fills and submits the task form. Dates are "YYYY-MM-DDTHH:MM" in the user's zone. */
@@ -62,6 +63,7 @@ export async function addTask(page: Page, t: TaskForm): Promise<void> {
   if (t.max) await form.getByLabel("Longest chunk").fill(String(t.max));
   if (t.nextUp) await form.getByLabel(/Next up/).check();
   if (t.notes) await form.getByLabel("Notes").fill(t.notes);
+  if (t.visibility) await form.getByLabel("Visibility").selectOption({ label: t.visibility });
   await expect(form.getByLabel("Title")).toHaveValue(t.title);
   // Wait for the save and for the plan run the form starts after it: callers
   // read the calendar next, so addTask returns only when the new task is

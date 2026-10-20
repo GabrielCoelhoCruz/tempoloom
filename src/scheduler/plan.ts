@@ -1535,6 +1535,11 @@ const KIND_ORDER = { meeting: 0, buffer: 1, habit: 2 } as const;
 export function plan(s: Snapshot): Plan {
   const ctx = init(s);
   const effective = new Map(s.tasks.map((t) => [t.id, effectiveLevel(ctx, t)]));
+  const taskOrder: string[] = [];
+  const takeTask = (t: TaskItem) => {
+    taskOrder.push(t.id);
+    placeTask(ctx, t);
+  };
   for (const level of LEVELS) {
     const autos: Automation[] = [
       ...s.meetings
@@ -1562,12 +1567,12 @@ export function plan(s: Snapshot): Plan {
       const queue = s.tasks
         .filter((t) => t.nextUpRank !== null)
         .sort((a, b) => (a.nextUpRank ?? 0) - (b.nextUpRank ?? 0) || taskKey(a, b));
-      for (const t of queue) placeTask(ctx, t);
+      for (const t of queue) takeTask(t);
     }
     const band = s.tasks
       .filter((t) => t.nextUpRank === null && effective.get(t.id) === level)
       .sort(taskKey);
-    for (const t of band) placeTask(ctx, t);
+    for (const t of band) takeTask(t);
   }
   // Both focus automations come after every other item, in their P4 rank order;
   // at one rank the meeting overload goes first (focus edge case 5).
@@ -1593,5 +1598,6 @@ export function plan(s: Snapshot): Plan {
         a.itemId.localeCompare(b.itemId) ||
         a.demandKey.localeCompare(b.demandKey),
     ),
+    taskOrder,
   };
 }

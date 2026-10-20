@@ -49,6 +49,7 @@ import { scimRoutes } from "./api/scim.ts";
 import { settingsRoutes } from "./api/settings.ts";
 import { ssoAdminRoutes, ssoAuthRoutes } from "./api/sso.ts";
 import { statsRoutes } from "./api/stats.ts";
+import { taskActionRoutes } from "./api/task-actions.ts";
 import { taskSearchRoutes } from "./api/task-searches.ts";
 import { taskTimeRoutes } from "./api/task-time.ts";
 import { publicInviteRoutes, teamRoutes } from "./api/team.ts";
@@ -445,6 +446,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
 
   app.route("/api", settingsRoutes(db, sync, now));
   app.route("/api", itemRoutes(db, sync, now));
+  app.route("/api", taskActionRoutes(db, sync, now));
   app.route("/api", meetingRoutes(db, sync, now, deps.mailer));
   app.route("/api/planner", plannerRoutes(db, sync, now));
   app.route("/api/booking", bookingRoutes(db, now, config.ONEOFF_LINK_DAYS));

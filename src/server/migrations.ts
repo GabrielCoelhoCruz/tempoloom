@@ -1213,4 +1213,11 @@ export const MIGRATIONS: readonly string[] = [
     PRIMARY KEY (user_id, kind)
   ) STRICT;
   `,
+  // 36: task visibility (planning-event-content.md CNT-20, CNT-24) and the scheduling order.
+  `
+  ALTER TABLE tasks ADD COLUMN visibility TEXT NOT NULL DEFAULT 'calendar_default'
+    CHECK (visibility IN ('calendar_default', 'private'));
+  -- The task ids in the order the last plan processed them (planning-tasks.md TSK-61).
+  ALTER TABLE plan_reports ADD COLUMN task_order TEXT NOT NULL DEFAULT '[]';
+  `,
 ];

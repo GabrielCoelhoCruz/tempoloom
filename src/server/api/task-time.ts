@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import { Hono } from "hono";
 import { z } from "zod";
 import { plan } from "../../scheduler/plan.ts";
-import { MINUTE } from "../../shared/time.ts";
+import { addLocalDays, MINUTE } from "../../shared/time.ts";
 import type { AppEnv } from "../app.ts";
 import { type Db, one, run } from "../db.ts";
 import { jsonBody, notFound } from "../http.ts";
@@ -14,7 +14,6 @@ import { openTasks } from "../planner/now.ts";
 import { eventDescription, loadSnapshot, writeCalendar } from "../planner/replan.ts";
 import {
   type LockedEvent,
-  nextChunkIndex,
   writableCalendar,
   writableCalendars,
   writeLocked,
@@ -22,6 +21,7 @@ import {
 import { getSettings } from "../settings.ts";
 import type { SyncService } from "../sync/service.ts";
 import { markTaskDone } from "../task-order.ts";
+import { createTask } from "../tasks.ts";
 import { planningZone } from "../travel.ts";
 
 type Kind = "task" | "habit";
@@ -187,6 +187,69 @@ export function taskTimeRoutes(
     return c.json({ title: task.title, blocks });
   });
 
+  /** TSK-7: a task from a range selected in the planner, with one locked chunk there. */
+  r.post("/tasks/at", async (c) => {
+    const user = c.get("user");
+    const body = await jsonBody(
+      c,
+      z.object({
+        title: z.string().trim().min(1).max(255),
+        start: z.number().int(),
+        end: z.number().int(),
+      }),
+    );
+    const t = now();
+    const minutes = (body.end - body.start) / MINUTE;
+    if (
+      body.start < t ||
+      !Number.isInteger(minutes) ||
+      minutes < 15 ||
+      minutes % 15 !== 0 ||
+      minutes > 24 * 60
+    )
+      return c.json(
+        { error: "invalid_range", message: "Select a future time range in steps of 15 minutes." },
+        400,
+      );
+    const d = getSettings(db, user.id).taskDefaults;
+    // The default due date, but never before the chunk ends.
+    const dueAt =
+      d.dueInDays === null
+        ? null
+        : Math.max(addLocalDays(t, d.dueInDays, user.time_zone), body.end);
+    const id = createTask(
+      db,
+      user,
+      { title: body.title, minutes, splitUp: false, startAfter: body.start, dueAt },
+      t,
+    );
+    const it = item(user.id, "task", id) as Item;
+    const calendarId = defaultCalendar(user.id, "task", it);
+    try {
+      if (!calendarId) notFound("calendar");
+      const settings = getSettings(db, user.id);
+      await writeLocked(db, sync, user.id, calendarId, [
+        {
+          kind: "task",
+          sourceId: id,
+          start: body.start,
+          end: body.end,
+          title: eventTitle(settings.markers, {
+            state: placementState("task", LOCKED),
+            title: it.title,
+          }),
+          description: eventDescription(it.notes, baseUrl, "task", id),
+          ...(d.visibility === "private" ? { visibility: "private" as const } : {}),
+        },
+      ]);
+    } catch (err) {
+      run(db, "DELETE FROM tasks WHERE id = ?", id);
+      throw err;
+    }
+    sync.request(user.id);
+    return c.json({ task: one(db, "SELECT * FROM tasks WHERE id = ?", id) }, 201);
+  });
+
   r.post("/tasks/:id/blocks", async (c) => {
     const user = c.get("user");
     const id = c.req.param("id");
@@ -208,14 +271,12 @@ export function taskTimeRoutes(
     const calendarId = defaultCalendar(user.id, "task", it);
     if (!calendarId) notFound("calendar");
     const settings = getSettings(db, user.id);
-    let n = nextChunkIndex(db, user.id, id);
     await writeLocked(
       db,
       sync,
       user.id,
       calendarId,
       blocks.map((b) => ({
-        key: `task:${id}:${n++}`,
         kind: "task" as const,
         sourceId: id,
         start: b.start,
