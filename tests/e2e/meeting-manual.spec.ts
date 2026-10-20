@@ -14,6 +14,8 @@
 // - a visibility or guest change in the meeting settings rewrites the
 //   whole occurrence: the organizer's edits go and the guest the
 //   organizer added is removed (a cancel the organizer did not send)  -> settings
+// - an edit opened after the calendar write but before the meeting list
+//   reloads starts from the old settings and writes them back         -> slow list
 
 import type { Page } from "@playwright/test";
 import { addDays } from "../../src/shared/time.ts";
@@ -398,4 +400,41 @@ test("a visibility change and a guest removal in the meeting settings write only
     class: "PUBLIC",
     guests: ["dana@example.com", "erin@example.com"],
   });
+});
+
+test("an edit opened as soon as the calendar shows a settings save starts from the saved settings, also when the meeting list is slow to load (MEET-02 rule 22)", async ({
+  page,
+  cal,
+  signIn,
+}) => {
+  await blockUntil(cal, W);
+  await signIn();
+  await addReview(page, "dana@example.com, bob@example.com");
+  const [id] = await occurrences(cal);
+  const state = async () => {
+    const ics = await rawEvent(cal.calendarId, id);
+    return { class: eventProp(ics, "CLASS"), guests: guests(ics) };
+  };
+  await eventually(state, (s) => expect(s.class).toBe("PRIVATE"));
+
+  // From now on the meeting list answers 4 s late: the calendar write of a
+  // save must not come before the list that the next edit starts from.
+  await page.route(/\/api\/meetings$/, async (route) => {
+    if (route.request().method() === "GET") await new Promise((r) => setTimeout(r, 4000));
+    await route.fallback();
+  });
+  let form = await editReview(page);
+  await fillEventSettings(form, { visibility: "Public" });
+  await form.getByRole("button", { name: "Save meeting" }).click();
+  await eventually(state, (s) => expect(s.class).toBe("PUBLIC"), 60_000);
+
+  form = await editReview(page);
+  await expect(form.getByLabel("Visibility")).toHaveValue("public");
+  await form.getByLabel("Guests (comma list)", { exact: true }).fill("dana@example.com");
+  await form.getByRole("button", { name: "Save meeting" }).click();
+  await eventually(
+    state,
+    (s) => expect(s).toEqual({ class: "PUBLIC", guests: ["dana@example.com"] }),
+    60_000,
+  );
 });

@@ -276,6 +276,9 @@ export function Meetings() {
   const [editing, setEditing] = useState<Meeting | null>(null);
   const ed = editing;
 
+  // True from a change until the list shows it: an edit must not start from
+  // the old meeting, because its save would write the old settings back.
+  const [stale, setStale] = useState(false);
   const load = useCallback(async () => {
     const r = await api<{ meetings: Meeting[]; mailConfigured: boolean }>("GET", "/api/meetings");
     setMeetings(r.meetings);
@@ -348,12 +351,17 @@ export function Meetings() {
   };
   const act = async (fn: () => Promise<unknown>) => {
     setError(null);
+    setStale(true);
     try {
       await fn();
+      await load();
+      setStale(false);
       await planNow();
       await load();
     } catch (err) {
       fail(err);
+    } finally {
+      setStale(false);
     }
   };
 
@@ -930,7 +938,7 @@ export function Meetings() {
                     )}
                   </div>
                   <div class="actions">
-                    <button type="button" onClick={() => edit(m)}>
+                    <button type="button" disabled={stale} onClick={() => edit(m)}>
                       Edit
                     </button>
                     <button
