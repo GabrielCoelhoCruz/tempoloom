@@ -106,28 +106,32 @@ test("the weekly report previews next week's calendar by day with the busiest an
   const preview = section(report.text, "Next week:");
   // Busy time: Monday 2 h; Tuesday the busy habit; Wednesday the dentist (the
   // habit there is free); Thursday nothing; Friday the retro.
-  expect(preview.filter((l) => !l.startsWith("- ")).map(withoutUrl)).toEqual([
+  expect(preview.filter((l) => !l.startsWith("  ")).map(withoutUrl)).toEqual([
     `Monday ${next} (busiest), 2 h`,
     `Tuesday ${day(8)}, 30 min`,
     `Wednesday ${day(9)}, 30 min`,
     `Thursday ${day(10)} (lightest), 0 min`,
     `Friday ${day(11)}, 1 h`,
   ]);
-  const events = preview.filter((l) => l.startsWith("- ")).map(withoutUrl);
-  expect(events).toContain("- 10:00-12:00 Board meeting");
-  expect(events).toContain("- 14:00-14:30 Dentist");
-  expect(events.some((l) => /^- 18:00-18:30 .*Gym/.test(l))).toBe(true);
-  expect(events.some((l) => /^- 19:00-19:30 .*Reading/.test(l))).toBe(true);
+  const events = preview.filter((l) => l.startsWith("  ")).map(withoutUrl);
+  expect(events).toContain("  10:00-12:00 Board meeting");
+  expect(events).toContain("  14:00-14:30 Dentist");
+  expect(events.some((l) => /^ {2}18:00-18:30 .*Gym/.test(l))).toBe(true);
+  expect(events.some((l) => /^ {2}19:00-19:30 .*Reading/.test(l))).toBe(true);
   expect(report.text).not.toContain("Old sync");
+  // The facts stay the only "- " lines of the email (weekly-report.spec.ts reads them so).
+  expect(
+    report.text.split("\n").filter((l) => l.startsWith("- ") && /Board|Gym|Ship/.test(l)),
+  ).toEqual([]);
   const priorities = section(report.text, "Priorities:");
   expect(priorities.map(withoutUrl)).toEqual([
     "Tasks:",
-    "- P1 Ship release",
-    "- P2 Write report",
-    "- P4 Tidy notes",
+    "  P1 Ship release",
+    "  P2 Write report",
+    "  P4 Tidy notes",
     "Habits next week:",
-    "- P1 Reading",
-    "- P3 Gym",
+    "  P1 Reading",
+    "  P3 Gym",
   ]);
 
   // The links open the planner at that day and the item.
