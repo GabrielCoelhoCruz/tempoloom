@@ -73,6 +73,16 @@ export function applyCalendarEdits(
     userId,
     ...calendarIds,
   );
+  // CED-22 needs a delete that the calendar reports: a chunk that ended before
+  // the start of the last read window is missing from the cache because the
+  // read did not ask for it, not because the user deleted it.
+  const windowStart = new Map(
+    all<{ id: string; window_start: number | null }>(
+      db,
+      `SELECT id, window_start FROM calendars WHERE id IN (${marks})`,
+      ...calendarIds,
+    ).map((c) => [c.id, c.window_start]),
+  );
   tx(db, () => {
     for (const row of rows) {
       const cached = one<{
@@ -124,7 +134,7 @@ export function applyCalendarEdits(
           } else {
             exclude(db, userId, row.kind, row.source_id, row.start_ms, row.end_ms);
           }
-        } else if (row.kind === "task") {
+        } else if (row.kind === "task" && row.end_ms > (windowStart.get(row.calendar_id) ?? 0)) {
           // "This work did not happen": the minutes go back to the task, which is open again.
           run(
             db,

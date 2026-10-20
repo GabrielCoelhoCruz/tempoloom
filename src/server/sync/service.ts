@@ -359,7 +359,7 @@ export class SyncService {
         now,
       );
       // The daily or weekly auto-lock run (planning-locks.md LCK-30, LCK-31).
-      autoLock(db, userId, user.time_zone, getSettings(db, userId), now);
+      autoLock(db, userId, getSettings(db, userId), now);
       // Team policies (teams-policies.md rules 3, 14-17): automations, then agendas.
       // A policy failure never stops the member's own planning.
       try {

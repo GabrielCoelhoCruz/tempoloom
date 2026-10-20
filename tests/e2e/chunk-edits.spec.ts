@@ -6,13 +6,15 @@
 // - a move of the first chunk leaves the task's start as it was, so the
 //   other chunk stays before the moved one, or an earlier move does not
 //   show the earlier start                                           -> first chunk
+// - a planner drag of the first chunk does not set the start (CED-50) -> planner drag
 // - a chunk moved past the due date leaves the other chunk free     -> past due
 // - a shorter chunk does not give its minutes back, or a longer one
 //   does not take them from the rest of the task                    -> resize
 // - a deleted past chunk leaves a used-up task without work, or a done
 //   task stays done; a shorter past chunk keeps its minutes         -> past chunks
 // - a locked event comes back locked after a delete, or stays locked
-//   at its time after a reschedule or a decline                     -> unlock
+//   at its time after a reschedule, a guest's decline or the user's
+//   own decline                                                      -> unlock
 import { localToUtc } from "../../src/shared/time.ts";
 import { boxOf, day, span, week } from "./automation-helpers.ts";
 import {
@@ -20,6 +22,7 @@ import {
   BACKEND,
   blockUntil,
   type CalendarDriver,
+  EMAIL,
   eventually,
   expect,
   local,
@@ -27,6 +30,7 @@ import {
   ZONE,
 } from "./fixtures.ts";
 import { addHabit, addTask, MIN, openWeek, titled, W } from "./helpers.ts";
+import { credentials } from "./ics.ts";
 import { addMeeting, answerAs } from "./meeting-helpers.ts";
 
 const twoWeeks = (cal: CalendarDriver) => cal.events(at(W, "00:00"), at(day(14), "00:00"));
@@ -35,6 +39,34 @@ const iso = (date: string, hhmm: string) => {
   const [h, m] = hhmm.split(":").map(Number) as [number, number];
   return new Date(localToUtc(ZONE, date, h * 60 + m)).toISOString();
 };
+
+/**
+ * The user declines their own event in a calendar app: the app writes the user
+ * as an attendee with PARTSTAT=DECLINED on each part of the event.
+ */
+async function declineOwn(calendarUrl: string, id: string): Promise<void> {
+  const url = id.split("#")[0] ?? id;
+  const res = await fetch(url, { headers: { authorization: credentials(calendarUrl) } });
+  if (!res.ok) throw new Error(`GET ${url} failed: ${res.status}`);
+  const etag = res.headers.get("etag");
+  const lines = (await res.text()).replace(/\r?\n[ \t]/g, "").split(/\r?\n/);
+  const out: string[] = [];
+  for (const l of lines) {
+    if (/^ATTENDEE[;:].*mailto:/i.test(l) && l.toLowerCase().endsWith(`mailto:${EMAIL}`)) continue;
+    if (l === "END:VEVENT") out.push(`ATTENDEE;PARTSTAT=DECLINED:mailto:${EMAIL}`);
+    out.push(l);
+  }
+  const put = await fetch(url, {
+    method: "PUT",
+    headers: {
+      authorization: credentials(calendarUrl),
+      "content-type": "text/calendar",
+      ...(etag ? { "if-match": etag } : {}),
+    },
+    body: out.join("\r\n"),
+  });
+  if (!put.ok) throw new Error(`PUT ${url} failed: ${put.status}`);
+}
 
 test("moving the first chunk later moves the task's start, so no chunk goes before it; moving it earlier sets an earlier start (CED-11)", async ({
   page,
@@ -98,6 +130,70 @@ test("moving the first chunk later moves the task's start, so no chunk goes befo
   await page.getByRole("link", { name: "Tasks" }).click();
   await expect(before).toHaveAttribute("data-at", String(at(W, "14:00")));
   await expect(start).toHaveAttribute("data-at", String(at(day(2), "15:00")));
+  check(await week(cal));
+});
+
+test("a planner drag of the first chunk sets the task's start, so no chunk goes before it (CED-11, CED-50)", async ({
+  page,
+  app,
+  cal,
+  signIn,
+}) => {
+  await blockUntil(cal, W);
+  await signIn();
+  await addTask(page, { title: "AT-E3", minutes: 120, min: 60, max: 60, due: "" });
+  // Both chunks are on Monday morning: without the rule the second one stays there.
+  const placed = await eventually(
+    () => week(cal),
+    (l) => {
+      const chunks = titled(l, "AT-E3");
+      expect(chunks).toHaveLength(2);
+      expect(chunks[0] && span(chunks[0])).toBe(`${W} 09:00-10:00`);
+      expect(chunks[1] && chunks[1].start < at(W, "13:00")).toBe(true);
+    },
+  );
+  const first = titled(placed, "AT-E3").find((e) => span(e) === `${W} 09:00-10:00`);
+  if (!first) throw new Error("no first chunk");
+  await openWeek(page);
+  const box = await boxOf(page, app, first.id);
+  await expect(box).toBeVisible();
+  // Notices above the grid load after the events: wait until the box stays in place.
+  let b = await box.boundingBox();
+  await expect
+    .poll(async () => {
+      const prev = b;
+      await page.waitForTimeout(300);
+      b = await box.boundingBox();
+      return JSON.stringify(b) === JSON.stringify(prev);
+    })
+    .toBe(true);
+  if (!b) throw new Error("no box");
+  // 48 px per hour: drag down 4 hours, to 13:00.
+  const moved = page.waitForResponse(
+    (r) => r.request().method() === "POST" && /\/api\/planner\/events\/[^/]+\/move$/.test(r.url()),
+  );
+  await page.mouse.move(b.x + b.width / 2, b.y + 5);
+  await page.mouse.down();
+  for (let i = 1; i <= 4; i++)
+    await page.mouse.move(b.x + b.width / 2, b.y + 5 + 48 * i, { steps: 4 });
+  await page.mouse.up();
+  expect((await moved).ok()).toBe(true);
+  // Without the rule the other chunk stays at 10:00, before the moved one.
+  const check = (l: Awaited<ReturnType<typeof week>>) => {
+    const chunks = titled(l, "AT-E3");
+    expect(chunks).toHaveLength(2);
+    const m = chunks.find((e) => e.id === first.id);
+    expect(m && `${m.summary} ${span(m)}`).toBe(`${LOCK} AT-E3 ${W} 13:00-14:00`);
+    const other = chunks.find((e) => e.id !== first.id);
+    expect(other && other.start >= at(W, "14:00")).toBe(true);
+  };
+  await eventually(() => week(cal), check);
+  await page.getByRole("link", { name: "Tasks" }).click();
+  const start = page.locator('[data-task-title="AT-E3"]').getByTestId("task-start");
+  await expect(start).toHaveAttribute("data-at", String(at(W, "13:00")));
+  await page.reload();
+  await page.getByRole("link", { name: "Tasks" }).click();
+  await expect(start).toHaveAttribute("data-at", String(at(W, "13:00")));
   check(await week(cal));
 });
 
@@ -263,7 +359,7 @@ test("past chunks: a delete brings the work back and reopens a done task; a shor
   check(await week(cal));
 });
 
-test("a delete, a reschedule and a decline end a lock: the item is placed again away from the locked time (LCK-40, CED-27, CED-30)", async ({
+test("a delete, a reschedule, a guest's decline and the user's own decline end a lock: the item is placed again away from the locked time (LCK-40, CED-27, CED-30)", async ({
   page,
   app,
   cal,
@@ -275,12 +371,14 @@ test("a delete, a reschedule and a decline end a lock: the item is placed again 
   await addTask(page, { title: "AT-U1", minutes: 60, split: false, due: "" });
   await addHabit(page, { title: "AT-U2", ideal: "12:00", min: 30, max: 30 });
   await addMeeting(page, { title: "AT-U3", guests: "dana@example.com", idealTime: "15:00" });
+  await addMeeting(page, { title: "AT-U4", guests: "erin@example.com", idealTime: "10:00" });
   const placed = await eventually(
     () => twoWeeks(cal),
     (l) => {
       expect(titled(l, "AT-U1").map(span)).toEqual([`${W} 09:00-10:00`]);
       expect(titled(l, "AT-U2").map(span)).toContain(`${day(1)} 12:00-12:30`);
       expect(titled(l, "AT-U3").map(span)).toContain(`${day(1)} 15:00-15:30`);
+      expect(titled(l, "AT-U4").map(span)).toContain(`${day(1)} 10:00-10:30`);
     },
   );
   const on = (title: string, date: string) => {
@@ -291,8 +389,9 @@ test("a delete, a reschedule and a decline end a lock: the item is placed again 
   const task = on("AT-U1", W);
   const habit = on("AT-U2", day(1));
   const meeting = on("AT-U3", day(1));
+  const own = on("AT-U4", day(1));
   await openWeek(page);
-  for (const e of [task, habit, meeting]) {
+  for (const e of [task, habit, meeting, own]) {
     await (await boxOf(page, app, e.id)).click();
     await page.getByTestId("event-drawer").getByRole("button", { name: "Lock" }).click();
     await expect(page.getByTestId("event-drawer")).toHaveCount(0);
@@ -300,7 +399,7 @@ test("a delete, a reschedule and a decline end a lock: the item is placed again 
   await eventually(
     () => twoWeeks(cal),
     (l) => {
-      for (const e of [task, habit, meeting])
+      for (const e of [task, habit, meeting, own])
         expect(l.find((x) => x.id === e.id)?.summary.startsWith(LOCK)).toBe(true);
     },
   );
@@ -316,6 +415,8 @@ test("a delete, a reschedule and a decline end a lock: the item is placed again 
   await expect(page.getByTestId("event-drawer")).toHaveCount(0);
   // Decline: the guest declines the locked occurrence; it moves.
   await answerAs(cal.calendarId, meeting.id, "dana@example.com", "DECLINED");
+  // The user's own decline: the occurrence moves too.
+  await declineOwn(cal.calendarId, own.id);
 
   const check = (l: Awaited<ReturnType<typeof twoWeeks>>) => {
     const [t] = titled(l, "AT-U1");
@@ -328,6 +429,10 @@ test("a delete, a reschedule and a decline end a lock: the item is placed again 
     expect(m).toHaveLength(1);
     expect(m.map(span)).not.toContain(`${day(1)} 15:00-15:30`);
     expect(m[0]?.summary.startsWith(LOCK)).toBe(false);
+    const o = titled(l, "AT-U4").filter((e) => local(e.start).startsWith(day(1)));
+    expect(o).toHaveLength(1);
+    expect(o.map(span)).not.toContain(`${day(1)} 10:00-10:30`);
+    expect(o[0]?.summary.startsWith(LOCK)).toBe(false);
   };
   await eventually(() => twoWeeks(cal), check, 60_000);
   await page.reload();

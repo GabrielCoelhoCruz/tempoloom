@@ -42,9 +42,9 @@ export function AutoLockSettings({ settings, act }: { settings: Settings; act: A
     <section>
       <h2>Auto-lock</h2>
       <p class="status">
-        Each day from 01:00, Tempoloom locks the events that start that day, or on the first day of
-        the week those of the week. Events placed later stay unlocked; turn the setting off and on
-        to lock them too.
+        Each day between 01:00 and 02:00, Tempoloom locks the events that start that day, or on the
+        first day of the week those of the week. Events placed later stay unlocked; turn the setting
+        off and on to lock them at once.
       </p>
       <div class="form" data-testid="auto-lock">
         {AUTO_LOCK.map(([kind, label]) => (
