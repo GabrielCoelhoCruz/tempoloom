@@ -34,7 +34,7 @@ import type { CalendarProvider } from "../providers/types.ts";
 import { getSettings, type Settings } from "../settings.ts";
 import { planningZone } from "../travel.ts";
 import { afterPush } from "./after-push.ts";
-import { categoryContext, colorFor, paintExternal } from "./categories.ts";
+import { categoryContext, colorFor, externalPaints } from "./categories.ts";
 import { externalEvents } from "./events.ts";
 import {
   eventTitle,
@@ -48,6 +48,7 @@ import { recordMeetingChanges } from "./meeting-log.ts";
 import { attendeeOccurrences, attendeesOf, meetingItems } from "./meetings.ts";
 import { LABELS, mirrorCopies } from "./mirror.ts";
 import { type DesiredEvent, type ManagedRow, type PushResult, pushSchedule } from "./push.ts";
+import { type Paint, type PaintJob, repaintRequest } from "./repaint.ts";
 
 export interface ReplanContext {
   db: Db;
@@ -62,6 +63,8 @@ export interface ReplanContext {
 export interface ReplanResult {
   push: PushResult;
   report: ReportEntry[];
+  /** Colors to write after the run (events-categories-and-colors.md rule 16). */
+  paint: PaintJob;
 }
 
 interface CalendarInfo {
@@ -404,6 +407,10 @@ export function loadSnapshot(
   for (const m of meetings.rows) {
     notes.set(`meeting:${m.id}`, m.description);
     titles.set(`meeting:${m.id}`, m.title);
+    eventSettings.set(
+      `meeting:${m.id}`,
+      readEventSettings(m.event_settings, defaultEventSettings("meeting")),
+    );
   }
 
   const snapshot: Snapshot = {
@@ -421,6 +428,13 @@ export function loadSnapshot(
     current,
     past,
     dismissedKeys: dismissed,
+    bufferLengths: Object.fromEntries(
+      rows.flatMap((r) =>
+        r.kind === "buffer" && r.kept_minutes !== null && r.end_ms > now
+          ? [[r.key, r.kept_minutes]]
+          : [],
+      ),
+    ),
     tasks,
     habits,
     meetings: meetings.items,
@@ -433,8 +447,13 @@ export function loadSnapshot(
   return { snapshot, rows, notes, titles, eventSettings };
 }
 
-/** Tempoloom's own mirror copies as their calendars show them (buffers-travel.md rule 13). */
+/**
+ * Tempoloom's own mirror copies as their calendars show them (buffers-travel.md
+ * rule 13), with the category their title and description give.
+ */
 export function copyAnchors(db: Db, userId: string, now: number): ExternalEvent[] {
+  const userEmail =
+    one<{ email: string }>(db, "SELECT email FROM users WHERE id = ?", userId)?.email ?? "";
   return all<{
     id: string;
     calendar_id: string;
@@ -471,6 +490,21 @@ export function copyAnchors(db: Db, userId: string, now: number): ExternalEvent[
     bookedViaLink: false,
     calendarId: c.calendar_id,
     mirrorSource: c.source_calendar_id,
+    category: categoryOf(
+      {
+        title: c.summary,
+        description: c.description,
+        rsvpNote: "",
+        start: c.start_ms,
+        end: c.end_ms,
+        eventType: "default",
+        attendees: [],
+        managedKind: null,
+        personalCalendar: false,
+        manual: null,
+      },
+      userEmail,
+    ),
   }));
 }
 
@@ -504,6 +538,21 @@ export function eventDescription(
       ? `Open in Tempoloom: ${baseUrl}/?item=${kind}:${itemId}`
       : "";
   return [notes, link, FOOTER].filter(Boolean).join("\n\n");
+}
+
+/** The organizer, guests and location of a meeting occurrence (rules 35, 41). */
+export function meetingGuests(
+  m: { location: string; people: { email: string; required: boolean }[] } | undefined,
+  organizer: string,
+  userEmail: string,
+) {
+  const people = (m?.people ?? []).filter((a) => a.email !== organizer && a.email !== userEmail);
+  return {
+    organizer,
+    attendees: people.filter((a) => a.required).map((a) => a.email),
+    optionalAttendees: people.filter((a) => !a.required).map((a) => a.email),
+    ...(m?.location ? { location: m.location } : {}),
+  };
 }
 
 export async function replanUser(ctx: ReplanContext, userId: string): Promise<ReplanResult | null> {
@@ -541,23 +590,20 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
   );
   const taskHours = new Map(snapshot.tasks.map((t) => [t.id, t.hours]));
   // Guests and location of each flexible meeting (meetings-flexible.md rules 35, 41).
-  const guests = new Map(
+  const meetingRows = new Map(
     all<{ id: string; location: string }>(
       db,
       "SELECT id, location FROM meetings WHERE user_id = ?",
       userId,
-    ).map((m) => {
-      const people = attendeesOf(db, m.id).filter((a) => a.email !== user.email);
-      return [
-        m.id,
-        {
-          organizer: user.email,
-          attendees: people.filter((a) => a.required).map((a) => a.email),
-          optionalAttendees: people.filter((a) => !a.required).map((a) => a.email),
-          ...(m.location ? { location: m.location } : {}),
-        },
-      ];
-    }),
+    ).map((m) => [m.id, { location: m.location, people: attendeesOf(db, m.id) }]),
+  );
+  // The organizer of an occurrence is the account that owns its calendar.
+  const accountEmail = new Map(
+    all<{ id: string; email: string }>(
+      db,
+      "SELECT id, email FROM accounts WHERE user_id = ?",
+      userId,
+    ).map((a) => [a.id, a.email.toLowerCase()]),
   );
   const calendars = new Map(
     all<CalendarInfo & { ok: number }>(
@@ -616,7 +662,13 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
       colorId: null,
       ...(p.kind === "habit" && es?.location ? { location: es.location } : {}),
       ...reminderFields(p.kind, es),
-      ...(p.kind === "meeting" ? guests.get(p.itemId) : {}),
+      ...(p.kind === "meeting"
+        ? meetingGuests(
+            meetingRows.get(p.itemId),
+            accountEmail.get(calendars.get(calendarId)?.account_id ?? "") ?? user.email,
+            user.email,
+          )
+        : {}),
     };
   });
 
@@ -633,6 +685,8 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
       user.time_zone,
       now,
       work ? (JSON.parse(work.weekly) as WeeklyHours) : null,
+      settings.noReplyCopies === "busy",
+      desired.filter((d) => d.kind === "buffer" && travelBuffers.has(d.sourceId)),
     ),
   );
 
@@ -677,40 +731,49 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
       userId,
     ).map((p) => [p.id, p.color_override]),
   );
-  for (const d of desired) {
-    const row = rowByKey.get(d.key);
-    const manual = row?.event_id
-      ? (cats.manual.get(`${row.calendar_id}:${row.event_id}`) ?? null)
-      : null;
-    const type = d.kind === "mirror" ? mirrorTypes.get(d.sourceId) : undefined;
+  /** The color of a managed event: its category color, or its item's own color (rule 9). */
+  const colorOf = (
+    kind: string,
+    sourceId: string,
+    text: { title: string; description: string; start: number; end: number },
+    attendees: string[],
+    manualKey: string | null,
+  ): string | null => {
+    const manual = manualKey ? (cats.manual.get(manualKey) ?? null) : null;
+    const type = kind === "mirror" ? mirrorTypes.get(sourceId) : undefined;
     const category =
       type === "travel" && !manual
         ? "travel"
         : categoryOf(
             {
-              title: d.title,
-              description: d.description,
-              start: d.start,
-              end: d.end,
+              ...text,
+              rsvpNote: "",
               eventType: "default",
-              attendees: [...(d.attendees ?? []), ...(d.optionalAttendees ?? [])],
-              managedKind: d.kind,
-              personalHabit: personalHabits.has(d.sourceId),
-              travelBuffer: travelBuffers.has(d.sourceId),
+              attendees,
+              managedKind: kind,
+              personalHabit: personalHabits.has(sourceId),
+              travelBuffer: travelBuffers.has(sourceId),
               personalCalendar: type === "personal",
               manual,
             },
             cats.userEmail,
           );
-    d.colorId =
-      (d.kind === "mirror" ? mirrorColors.get(d.sourceId) : undefined) ??
-      colorFor(settings, category);
-    // Rule 9: an item color overrides the category color.
     const own =
-      d.kind === "task"
-        ? taskColors.get(d.sourceId)
-        : eventSettings.get(`${d.kind}:${d.sourceId}`)?.color;
-    if (own && own !== "category") d.colorId = own === "calendar_default" ? null : own;
+      kind === "task" ? taskColors.get(sourceId) : eventSettings.get(`${kind}:${sourceId}`)?.color;
+    if (own && own !== "category") return own === "calendar_default" ? null : own;
+    return (
+      (kind === "mirror" ? mirrorColors.get(sourceId) : undefined) ?? colorFor(settings, category)
+    );
+  };
+  for (const d of desired) {
+    const row = rowByKey.get(d.key);
+    d.colorId = colorOf(
+      d.kind,
+      d.sourceId,
+      d,
+      [...(d.attendees ?? []), ...(d.optionalAttendees ?? [])],
+      row?.event_id ? `${row.calendar_id}:${row.event_id}` : null,
+    );
   }
 
   const push = await pushSchedule(
@@ -728,14 +791,44 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
     desired,
   );
   recordMeetingChanges(db, userId, rows, now, last);
-  await paintExternal(
+  // Rule 8: a new color also repaints managed events that ended, up to 90 days back.
+  // Rule 12, "repaint all": every managed event gets its color again, also where
+  // the user changed the color in the calendar. The run only lists the paints;
+  // the sync service writes them after the run (rule 16).
+  const requestedAt = repaintRequest(db, userId);
+  const paints: Paint[] = [];
+  for (const r of all<ManagedRow & { cached_color: string | null; attendees: string | null }>(
     db,
+    `SELECT m.*, e.color_id AS cached_color, e.attendees FROM managed_events m
+       JOIN calendars c ON c.id = m.calendar_id
+       JOIN accounts a ON a.id = c.account_id
+       LEFT JOIN events e ON e.calendar_id = m.calendar_id AND e.event_id = m.event_id
+     WHERE m.user_id = ? AND a.status = 'ok' AND c.writable = 1
+       AND m.event_id IS NOT NULL AND m.end_ms > ? AND m.end_ms <= ?`,
     userId,
-    settings,
-    (accountId) => ctx.provider(accountId),
-    now,
-    snapshot.windowEnd,
-  );
+    now - 90 * DAY,
+    requestedAt === null ? now : Number.MAX_SAFE_INTEGER,
+  )) {
+    if (!r.event_id || (r.kind === "mirror" && r.end_ms <= now)) continue;
+    const color = colorOf(
+      r.kind,
+      r.source_id,
+      { title: r.title, description: r.description, start: r.start_ms, end: r.end_ms },
+      // Only a meeting's category depends on its guests.
+      r.kind === "meeting" ? (JSON.parse(r.attendees ?? "[]") as string[]) : [],
+      `${r.calendar_id}:${r.event_id}`,
+    );
+    const current = requestedAt === null ? r.color_id : r.cached_color;
+    if ((current ?? null) === color) continue;
+    paints.push({
+      calendarId: r.calendar_id,
+      eventId: r.event_id,
+      series: false,
+      color,
+      managedId: r.id,
+    });
+  }
+  paints.push(...externalPaints(db, userId, settings, now, snapshot.windowEnd));
   await markEnded(db, userId, settings.markers, (accountId) => ctx.provider(accountId), now);
   await markFlights(db, userId, (accountId) => ctx.provider(accountId), now, snapshot.windowEnd);
   await afterPush(db, userId, (accountId) => ctx.provider(accountId), now);
@@ -747,5 +840,5 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
     JSON.stringify(result.report),
     now,
   );
-  return { push, report: result.report };
+  return { push, report: result.report, paint: { paints, requestedAt } };
 }

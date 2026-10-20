@@ -6,9 +6,10 @@ import { lazyComponent } from "../lib/lazy.ts";
 import { zone } from "../lib/state.ts";
 import { StatsTabs } from "./stats-tabs.tsx";
 
-const StatsExtras = lazyComponent<{ from: string; to: string }>(() =>
+const StatsExtras = lazyComponent<{ from: string; to: string; base: Base }>(() =>
   import("./stats-extras.tsx").then((m) => m.StatsExtras),
 );
+type Base = import("./stats-extras.tsx").BaseStats;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 type Category =
@@ -22,7 +23,16 @@ type Category =
   | "focus"
   | "buffers";
 
+interface HabitProgress {
+  id: string;
+  title: string;
+  events: number;
+  done: number;
+  minutes: number;
+}
+
 interface Stats {
+  habits: HabitProgress[];
   days: { date: string; minutes: Record<Category, number> }[];
   totals: Record<Category, number>;
   highlights: {
@@ -199,28 +209,26 @@ export function StatsPage() {
               </div>
             ))}
           </div>
-          <h2>Highlights</h2>
-          <div class="list" data-testid="highlights">
-            <div class="row">
-              <span>Meetings</span>
-              <strong data-testid="hl-meetings">{round(stats.highlights.meetingMinutes)}</strong>
-            </div>
-            <div class="row">
-              <span>Meetings outside work hours</span>
-              <strong data-testid="hl-outside">
-                {round(stats.highlights.meetingMinutesOutsideWorkHours)}
-              </strong>
-            </div>
-            <div class="row">
-              <span>Focus time held</span>
-              <strong data-testid="hl-focus">{round(stats.highlights.focusMinutes)}</strong>
-            </div>
-            <div class="row">
-              <span>Meetings booked through links</span>
-              <strong data-testid="hl-bookings">{stats.highlights.bookings}</strong>
-            </div>
+          <h2>Habit progress</h2>
+          <div class="list" data-testid="habit-progress">
+            {stats.habits.map((h) => (
+              <div class="row" key={h.id} data-habit-progress={h.title}>
+                <span>{h.title}</span>
+                <span>
+                  <strong>
+                    {h.done} of {h.events} done
+                  </strong>
+                  <span class="meta"> · {round(h.minutes)}</span>
+                </span>
+              </div>
+            ))}
+            {stats.habits.length === 0 && <p class="status">No habit events in this range.</p>}
           </div>
-          <StatsExtras from={range[0]} to={range[1]} />
+          <StatsExtras
+            from={range[0]}
+            to={range[1]}
+            base={{ ...stats.highlights, personalHabits: stats.totals.personalHabits }}
+          />
         </>
       )}
     </div>

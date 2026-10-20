@@ -221,7 +221,7 @@ export function mcpRoutes(deps: McpDeps): Hono {
         if (a.end_date < a.start_date) throw new ToolError("end_date is before start_date");
         if ((Date.parse(a.end_date) - Date.parse(a.start_date)) / DAY > 120)
           throw new ToolError("The range is too long: at most 120 days");
-        return computeStats(db, user.id, a.start_date, a.end_date);
+        return computeStats(db, user.id, a.start_date, a.end_date, now());
       },
     }),
     tool({

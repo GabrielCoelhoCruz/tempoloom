@@ -6,7 +6,7 @@ import { logChange } from "../change-log.ts";
 import { all, type Db, one, run } from "../db.ts";
 import { jsonBody, notFound } from "../http.ts";
 import { type CachedEvent, categoryContext, externalCategory } from "../planner/categories.ts";
-import { withState } from "../planner/markers.ts";
+import { stripMarker, withState } from "../planner/markers.ts";
 import { mirrorKey, mirrorSource } from "../planner/mirror.ts";
 import { MANAGED_PROP, type ManagedRow, rowWrite } from "../planner/push.ts";
 import { getSettings } from "../settings.ts";
@@ -75,11 +75,8 @@ export function plannerEvents(db: Db, userId: string, from: number, to: number):
     to,
   );
   // The planner shows state with its own styles, so it drops the calendar title marker.
-  const markers = Object.values(getSettings(db, userId).markers).filter(Boolean);
-  const plain = (title: string) => {
-    for (const m of markers) if (title.startsWith(`${m} `)) return title.slice(m.length + 1);
-    return title;
-  };
+  const markers = getSettings(db, userId).markers;
+  const plain = (title: string) => stripMarker(markers, title);
   const cats = categoryContext(db, userId);
   const out: PlannerEvent[] = managed.map((m) => ({
     id: m.id,

@@ -38,7 +38,7 @@ import type {
   Snapshot,
   TaskItem,
 } from "../../src/scheduler/model.ts";
-import { plan } from "../../src/scheduler/plan.ts";
+import { meetingAnchor, meetingPeriodStart, plan } from "../../src/scheduler/plan.ts";
 import { addDays, localToUtc } from "../../src/shared/time.ts";
 
 const ZONE = "Europe/Berlin";
@@ -438,6 +438,122 @@ describe("task chunks", () => {
     for (const c of chunks) expect(c.start % (15 * MIN)).toBe(0);
   });
 
+  it("places a short last chunk when no split fits the bounds (TSK-13)", () => {
+    // 90 minutes with chunks of exactly 60: no split into 60-minute chunks
+    // exists, so the rest after one 60-minute chunk is a 30-minute chunk.
+    const result = plan(
+      snapshot({
+        tasks: [task({ id: "t", remainingMinutes: 90, minChunkMinutes: 60, maxChunkMinutes: 60 })],
+      }),
+    );
+    expect(spans(of(result, "t"))).toEqual([`${MON}T09:00/10:00`, `${MON}T10:15/10:45`]);
+    expect(result.report).not.toContainEqual(
+      expect.objectContaining({ itemId: "t", status: "unplaced" }),
+    );
+  });
+
+  it.each([
+    [195, 60, 90, [75, 60, 60]],
+    [200, 60, 90, [80, 60, 60]],
+    [90, 60, 60, [60, 30]],
+    [150, 60, 60, [60, 60, 30]],
+  ])(
+    "splits %i minutes at %i-%i into the chunks of the split rule (TSK-10, TSK-13)",
+    (remaining, min, max, expected) => {
+      // A split within the bounds exists when ceil(need / max) * min <= need.
+      // Then no chunk is short; else only the last rest is.
+      const result = plan(
+        snapshot({
+          tasks: [
+            task({
+              id: "t",
+              remainingMinutes: remaining,
+              minChunkMinutes: min,
+              maxChunkMinutes: max,
+            }),
+          ],
+        }),
+      );
+      expect(of(result, "t").map((c) => (c.end - c.start) / MIN)).toEqual(expected);
+    },
+  );
+
+  it("keeps a short sticky chunk that lies before a full chunk (TSK-13, SCH-88)", () => {
+    const t = task({ id: "t", remainingMinutes: 90, minChunkMinutes: 60, maxChunkMinutes: 60 });
+    const chunk = (n: number, date: string, from: string, to: string) => ({
+      key: `task:t:${n}`,
+      itemId: "t",
+      start: at(date, from),
+      end: at(date, to),
+      locked: false,
+    });
+    const current = [chunk(0, day(1), "09:00", "10:00"), chunk(1, MON, "14:00", "14:30")];
+    const result = plan(snapshot({ current, tasks: [t] }));
+    expect(spans(of(result, "t")).sort()).toEqual([`${MON}T14:00/14:30`, `${day(1)}T09:00/10:00`]);
+  });
+
+  it("places the short rest in a hole too small for a full chunk, so a replan keeps it (TSK-13, SCH-88)", () => {
+    // 240 minutes with chunks of exactly 45: no split exists, so the plan is
+    // five 45-minute chunks and a 15-minute rest. Monday has a 30-minute
+    // hole before the room for the full chunks. The first plan must put the
+    // rest there; else a replan from the five chunks finds the hole and adds
+    // a chunk that the first plan did not have.
+    const events = [
+      ...fill(MON, ["09:00", "09:30"]),
+      ...fill(day(1), ["09:00", "13:45"]),
+      ...[2, 3, 4, 7, 8, 9, 10, 11, 14, 15, 16, 17, 18].flatMap((d) => fill(day(d))),
+    ];
+    const t = task({ id: "t", remainingMinutes: 240, minChunkMinutes: 45, maxChunkMinutes: 45 });
+    const first = plan(snapshot({ events, tasks: [t] }));
+    expect(spans(of(first, "t"))).toEqual([
+      `${MON}T09:00/09:15`,
+      `${day(1)}T09:00/09:45`,
+      `${day(1)}T10:00/10:45`,
+      `${day(1)}T11:00/11:45`,
+      `${day(1)}T12:00/12:45`,
+      `${day(1)}T13:00/13:45`,
+    ]);
+    expect(first.report.filter((r) => r.itemId === "t")).toEqual([]);
+    const current = first.placements.map((p) => ({
+      key: p.key,
+      itemId: p.itemId,
+      start: p.start,
+      end: p.end,
+      locked: false,
+    }));
+    expect(plan(snapshot({ events, tasks: [t], current })).placements).toEqual(first.placements);
+  });
+
+  it("splits a 60-minute task when less than an hour of today's hours is left (SCH-90; sso.spec Board deck)", () => {
+    // The E2E adds a 60-minute task with the 30/120 default chunk bounds on a
+    // Monday. Placed at 16:05 the day has 45 minutes left, so SCH-90 gives a
+    // 30-minute chunk today (no 15-minute stub) and the rest tomorrow. Placed
+    // earlier, or with splitting off, the task is one event.
+    const MONDAY = "2026-10-19";
+    const due = at("2026-10-30", "17:00");
+    const at1605 = (over: Partial<TaskItem> = {}) =>
+      plan(
+        snapshot({
+          now: at(MONDAY, "16:05"),
+          tasks: [task({ id: "deck", startAfter: at(MONDAY, "16:05"), dueAt: due, ...over })],
+        }),
+      );
+    expect(spans(of(at1605(), "deck"))).toEqual([
+      `${MONDAY}T16:15/16:45`,
+      "2026-10-20T09:00/09:30",
+    ]);
+    expect(spans(of(at1605({ minChunkMinutes: 60, maxChunkMinutes: 60 }), "deck"))).toEqual([
+      "2026-10-20T09:00/10:00",
+    ]);
+    const earlier = plan(
+      snapshot({
+        now: at(MONDAY, "14:25"),
+        tasks: [task({ id: "deck", startAfter: at(MONDAY, "14:25"), dueAt: due })],
+      }),
+    );
+    expect(spans(of(earlier, "deck"))).toEqual([`${MONDAY}T14:30/15:30`]);
+  });
+
   it("places one chunk per day with the once-per-day cooldown", () => {
     const result = plan(
       snapshot({
@@ -450,6 +566,49 @@ describe("task chunks", () => {
       `${day(1)}T09:00/10:00`,
       `${day(2)}T09:00/10:00`,
     ]);
+  });
+
+  it("keeps the cooldown between chunks across a busy event, and a replan keeps both (TSK-14, SCH-88)", () => {
+    // A busy event 09:15-09:30 cuts the free time in two. The second chunk
+    // must start 30 minutes after the first ends, not at the start of the
+    // next free interval.
+    const events = [ext(at(MON, "09:15"), at(MON, "09:30"))];
+    const t = task({ id: "t", remainingMinutes: 30, minChunkMinutes: 15, maxChunkMinutes: 15 });
+    const first = plan(snapshot({ chunkCooldown: "30m", events, tasks: [t] }));
+    expect(spans(of(first, "t"))).toEqual([`${MON}T09:00/09:15`, `${MON}T09:45/10:00`]);
+    const current = first.placements.map((p) => ({
+      key: p.key,
+      itemId: p.itemId,
+      start: p.start,
+      end: p.end,
+      locked: false,
+    }));
+    const again = plan(snapshot({ chunkCooldown: "30m", events, tasks: [t], current }));
+    expect(again.placements).toEqual(first.placements);
+  });
+
+  it("keeps the cooldown after a chunk that ends at midnight with once-per-day, and a replan keeps both (TSK-14, SCH-88)", () => {
+    // The first chunk ends at 24:00. The next day is free, but the second
+    // chunk still starts one cooldown (15 minutes) after the first ends.
+    const t = task({
+      id: "t",
+      hours: "always",
+      remainingMinutes: 120,
+      minChunkMinutes: 60,
+      maxChunkMinutes: 60,
+      startAfter: at(MON, "23:00"),
+    });
+    const first = plan(snapshot({ chunkCooldown: "once-per-day", tasks: [t] }));
+    expect(spans(of(first, "t"))).toEqual([`${MON}T23:00/00:00`, `${day(1)}T00:15/01:15`]);
+    const current = first.placements.map((p) => ({
+      key: p.key,
+      itemId: p.itemId,
+      start: p.start,
+      end: p.end,
+      locked: false,
+    }));
+    const again = plan(snapshot({ chunkCooldown: "once-per-day", tasks: [t], current }));
+    expect(again.placements).toEqual(first.placements);
   });
 
   it("never spans two hours ranges (HRS-2)", () => {
@@ -688,6 +847,36 @@ describe("habits", () => {
     );
   });
 
+  it("skips, never keeps as a conflict, an occurrence whose hours are all away; busy time gives a conflict (events-out-of-office rules 2, 12)", () => {
+    const [wed, thu, fri] = [day(2), day(3), day(4)];
+    const result = plan(
+      snapshot({
+        hours: lunchHours,
+        habits: [lunch({ whenUnplaceable: "keep_as_conflict" })],
+        events: [
+          // Plain busy time over the habit's hours: a conflict.
+          ext(at(wed, "11:00"), at(wed, "14:30")),
+          // Out of office over the habit's hours only (not the whole day): skipped.
+          ext(at(thu, "11:00"), at(thu, "14:30"), { eventType: "outOfOffice" }),
+          // A busy all-day event: the whole day is away, skipped.
+          ext(at(fri, "00:00"), at(day(5), "00:00"), { allDay: true }),
+        ],
+      }),
+    );
+    const on = (d: string) => of(result, "lunch").filter((p) => hm(p.start).startsWith(d));
+    expect(on(wed)).toMatchObject([{ conflict: true }]);
+    expect(on(thu)).toEqual([]);
+    expect(on(fri)).toEqual([]);
+    for (const d of [thu, fri])
+      expect(result.report).toContainEqual(
+        expect.objectContaining({
+          demandKey: `habit:lunch:${d}`,
+          status: "unplaced",
+          reason: "away",
+        }),
+      );
+  });
+
   it("moves a weekly occurrence to another day of the week but never a daily one", () => {
     const hours: Snapshot["hours"] = {
       ...snapshot().hours,
@@ -902,6 +1091,92 @@ describe("flexible meetings", () => {
     expect(weeks(result, "c")).toEqual([`${day(3)}T10:00/10:30`, `${day(17)}T10:00/10:30`]);
   });
 
+  it("counts every N weeks from the creation day when no start date is set, on any later run", () => {
+    const fortnight = meeting({
+      id: "f",
+      starting: null,
+      createdAt: at(MON, "08:00"),
+      frequency: { period: "weekly", everyWeeks: 2, idealDays: [2] },
+    });
+    const first = plan(snapshot({ meetings: [fortnight] }));
+    expect(weeks(first, "f")).toEqual([`${day(1)}T10:00/10:30`, `${day(15)}T10:00/10:30`]);
+    // One week later the off week stays off: the period does not restart on "today".
+    const later = plan(snapshot({ now: at(day(7), "08:00"), meetings: [fortnight] }));
+    expect(weeks(later, "f")).toEqual([`${day(15)}T10:00/10:30`]);
+  });
+
+  it("takes the nearest free day before a farther day that fragments less", () => {
+    // Ideal day Thursday is full. Friday (1 day away) only has a slot that leaves
+    // short gaps; Monday (3 days away) has a slot that fills a short gap.
+    const events = [0, 1, 2, 3, 4, 7, 8, 9, 10, 11, 14, 15, 16, 17, 18].flatMap((i) =>
+      i === 0
+        ? fill(day(0), ["09:45", "10:15"])
+        : i === 4
+          ? fill(day(4), ["09:45", "10:45"])
+          : fill(day(i)),
+    );
+    const result = plan(
+      snapshot({
+        events,
+        fragmentation: { minBlockMinutes: 60, maxShiftMinutes: 120 },
+        meetings: [meeting({ id: "m", frequency: { period: "monthly", dayOfMonth: 12 } })],
+      }),
+    );
+    expect(weeks(result, "m")).toEqual([`${day(4)}T10:00/10:30`]);
+  });
+
+  it("places no monthly occurrence in a month without its ideal day, or whose ideal day has passed", () => {
+    // November 2026 has no 5th Thursday; its 3rd is before "now" (8 November).
+    const result = plan(
+      snapshot({
+        meetings: [
+          meeting({ id: "fifth", frequency: { period: "monthly", nth: 5, weekday: 4 } }),
+          meeting({ id: "passed", frequency: { period: "monthly", dayOfMonth: 3 } }),
+          meeting({ id: "kept", frequency: { period: "monthly", dayOfMonth: 3 } }),
+        ],
+        current: [
+          {
+            key: "meeting:kept:2026-11-01",
+            itemId: "kept",
+            start: at(day(1), "11:00"),
+            end: at(day(1), "11:30"),
+            locked: false,
+          },
+        ],
+      }),
+    );
+    expect(weeks(result, "fifth")).toEqual([]);
+    expect(weeks(result, "passed")).toEqual([]);
+    // An occurrence already placed after a passed ideal day stays.
+    expect(weeks(result, "kept")).toEqual([`${day(1)}T11:00/11:30`]);
+  });
+
+  it("gives each occurrence the period that meetingPeriodStart finds for its date", () => {
+    const cases: MeetingItem["frequency"][] = [
+      { period: "daily", everyDays: 3 },
+      { period: "weekly", everyWeeks: 3, idealDays: [3] },
+      { period: "monthly", everyMonths: 2, dayOfMonth: 20 },
+    ];
+    for (const frequency of cases) {
+      const m = meeting({ id: "m", starting: null, createdAt: at(day(-62), "09:00"), frequency });
+      const placed = of(plan(snapshot({ meetings: [m] })), "m");
+      expect(placed.length).toBeGreaterThan(0);
+      for (const p of placed)
+        expect(
+          meetingPeriodStart(frequency, hm(p.start).slice(0, 10), 1, meetingAnchor(ZONE, m)),
+        ).toBe(p.key.split(":")[2]);
+    }
+    // Days of a skipped week or month have no period.
+    expect(
+      meetingPeriodStart(
+        { period: "monthly", everyMonths: 2, dayOfMonth: 1 },
+        "2026-12-05",
+        1,
+        MON,
+      ),
+    ).toBeNull();
+  });
+
   it("keeps an unchanged occurrence in place and moves it no sooner than the lead time", () => {
     const tue = day(1);
     const cur = {
@@ -1107,6 +1382,42 @@ describe("free and busy status", () => {
     expect(of(tight, "t")[0]?.busy).toBe(true);
     const noDue = plan(snapshot({ tasks: [task({ id: "t" })] }));
     expect(of(noDue, "t")[0]?.busy).toBe(false);
+  });
+
+  it("marks a chunk busy when the only other room is on the day of a locked chunk with once-per-day (DEF-*, TSK-14)", () => {
+    // A locked chunk takes Monday. Tuesday has room only for the placed
+    // chunk, so the task cannot move: the chunk is busy. Monday afternoon
+    // is free, but once-per-day does not allow a second chunk there.
+    const t = task({
+      id: "t",
+      remainingMinutes: 120,
+      minChunkMinutes: 60,
+      maxChunkMinutes: 60,
+      dueAt: at(day(1), "17:00"),
+    });
+    const locked = {
+      key: "task:t:0",
+      itemId: "t",
+      start: at(MON, "09:00"),
+      end: at(MON, "10:00"),
+      locked: true,
+    };
+    const run = (chunkCooldown: Snapshot["chunkCooldown"]) =>
+      plan(
+        snapshot({
+          chunkCooldown,
+          events: fill(day(1), ["09:00", "10:00"]),
+          tasks: [t],
+          current: [locked],
+        }),
+      );
+    const once = of(run("once-per-day"), "t").filter((p) => !p.locked);
+    expect(spans(once)).toEqual([`${day(1)}T09:00/10:00`]);
+    expect(once[0]?.busy).toBe(true);
+    // Without once-per-day the chunk can move to Monday: it is free.
+    const none = of(run("none"), "t").filter((p) => !p.locked);
+    expect(spans(none)).toEqual([`${MON}T10:15/11:15`]);
+    expect(none[0]?.busy).toBe(false);
   });
 
   it("marks an adaptive habit busy within 12 hours or when it is the last slot of its day", () => {

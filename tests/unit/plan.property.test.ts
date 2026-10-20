@@ -3,8 +3,9 @@
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 import { blocksPlanning } from "../../src/scheduler/blocking.ts";
-import { hoursToTimeSet } from "../../src/scheduler/hours.ts";
+import { hoursToTimeSet, type WeeklyHours } from "../../src/scheduler/hours.ts";
 import type {
+  CurrentPlacement,
   ExternalEvent,
   HabitItem,
   Placement,
@@ -33,6 +34,16 @@ const lunch = {
   4: [[660, 840]],
   5: [[660, 840]],
 } as const;
+// Task hours that cross midnight (night) or have no gaps (always): a chunk
+// can end at 24:00 and the next day starts at once (TSK-14).
+const everyDay = (ranges: [number, number][]) =>
+  Object.fromEntries([1, 2, 3, 4, 5, 6, 7].map((d) => [d, ranges])) as WeeklyHours;
+const night = everyDay([
+  [0, 240],
+  [1200, 1440],
+]);
+const always = everyDay([[0, 1440]]);
+const TASK_HOURS = { day: work, night, always } as const;
 
 const event = fc.record({
   day: fc.integer({ min: 0, max: 6 }),
@@ -65,7 +76,27 @@ const taskArb = fc.record({
   extraQ: fc.integer({ min: 0, max: 8 }),
   dueDay: fc.option(fc.integer({ min: 0, max: 6 })),
   nextUp: fc.boolean(),
+  startQ: fc.integer({ min: 0, max: 191 }),
+  // Chunks of an earlier plan (SCH-88). Some are not valid for the task.
+  // Some are locked (SCH-57): the plan keeps them as they are.
+  sticky: fc.array(
+    fc.record({
+      day: fc.integer({ min: 0, max: 4 }),
+      startQ: fc.integer({ min: 36, max: 64 }),
+      lenQ: fc.integer({ min: 1, max: 8 }),
+      locked: fc.constantFrom(false, false, false, true),
+    }),
+    { maxLength: 3 },
+  ),
 });
+const toCurrent = (t: ValueOf<typeof taskArb>, i: number): CurrentPlacement[] =>
+  t.sticky.map((c, n) => ({
+    key: `task:t${i}:${n}`,
+    itemId: `t${i}`,
+    start: t0 + c.day * 1440 * MIN + c.startQ * 15 * MIN,
+    end: t0 + c.day * 1440 * MIN + (c.startQ + c.lenQ) * 15 * MIN,
+    locked: c.locked,
+  }));
 const toTask = (t: ValueOf<typeof taskArb>, i: number): TaskItem => ({
   id: `t${i}`,
   title: `t${i}`,
@@ -73,7 +104,7 @@ const toTask = (t: ValueOf<typeof taskArb>, i: number): TaskItem => ({
   remainingMinutes: t.remainingQ * 15,
   minChunkMinutes: t.minQ * 15,
   maxChunkMinutes: (t.minQ + t.extraQ) * 15,
-  startAfter: t0,
+  startAfter: t0 + t.startQ * 15 * MIN,
   dueAt: t.dueDay === null ? null : t0 + t.dueDay * 1440 * MIN + 17 * 60 * MIN,
   hours: "work",
   nextUpRank: t.nextUp ? i : null,
@@ -110,50 +141,104 @@ const toHabit = (h: ValueOf<typeof habitArb>, i: number): HabitItem => ({
   changed: false,
 });
 
-const snapshotArb = fc
-  .record({
-    events: fc.array(event, { maxLength: 30 }),
-    tasks: fc.array(taskArb, { maxLength: 8 }),
-    habits: fc.array(habitArb, { maxLength: 3 }),
-    breakMinutes: fc.constantFrom(0, 15),
-  })
-  .map(
-    (r): Snapshot => ({
-      now,
-      zone: ZONE,
-      weekStart: 1,
-      windowEnd: end,
-      stepMinutes: 15,
-      urgencyMode: "due-date-and-work",
-      chunkCooldown: "none",
-      breakMinutes: r.breakMinutes,
-      hours: { work, lunch },
-      workHours: ["work"],
-      events: r.events.map(toEvent),
-      current: [],
-      tasks: r.tasks.map(toTask),
-      habits: r.habits.map(toHabit),
-      meetings: [],
-      buffers: [],
-      focus: [],
-    }),
-  );
+const inputArb = fc.record({
+  events: fc.array(event, { maxLength: 30 }),
+  tasks: fc.array(taskArb, { maxLength: 8 }),
+  habits: fc.array(habitArb, { maxLength: 3 }),
+  breakMinutes: fc.constantFrom(0, 15),
+  taskHours: fc.constantFrom<(keyof typeof TASK_HOURS)[]>("day", "day", "night", "always"),
+  chunkCooldown: fc.constantFrom<Snapshot["chunkCooldown"][]>(
+    "none",
+    "once-per-day",
+    "30m",
+    "1h",
+    "2h",
+    "4h",
+  ),
+});
+const snapshotArb = inputArb.map(
+  (r): Snapshot => ({
+    now,
+    zone: ZONE,
+    weekStart: 1,
+    windowEnd: end,
+    stepMinutes: 15,
+    urgencyMode: "due-date-and-work",
+    chunkCooldown: r.chunkCooldown,
+    breakMinutes: r.breakMinutes,
+    hours: { work: TASK_HOURS[r.taskHours], lunch },
+    workHours: ["work"],
+    events: r.events.map(toEvent),
+    current: r.tasks.flatMap(toCurrent),
+    tasks: r.tasks.map(toTask),
+    habits: r.habits.map(toHabit),
+    meetings: [],
+    buffers: [],
+    focus: [],
+  }),
+);
 
 type ValueOf<A> = A extends fc.Arbitrary<infer T> ? T : never;
 const overlaps = (a: { start: number; end: number }, b: { start: number; end: number }) =>
   a.start < b.end && b.start < a.end;
 const live = (ps: Placement[]) => ps.filter((p) => !p.conflict);
+// Locked chunks come from the input as they are: they can overlap events,
+// each other, or break the chunk bounds. The checks below apply to the
+// chunks the plan places and to their relation with locked ones.
+const GAP: Record<Snapshot["chunkCooldown"], number> = {
+  none: 15,
+  "once-per-day": 15,
+  "30m": 30,
+  "1h": 60,
+  "2h": 120,
+  "4h": 240,
+};
+const dayFormat = new Intl.DateTimeFormat("sv-SE", { timeZone: ZONE });
+const localDate = (t: number) => dayFormat.format(t);
+// TSK-14 for one task: each placed (not locked) chunk keeps the cooldown
+// from every other chunk of the task and, with once-per-day, has its local
+// day to itself. Linear after a sort: the nearest chunk before c is the
+// largest end among chunks that start no later; the nearest after is the
+// next start. Returns the chunks that break the rule.
+const cooldownBreaks = (mine: Placement[], cooldown: Snapshot["chunkCooldown"]) => {
+  const sorted = [...mine].sort((a, b) => a.start - b.start);
+  const days = new Map<string, number>();
+  const dayOf = sorted.map((c) => localDate(c.start));
+  for (const d of dayOf) days.set(d, (days.get(d) ?? 0) + 1);
+  const gap = GAP[cooldown] * MIN;
+  const bad: Placement[] = [];
+  let maxEnd = -Infinity;
+  sorted.forEach((c, i) => {
+    const next = sorted[i + 1];
+    const tooClose = c.start - maxEnd < gap || (next !== undefined && next.start - c.end < gap);
+    const sameDay = cooldown === "once-per-day" && (days.get(dayOf[i] as string) ?? 0) > 1;
+    if (!c.locked && (tooClose || sameDay)) bad.push(c);
+    maxEnd = Math.max(maxEnd, c.end);
+  });
+  return bad;
+};
+// PLAN_RUNS=3000 PLAN_SEED=<n> raise the run count and fix the seed. The
+// overlap test spends most of its time in its pairwise expect() calls (about
+// 1.3 ms per run; plan() takes about 0.2 ms), so long runs get a long timeout.
+// The chunk-bounds test takes about 1.3 s at its 3000 default runs on a dev
+// host (plan() is about 0.3 ms per run) and about 1.5x that on CI: the
+// default timeout keeps a wide margin.
+const runs = (n: number) => ({
+  numRuns: Number(process.env.PLAN_RUNS) || n,
+  ...(process.env.PLAN_SEED ? { seed: Number(process.env.PLAN_SEED) } : {}),
+});
 
-describe("plan() invariants", () => {
+describe("plan() invariants", { timeout: process.env.PLAN_RUNS ? 300_000 : 15_000 }, () => {
   it("never overlaps blocking events or other placements, and keeps each item in its hours", () => {
     fc.assert(
       fc.property(snapshotArb, (s) => {
         const { placements } = plan(s);
         const blocking = s.events.filter(blocksPlanning);
-        const workSet = hoursToTimeSet(work, ZONE, now, end);
+        const workSet = hoursToTimeSet(s.hours.work ?? {}, ZONE, now, end);
         const lunchSet = hoursToTimeSet(lunch, ZONE, now, end);
         const ps = live(placements);
         for (const p of ps) {
+          if (p.locked) continue;
           expect(p.end).toBeLessThanOrEqual(end);
           expect(p.start % (15 * MIN)).toBe(0);
           for (const b of blocking) expect(overlaps(p, b)).toBe(false);
@@ -163,6 +248,7 @@ describe("plan() invariants", () => {
           for (let j = i + 1; j < ps.length; j++) {
             const a = ps[i] as Placement;
             const b = ps[j] as Placement;
+            if (a.locked && b.locked) continue;
             expect(overlaps(a, b)).toBe(false);
             if (s.breakMinutes > 0 && a.itemId !== b.itemId) {
               const gap = Math.max(b.start - a.end, a.start - b.end);
@@ -171,7 +257,7 @@ describe("plan() invariants", () => {
           }
         }
       }),
-      { numRuns: 150 },
+      runs(150),
     );
   });
 
@@ -180,17 +266,33 @@ describe("plan() invariants", () => {
       fc.property(snapshotArb, (s) => {
         const { placements } = plan(s);
         for (const t of s.tasks) {
-          const chunks = placements.filter((p) => p.itemId === t.id);
-          const total = chunks.reduce((a, c) => a + (c.end - c.start) / MIN, 0);
-          expect(total).toBeLessThanOrEqual(t.remainingMinutes);
+          const mine = placements.filter((p) => p.itemId === t.id);
+          const sum = (cs: Placement[]) => cs.reduce((a, c) => a + (c.end - c.start) / MIN, 0);
+          const lockedTotal = sum(mine.filter((c) => c.locked));
+          const chunks = mine.filter((c) => !c.locked);
+          const total = sum(chunks);
+          expect(total + lockedTotal).toBeLessThanOrEqual(
+            Math.max(t.remainingMinutes, lockedTotal),
+          );
+          // TSK-14: chunks of one task keep the cooldown from each other and
+          // from locked chunks; once-per-day keeps them on different days.
+          expect(cooldownBreaks(mine, s.chunkCooldown)).toEqual([]);
+          // TSK-13 applied to the rest: a chunk shorter than the minimum is
+          // allowed only when no split of the remaining work R (the work not
+          // in locked chunks) fits the bounds (ceil(R / max) * min > R). Then
+          // there is at most one, and the chunks add up to R (TSK-12).
+          const r = Math.max(0, t.remainingMinutes - lockedTotal);
+          const noSplit = Math.ceil(r / t.maxChunkMinutes) * t.minChunkMinutes > r;
+          const short = chunks.filter((c) => (c.end - c.start) / MIN < t.minChunkMinutes);
+          expect(short.length).toBeLessThanOrEqual(noSplit ? 1 : 0);
+          if (short.length > 0) expect(total).toBe(r);
           for (const c of chunks) {
             const l = (c.end - c.start) / MIN;
-            const stub = l < t.minChunkMinutes && l === t.remainingMinutes;
-            expect(stub || (l >= t.minChunkMinutes && l <= t.maxChunkMinutes)).toBe(true);
+            expect(l).toBeLessThanOrEqual(t.maxChunkMinutes);
           }
         }
       }),
-      { numRuns: 150 },
+      runs(3000),
     );
   });
 
@@ -207,7 +309,7 @@ describe("plan() invariants", () => {
               itemId: p.itemId,
               start: p.start,
               end: p.end,
-              locked: false,
+              locked: p.locked,
             })),
         });
         expect(live(again.placements)).toEqual(live(first.placements));
@@ -219,7 +321,7 @@ describe("plan() invariants", () => {
         });
         expect(shuffled).toEqual(first);
       }),
-      { numRuns: 100 },
+      runs(100),
     );
   });
 });

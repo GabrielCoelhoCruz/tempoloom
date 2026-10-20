@@ -25,11 +25,14 @@ const EventExtras = lazyComponent<{ event: PlannerEvent; onDone: () => void }>((
   import("./planner-now.tsx").then((m) => m.EventExtras),
 );
 
+const AWAY = "time away (all-day or out-of-office events) covers all its hours";
 const REASONS: Record<string, string> = {
   "outside-window": "starts after the scheduling window",
   "no-hours": "its hours have no time in this period",
   "too-long-for-hours": "longer than any range of its hours",
-  "all-day-block": "all-day events block every day",
+  away: AWAY,
+  // Reports stored before the rename still say "all-day-block".
+  "all-day-block": AWAY,
   "reserved-word": "an event with a reserved word exists that day",
   "no-space-fixed": "no free time between your meetings",
   "no-space-priority": "higher-priority items use the free time",

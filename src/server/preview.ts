@@ -11,6 +11,7 @@ import { logChange } from "./change-log.ts";
 import { all, type Db, one, run, tx } from "./db.ts";
 import type { LiveHub } from "./live.ts";
 import type { Mailer } from "./mail.ts";
+import { stripMarker } from "./planner/markers.ts";
 import { loadSnapshot, writeCalendar } from "./planner/replan.ts";
 import { getSettings } from "./settings.ts";
 import { cacheEvent } from "./sync/pull.ts";
@@ -284,9 +285,7 @@ export const zoneOf = (db: Db, userId: string) =>
 
 /** A managed event's title without the state marker that Tempoloom puts in front. */
 export function plainTitle(db: Db, userId: string, title: string): string {
-  for (const m of Object.values(getSettings(db, userId).markers).filter(Boolean))
-    if (title.startsWith(`${m} `)) return title.slice(m.length + 1);
-  return title;
+  return stripMarker(getSettings(db, userId).markers, title);
 }
 
 // ---------------------------------------------------------------- impact
@@ -452,7 +451,7 @@ export function createPreview(deps: PreviewDeps) {
       if (res.status >= 400) return { ...res, impact: [] };
       return { ...res, impact: diffPlans(db, userId, before, plannedNow(dry.db, userId, t)) };
     } finally {
-      dry.db.exec("ROLLBACK");
+      if (dry.db.isTransaction) dry.db.exec("ROLLBACK");
     }
   }
 

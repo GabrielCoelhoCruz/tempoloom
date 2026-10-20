@@ -52,7 +52,19 @@ export function tx<T>(db: Db, fn: () => T): T {
     db.exec("COMMIT");
     return result;
   } catch (err) {
-    db.exec("ROLLBACK");
+    // SQLite ends the transaction itself on some errors (SQLITE_FULL,
+    // SQLITE_IOERR, ...); a ROLLBACK then would throw and hide err.
+    if (!db.isTransaction) throw err;
+    try {
+      db.exec("ROLLBACK");
+    } catch (rollbackErr) {
+      const both = new AggregateError(
+        [err, rollbackErr],
+        "ROLLBACK failed after a failed transaction",
+      );
+      console.error("ROLLBACK failed: the connection may be left in a transaction", both);
+      throw both;
+    }
     throw err;
   }
 }

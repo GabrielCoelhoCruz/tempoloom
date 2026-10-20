@@ -1,4 +1,5 @@
 import type { Category } from "../../scheduler/categories.ts";
+import type { ItemRange } from "../../shared/item-hours.ts";
 
 // The automation library (docs/specs/automations-library.md): ready-made
 // starting points. All presets are Tempoloom's own proposals (spec, "Entries").
@@ -29,7 +30,13 @@ export interface HabitPreset {
   days: number[] | null;
   level: 1 | 2 | 3 | 4;
   hours: "work" | "personal";
+  /** Item-specific hours on these days instead of a named set. */
+  window?: ItemRange;
+  /** The ideal time is the last `minutes` of work hours, read from the user's work hours. */
+  idealAtEnd?: boolean;
 }
+
+const WORKDAYS = [1, 2, 3, 4, 5];
 
 export interface BufferPreset {
   side: "before" | "after" | "both";
@@ -58,6 +65,8 @@ export interface MeetingOverloadPreset {
 export interface FocusPreset {
   weeklyGoalMinutes: number;
   minBlockMinutes?: number;
+  /** The ideal window, as item-specific hours (focus-time.md `hours`: a one-off window). */
+  window?: ItemRange;
 }
 
 export interface MeetingPreset {
@@ -163,9 +172,9 @@ export const LIBRARY: LibraryEntry[] = [
     name: "Executive weekly focus",
     emoji: "🎯",
     group: "focus_time",
-    summary: "8 h of focus time each week.",
+    summary: "8 h of focus time each week, in the mornings (09:00 to 12:00).",
     kind: "focus_time",
-    preset: { weeklyGoalMinutes: 480 },
+    preset: { weeklyGoalMinutes: 480, window: { days: WORKDAYS, from: "09:00", to: "12:00" } },
   },
   {
     slug: "recovery-day",
@@ -199,9 +208,16 @@ export const LIBRARY: LibraryEntry[] = [
     name: "End-of-day wrap-up",
     emoji: "🌇",
     group: "habits",
-    summary: "30 min, Monday to Friday, at 16:30. P3.",
+    summary: "30 min, Monday to Friday, in the last 30 min of work hours. P3.",
     kind: "habit",
-    preset: { idealTime: "16:30", minutes: 30, days: null, level: 3, hours: "work" },
+    preset: {
+      idealTime: "16:30",
+      idealAtEnd: true,
+      minutes: 30,
+      days: null,
+      level: 3,
+      hours: "work",
+    },
   },
   prompt(
     "customer-onboarding",
@@ -233,7 +249,11 @@ export const LIBRARY: LibraryEntry[] = [
     group: "buffers",
     summary: "10 min after meetings of 60 min or more.",
     kind: "buffer",
-    preset: { side: "after", minutesAfter: 10, filter: { length: { op: ">=", minutes: 60 } } },
+    preset: {
+      side: "after",
+      minutesAfter: 10,
+      filter: { participants: { op: ">=", value: 2 }, length: { op: ">=", minutes: 60 } },
+    },
   },
   prompt("adaptive-workday", "Adaptive workday", "Rearrange today's flexible items for new hours."),
   prompt("conflict-fixes", "Conflict fixes", "Fix the conflicts in the dates in view."),
@@ -243,9 +263,9 @@ export const LIBRARY: LibraryEntry[] = [
     name: "Peak-energy focus",
     emoji: "⚡",
     group: "focus_time",
-    summary: "10 h of focus time each week.",
+    summary: "10 h of focus time each week, from 09:00 to 12:00.",
     kind: "focus_time",
-    preset: { weeklyGoalMinutes: 600 },
+    preset: { weeklyGoalMinutes: 600, window: { days: WORKDAYS, from: "09:00", to: "12:00" } },
   },
   prompt("task-reranking", "Task re-ranking", "Re-rank open tasks by due date and work left."),
   {
@@ -283,9 +303,14 @@ export const LIBRARY: LibraryEntry[] = [
     slug: "travel-meetings",
     name: "Travel for external meetings",
     group: "buffers",
-    summary: "30 min before and after meetings at an address.",
+    summary: "30 min before and after external meetings at an address.",
     kind: "buffer",
-    preset: { side: "both", minutesBefore: 30, minutesAfter: 30, filter: { travel: true } },
+    preset: {
+      side: "both",
+      minutesBefore: 30,
+      minutesAfter: 30,
+      filter: { categories: ["external_meeting"], travel: true },
+    },
   },
   {
     slug: "focus-before-customers",
@@ -439,9 +464,16 @@ export const LIBRARY: LibraryEntry[] = [
     name: "Lunch",
     emoji: "🍱",
     group: "habits",
-    summary: "60 min on workdays at 12:00.",
+    summary: "60 min on workdays between 11:30 and 14:00, ideally at 12:00.",
     kind: "habit",
-    preset: { idealTime: "12:00", minutes: 60, days: null, level: 3, hours: "work" },
+    preset: {
+      idealTime: "12:00",
+      minutes: 60,
+      days: null,
+      level: 3,
+      hours: "work",
+      window: { days: WORKDAYS, from: "11:30", to: "14:00" },
+    },
   },
 ];
 

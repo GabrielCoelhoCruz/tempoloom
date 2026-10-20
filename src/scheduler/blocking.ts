@@ -7,9 +7,38 @@ export const TAG_FREE = "#tl_free";
 export const TAG_BUSY = "#tl_busy";
 export const TAG_FOCUS = "#tl_focus";
 
-export function hasTag(e: Pick<ExternalEvent, "title" | "description">, tag: string): boolean {
-  const t = tag.toLowerCase();
-  return e.title.toLowerCase().includes(t) || e.description.toLowerCase().includes(t);
+/**
+ * events-tags.md: the tag in the title, the description or the user's own RSVP
+ * note, as a whole token in any case. Before it: the start or a character that
+ * is not a letter, digit or `_`; after it: the end, whitespace or punctuation
+ * other than `_` (`#tl_freedom` and `x#tl_free` do not match).
+ */
+export function hasTag(e: ExternalEvent | TagText, tag: string): boolean {
+  const re = tagPattern(tag);
+  return re.test(e.title) || re.test(e.description) || re.test(e.rsvpNote ?? "");
+}
+
+/** The three texts where tags count; every place that reads tags passes all three. */
+export interface TagText {
+  title: string;
+  description: string;
+  rsvpNote: string;
+}
+
+/** The tag texts of a cached event row. */
+export function tagText(e: { summary: string; description: string; rsvp_note: string }): TagText {
+  return { title: e.summary, description: e.description, rsvpNote: e.rsvp_note };
+}
+
+const patterns = new Map<string, RegExp>();
+function tagPattern(tag: string): RegExp {
+  let re = patterns.get(tag);
+  if (!re) {
+    const t = tag.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    re = new RegExp(`(^|[^\\p{L}\\p{N}_])${t}(?![\\p{L}\\p{N}_])`, "iu");
+    patterns.set(tag, re);
+  }
+  return re;
 }
 
 /** True when the user takes part: organizer, own event, or answered yes or maybe. */
@@ -32,9 +61,10 @@ export function blockingIntervals(events: ExternalEvent[]): Interval[] {
   return events.filter(blocksPlanning).map((e) => ({ start: e.start, end: e.end }));
 }
 
-export function allDayBlocks(events: ExternalEvent[]): Interval[] {
+/** Time away (events-out-of-office.md): busy all-day events and out-of-office events that block. */
+export function awayBlocks(events: ExternalEvent[]): Interval[] {
   return events
-    .filter((e) => e.allDay && blocksPlanning(e))
+    .filter((e) => (e.allDay || e.eventType === "outOfOffice") && blocksPlanning(e))
     .map((e) => ({ start: e.start, end: e.end }));
 }
 

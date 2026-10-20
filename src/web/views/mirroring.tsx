@@ -2,6 +2,7 @@
 // rules 1-13, 26, 29, 39, 40, edge cases 11, 16): the policy form, the list
 // with one tab per account, edit, the status toggle and delete.
 import { useCallback, useEffect, useId, useState } from "preact/hooks";
+import type { Settings as UserSettings } from "../../server/settings.ts";
 import { api } from "../lib/api.ts";
 import {
   type Ask,
@@ -15,7 +16,10 @@ import {
 import { COLORS } from "../lib/categories.ts";
 import { toLocalInput } from "../lib/format.ts";
 import { templateFromUrl } from "../lib/library.ts";
+import { onLinkClick } from "../lib/router.ts";
 import { me, planNow, zone } from "../lib/state.ts";
+
+type NoReply = UserSettings["noReplyCopies"];
 
 interface Policy {
   id: string;
@@ -31,6 +35,8 @@ interface Policy {
   copy_outside_work_hours: number;
   color_override: string | null;
   enabled: number;
+  /** Emails of the policy's accounts that are disconnected, or null. */
+  disconnected: string | null;
 }
 
 interface Fields {
@@ -212,7 +218,8 @@ const body = (f: Fields) => ({
 
 export function MirrorSettings() {
   // A library mirroring entry fills the form (automations-library.md rule 5).
-  const fromLibrary = templateFromUrl()?.kind === "calendar_mirroring";
+  const template = templateFromUrl();
+  const fromLibrary = template?.kind === "calendar_mirroring";
   const [policies, setPolicies] = useState<Policy[]>([]);
   const [reconciledAt, setReconciledAt] = useState<number | null>(null);
   const [tab, setTab] = useState<string | null>(null);
@@ -220,6 +227,7 @@ export function MirrorSettings() {
   const [message, setMessage] = useState<string | null>(null);
   const [ask, setAsk] = useState<Ask | null>(null);
   const [created, setCreated] = useState(0);
+  const [noReply, setNoReply] = useState<NoReply | null>(null);
   const calendars = calendarList.value;
   const accounts = (me.value?.accounts ?? []).filter((a) => !a.viaGrant);
 
@@ -229,6 +237,12 @@ export function MirrorSettings() {
     setReconciledAt(r.reconciledAt);
   }, []);
   useEffect(() => void load(), [load]);
+  useEffect(() => {
+    void api<{ settings: Pick<UserSettings, "noReplyCopies"> }>("GET", "/api/settings").then((r) =>
+      // A choice made before this first load stays.
+      setNoReply((prev) => prev ?? r.settings.noReplyCopies),
+    );
+  }, []);
 
   const act = async (fn: () => Promise<unknown>, after?: () => void) => {
     setMessage(null);
@@ -271,6 +285,15 @@ export function MirrorSettings() {
           source calendar in your calendar app.
         </li>
       </ul>
+      {fromLibrary && calendars.filter((c) => c.provider !== "ics" && c.writable).length < 2 && (
+        <p class="warning" data-testid="mirror-needs-two">
+          Mirroring needs two connected calendars, and you have one. Connect another calendar on the{" "}
+          <a href="/account" onClick={onLinkClick}>
+            Account
+          </a>{" "}
+          page, then refresh the calendar list.
+        </p>
+      )}
       <PolicyForm
         key={`new-${created}`}
         testid="mirror-form"
@@ -287,7 +310,11 @@ export function MirrorSettings() {
         }}
         onSave={(f) =>
           void act(
-            () => api("POST", "/api/mirrors", body(f)),
+            () =>
+              api("POST", "/api/mirrors", {
+                ...body(f),
+                ...(fromLibrary ? { templateId: template.slug } : {}),
+              }),
             () => setCreated((n) => n + 1),
           )
         }
@@ -298,6 +325,30 @@ export function MirrorSettings() {
         </p>
       )}
       {ask && <Confirm ask={ask} onClose={() => setAsk(null)} />}
+      <div class="field">
+        <label for="mirror-no-reply">Copies of events you have not answered</label>
+        <select
+          id="mirror-no-reply"
+          value={noReply ?? "free"}
+          disabled={noReply === null}
+          onChange={(e) => {
+            const value = e.currentTarget.value as NoReply;
+            const before = noReply;
+            setNoReply(value);
+            // A failed save shows the stored choice again.
+            void act(() =>
+              api("PATCH", "/api/settings", { noReplyCopies: value }).catch((err: unknown) => {
+                setNoReply(before);
+                throw err;
+              }),
+            );
+          }}
+        >
+          <option value="free">Show as free</option>
+          <option value="busy">Show as busy</option>
+        </select>
+        <p class="meta">Applies to every mirroring policy.</p>
+      </div>
       <p class="meta">Each switch writes many events. Wait a few minutes between switches.</p>
       <p class="meta" data-testid="mirror-reconciled">
         Last full check:{" "}
@@ -325,6 +376,12 @@ export function MirrorSettings() {
                 <span>
                   {label} · {p.visibility.replace("_", " ")}
                   {p.enabled ? "" : " · off"}
+                  {p.disconnected && (
+                    <span class="status error" role="alert" data-testid="mirror-disconnected">
+                      {" "}
+                      · Paused: {p.disconnected} is disconnected. Reconnect it on the Account page.
+                    </span>
+                  )}
                 </span>
                 <div class="actions">
                   <button type="button" onClick={() => setEditing(editing === p.id ? null : p.id)}>

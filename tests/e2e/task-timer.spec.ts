@@ -109,12 +109,18 @@ test("time logged with the timer on a task and on a habit counts in stats (analy
   page,
   cal,
   signIn,
+  app,
 }) => {
+  // Logged time ends at the stop time and counts on its own day. Noon on the
+  // server clock keeps the 25 and 15 logged minutes inside today at any time of
+  // day the test runs (near midnight they would split across two days).
+  const today = utcToLocal(ZONE, Date.now()).date;
+  app.env.TEST_CLOCK_START = new Date(localToUtc(ZONE, today, 12 * 60)).toISOString();
+  await app.restart();
   await signIn();
   await chooseSetting(page, "Task placement", "Suggestions only (no task events)");
   await addTask(page, { title: "AT-Logged task", minutes: 60, split: false, due: "" });
   // The habit's day is not today, so today's habit minutes come from the log only.
-  const today = utcToLocal(ZONE, Date.now()).date;
   const habitDay = DAY_NAMES[weekdayOf(addDays(today, 2)) - 1] as (typeof DAY_NAMES)[number];
   await addHabit(page, { title: "AT-Read", ideal: "11:00", min: 30, max: 30, days: [habitDay] });
   await eventually(
