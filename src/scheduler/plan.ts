@@ -358,7 +358,7 @@ function placeTask(ctx: Ctx, t: TaskItem): void {
     .filter((c) => !ctx.fixedKeys.has(c.key) && !keptKeys.has(c.key))
     .map((c) => c.key)
     .sort((a, b) => index(a) - index(b));
-  let next = mine.reduce((m, c) => Math.max(m, index(c.key) + 1), 0);
+  let next = mine.reduce((m, c) => Math.max(m, index(c.key) + 1), t.nextIndex ?? 0);
   const freshKeys = result.fresh.map(() => dropped.shift() ?? `${prefix}${next++}`);
 
   const chunks = [
@@ -1454,13 +1454,17 @@ function setStatus(ctx: Ctx): void {
       byTask.set(p.itemId, list);
     }
   }
+  // DEF-12, CED-12: a chunk after the due date, locked ones too, makes all chunks busy.
+  const late = new Set(
+    ctx.placements.filter((p) => p.kind === "task" && p.afterDue).map((p) => p.itemId),
+  );
   for (const [id, chunks] of byTask) {
     const t = tasks.get(id);
     const seen = ctx.taskSeen.get(id);
     if (!t || !seen) continue;
     const due = t.dueAt;
     if (due === null) continue;
-    if (chunks.some((c) => c.afterDue)) {
+    if (late.has(id)) {
       for (const c of chunks) c.busy = true;
       continue;
     }
@@ -1531,6 +1535,11 @@ const KIND_ORDER = { meeting: 0, buffer: 1, habit: 2 } as const;
 export function plan(s: Snapshot): Plan {
   const ctx = init(s);
   const effective = new Map(s.tasks.map((t) => [t.id, effectiveLevel(ctx, t)]));
+  const taskOrder: string[] = [];
+  const takeTask = (t: TaskItem) => {
+    taskOrder.push(t.id);
+    placeTask(ctx, t);
+  };
   for (const level of LEVELS) {
     const autos: Automation[] = [
       ...s.meetings
@@ -1558,12 +1567,12 @@ export function plan(s: Snapshot): Plan {
       const queue = s.tasks
         .filter((t) => t.nextUpRank !== null)
         .sort((a, b) => (a.nextUpRank ?? 0) - (b.nextUpRank ?? 0) || taskKey(a, b));
-      for (const t of queue) placeTask(ctx, t);
+      for (const t of queue) takeTask(t);
     }
     const band = s.tasks
       .filter((t) => t.nextUpRank === null && effective.get(t.id) === level)
       .sort(taskKey);
-    for (const t of band) placeTask(ctx, t);
+    for (const t of band) takeTask(t);
   }
   // Both focus automations come after every other item, in their P4 rank order;
   // at one rank the meeting overload goes first (focus edge case 5).
@@ -1589,5 +1598,6 @@ export function plan(s: Snapshot): Plan {
         a.itemId.localeCompare(b.itemId) ||
         a.demandKey.localeCompare(b.demandKey),
     ),
+    taskOrder,
   };
 }

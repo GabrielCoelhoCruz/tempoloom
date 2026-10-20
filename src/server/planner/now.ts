@@ -12,6 +12,7 @@ import { getSettings } from "../settings.ts";
 import { planningZone } from "../travel.ts";
 import { externalEvents } from "./events.ts";
 import { stripMarker } from "./markers.ts";
+import { taskDoneMinutes } from "./progress.ts";
 
 export interface OpenTask {
   id: string;
@@ -26,15 +27,7 @@ export interface OpenTask {
 
 /** Open tasks with the work they still need (planning-tasks.md derived values). */
 export function openTasks(db: Db, userId: string, now: number): OpenTask[] {
-  const used = new Map(
-    all<{ source_id: string; m: number }>(
-      db,
-      `SELECT source_id, SUM(end_ms - start_ms) / 60000.0 AS m FROM managed_events
-       WHERE user_id = ? AND kind = 'task' AND end_ms <= ? GROUP BY source_id`,
-      userId,
-      now,
-    ).map((r) => [r.source_id, r.m]),
-  );
+  const used = taskDoneMinutes(db, userId, now);
   return all<OpenTask & { total_minutes: number; logged_minutes: number }>(
     db,
     "SELECT * FROM tasks WHERE user_id = ? AND status = 'open'",

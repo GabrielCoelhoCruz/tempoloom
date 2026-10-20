@@ -8,9 +8,6 @@
 // - policies that use it show no error                               -> paused note on the policy
 // - reconnect takes a wrong password, or does not resume the policy  -> refusal; the copy appears
 // - the status is not stored                                         -> reload after each step
-import { readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
 import type { Page } from "@playwright/test";
 import { addDays } from "../../src/shared/time.ts";
 import { addPolicy, copies, policyRow, week } from "./calendar-helpers.ts";
@@ -18,23 +15,9 @@ import { addCalDavAccount, openAccount } from "./delegation-helpers.ts";
 import { at, BACKEND, blockUntil, EMAIL, eventually, expect, planNow, test } from "./fixtures.ts";
 import { addTask, allEvents, titled, W } from "./helpers.ts";
 import { putEvent } from "./ics.ts";
+import { setPassword } from "./radicale-users.ts";
 
 test.skip(BACKEND === "google", "The test changes a password on the loopback CalDAV server.");
-
-const STATE = join(
-  process.env.TEMPOLOOM_E2E_STATE ?? join(homedir(), ".local/state/tempoloom"),
-  "radicale",
-);
-
-/** Sets a Radicale user's password (scripts/caldav-server.sh files); Radicale reads them on each request. */
-function setPassword(user: string, n: number, password: string): void {
-  const users = join(STATE, "config/users");
-  const lines = readFileSync(users, "utf8")
-    .split("\n")
-    .map((l) => (l.startsWith(`${user}:`) ? `${user}:${password}` : l));
-  writeFileSync(users, lines.join("\n"));
-  writeFileSync(join(STATE, `password${n}`), `${password}\n`);
-}
 
 const accountRow = (page: Page, email: string) =>
   page.getByTestId("account-list").locator(`[data-account="${email}"]`);
