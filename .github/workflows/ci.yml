@@ -86,6 +86,8 @@ jobs:
       - run: docker build -t tempoloom:ci .
       - name: Self-host E2E (Docker image, Radicale, Chrome)
         run: npx playwright test --grep @self-host
+        # Below the job timeout, so a hang fails this step and the log steps still run.
+        timeout-minutes: 20
         env:
           TEMPOLOOM_SELFHOST_IMAGE: tempoloom:ci
       - name: Upload report and screenshots
@@ -99,7 +101,7 @@ jobs:
             .e2e/test-results
           retention-days: 14
       - name: Upload server logs
-        if: failure()
+        if: failure() || cancelled()
         uses: actions/upload-artifact@v4
         with:
           name: self-host-logs
