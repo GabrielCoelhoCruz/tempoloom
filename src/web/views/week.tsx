@@ -176,17 +176,24 @@ export function WeekView({
       const b = Math.max(m0, minuteAt(m.clientY));
       pick.value = { day, from: snapDown(a), to: Math.max(snapDown(a) + SNAP_MIN, snapUp(b)) };
     };
-    const up = () => {
+    const end = () => {
       col.removeEventListener("pointermove", move);
       col.removeEventListener("pointerup", up);
+      col.removeEventListener("pointercancel", end);
       const p = pick.value;
       pick.value = null;
+      return p;
+    };
+    // A cancelled pointer (a touch pan, for example) makes no task.
+    const up = () => {
+      const p = end();
       const date = days[day] as LocalDate;
       if (moved && p) onCreate(localToUtc(zone, date, p.from), localToUtc(zone, date, p.to));
       else onCreate(localToUtc(zone, date, snapDown(m0)), null);
     };
     col.addEventListener("pointermove", move);
     col.addEventListener("pointerup", up);
+    col.addEventListener("pointercancel", end);
   };
   const picked = pick.value;
 

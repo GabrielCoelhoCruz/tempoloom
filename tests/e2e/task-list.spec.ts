@@ -10,8 +10,12 @@
 // - a reload drops the filters or the sort                                -> list and fields after reload
 // - a bulk edit changes a task that is not selected                       -> the third task keeps its values
 // - bulk start, due, priority, done or delete does not reach the calendar -> Radicale events and the database
+// - scheduling order ignores the urgency lift of the default mode         -> list order (lifted P3 first)
 // - snooze does not move the chunks, or locks them                       -> Radicale time and title marker
-// - "Next week" goes to the wrong day or hour                             -> stored start date
+// - "1 hour", "3 hours", "Tomorrow" or "Next week" give the wrong time    -> stored start date
+// - snooze puts the start after the due date, so later edits fail        -> stored dates, PATCH and bulk responses
+// - snooze leaves the locked chunk of a task made on the planner          -> Radicale time and lock marker
+// - the shortest or longest chunk default is not used                    -> stored bounds, Radicale chunk lengths
 // - a private task writes no CLASS, or a default task writes one         -> CLASS in the raw event
 // - a change of visibility on one task does not reach its events         -> CLASS after the change
 // - a task default is not used, or changes a task made before            -> stored values of both tasks
@@ -112,6 +116,39 @@ test("the task list filters by state, hours set, due date and start date, and so
   await expect.poll(() => listed(page)).toEqual(["FB", "FE"]);
 });
 
+test("scheduling order is the scheduler's order, with the urgency lift of a task short of time before its due date (TSK-61)", async ({
+  page,
+  cal,
+  signIn,
+}) => {
+  await blockUntil(cal, W);
+  await signIn();
+  // LA is P2. LB is P3 with 7 hours of work and 8 free work hours before its
+  // due date, so the default urgency mode lifts it above LA. By priority alone LA comes first.
+  await addTask(page, { title: "LA", minutes: 60, split: false, level: 2, due: "" });
+  await page.goto("/tasks");
+  await addTask(page, {
+    title: "LB",
+    minutes: 420,
+    min: 60,
+    max: 120,
+    level: 3,
+    due: `${W}T17:00`,
+  });
+  await waitPlaced(cal, ["LA", "LB"]);
+  await page.goto("/tasks?sort=scheduling");
+  await expect(page.getByTestId("task-filters").getByLabel("Sort")).toHaveValue("scheduling");
+  await expect.poll(() => listed(page)).toEqual(["LB", "LA"]);
+  await page.getByTestId("task-filters").getByLabel("Sort").selectOption({ label: "Priority" });
+  await expect.poll(() => listed(page)).toEqual(["LA", "LB"]);
+  await page
+    .getByTestId("task-filters")
+    .getByLabel("Sort")
+    .selectOption({ label: "Scheduling order" });
+  await page.reload();
+  await expect.poll(() => listed(page)).toEqual(["LB", "LA"]);
+});
+
 test("bulk edit sets the start date, due date and priority of the selected tasks, marks them done or deletes them (TSK-45)", async ({
   page,
   app,
@@ -184,6 +221,13 @@ test("bulk edit sets the start date, due date and priority of the selected tasks
   await expect(row(page, "BK2")).toBeHidden();
 });
 
+/** The first day after today with work hours (Monday to Friday). */
+function nextWorkday(): string {
+  let d = addDays(utcToLocal(ZONE, Date.now()).date, 1);
+  while (weekdayOf(d) > 5) d = addDays(d, 1);
+  return d;
+}
+
 /** The first Monday after today, the first day of next week (week start Monday). */
 function nextMonday(): string {
   let d = addDays(utcToLocal(ZONE, Date.now()).date, 1);
@@ -205,13 +249,26 @@ test("snooze moves a task to a later start and places its chunks again, unlocked
 
   const more = row(page, "AT-Snooze").getByTestId("task-more");
   await more.locator("summary").click();
-  for (const choice of ["1 hour", "3 hours", "Tomorrow"])
-    await expect(more.getByRole("button", { name: choice, exact: true })).toBeVisible();
+  const startAfter = () =>
+    app.query<{ s: number }>("SELECT start_after AS s FROM tasks WHERE title = 'AT-Snooze'")[0]
+      ?.s ?? 0;
+  // "1 hour" and "3 hours" count from now; each is later than the last choice.
+  for (const [choice, hours] of [
+    ["1 hour", 1],
+    ["3 hours", 3],
+  ] as const) {
+    const clicked = Date.now();
+    await more.getByRole("button", { name: choice, exact: true }).click();
+    await expect
+      .poll(() => Math.abs(startAfter() - (clicked + hours * 60 * MIN)), { message: choice })
+      .toBeLessThan(2 * MIN);
+  }
+  // Tomorrow: the next day with work hours, at their start (09:00).
+  await more.getByRole("button", { name: "Tomorrow", exact: true }).click();
+  await expect.poll(startAfter).toBe(at(nextWorkday(), "09:00"));
   await more.getByRole("button", { name: "Next week", exact: true }).click();
   // Next week: its first day, at the start of the task's hours (work hours, 09:00).
-  await expect
-    .poll(() => app.query<{ s: number }>("SELECT start_after AS s FROM tasks"))
-    .toEqual([{ s: at(nextMonday(), "09:00") }]);
+  await expect.poll(startAfter).toBe(at(nextMonday(), "09:00"));
 
   await more.getByLabel("Snooze until").fill(`${day(2)}T13:00`);
   await more.getByRole("button", { name: "Snooze", exact: true }).click();
@@ -233,6 +290,100 @@ test("snooze moves a task to a later start and places its chunks again, unlocked
   expect(titled(after, "AT-Snooze").map((e) => [e.id, e.start])).toEqual(
     titled(evs, "AT-Snooze").map((e) => [e.id, e.start]),
   );
+});
+
+test("snooze past the due date moves the due date with the start, and the task can still be edited (TSK-24, edge case 6)", async ({
+  page,
+  app,
+  cal,
+  signIn,
+}) => {
+  await blockUntil(cal, W);
+  await signIn();
+  // Due tomorrow at 08:00: always before next week's first work hour.
+  const tomorrow = addDays(utcToLocal(ZONE, Date.now()).date, 1);
+  await addTask(page, {
+    title: "AT-SnoozeDue",
+    minutes: 60,
+    split: false,
+    due: `${tomorrow}T08:00`,
+  });
+  const dates = () =>
+    app.query<{ s: number; d: number; level: number; visibility: string }>(
+      "SELECT start_after AS s, due_at AS d, level, visibility FROM tasks",
+    )[0];
+  const before = dates();
+  const more = row(page, "AT-SnoozeDue").getByTestId("task-more");
+  await more.locator("summary").click();
+  await more.getByRole("button", { name: "Next week", exact: true }).click();
+  const start = at(nextMonday(), "09:00");
+  // The whole task moves: the due date keeps its distance from the start.
+  await expect
+    .poll(() => [dates()?.s, dates()?.d])
+    .toEqual([start, start + ((before?.d ?? 0) - (before?.s ?? 0))]);
+
+  const saved = page.waitForResponse(
+    (r) => r.request().method() === "PATCH" && r.url().includes("/api/tasks/"),
+  );
+  await more.getByLabel("Visibility").selectOption({ label: "Private" });
+  expect((await saved).ok()).toBe(true);
+  await row(page, "AT-SnoozeDue").getByLabel("Select").check();
+  const bulk = page.getByTestId("bulk-bar");
+  await bulk.getByLabel("Priority").selectOption("4");
+  const bulked = page.waitForResponse(
+    (r) => r.request().method() === "POST" && new URL(r.url()).pathname === "/api/tasks/bulk",
+  );
+  await bulk.getByRole("button", { name: "Set priority" }).click();
+  expect((await bulked).ok()).toBe(true);
+  await expect(row(page, "AT-SnoozeDue").getByTestId("task-level")).toHaveText("P4 low");
+  await page.reload();
+  await expect(row(page, "AT-SnoozeDue").getByTestId("task-level")).toHaveText("P4 low");
+  await expect(row(page, "AT-SnoozeDue").getByTestId("task-private")).toBeVisible();
+  expect(dates()).toMatchObject({ level: 4, visibility: "private" });
+});
+
+test("snooze moves a task made on the planner: its locked chunk is unlocked and placed again (TSK-24, TSK-7)", async ({
+  page,
+  cal,
+  signIn,
+}) => {
+  await blockUntil(cal, W);
+  await signIn();
+  await openWeek(page);
+  await expect(page.getByRole("checkbox", { name: "Preview mode" })).toBeVisible();
+  await page.locator(".week-scroll").evaluate((el) => {
+    el.scrollTop = 8 * 48;
+  });
+  const click = await point(page, day(3), 10 * 60);
+  await page.mouse.click(click.x, click.y + 2);
+  await createHere(page, "AT-PlanSnooze");
+  await eventually(
+    () => allEvents(cal),
+    (l) =>
+      expect(titled(l, "AT-PlanSnooze").map((e) => [e.start, e.summary.includes("🔒")])).toEqual([
+        [at(day(3), "10:00"), true],
+      ]),
+  );
+
+  await page.goto("/tasks");
+  const more = row(page, "AT-PlanSnooze").getByTestId("task-more");
+  await more.locator("summary").click();
+  await more.getByLabel("Snooze until").fill(`${day(4)}T13:00`);
+  await more.getByRole("button", { name: "Snooze", exact: true }).click();
+  const evs = await eventually(
+    () => allEvents(cal),
+    (l) =>
+      expect(titled(l, "AT-PlanSnooze").map((e) => [e.start, e.end - e.start])).toEqual([
+        [at(day(4), "13:00"), 60 * MIN],
+      ]),
+  );
+  expect(titled(evs, "AT-PlanSnooze")[0]?.summary).not.toContain("🔒");
+  await openWeek(page);
+  await expect(page.locator(".ev", { hasText: "AT-PlanSnooze" })).not.toHaveClass(/ev-locked/);
+  await page.reload();
+  await planNow(page);
+  const after = await allEvents(cal);
+  expect(titled(after, "AT-PlanSnooze").map((e) => e.start)).toEqual([at(day(4), "13:00")]);
 });
 
 test("a private task writes private chunk events; the default comes from task settings and each task can change it (CNT-20, CNT-24)", async ({
@@ -377,6 +528,54 @@ test("task defaults in Settings fill new tasks: priority, duration, chunks, hour
   await expect(row(page, "AT-New").getByTestId("task-level")).toHaveText("P3 medium");
   await expect(row(page, "AT-New").getByTestId("task-start")).toBeVisible();
   await expect(row(page, "AT-Old").getByTestId("task-level")).toHaveText("P2 high");
+});
+
+test("task defaults in Settings: the shortest and longest chunk fill new split tasks (TSK-1 to TSK-3)", async ({
+  page,
+  app,
+  cal,
+  signIn,
+}) => {
+  await blockUntil(cal, W);
+  await signIn();
+  await page.getByRole("link", { name: "Settings" }).click();
+  const defaults = page.getByTestId("task-defaults");
+  await expect(defaults.getByLabel("Split into chunks")).toHaveValue("yes");
+  for (const [label, value] of [
+    ["Shortest chunk", "45"],
+    ["Longest chunk", "60"],
+  ] as const) {
+    const saved = page.waitForResponse(
+      (r) => r.request().method() === "PATCH" && new URL(r.url()).pathname === "/api/settings",
+    );
+    const field = defaults.getByLabel(label);
+    await field.fill(value);
+    await field.blur();
+    expect((await saved).ok()).toBe(true);
+    await expect(page.getByTestId("settings-message")).toHaveText("Saved");
+  }
+  await page.reload();
+  await expect(page.getByTestId("task-defaults").getByLabel("Shortest chunk")).toHaveValue("45");
+  await expect(page.getByTestId("task-defaults").getByLabel("Longest chunk")).toHaveValue("60");
+
+  // 180 minutes with chunks of 45 to 60 minutes: the out-of-the-box 30 to 120 would allow one 120-minute chunk.
+  await addTask(page, { title: "AT-Chunks", minutes: 180, due: "" });
+  expect(
+    app.query<{ min_chunk_minutes: number; max_chunk_minutes: number }>(
+      "SELECT min_chunk_minutes, max_chunk_minutes FROM tasks WHERE title = 'AT-Chunks'",
+    ),
+  ).toEqual([{ min_chunk_minutes: 45, max_chunk_minutes: 60 }]);
+  const evs = await eventually(
+    () => allEvents(cal),
+    (l) => {
+      const chunks = titled(l, "AT-Chunks");
+      expect(chunks.reduce((a, e) => a + (e.end - e.start), 0)).toBe(180 * MIN);
+    },
+  );
+  for (const e of titled(evs, "AT-Chunks")) {
+    expect(e.end - e.start).toBeGreaterThanOrEqual(45 * MIN);
+    expect(e.end - e.start).toBeLessThanOrEqual(60 * MIN);
+  }
 });
 
 /**

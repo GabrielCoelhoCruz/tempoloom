@@ -310,4 +310,6 @@ export interface ReportEntry {
 export interface Plan {
   placements: Placement[];
   report: ReportEntry[];
+  /** Task ids in the order the scheduler processed them (planning-tasks.md TSK-61). */
+  taskOrder: string[];
 }

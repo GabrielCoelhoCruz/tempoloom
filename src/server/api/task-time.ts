@@ -21,8 +21,8 @@ import {
 } from "../planner/write.ts";
 import { getSettings } from "../settings.ts";
 import type { SyncService } from "../sync/service.ts";
+import { createTask } from "../tasks.ts";
 import { planningZone } from "../travel.ts";
-import { createTask } from "./items.ts";
 
 type Kind = "task" | "habit";
 

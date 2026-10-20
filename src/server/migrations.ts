@@ -1195,9 +1195,11 @@ export const MIGRATIONS: readonly string[] = [
   -- The attendees' meeting hours and time zones the last plan used (rule 11).
   ALTER TABLE meetings ADD COLUMN attendee_hours TEXT NOT NULL DEFAULT '';
   `,
-  // 34: task visibility (planning-event-content.md CNT-20, CNT-24).
+  // 34: task visibility (planning-event-content.md CNT-20, CNT-24) and the scheduling order.
   `
   ALTER TABLE tasks ADD COLUMN visibility TEXT NOT NULL DEFAULT 'calendar_default'
     CHECK (visibility IN ('calendar_default', 'private'));
+  -- The task ids in the order the last plan processed them (planning-tasks.md TSK-61).
+  ALTER TABLE plan_reports ADD COLUMN task_order TEXT NOT NULL DEFAULT '[]';
   `,
 ];

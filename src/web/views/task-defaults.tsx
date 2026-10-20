@@ -111,12 +111,12 @@ export function TaskDefaults({
           Due in (days)
           <input
             type="number"
-            min={0}
+            min={1}
             placeholder="No due date"
             value={d.dueInDays ?? ""}
             onChange={(e) => {
               const v = e.currentTarget.value;
-              save({ dueInDays: v === "" ? null : Math.max(0, Math.round(Number(v))) });
+              save({ dueInDays: v === "" ? null : Math.max(1, Math.round(Number(v))) });
             }}
           />
         </label>

@@ -1067,24 +1067,31 @@ T.update({
     "u33_private": "a private task writes private chunk events; the default comes from task settings and each task can change it (CNT-20, CNT-24)",
     "u33_defaults": "task defaults in Settings fill new tasks: priority, duration, chunks, hours, start delay, due in and next up; older tasks keep theirs (TSK-1 to TSK-3)",
     "u33_here": "a drag on the planner makes a locked task of that length there; a click makes one of the default length (TSK-7, AT-T10)",
+    "u33_key_c": "the key C opens the New task form on pages other than the planner, such as Settings and Tasks (TSK-5)",
+    "u33_order_lift": "scheduling order is the scheduler's order, with the urgency lift of a task short of time before its due date (TSK-61)",
+    "u33_snooze_due": "snooze past the due date moves the due date with the start, and the task can still be edited (TSK-24, edge case 6)",
+    "u33_snooze_locked": "snooze moves a task made on the planner: its locked chunk is unlocked and placed again (TSK-24, TSK-7)",
+    "u33_chunk_defaults": "task defaults in Settings: the shortest and longest chunk fill new split tasks (TSK-1 to TSK-3)",
 })
 E2E.update({
-    2: ["s3_another"], 5: ["u33_here"], 14: ["u33_snooze"], 16: ["u33_private"],
-    18: ["u33_defaults", "t_title"], 25: ["u33_bulk"], 28: ["u33_filters"], 29: ["u33_filters"],
+    2: ["s3_another", "u33_key_c"], 5: ["u33_here"],
+    14: ["u33_snooze", "u33_snooze_due", "u33_snooze_locked"], 16: ["u33_private"],
+    18: ["u33_defaults", "t_title"], 25: ["u33_bulk"], 28: ["u33_filters"],
+    29: ["u33_filters", "u33_order_lift"],
 })
 E2E_NOTES.update({
     2: "The key opens the New task form on the planner and on other pages; it does nothing while the user types in a field",
     5: "A click picks a range of the default task duration; the due date is the default one, never before the chunk ends",
-    14: "Choices: 1 hour, 3 hours, tomorrow and next week (each at the start of the task's hours, on the first later day with hours) and a date-time picker; \u201cnext week\u201d and \u201ctomorrow\u201d also have unit tests",
-    16: "The visibility is set in the task form, in each task's More menu, and as a task default; CalDAV writes CLASS:PRIVATE, Google visibility \u201cprivate\u201d",
+    14: "Choices: 1 hour, 3 hours, tomorrow and next week (each at the start of the task's hours, on the first later day with hours) and a date-time picker, each with E2E. Snooze unlocks the task's future chunks, so a task made on the planner moves too; a started chunk stays. When the new start reaches the due date, the due date moves with it and keeps its distance from the start",
+    16: "The visibility is set in the task form, in each task's More menu, and as a task default; CalDAV writes CLASS:PRIVATE. Gap outside CNT-20 and CNT-24: when the user changes the privacy of a task chunk in the calendar, Tempoloom does not set it back (meetings do this with events.own_visibility, PR #23; task chunks are a follow-up)",
     18: "The start delay is in minutes and the due-in in days, both from the creation time",
-    25: "Every task is a Tempoloom task, so no task is skipped for bulk priority (TSK-46 has no integrations to skip)",
+    25: "Every task is a Tempoloom task, so no task is skipped for bulk priority (TSK-46 has no integrations to skip). Bulk start keeps locked chunks at their time (TSK-23) and says so; a start after a task's due date is refused",
     28: "Due by and Starts from are local dates; the filters and the sort stay in the page address, so a reload keeps them",
-    29: "Scheduling order is the scheduler's task order without urgency lifts: next-up rank, priority, due date, remaining work, age",
+    29: "Scheduling order is the order in which the last plan processed the tasks, with the urgency lifts of the urgency mode",
 })
-PARTIAL[17] = ("The Settings page has every task default but one, with E2E (\u201c" + T["u33_defaults"] + "\u201d, \u201c"
-               + T["u33_private"] + "\u201d; the time between chunks is row 9). Missing: the quick task duration (quickTaskMinutes), "
-               "used only for tasks made from chat-app or mail messages, which need the Slack app and a mail integration (row 19)")
+BLOCKED[17] = ("Settings has every task default with E2E but one (\u201c" + T["u33_defaults"] + "\u201d, \u201c"
+               + T["u33_chunk_defaults"] + "\u201d, \u201c" + T["u33_private"] + "\u201d; the time between chunks is row 9). "
+               "quickTaskMinutes is used only for tasks made from chat-app or mail messages, which need the Slack app and a mail integration (row 19)")
 # --- end U33 ---
 
 # Google Calendar proof. docs/e2e-google-run.tsv records a full E2E run on Google

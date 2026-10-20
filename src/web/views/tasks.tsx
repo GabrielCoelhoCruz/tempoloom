@@ -409,6 +409,9 @@ function BulkBar({
       >
         Set start
       </button>
+      <span class="meta" data-testid="bulk-start-note">
+        Locked chunks keep their time.
+      </span>
       <label class="inline">
         Due
         <input type="datetime-local" value={due} onInput={(e) => setDue(e.currentTarget.value)} />

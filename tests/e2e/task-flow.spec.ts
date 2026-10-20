@@ -77,14 +77,6 @@ test("the New task form keeps open for the next task with Create another, and cl
   await expect(page.getByRole("dialog", { name: "New task" })).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog", { name: "New task" })).toBeHidden();
-  // The key works from any page, not only the planner.
-  await page.getByRole("link", { name: "Settings" }).click();
-  await expect(page.getByTestId("settings-page")).toBeVisible();
-  await page.keyboard.press("c");
-  await expect(page.getByRole("dialog", { name: "New task" })).toBeVisible();
-  await page.keyboard.press("Escape");
-  await expect(page.getByRole("dialog", { name: "New task" })).toBeHidden();
-  await page.getByRole("link", { name: "Tasks" }).click();
 
   await eventually(
     () => allEvents(cal),
@@ -98,6 +90,39 @@ test("the New task form keeps open for the next task with Create another, and cl
   await page.reload();
   for (const t of ["AT-CA1", "AT-CA2", "AT-CA3"])
     await expect(page.locator(`[data-task-title="${t}"]`)).toBeVisible();
+});
+
+test("the key C opens the New task form on pages other than the planner, such as Settings and Tasks (TSK-5)", async ({
+  page,
+  cal,
+  signIn,
+}) => {
+  await blockUntil(cal, W);
+  await signIn();
+  const dialog = page.getByRole("dialog", { name: "New task" });
+  await page.getByRole("link", { name: "Settings" }).click();
+  await expect(page.getByTestId("settings-page")).toBeVisible();
+  await page.keyboard.press("c");
+  await expect(dialog).toBeVisible();
+  await dialog.getByLabel("Title").fill("AT-KeyC");
+  await dialog.getByLabel("Split into chunks").selectOption("no");
+  await dialog.getByRole("button", { name: "Add task" }).click();
+  await expect(dialog).toBeHidden();
+  await expect(page.getByTestId("settings-page")).toBeVisible();
+
+  await page.getByRole("link", { name: "Tasks" }).click();
+  await expect(page.locator('[data-task-title="AT-KeyC"]')).toBeVisible();
+  await page.keyboard.press("c");
+  await expect(dialog).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+
+  await eventually(
+    () => allEvents(cal),
+    (l) => expect(titled(l, "AT-KeyC")).toHaveLength(1),
+  );
+  await page.reload();
+  await expect(page.locator('[data-task-title="AT-KeyC"]')).toBeVisible();
 });
 
 test("suggestions-only mode removes task events and lists tasks as Suggested now and At risk (TSK-70, NXT-30 to NXT-33)", async ({

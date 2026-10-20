@@ -734,6 +734,30 @@ describe("task chunks", () => {
     expect((firstA?.start ?? 0) > (firstB?.start ?? 0)).toBe(true);
   });
 
+  it("reports the task order it used, with urgency lifts (TSK-61)", () => {
+    const tasks = [
+      task({ id: "p2", level: 2, dueAt: at(day(18), "17:00") }),
+      task({ id: "p3-due", level: 3, remainingMinutes: 360, dueAt: at(MON, "17:00") }),
+      task({ id: "p1", level: 1 }),
+      task({ id: "next", level: 4, nextUpRank: 0 }),
+    ];
+    // 6 hours of work in 8 free hours before the due date lifts the P3 task one level,
+    // to P2, where its earlier due date puts it before the other P2 task.
+    expect(plan(snapshot({ urgencyMode: "due-date-and-work", tasks })).taskOrder).toEqual([
+      "next",
+      "p1",
+      "p3-due",
+      "p2",
+    ]);
+    // Without lifts the priority order holds.
+    expect(plan(snapshot({ urgencyMode: "priority-only", tasks })).taskOrder).toEqual([
+      "next",
+      "p1",
+      "p2",
+      "p3-due",
+    ]);
+  });
+
   it("places next-up tasks after P1 automations and before other items (scenario 15)", () => {
     const result = plan(
       snapshot({

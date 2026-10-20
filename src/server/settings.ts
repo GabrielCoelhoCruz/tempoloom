@@ -138,6 +138,10 @@ export function updateSettings(db: Db, userId: string, patch: unknown): Settings
     },
     profile: { ...current.profile, ...((patch as { profile?: object }).profile ?? {}) },
   });
+  // planning-tasks.md edge case 6: a new task's default due date must come after its start.
+  const td = merged.taskDefaults;
+  if (td.dueInDays !== null && td.dueInDays * 24 * 60 <= td.startDelayMinutes)
+    throw new Error("Due in must be longer than the start delay");
   run(db, "UPDATE users SET settings = ? WHERE id = ?", JSON.stringify(merged), userId);
   return merged;
 }

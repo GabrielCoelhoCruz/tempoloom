@@ -842,11 +842,13 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
   await afterPush(db, userId, (accountId) => ctx.provider(accountId), now);
   run(
     db,
-    `INSERT INTO plan_reports (user_id, report, planned_at) VALUES (?, ?, ?)
-     ON CONFLICT (user_id) DO UPDATE SET report = excluded.report, planned_at = excluded.planned_at`,
+    `INSERT INTO plan_reports (user_id, report, planned_at, task_order) VALUES (?, ?, ?, ?)
+     ON CONFLICT (user_id) DO UPDATE SET report = excluded.report, planned_at = excluded.planned_at,
+       task_order = excluded.task_order`,
     userId,
     JSON.stringify(result.report),
     now,
+    JSON.stringify(result.taskOrder),
   );
   return { push, report: result.report, paint: { paints, requestedAt } };
 }
