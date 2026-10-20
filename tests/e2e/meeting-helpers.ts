@@ -59,6 +59,26 @@ export async function rawEvent(calendarUrl: string, id: string): Promise<string>
   return (await res.text()).replace(/\r?\n[ \t]/g, "");
 }
 
+/** Replaces lines of a stored event, as another calendar app edits it. */
+export async function editRaw(
+  calendarUrl: string,
+  id: string,
+  edit: (lines: string[]) => string[],
+): Promise<void> {
+  const url = id.split("#")[0] ?? id;
+  const auth = { authorization: credentials(calendarUrl) };
+  const res = await fetch(url, { headers: auth });
+  if (!res.ok) throw new Error(`GET ${url} failed: ${res.status}`);
+  const etag = res.headers.get("etag");
+  const lines = edit((await res.text()).replace(/\r?\n[ \t]/g, "").split(/\r?\n/));
+  const put = await fetch(url, {
+    method: "PUT",
+    headers: { ...auth, "content-type": "text/calendar", ...(etag ? { "if-match": etag } : {}) },
+    body: lines.join("\r\n"),
+  });
+  if (!put.ok) throw new Error(`PUT ${url} failed: ${put.status}`);
+}
+
 /**
  * Sets one guest's answer on the organizer's copy of an event, as a CalDAV
  * server with scheduling does when that guest replies.

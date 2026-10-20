@@ -1195,4 +1195,12 @@ export const MIGRATIONS: readonly string[] = [
   -- The attendees' meeting hours and time zones the last plan used (rule 11).
   ALTER TABLE meetings ADD COLUMN attendee_hours TEXT NOT NULL DEFAULT '';
   `,
+  // 34: the visibility of Tempoloom's own events as the calendar has it, so a
+  // privacy edit of a meeting occurrence is written back (MEET-02 rule 22).
+  // Other events keep NULL. NULL also means "not read since this migration":
+  // no write-back until the next read of that event, so no burst of writes.
+  `
+  ALTER TABLE events ADD COLUMN own_visibility TEXT
+    CHECK (own_visibility IN ('default', 'public', 'private', 'confidential'));
+  `,
 ];

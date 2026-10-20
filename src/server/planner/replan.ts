@@ -651,8 +651,10 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
               ...(es?.emoji ? { emoji: es.emoji } : {}),
               title: titles.get(itemKey) ?? p.kind,
             }),
+      // A meeting gets each new form description (rule 23); push writes it only
+      // when it changes, so the organizer's calendar edit stays until then.
       description:
-        keepUserTitle && row
+        keepUserTitle && row && p.kind !== "meeting"
           ? row.description
           : eventDescription(itemNotes, ctx.baseUrl, p.kind, p.itemId),
       busy: p.busy || p.locked,

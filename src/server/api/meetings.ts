@@ -604,21 +604,15 @@ export function meetingRoutes(
       if (row.start_ms <= now() || start <= now()) return "started" as const;
       const end = start + (row.end_ms - row.start_ms);
       const title = row.user_edited ? row.title : withState(markers, m.title, "locked");
-      const ev = await pool.get(row.account_id).updateEvent(
-        row.provider_id,
-        row.event_id,
-        {
-          summary: title,
-          description: row.description,
-          start,
-          end,
-          busy: true,
-          colorId: row.color_id,
-          privateProps: { [MANAGED_PROP]: "1", [KEY_PROP]: row.key, tl_user: user.id },
-          ...guestsOf(db, m, row.account_id, user.email),
-        },
-        row.etag,
-      );
+      // Only the time, title and status: the organizer's calendar edits stay (rule 22).
+      const ev = await pool
+        .get(row.account_id)
+        .editExternal(
+          row.provider_id,
+          row.event_id,
+          { summary: title, start, end, busy: true },
+          row.etag,
+        );
       cacheEvent(db, row.calendar_id, ev);
       run(
         db,

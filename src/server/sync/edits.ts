@@ -29,7 +29,8 @@ function exclude(db: Db, userId: string, kind: string, itemId: string, start: nu
  * follows its anchor (buffers rule 14); a moved task
  * chunk leaves an exclusion at its old time (CED-10); a deleted event leaves an
  * exclusion or a dismissed key by kind (CED-20, CED-24, CED-25); a title edit
- * of a non-task event locks it (CED-40).
+ * of a non-task event locks it (CED-40). Other edits of a meeting occurrence
+ * need nothing here: push never writes them over (MEET-02 rule 22).
  */
 export function applyCalendarEdits(
   db: Db,
