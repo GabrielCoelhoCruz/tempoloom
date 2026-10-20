@@ -3,7 +3,12 @@
 import { randomUUID } from "node:crypto";
 import { logManaged, pruneChangeLog } from "../change-log.ts";
 import { all, type Db, one, run } from "../db.ts";
-import { type CalendarProvider, type EventWrite, ProviderError } from "../providers/types.ts";
+import {
+  type CalendarProvider,
+  type EventWrite,
+  type ExternalChange,
+  ProviderError,
+} from "../providers/types.ts";
 import { cacheEvent } from "../sync/pull.ts";
 import { ACTIVE } from "./mirror.ts";
 
@@ -63,6 +68,18 @@ const extraOf = (d: DesiredEvent) =>
       })
     : "";
 
+interface Extra {
+  location?: string;
+  attendees?: string[];
+  optional?: string[];
+  organizer?: string;
+  reminders?: DesiredEvent["reminders"];
+  visibility?: DesiredEvent["visibility"];
+  allDayDates?: DesiredEvent["allDayDates"];
+}
+
+const extraFrom = (row: ManagedRow): Extra => (row.extra ? JSON.parse(row.extra) : {}) as Extra;
+
 /**
  * The write of a managed event as it is stored, with a new time, title or
  * status: for changes outside a plan run, such as a drag in the planner.
@@ -72,15 +89,7 @@ export function rowWrite(
   row: ManagedRow,
   change: { start: number; end: number; title: string; busy: boolean },
 ): EventWrite {
-  const x = (row.extra ? JSON.parse(row.extra) : {}) as {
-    location?: string;
-    attendees?: string[];
-    optional?: string[];
-    organizer?: string;
-    reminders?: DesiredEvent["reminders"];
-    visibility?: DesiredEvent["visibility"];
-    allDayDates?: DesiredEvent["allDayDates"];
-  };
+  const x = extraFrom(row);
   return write(userId, {
     key: row.key,
     kind: row.kind,
@@ -148,6 +157,8 @@ interface Cached {
   end_ms: number;
   color_id: string | null;
   alerts: number;
+  /** Null until the event is read again after migration 34: no drift. */
+  own_visibility: string | null;
 }
 
 function differs(
@@ -187,6 +198,54 @@ function differs(
       cached.description !== d.description ||
       Boolean(cached.busy) !== d.busy)
   );
+}
+
+/**
+ * The change of a meeting occurrence after its creation
+ * (meetings-flexible-rescheduling.md rule 22): only the fields whose
+ * Tempoloom value changed since the last write (`row`), and free/busy and
+ * privacy where the calendar copy drifted from them. The organizer's own
+ * edits of title, description, location, color, note and guests stay. Null
+ * when nothing is to be written.
+ */
+export function meetingChange(
+  row: ManagedRow,
+  cached: Pick<Cached, "busy" | "own_visibility"> | undefined,
+  d: DesiredEvent,
+): ExternalChange | null {
+  const was = extraFrom(row);
+  const change: ExternalChange = {};
+  if (row.start_ms !== d.start || row.end_ms !== d.end) {
+    change.start = d.start;
+    change.end = d.end;
+  }
+  if (row.title !== d.title) change.summary = d.title;
+  if (row.description !== d.description) change.description = d.description;
+  if (Boolean(row.busy) !== d.busy || (cached && Boolean(cached.busy) !== d.busy))
+    change.busy = d.busy;
+  const visibility = d.visibility ?? "default";
+  if (
+    (was.visibility ?? "default") !== visibility ||
+    (cached?.own_visibility != null && cached.own_visibility !== visibility)
+  )
+    change.visibility = visibility;
+  if ((row.color_id ?? null) !== (d.colorId ?? null)) change.colorId = d.colorId ?? null;
+  if ((was.location ?? "") !== (d.location ?? "")) change.location = d.location ?? "";
+  if (JSON.stringify(was.reminders ?? null) !== JSON.stringify(d.reminders ?? null))
+    change.reminders = d.reminders ?? { minutes: [] };
+  const guestMap = (required: string[] = [], optional: string[] = []) =>
+    new Map([
+      ...required.map((e) => [e.toLowerCase(), false] as const),
+      ...optional.map((e) => [e.toLowerCase(), true] as const),
+    ]);
+  const before = guestMap(was.attendees, was.optional);
+  const after = guestMap(d.attendees, d.optionalAttendees);
+  const add = [...after]
+    .filter(([email, optional]) => before.get(email) !== optional)
+    .map(([email, optional]) => ({ email, optional }));
+  const remove = [...before.keys()].filter((email) => !after.has(email));
+  if (add.length > 0 || remove.length > 0) change.guests = { add, remove };
+  return Object.keys(change).length > 0 ? change : null;
 }
 
 /**
@@ -250,20 +309,24 @@ export async function pushSchedule(
     if (row.locked && (row.start_ms !== d.start || row.end_ms !== d.end)) continue;
     const cached = one<Cached>(
       db,
-      `SELECT summary, description, busy, etag, start_ms, end_ms, color_id, alerts
+      `SELECT summary, description, busy, etag, start_ms, end_ms, color_id, alerts, own_visibility
        FROM events WHERE calendar_id = ? AND event_id = ?`,
       row.calendar_id,
       row.event_id,
     );
-    if (!differs(row, cached, d, ctx.fullCheck ?? false)) continue;
+    // A meeting occurrence is never written whole after its creation (rule 22).
+    const change =
+      row.kind === "meeting"
+        ? meetingChange(row, cached, d)
+        : differs(row, cached, d, ctx.fullCheck ?? false);
+    if (!change) continue;
     const { provider, providerCalendarId } = ctx.target(row.calendar_id);
+    const etag = cached?.etag ?? row.etag;
     try {
-      const ev = await provider.updateEvent(
-        providerCalendarId,
-        row.event_id,
-        write(userId, d),
-        cached?.etag ?? row.etag,
-      );
+      const ev =
+        change === true
+          ? await provider.updateEvent(providerCalendarId, row.event_id, write(userId, d), etag)
+          : await provider.editExternal(providerCalendarId, row.event_id, change, etag);
       cacheEvent(db, row.calendar_id, ev);
       saveRow(db, userId, d, ev.id, ev.etag, row.id);
       const moved = row.start_ms !== d.start || row.end_ms !== d.end;

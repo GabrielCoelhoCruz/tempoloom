@@ -864,6 +864,10 @@ T.update({
     "u7_calendar_kept": "the calendar for booked events is kept when the editor saves while the calendar list cannot load (booking-links targetCalendar)",
     "u7_reminder_loc": "the reminder names the location the booker chose, not the link's default (rule 21; page details form)",
     "u7_cc_mail": "CC guests get the booked, rescheduled and cancelled emails with the chosen location and without the booker's links; an organizer in CC gets no second copy (rule 14; page details form)",
+    "u25_privacy": "privacy and free/busy edits in the calendar are written back from the meeting's event settings; the organizer's description, location, color, note and guest edits are kept (MEET-02 rule 22)",
+    "u25_move": "an automatic move, a lock and an unlock after the organizer's edits write only Tempoloom's own fields: the description, location, color, note and added guest stay (MEET-02 rules 21, 22, 37)",
+    "u25_description": "a description edit alone in the calendar is kept with no lock and no write; lock and unlock keep it, and a later description edit in the form reaches every occurrence (MEET-02 rules 21-23)",
+    "u25_settings": "a visibility change and a guest removal in the meeting settings write only those fields: the organizer's description, location, color, note and added guest stay (MEET-02 rule 22)",
     "u7_delete_series": "delete on rules attached to an existing series offers no cancel email: the series stays on the calendar and the guests get nothing (MEET-02 rule 28; MEET-01 rule 39)",
 })
 E2E.update({
@@ -892,8 +896,8 @@ E2E_NOTES.update({
     420: "CC guests are invited to the event and get the booked, rescheduled and cancelled emails (they need SMTP_URL); the location choice shows when the link has several",
 })
 PARTIAL.update({
-    364: "A resize of one occurrence in the calendar is kept and locks it, with full UI E2E on CalDAV (\u201c" + T["u7_manual"] + "\u201d); a resize of the following or all occurrences of a series does not change the meeting's duration yet",
-    368: "Title and time edits in the calendar are kept and free/busy is written back, with full UI E2E on CalDAV (\u201c" + T["u7_manual"] + "\u201d); privacy is not written back, because meetings have no visibility setting yet (row 342)",
+    364: "A resize of one occurrence in the calendar is kept and locks it, with full UI E2E on CalDAV (\u201c" + T["u7_manual"] + "\u201d). A resize of the following or all occurrences is not built: that scope is a choice of a recurring-series edit, and Tempoloom writes each occurrence as its own event (row 320), so no calendar offers the scope on its events",
+    368: "Full UI E2E on CalDAV proves: a title edit and a resize are kept and lock the occurrence (\u201c" + T["u7_manual"] + "\u201d); privacy (CLASS) and free/busy edits are written back from the meeting's event settings, and the organizer's edits of description, location, color (COLOR), note (COMMENT) and an added guest stay through that write-back (\u201c" + T["u25_privacy"] + "\u201d), through an automatic move, a lock and an unlock (\u201c" + T["u25_move"] + "\u201d), and through a visibility change and a guest removal in the meeting settings (\u201c" + T["u25_settings"] + "\u201d); a description edit alone does not lock and gets no write, and a later description edit in the form replaces it on every following occurrence (rule 23; \u201c" + T["u25_description"] + "\u201d). Tempoloom writes only the fields it changed, through the provider's patch call, also on Google and on instances of an adopted series; these two have no E2E here. Not tested: a guest removed by the organizer. Not built: recurrence edits and the scope choice (one, following or all occurrences), because Tempoloom writes each occurrence as its own event, not as one recurring series (row 320)",
 })
 BLOCKED.update({
     392: "Meet needs a Google account and the Calendar conference API; Zoom needs a Zoom developer app and a Zoom test account; Gong needs a Gong app and a Gong test organization. The other options have full UI E2E on CalDAV: address, phone and other (text or URL), with a default and the booker's choice (\u201c" + T["u7_locations"] + "\u201d)",
