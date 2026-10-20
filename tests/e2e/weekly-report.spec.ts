@@ -8,11 +8,18 @@
 // - the facts of the email differ from the facts the stats page shows for the week;
 // - a fact with a zero value shows, or more than 4 facts show;
 // - the report is off for a new user, or the opt-out is lost on reload or ignored;
-// - only the operator command sends it, not the server's own clock.
+// - only the operator command sends it, not the server's own clock;
+// - work tasks or work habits miss solo work, or a personal calendar's events
+//   miss personal time (rule 6);
+// - turning the report on again does not send it again (rule 2);
+// - a user without work hours, or whose last workday is out of office, gets no
+//   report, or an empty week sends nothing (edge cases 1, 2, 5).
 import type { Page } from "@playwright/test";
 import { addDays, localToUtc } from "../../src/shared/time.ts";
+import { addPolicy, copies, week } from "./calendar-helpers.ts";
 import { at, BACKEND, blockUntil, eventually, expect, test, ZONE } from "./fixtures.ts";
-import { addHabit, book, claimPage, MIN, titled, visitor, W } from "./helpers.ts";
+import { addHabit, addTask, book, claimPage, MIN, titled, visitor, W } from "./helpers.ts";
+import { outOfOffice } from "./ics.ts";
 
 const day = (n: number) => addDays(W, n);
 const iso = (date: string, hhmm: string) => {
@@ -197,5 +204,102 @@ test("the server sends the weekly report by its own clock in the first work hour
   expect(report.text).toContain("Solo work: 1 h\n");
   // Later ticks in the same hour send nothing more.
   await page.waitForTimeout(12_000);
+  expect(await mail.count("e2e@tempoloom.test", REPORT)).toBe(1);
+});
+
+test("the weekly report counts work tasks and work habits as solo work and personal habits and a personal calendar's events as personal time; turned off and on again, it goes out again, also on an out-of-office Friday", async ({
+  page,
+  cal,
+  app,
+  mail,
+  signIn,
+}) => {
+  test.skip(BACKEND === "google", "A second calendar needs CalDAV here.");
+  await blockUntil(cal, W);
+  await signIn();
+  // Made after sign-in, so that the main calendar stays Work.
+  const priv = await cal.newCalendar("Private");
+  await priv.addEvent({ title: "Dentist", start: at(day(1), "12:00"), end: at(day(1), "13:00") });
+  // Edge case 2: the last workday is a full out-of-office day; the report goes out anyway.
+  await outOfOffice(cal.calendarId, "Day off", { from: day(4), to: day(5) });
+  await addHabit(page, {
+    title: "Evening run",
+    ideal: "18:00",
+    min: 60,
+    max: 60,
+    days: ["Mon"],
+    hours: "Personal hours",
+  });
+  await page.reload();
+  await addHabit(page, { title: "Inbox", ideal: "16:00", min: 30, max: 30, days: ["Tue"] });
+  await addTask(page, { title: "Draft plan", minutes: 90, split: false, due: `${day(3)}T17:00` });
+  // The private calendar is personal: its events count as personal time (rule 6).
+  await addPolicy(page, { from: "Private", to: "Work", label: "Personal commitment" });
+  const placed = await eventually(
+    () => week(cal),
+    (l) => {
+      expect(titled(l, "Evening run")).toHaveLength(1);
+      expect(titled(l, "Inbox")).toHaveLength(1);
+      expect(titled(l, "Draft plan")).toHaveLength(1);
+      expect(copies(l).filter((e) => e.start === at(day(1), "12:00"))).toHaveLength(1);
+    },
+  );
+  // Every item ends before the send time on Friday at 09:30.
+  for (const e of [...titled(placed, "Inbox"), ...titled(placed, "Draft plan")])
+    expect(e.end).toBeLessThanOrEqual(at(day(4), "09:30"));
+
+  // Off, then on again: the switch is on after reload, and the report goes out.
+  await (await reportSwitch(page)).uncheck();
+  await expect(page.getByTestId("weekly-report-saved")).toHaveText("Saved");
+  await page.reload();
+  const again = page.getByTestId("weekly-report").getByLabel("Weekly report email");
+  await expect(again).not.toBeChecked();
+  await again.check();
+  await expect(page.getByTestId("weekly-report-saved")).toHaveText("Saved");
+  await page.reload();
+  await expect(page.getByTestId("weekly-report").getByLabel("Weekly report email")).toBeChecked();
+
+  expect(app.cli("weekly-reports", "--now", iso(day(4), "09:30"))).toContain("sent 1 report");
+  const report = await mail.message("e2e@tempoloom.test", REPORT);
+  expect(report.subject).toBe(`Your week: ${W} to ${day(4)}`);
+  // The 90-minute task and the 30-minute work habit; the copy of the personal event is not counted twice.
+  expect(report.text).toContain("Solo work: 2 h\n");
+  // The personal habit and the event of the personal calendar.
+  expect(report.text).toContain("Personal time: 2 h\n");
+  expect(report.text).toContain("Meetings: 0 min\n");
+  expect(await mail.count("e2e@tempoloom.test", REPORT)).toBe(1);
+});
+
+test("without work hours the weekly report goes out on Friday between 09:00 and 10:00, and an empty week has zero totals", async ({
+  page,
+  cal,
+  app,
+  mail,
+  signIn,
+}) => {
+  await blockUntil(cal, W);
+  await signIn();
+  await page.getByRole("link", { name: "Settings" }).click();
+  const editor = page.locator("#hours");
+  for (const d of [1, 2, 3, 4, 5])
+    await editor.getByTestId(`range-work-${d}-0`).getByRole("button", { name: "−" }).click();
+  await page.getByRole("button", { name: "Save work hours" }).click();
+  await expect(page.getByTestId("settings-message")).toHaveText("Saved");
+  await page.reload();
+  for (const d of [1, 2, 3, 4, 5])
+    await expect(editor.getByTestId(`range-work-${d}-0`)).toHaveCount(0);
+
+  // Edge case 1: Friday at 09:00 home time.
+  expect(app.cli("weekly-reports", "--now", iso(day(3), "09:30"))).toContain("sent 0 reports");
+  expect(app.cli("weekly-reports", "--now", iso(day(4), "08:55"))).toContain("sent 0 reports");
+  expect(app.cli("weekly-reports", "--now", iso(day(4), "10:00"))).toContain("sent 0 reports");
+  expect(app.cli("weekly-reports", "--now", iso(day(4), "09:30"))).toContain("sent 1 report");
+  const report = await mail.message("e2e@tempoloom.test", REPORT);
+  expect(report.subject).toBe(`Your week: ${W} to ${day(4)}`);
+  // Edge case 5: zero events give zero totals.
+  expect(report.text).toContain("Meetings: 0 min\n");
+  expect(report.text).toContain("Solo work: 0 min\n");
+  expect(report.text).toContain("Personal time: 0 min\n");
+  expect(report.text).toContain("No facts this week.");
   expect(await mail.count("e2e@tempoloom.test", REPORT)).toBe(1);
 });

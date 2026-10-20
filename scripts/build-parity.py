@@ -279,7 +279,7 @@ BLOCKED = StatusMap("BLOCKED", {
     645: "Needs a Microsoft 365 tenant and a Microsoft Graph calendar provider, which is not implemented",
     568: "Needs the assistant chat, which is not implemented: a switch with nothing to switch off has no effect to prove",
     569: "Needs the assistant chat, which is not implemented",
-    581: "Needs the Slack app (a vendor developer app and a test workspace)",
+    581: "Needs a Slack app and a Slack test workspace",
     582: "Needs the assistant chat, which is not implemented",
     217: "No benchmark data: the evidence gives no targets per role (teams-policies.md open question 3)",
     594: "No benchmark data: the evidence gives no targets per role (teams-policies.md open question 3)",
@@ -287,8 +287,8 @@ BLOCKED = StatusMap("BLOCKED", {
     673: "The evidence names it only on the pricing page and gives no behavior to build (plans-feature-inventory.md open questions); org-chart data exists through SCIM managers",
     928: "Needs the vendor's Zapier app and a Zapier account",
     929: "Needs the vendor's Zapier app and a Zapier account",
-    591: "Needs the Slack app (a vendor developer app and a test workspace)",
-    592: "Needs the Slack app (a vendor developer app and a test workspace)",
+    591: "Needs a Slack app and a Slack test workspace",
+    592: "Needs a Slack app and a Slack test workspace",
     688: "Needs the assistant chat, which is not implemented",
 })
 for n in [5, 6, 12, 14, 15, 16, 17, 18, 20, 21, 22, 24, 31]:
@@ -750,7 +750,7 @@ BLOCKED[671] = "Needs Google Meet (a Google account and the Calendar conference 
 for n in [446, 447]:
     BLOCKED[n] = "Needs the Gmail and Google Calendar add-on, a vendor app; the same actions exist on the Booking links page (rows 440 to 443)"
 for n in [268, 293]:
-    BLOCKED[n] = "Needs the Slack app (a vendor developer app and a test workspace)"
+    BLOCKED[n] = "Needs a Slack app and a Slack test workspace"
 BLOCKED[344] = "Needs the vendor apps of third-party agenda tools (Docs notes, Lattice, Fellow)"
 for n in [664, 665, 666, 667, 668]:
     BLOCKED[n] = "The pricing page names it and gives no behavior to build (plans-feature-inventory.md open questions); it also needs meeting notes, transcripts or a room provider"
@@ -896,8 +896,8 @@ PARTIAL.update({
     368: "Title and time edits in the calendar are kept and free/busy is written back, with full UI E2E on CalDAV (\u201c" + T["u7_manual"] + "\u201d); privacy is not written back, because meetings have no visibility setting yet (row 342)",
 })
 BLOCKED.update({
-    392: "Meet, Zoom and Gong options need the vendors' developer apps and test accounts (integrations-video-conferencing.md). The other options have full UI E2E on CalDAV: address, phone and other (text or URL), with a default and the booker's choice (\u201c" + T["u7_locations"] + "\u201d)",
-    398: "A conference link needs Meet or Zoom, which need the vendors' developer apps and test accounts. The rest has full UI E2E on CalDAV: a busy event with the booker and CC guests invited, the chosen location and the manage links (\u201c" + T["u7_locations"] + "\u201d; \u201c" + T["b_book"] + "\u201d)",
+    392: "Meet needs a Google account and the Calendar conference API; Zoom needs a Zoom developer app and a Zoom test account; Gong needs a Gong app and a Gong test organization. The other options have full UI E2E on CalDAV: address, phone and other (text or URL), with a default and the booker's choice (\u201c" + T["u7_locations"] + "\u201d)",
+    398: "A conference link needs Google Meet (a Google account and the Calendar conference API) or a Zoom developer app and a Zoom test account. The rest has full UI E2E on CalDAV: a busy event with the booker and CC guests invited, the chosen location and the manage links (\u201c" + T["u7_locations"] + "\u201d; \u201c" + T["b_book"] + "\u201d)",
 })
 # --- end U07 ---
 
@@ -919,7 +919,7 @@ E2E_NOTES.update({
     298: "Tempoloom decision: copies are not separate planner items (mirroring rule 33), so a mirrored event and its copy are one item. Its control is disabled at P1 with a note that the copies count as P1; the control of an event on another connected calendar is disabled at P1 with a note. The API refuses both",
 })
 BLOCKED.update({
-    484: "The calendar add-on part needs a Google Workspace add-on (the vendor's developer app and a test account). The planner part has full UI E2E on CalDAV: the source event and its copy are one item that names its calendar, the calendars it is copied to and its details (\u201c" + T["u16_one_item"] + "\u201d)",
+    484: "The add-on part needs a Google Workspace Marketplace add-on (Calendar and Gmail) and a Google Workspace test account. The planner part has full UI E2E on CalDAV: the source event and its copy are one item that names its calendar, the calendars it is copied to and its details (\u201c" + T["u16_one_item"] + "\u201d)",
 })
 # --- end U16 ---
 # --- U04: habits, focus time and buffers (first half of the partial rows) ---
@@ -1019,7 +1019,7 @@ PARTIAL[265] = (
 PARTIAL[284] = ("Painting skips an event that the calendar refuses (status 400 or 403) and goes on (src/server/planner/repaint.ts). "
                 "No test proves it: a CalDAV server lets the owner change every event, no unit test sends a refused color write, and "
                 "no Google E2E paints a mail-made or birthday event")
-BLOCKED[317] = "The chat app channel needs the Slack app (a vendor developer app and a test workspace); the daily digest by email, at a time the user sets, has full UI E2E on CalDAV (\u201clibrary entry 'Flag meeting problems' turns on the checks and an email digest of open, not ignored, issues at the chosen time, once a day\u201d)"
+BLOCKED[317] = "The chat app channel needs a Slack app and a Slack test workspace; the daily digest by email, at a time the user sets, has full UI E2E on CalDAV (\u201clibrary entry 'Flag meeting problems' turns on the checks and an email digest of open, not ignored, issues at the chosen time, once a day\u201d)"
 # --- end U05 ---
 
 # --- U06: flexible meeting rules (tests/e2e/meeting-rules.spec.ts) ---
@@ -1058,6 +1058,132 @@ BLOCKED[322] = ("Not built: the scheduler reads the availability of attendees wh
                 "it does not query Google free/busy for other emails; the Google API client has a freeBusy method that no code calls")
 BLOCKED[345] = "Needs Google Meet (a Google account), the Zoom vendor app and Google Workspace room resources; an address or a custom text or link is written as the location of every occurrence (E2E: \u201c" + T["mr_settings"] + "\u201d)"
 # --- end U06 ---
+
+# --- U30: exact blocked and partial reasons (audit of the blocked rows) ---
+T.update({
+    "u30_weekly_counts": "the weekly report counts work tasks and work habits as solo work and personal habits and a personal calendar's events as personal time; turned off and on again, it goes out again, also on an out-of-office Friday",
+    "u30_weekly_thu": "with work hours Monday to Thursday 10:00 to 18:00 the weekly report goes out on Thursday between 10:00 and 11:00, and not on Friday",
+    "u30_weekly_clock": "the server sends the weekly report by its own clock in the first work hour of Friday",
+    "u30_weekly_none": "without work hours the weekly report goes out on Friday between 09:00 and 10:00, and an empty week has zero totals",
+})
+E2E.update({
+    631: ["u9_weekly", "u30_weekly_counts"],
+    632: ["u9_weekly", "u30_weekly_thu", "u30_weekly_clock", "u30_weekly_none", "u30_weekly_counts"],
+    633: ["u9_weekly", "u30_weekly_counts", "u30_weekly_none"],
+    505: ["s1_habit_es", "mr_settings"],
+    836: ["s2_habit_tasks", "s2_focus_tasks"],
+})
+E2E_NOTES.update({
+    631: "On for a new user; the switch is in Settings, and off and on again survive a reload",
+    632: "Rules 3-5 and edge cases 1, 2, 5: the last weekday with work hours, its first work hour, Friday 09:00 without work hours, the week counted up to the send time; the operator command weekly-reports --now runs one tick of the server's email worker, and one test lets the server's own clock (TEST_CLOCK_START) reach the send hour.",
+    633: "Meetings are events with other invitees; solo work is work tasks, work habits and events without invitees; personal time is personal habits and events of a calendar that a mirroring policy labels personal",
+    505: "Habits and flexible meetings write to the calendar chosen at creation; the edit form shows it disabled",
+    836: "A search matches Tempoloom tasks; imported tasks need a task-app integration (row 835)",
+})
+PARTIAL.update({
+    944: ("One MCP URL per instance (/mcp), shown on the Settings page, with full UI E2E on CalDAV (\u201c" + T["s7_mcp_read"] + "\u201d). "
+          "Any MCP client that can send a bearer token connects with a personal API key. Not built: OAuth 2.1 with PKCE and a consent page "
+          "(Fields: Authorization), which clients that sign in only with OAuth need; it is buildable on the server"),
+    945: ("Read tools answer at once and change nothing, and write tools stage the change in preview mode with a link to it, with full UI E2E on CalDAV "
+          "(\u201c" + T["s7_mcp_read"] + "\u201d; \u201c" + T["s7_mcp_stage"] + "\u201d). Limits: apply_staged_changes called by the client has unit "
+          "tests only (tests/unit/mcp.test.ts), and no test proves that write tools respect hours sets (rule 4)"),
+    946: ("Built with full UI E2E on CalDAV: view schedule, find meeting times, analyze the week, create, move and delete events as staged changes, "
+          "and review and apply them (\u201c" + T["s7_mcp_read"] + "\u201d; \u201c" + T["s7_mcp_stage"] + "\u201d). Not built: tools to respond "
+          "to invitations, protect focus time and record work sessions; they are buildable"),
+    947: ("A client is disconnected by deleting its personal API key (\u201c" + T["acct_keys"] + "\u201d); "
+          "deleting a key changes no calendar connection and no event. Not built: per-client OAuth grants with a Revoke action (rule 8), which come with MCP OAuth (row 944)"),
+    953: ("Any client that sends the personal API key as a bearer token uses the same URL, with full UI E2E on CalDAV (\u201c" + T["s7_mcp_read"] + "\u201d). "
+          "Not built: OAuth sign-in for clients that support only OAuth; it is buildable on the server (row 944)"),
+})
+
+# Chat rows: the assistant chat needs a language model, which the owner must supply.
+G2 = "Needs an LLM provider and key from the owner (gate G2)"
+CHAT_BUILT = "; preview mode and the MCP server, which the assistant chat would use, are built"
+for n in [6, 47, 316, 369, 569, 582, 609, 612, 627, 661, 662, 672, 674, 675, 676, 677, 678, 679, 680, 681,
+          682, 684, 685, 686, 687, 688, 689, 718]:
+    BLOCKED[n] = G2 + CHAT_BUILT
+for n in [723, 724, 730, 732, 733, 734, 735, 736, 738, 739, 740, 742, 749]:
+    BLOCKED[n] = G2 + ": a prompt entry opens the assistant chat"
+BLOCKED[568] = G2 + ": the switch turns off the assistant chat, so without the chat it has no effect to prove"
+BLOCKED[683] = G2 + " for the nightly review by chat; the morning email digest of meeting checks is built (row 317)"
+BLOCKED[769] = G2 + " for the chat; the other parts of the baseline are built (preview mode, automations, issues, insights, MCP server)"
+BLOCKED[130] = G2 + " for the chat panel; the automations panel and the suggested tasks in the planner are built"
+
+# Rows that need a named outside account, vendor app or API.
+SLACK = "Needs a Slack app and a Slack test workspace"
+ZOOM = "Needs a Zoom developer app and a Zoom test account"
+GONG = "Needs a Gong app and a Gong test organization"
+TASK_APPS = "Needs a task-app integration: a developer app and a test account at Todoist, ClickUp, Asana, Jira or Linear"
+GOOGLE_TASKS = "Needs a Google account and the Google Tasks API (an OAuth client with the Tasks scope)"
+TODOIST = "Needs a Todoist developer app and a Todoist test account"
+ASANA = "Needs an Asana developer app and an Asana test workspace"
+CLICKUP = "Needs a ClickUp developer app and a ClickUp test workspace"
+JIRA_ROVO = "Needs a Jira Cloud test site whose admin allowlists the Atlassian Rovo MCP server"
+JIRA_APP = "Needs an Atlassian Marketplace app and a Jira Cloud test site"
+LINEAR = "Needs a Linear OAuth app and a Linear test workspace"
+RAYCAST = "Needs a Raycast extension in the Raycast Store and a Mac with Raycast"
+WORKSPACE_ADDON = "Needs a Google Workspace Marketplace add-on (Calendar and Gmail) and a Google Workspace test account"
+OUTSIDE = {
+    SLACK: [236] + list(range(785, 822)),
+    ZOOM: [822, 823, 825, 826, 827, 828, 829, 830],
+    ZOOM + ", and a Slack app and a Slack test workspace": [824],
+    GONG: [831, 832, 833, 834],
+    TASK_APPS: [26, 67, 835] + list(range(837, 847)) + [859],
+    GOOGLE_TASKS: [847, 848, 849, 850, 851, 852, 853, 854, 856, 857, 858],
+    "Needs a Google account and the Gmail API (an OAuth client with a Gmail scope)": [855],
+    TODOIST: list(range(860, 870)),
+    ASANA: list(range(870, 878)),
+    CLICKUP: list(range(878, 887)),
+    JIRA_ROVO: [887, 888],
+    JIRA_APP: list(range(889, 903)),
+    LINEAR: list(range(903, 915)),
+    RAYCAST: [448] + list(range(915, 927)),
+    WORKSPACE_ADDON: list(range(954, 964)),
+    ("Needs the developer app and a test account of at least one task or chat tool (Slack, Todoist, Asana, ClickUp, Jira, Linear or Zoom): "
+     "the connect, consent and disconnect flow has no provider to run against"): list(range(777, 783)),
+    "Needs a Zapier Developer Platform app and a Zapier account; personal API keys, which a Zapier app would use, are built (row 927)": [928, 929],
+    "Needs a Zoom developer app and a Zoom test account, or Google Meet (a Google account and the Calendar conference API)": [436],
+    "Needs a Microsoft 365 test account and a Microsoft Entra app registration for Microsoft Graph; the Graph calendar provider is not built": [
+        520, 521, 526, 527, 528, 529, 530, 531, 532, 533, 534, 535, 536, 669, 670],
+}
+for reason, ns in OUTSIDE.items():
+    for n in ns:
+        BLOCKED[n] = reason
+BLOCKED[19] = "Needs a Slack app and a Slack test workspace, or a Gmail add-on and a Google Workspace test account: the tasks come from chat or mail messages"
+BLOCKED[66] = "Needs a Google Workspace Marketplace add-on for Google Calendar and a Google Workspace test account; priorities change in the planner and the task and habit forms"
+BLOCKED[147] = BLOCKED[518] = (
+    "Needs a Google account and the Google Tasks and Gmail APIs: only the Google Tasks and Gmail features (rows 847 to 858) ask for more Google access. "
+    "Google sign-in asks for the calendar scopes up front (with include_granted_scopes); CalDAV has no permission scopes")
+BLOCKED[446] = BLOCKED[447] = WORKSPACE_ADDON + "; the same actions exist on the Booking links page (rows 440 to 443)"
+BLOCKED[948] = ("Needs a paid ChatGPT plan and a listing in the ChatGPT app directory, or a ChatGPT plan with custom connectors; it also needs MCP OAuth "
+                "on the server, which is not built and is buildable (row 944)")
+BLOCKED[949] = ("Needs a Claude account (Claude Desktop or the Claude web app) to add a custom connector; the connector signs in with MCP OAuth, "
+                "which is not built on the server and is buildable (row 944). The MCP server with API keys is built (rows 697 to 699)")
+BLOCKED[950] = ("Needs Claude Code and an Anthropic account; claude mcp add with an HTTP URL signs in with MCP OAuth, which is not built on the server "
+                "and is buildable (row 944). The MCP server with API keys is built (rows 697 to 699)")
+BLOCKED[951] = ("Needs a Claude account to show the per-tool settings, which are a Claude feature. Tempoloom's part is built: each tool has a name, a "
+                "description, readOnlyHint and destructiveHint (unit tests in tests/unit/mcp.test.ts; E2E lists the tools: \u201c" + T["s7_mcp_read"] + "\u201d)")
+BLOCKED[952] = ("Needs the Cursor app; its HTTP MCP entry signs in with MCP OAuth, which is not built on the server and is buildable (row 944). "
+                "The MCP server with API keys is built (rows 697 to 699)")
+
+# Rows that are not software, or have no evidence to build from.
+BLOCKED[595] = "Not software: a guided pilot and rollout is a human service of the vendor company"
+BLOCKED[655] = "Not software: a support tier, security reviews and company onboarding are human services of the vendor company"
+BLOCKED[653] = BLOCKED[654] = "No spec and no evidence of inputs or formulas: a calculator widget on the marketing site"
+BLOCKED[773] = "No evidence: the source service is closed and its export file format is not in the evidence"
+BLOCKED[770] = "Not needed: no legacy users (platform-current-version rule 11)"
+
+# Buildable rows that no unit has built yet. Rows that units U31 to U33 and PR #23 build now keep their text.
+PLANNED = "Buildable; not built yet (planned)"
+for n in [36, 38, 40, 42, 43, 63, 64, 102, 118, 121, 122, 123, 128, 129, 140, 144, 167, 169, 170, 183, 185, 187, 189,
+          201, 205, 232, 326, 327, 340, 347, 361, 362, 365, 370, 375, 542, 543, 635, 636, 637, 775, 776, 783, 784]:
+    BLOCKED[n] = PLANNED
+BLOCKED[92] = PLANNED + ": the reason for each move and skip, and a view per item; the change log of every calendar write is built (src/server/change-log.ts)"
+BLOCKED[507] = PLANNED + ": the link's events go to the calendar chosen on the link (\u201c" + T["u7_locations"] + "\u201d); the choice of an added account, whose primary calendar gets the events and sends the invitations, is not built"
+BLOCKED[540] = PLANNED + ": the Repair action; looking up one event with its change log is built (src/server/diagnosis.ts)"
+BLOCKED[322] = (PLANNED + ": the Google free/busy query for attendees who are not users here (the Google client has a freeBusy method that no code calls); "
+                "its proof needs a Google account. The availability of attendees who are users here is E2E-proven (rows 321, 339)")
+# --- end U30 ---
 
 # Google Calendar proof. docs/e2e-google-run.tsv records a full E2E run on Google
 # (status, test id, title per line; docs/e2e-google-run.md says how it ran and how to
@@ -1154,8 +1280,6 @@ def status(row_id, spec_file, notes):
             return row_status(row_id, m[row_id])
     if "non-goal" in notes.lower():
         return "blocked", "Non-goal by decision (billing, payments or mobile apps)."
-    if spec_file.startswith("integrations-"):
-        return "blocked", "Not implemented yet; needs the vendor's developer app and a test account."
     return "blocked", "Not implemented yet."
 
 def check_one_map_per_row():
