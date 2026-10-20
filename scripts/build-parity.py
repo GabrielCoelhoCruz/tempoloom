@@ -817,11 +817,29 @@ E2E_NOTES.update({
 PARTIAL[78] = ("Each sync takes the home time zone from the primary Google calendar (src/server/sync/pull.ts), and the hours page "
                "shows the zone that hours apply in and an active trip (E2E on CalDAV and Google: \u201ca browser that reports UTC gets a "
                "warning\u2026\u201d). No E2E or unit test sets a Google Calendar time zone and checks that the home zone follows it")
-# Row 90 stays partial: E2E does not cover buffers inside a level.
-PARTIAL[90] = "E2E on CalDAV covers flexible meetings, habits, tasks, next-up tasks and focus time in the order (\u201cinside one level meetings go first, then habits, then tasks\u2026\u201d, \u201ca next-up task goes before other tasks of any level\u201d, \u201cfocus time goes after a P4 task\u2026\u201d); buffers inside a level have unit tests only"
 # Row 76 stays partial: planning-hours.md says focus time, flexible meetings and
 # booking links do not offer item-specific hours "yet", so only habits are built.
 # --- end U03 ---
+
+# --- U58: processing order across item kinds (processing-order.spec.ts) ---
+T.update({
+    "u58_fixed": "locked chunks and booked meetings are in place before any demand: a P1 task created later does not take their time (SCH-61)",
+    "u58_nextup": "P1 habits and P1 flexible meetings go before next-up tasks; P2 habits go after them (SCH-67, SCH-70)",
+    "u58_focus": "focus time goes after habits, flexible meetings and buffers, also of P4 (SCH-68)",
+    "u58_kinds": "a new automation goes after the last one of its level whose kind comes first: flexible meetings, then buffers, then habits (SCH-71)",
+    "u58_task_key": "tasks of one level go by due date with no due date last, then more remaining minutes, then the older task (SCH-72, SCH-74)",
+    "u58_occurrences": "the occurrences of one habit are placed in date order: Monday's takes the free day nearest to it first (SCH-73)",
+})
+E2E.update({
+    90: ["u58_fixed", "u03_order", "s1_drag", "t_prio", "u03_urgency", "t_next", "u35_rank", "u58_nextup",
+         "u03_focus", "u58_focus", "u4_buffer_prio", "u58_kinds", "u58_task_key", "u58_occurrences", "s3_suggest"],
+})
+E2E_NOTES.update({
+    90: ("The tests follow SCH-61 to SCH-75 in order: fixed things, levels and kinds, stack rank, due date, urgency, the "
+         "next-up queue, focus time last, buffer levels, the kind order of new automations, the task key, the order of one "
+         "item's demands, and suggestions mode"),
+})
+# --- end U58 ---
 
 # --- U07: flexible meeting limits and actions, booking link settings ---
 T.update({

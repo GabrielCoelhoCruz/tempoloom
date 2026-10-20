@@ -14,6 +14,8 @@
 //   automation of the same or an earlier kind (kind order test)
 // - tasks of one level go in creation order instead of by due date, then
 //   more remaining minutes, then the older task (task key test)
+// - the occurrences of one habit are placed in another order than their
+//   dates (one item test)
 import type { Page } from "@playwright/test";
 import { day, span, week } from "./automation-helpers.ts";
 import { create, group, names, openAutomations, save } from "./automation-list-helpers.ts";
@@ -422,5 +424,40 @@ test("tasks of one level go by due date with no due date last, then more remaini
   await eventually(() => week(cal), check);
   await page.reload();
   await expect(page.locator('[data-task-title="AT-Twin"]')).toBeVisible();
+  check(await week(cal));
+});
+
+test("the occurrences of one habit are placed in date order: Monday's takes the free day nearest to it first (SCH-73)", async ({
+  page,
+  cal,
+  signIn,
+}) => {
+  await blockUntil(cal, W);
+  const [mon, tue, wed, thu] = [W, day(1), day(2), day(3)];
+  // Monday and Tuesday are full; Wednesday has one free hour; Thursday is free.
+  for (const d of [mon, tue])
+    await cal.addEvent({ title: "E2E busy", start: at(d, "09:00"), end: at(d, "17:00") });
+  await onlyFree(cal, wed);
+  await signIn();
+
+  // Both occurrences go to another day of the week; the nearest free day of
+  // both is Wednesday. Monday's occurrence comes first, so it gets Wednesday.
+  await addHabit(page, {
+    title: "AT-Weekly",
+    ideal: "13:00",
+    min: 60,
+    max: 60,
+    level: 3,
+    days: ["Mon", "Tue"],
+    noRoom: "Remove that day",
+  });
+  const check = (l: Evs) => {
+    const evs = titled(l, "AT-Weekly");
+    expect(evs.map(span)).toEqual([`${wed} 13:00-14:00`, `${thu} 13:00-14:00`]);
+    expect(evs.map((e) => e.privateProps.tl_key?.split(":").at(-1))).toEqual([mon, tue]);
+  };
+  await eventually(() => week(cal), check);
+  await page.reload();
+  await expect(page.locator('[data-habit-title="AT-Weekly"]')).toBeVisible();
   check(await week(cal));
 });
