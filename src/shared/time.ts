@@ -180,6 +180,31 @@ export function addDays(date: LocalDate, days: number): LocalDate {
   return new Date(Date.UTC(y, mo - 1, d + days)).toISOString().slice(0, 10);
 }
 
+/**
+ * The same local wall-clock time `days` calendar days later in `zone` (not
+ * days x 24 hours), with the seconds kept. A target time inside a DST gap moves
+ * forward by the gap. From the second pass of a repeated hour, the result keeps
+ * the second pass when the target day repeats that hour too.
+ */
+export function addLocalDays(epochMs: number, days: number, zone: string): number {
+  const l = utcToLocal(zone, epochMs);
+  const date = addDays(l.date, days);
+  const seconds = ((epochMs % MINUTE) + MINUTE) % MINUTE;
+  const first = localToUtc(zone, date, l.minuteOfDay) + seconds;
+  const pass = epochMs - seconds - localToUtc(zone, l.date, l.minuteOfDay);
+  if (pass === 0) return first;
+  const back = utcToLocal(zone, first + pass);
+  return back.date === date && back.minuteOfDay === l.minuteOfDay ? first + pass : first;
+}
+
+/**
+ * End of the scheduling window: 24:00 local in `zone` on the day `weeks` x 7
+ * days after today (docs/specs/planning-scheduling-window.md, "Window end").
+ */
+export function schedulingWindowEnd(zone: string, now: number, weeks: number): number {
+  return localToUtc(zone, addDays(utcToLocal(zone, now).date, weeks * 7 + 1), 0);
+}
+
 export function weekdayOf(date: LocalDate): IsoWeekday {
   const [y, mo, d] = parseDate(date);
   const js = new Date(Date.UTC(y, mo - 1, d)).getUTCDay();

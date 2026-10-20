@@ -15,7 +15,7 @@ import {
 import { hasTag, TAG_FREE, tagText } from "../../scheduler/blocking.ts";
 import type { WeeklyHours } from "../../scheduler/hours.ts";
 import type { ExternalEvent, Level } from "../../scheduler/model.ts";
-import { addDays, isValidTimeZone, localToUtc, utcToLocal } from "../../shared/time.ts";
+import { addLocalDays, isValidTimeZone } from "../../shared/time.ts";
 import type { AppEnv } from "../app.ts";
 import {
   bookedLocation,
@@ -1288,11 +1288,7 @@ export function oneOffExpiry(
   zone: string,
 ): number | null {
   if (!link.source_id) return null;
-  const created = utcToLocal(zone, link.created_at);
-  const wall = localToUtc(zone, created.date, created.minuteOfDay);
-  return (
-    localToUtc(zone, addDays(created.date, days), created.minuteOfDay) + (link.created_at - wall)
-  );
+  return addLocalDays(link.created_at, days, zone);
 }
 
 /** Public booking API: no session; the page and link slugs or a manage token identify the data. */

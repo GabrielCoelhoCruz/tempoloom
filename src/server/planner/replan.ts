@@ -24,6 +24,7 @@ import {
   DAY,
   type LocalDate,
   localToUtc,
+  schedulingWindowEnd,
   utcToLocal,
   weekdayOf,
 } from "../../shared/time.ts";
@@ -126,11 +127,7 @@ export function loadSnapshot(
   /** Event settings of each automation, by `kind:id` (src/shared/event-settings.ts). */
   eventSettings: Map<string, EventSettings>;
 } {
-  const windowEnd = localToUtc(
-    zone,
-    addDays(utcToLocal(zone, now).date, settings.schedulingWindowWeeks * 7 + 1),
-    0,
-  );
+  const windowEnd = schedulingWindowEnd(zone, now, settings.schedulingWindowWeeks);
   const hoursRows = all<{ id: string; kind: string; weekly: string }>(
     db,
     "SELECT id, kind, weekly FROM hours_sets WHERE user_id = ?",

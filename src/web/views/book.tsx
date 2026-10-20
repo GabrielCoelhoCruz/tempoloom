@@ -4,7 +4,15 @@ import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { isValidTimeZone, localToUtc } from "../../shared/time.ts";
 import { ApiError, api } from "../lib/api.ts";
 import { lazyComponent } from "../lib/lazy.ts";
-import { dayOf, dayText, FORMAT_KEY, savedFormat, timeText, type View } from "../lib/zoned.ts";
+import {
+  addPages,
+  dayOf,
+  dayText,
+  FORMAT_KEY,
+  savedFormat,
+  timeText,
+  type View,
+} from "../lib/zoned.ts";
 
 interface Question {
   label: string;
@@ -101,7 +109,6 @@ const withWhom = (organizers: string[]) =>
   organizers.length > 0 ? `with ${organizers.join(", ")}` : "";
 
 const browserZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-const SPAN = 14 * 86_400_000;
 
 /** Reads the URL parameters once (rule 9). Invalid values are ignored. */
 function urlParams() {
@@ -225,7 +232,7 @@ function Times({
     const q = new URLSearchParams({
       duration: String(duration),
       from: String(from),
-      to: String(from + SPAN),
+      to: String(addPages(view, from, 1)),
     });
     if (token) q.set("token", token);
     void api<{ times: Offered[] }>("GET", `/pub/pages/${page}/${link}/times?${q}`).then((r) => {
@@ -236,7 +243,7 @@ function Times({
         if (pick) onPick(pick);
       }
     });
-  }, [page, link, duration, from, token]);
+  }, [page, link, duration, from, token, view.zone]);
   useEffect(() => {
     if (!overlay) {
       setMine([]);
@@ -244,9 +251,9 @@ function Times({
     }
     void api<{ events: MyEvent[] }>(
       "GET",
-      `/api/booking/overlay?from=${from}&to=${from + SPAN}`,
+      `/api/booking/overlay?from=${from}&to=${addPages(view, from, 1)}`,
     ).then((r) => setMine(r.events));
-  }, [overlay, from]);
+  }, [overlay, from, view.zone]);
   const byDay = useMemo(() => {
     const m = new Map<string, Offered[]>();
     for (const t of times ?? [])
@@ -305,12 +312,15 @@ function Times({
       })}
       <div class="actions">
         {from > Date.now() + 1000 && (
-          <button type="button" onClick={() => setFrom((f) => Math.max(Date.now(), f - SPAN))}>
+          <button
+            type="button"
+            onClick={() => setFrom((f) => Math.max(Date.now(), addPages(view, f, -1)))}
+          >
             Earlier
           </button>
         )}
         {/* From the newest value: a quick second click must move two weeks more. */}
-        <button type="button" onClick={() => setFrom((f) => f + SPAN)}>
+        <button type="button" onClick={() => setFrom((f) => addPages(view, f, 1))}>
           Later
         </button>
       </div>
