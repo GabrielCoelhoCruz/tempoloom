@@ -18,7 +18,10 @@ export interface CalDavCredentials {
   serverUrl: string;
   username: string;
   password: string;
-  /** The user's email, used to find the user among attendees. */
+  /**
+   * The user's email. With the principal's calendar-user-address-set
+   * (RFC 6638), it finds the user among attendees.
+   */
   email: string;
   /**
    * Another person's calendar home, read with an organization grant's account
@@ -131,8 +134,11 @@ function responseOf(a: ICAL.Property): ResponseStatus {
         : "needsAction";
 }
 
-function attendeeFacts(ev: ICAL.Component, selfEmail: string) {
-  const self = selfEmail.toLowerCase();
+/** The user's addresses, lower case, without `mailto:`. */
+const selfSet = (addresses: string | readonly string[]) =>
+  new Set((typeof addresses === "string" ? [addresses] : addresses).map(mailto).filter(Boolean));
+
+function attendeeFacts(ev: ICAL.Component, self: ReadonlySet<string>) {
   const attendees = ev.getAllProperties("attendee");
   let selfResponse: ResponseStatus | null = null;
   let note = "";
@@ -140,7 +146,7 @@ function attendeeFacts(ev: ICAL.Component, selfEmail: string) {
   for (const a of attendees) {
     const email = mailto(a.getFirstValue());
     if (email) responses[email] = responseOf(a);
-    if (email === self) {
+    if (self.has(email)) {
       selfResponse = responseOf(a);
       note = String(a.getParameter("x-response-comment") ?? "");
     }
@@ -149,7 +155,8 @@ function attendeeFacts(ev: ICAL.Component, selfEmail: string) {
   // The user's RSVP note (events-tags.md) is the X-RESPONSE-COMMENT of the
   // user's own attendee line. A COMMENT on the event is the organizer's text
   // (edge case 5: someone else's note is ignored).
-  const organizerSelf = organizer === null || organizer === undefined || mailto(organizer) === self;
+  const organizerSelf =
+    organizer === null || organizer === undefined || self.has(mailto(organizer));
   return {
     selfResponse,
     rsvpNote: note,
@@ -170,7 +177,7 @@ function baseEvent(
   comp: ICAL.Component,
   id: string,
   etag: string | null,
-  selfEmail: string,
+  self: ReadonlySet<string>,
 ): Omit<ProviderEvent, "start" | "end" | "allDay"> {
   const str = (name: string) => {
     const v = comp.getFirstPropertyValue(name);
@@ -190,7 +197,7 @@ function baseEvent(
     location: str("location"),
     busy: away || str("transp").toUpperCase() !== "TRANSPARENT",
     eventType: away ? "outOfOffice" : "default",
-    ...attendeeFacts(comp, selfEmail),
+    ...attendeeFacts(comp, self),
     recurringId: null,
     colorId: COLOR_IDS.get(str("color").toLowerCase()) ?? null,
     updated: stamp instanceof ICAL.Time ? stamp.toUnixTime() * 1000 : null,
@@ -201,6 +208,24 @@ function baseEvent(
     visibility: CLASSES[str("class").toUpperCase()] ?? "default",
   };
 }
+
+const PROPFIND_ADDRESSES =
+  '<?xml version="1.0" encoding="utf-8"?><d:propfind xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav"><d:prop><c:calendar-user-address-set/></d:prop></d:propfind>';
+
+/** The `mailto:` addresses in a calendar-user-address-set (RFC 6638 2.4.1), lower case. */
+export function addressesIn(xml: string): string[] {
+  const set =
+    /calendar-user-address-set[^>]*>([\s\S]*?)<\/(?:[\w-]+:)?calendar-user-address-set/i.exec(
+      xml,
+    )?.[1] ?? "";
+  return [...set.matchAll(/<(?:[\w-]+:)?href[^>]*>\s*([^<]*?)\s*</gi)]
+    .map((m) => m[1] ?? "")
+    .filter((h) => /^mailto:/i.test(h))
+    .map(mailto);
+}
+
+/** The user's addresses of each CalDAV account, read once (server and user name as key). */
+const addressCache = new Map<string, Promise<string[]>>();
 
 const PROPFIND_ACCESS =
   '<?xml version="1.0" encoding="utf-8"?><d:propfind xmlns:d="DAV:" xmlns:cs="http://calendarserver.org/ns/"><d:prop><d:displayname/><d:resourcetype/><d:current-user-privilege-set/><d:sync-token/><cs:getctag/></d:prop></d:propfind>';
@@ -239,8 +264,10 @@ export function eventsFromObject(
   from: number,
   to: number,
   zone: string,
-  selfEmail: string,
+  /** The user's addresses (`mailto:` forms allowed, any case). */
+  selfAddresses: string | readonly string[],
 ): ProviderEvent[] {
+  const self = selfSet(selfAddresses);
   const root = new ICAL.Component(ICAL.parse(data));
   for (const tz of root.getAllSubcomponents("vtimezone")) {
     ICAL.TimezoneService.register(new ICAL.Timezone(tz));
@@ -257,7 +284,7 @@ export function eventsFromObject(
     const end = event.endDate ? instantOf(event.endDate, zone) : start;
     if (end > from && start < to) {
       out.push({
-        ...baseEvent(master, url, etag, selfEmail),
+        ...baseEvent(master, url, etag, self),
         start,
         end,
         allDay: event.startDate.isDate,
@@ -275,7 +302,7 @@ export function eventsFromObject(
     if (end <= from) continue;
     const comp = details.item.component;
     out.push({
-      ...baseEvent(comp, `${url}#${details.recurrenceId.toString()}`, etag, selfEmail),
+      ...baseEvent(comp, `${url}#${details.recurrenceId.toString()}`, etag, self),
       recurringId: url,
       start,
       end,
@@ -406,6 +433,37 @@ export class CalDavProvider implements CalendarProvider {
     return this.#client;
   }
 
+  /**
+   * The user's addresses: the account email and the principal's
+   * calendar-user-address-set, read once per account. A grant reads another
+   * person's home with its own principal, so it keeps the email alone.
+   */
+  async #self(): Promise<string[]> {
+    const email = this.#creds.email.toLowerCase();
+    if (this.#creds.homeUrl !== undefined) return [email];
+    const key = `${this.#creds.serverUrl}\n${this.#creds.username}`;
+    let found = addressCache.get(key);
+    if (!found) {
+      found = (async () => {
+        const principal = (await this.#connect()).account?.principalUrl;
+        if (!principal) return [];
+        const res = await this.#propfind(principal, "0", PROPFIND_ADDRESSES);
+        if (res.status >= 500)
+          throw new ProviderError("other", res.status, `PROPFIND ${res.status}`);
+        return res.status === 207 ? addressesIn(await res.text()) : [];
+      })();
+      addressCache.set(key, found);
+      // A failed read is tried again on the next call.
+      found.catch(() => addressCache.delete(key));
+    }
+    try {
+      return [...new Set([email, ...(await found)])];
+    } catch (err) {
+      if (err instanceof ProviderError && err.kind === "auth") throw err;
+      return [email];
+    }
+  }
+
   async #fetchCalendars(): Promise<DAVCalendar[]> {
     const client = await this.#connect();
     const home = this.#creds.homeUrl;
@@ -431,7 +489,7 @@ export class CalDavProvider implements CalendarProvider {
     return cals;
   }
 
-  async #propfind(url: string, depth: "0" | "1"): Promise<Response> {
+  async #propfind(url: string, depth: "0" | "1", body = PROPFIND_ACCESS): Promise<Response> {
     const res = await fetch(url, {
       method: "PROPFIND",
       headers: {
@@ -439,7 +497,7 @@ export class CalDavProvider implements CalendarProvider {
         depth,
         "content-type": "application/xml; charset=utf-8",
       },
-      body: PROPFIND_ACCESS,
+      body,
     });
     if (res.status === 401) throw new ProviderError("auth", 401, "CalDAV credentials rejected");
     return res;
@@ -547,6 +605,7 @@ export class CalDavProvider implements CalendarProvider {
       etag: davText(r.props?.getetag),
       data: davText(r.props?.calendarData),
     }));
+    const self = await this.#self();
     const events: ProviderEvent[] = [];
     for (const o of objects) {
       if (typeof o.data !== "string" || !o.data) continue;
@@ -558,7 +617,7 @@ export class CalDavProvider implements CalendarProvider {
           opts.timeMin,
           opts.timeMax,
           this.#zone,
-          this.#creds.email,
+          self,
         ),
       );
     }
@@ -581,7 +640,7 @@ export class CalDavProvider implements CalendarProvider {
         Number.NEGATIVE_INFINITY,
         Number.POSITIVE_INFINITY,
         this.#zone,
-        this.#creds.email,
+        await this.#self(),
       );
       if (ev) return ev;
     }
@@ -733,7 +792,7 @@ export class CalDavProvider implements CalendarProvider {
     const root = new ICAL.Component(ICAL.parse(obj.data));
     const ev = root.getAllSubcomponents("vevent").find((v) => !v.hasProperty("recurrence-id"));
     if (!ev) throw new ProviderError("not_found", 404, "Event not found");
-    this.#apply(ev, change);
+    this.#apply(ev, change, await this.#self());
     const match = obj.etag ?? etag;
     const res = await client.updateCalendarObject({
       calendarObject: { url: eventId, data: root.toString(), ...(match ? { etag: match } : {}) },
@@ -767,7 +826,7 @@ export class CalDavProvider implements CalendarProvider {
     const series = await this.#series(calendarId, eventId);
     const { start, end } = this.#instanceTimes(series);
     const ov = this.#override(series);
-    this.#apply(ov, change);
+    this.#apply(ov, change, await this.#self());
     const tag = await this.#putSeries(series.url, series.root, series.etag ?? etag);
     const found = eventsFromObject(
       series.root.toString(),
@@ -776,14 +835,14 @@ export class CalDavProvider implements CalendarProvider {
       Math.min(start, change.start ?? start) - 86_400_000,
       Math.max(end, change.end ?? end) + 86_400_000,
       this.#zone,
-      this.#creds.email,
+      await this.#self(),
     ).find((e) => e.id === eventId);
     if (!found) throw new ProviderError("other", 500, "Instance missing after update");
     return found;
   }
 
   /** Writes `change` into one VEVENT; every other property stays. */
-  #apply(ev: ICAL.Component, change: ExternalChange): void {
+  #apply(ev: ICAL.Component, change: ExternalChange, addresses: readonly string[]): void {
     const set = (name: string, value: string | null) => {
       ev.removeAllProperties(name);
       if (value) ev.addPropertyWithValue(name, value);
@@ -819,7 +878,7 @@ export class CalDavProvider implements CalendarProvider {
       ev.removeAllProperties("dtstart");
       ev.addPropertyWithValue("dtstart", toUtcTime(change.start));
     }
-    const self = this.#creds.email.toLowerCase();
+    const self = selfSet(addresses);
     if (change.guests) {
       const { add, remove } = change.guests;
       const gone = new Set(remove.map((e) => e.toLowerCase()));
@@ -841,7 +900,7 @@ export class CalDavProvider implements CalendarProvider {
     // A new time asks the guests again (RFC 5546 3.2.2: a new SEQUENCE).
     if (retimed) {
       for (const a of ev.getAllProperties("attendee"))
-        if (mailto(a.getFirstValue()) !== self) a.removeParameter("partstat");
+        if (!self.has(mailto(a.getFirstValue()))) a.removeParameter("partstat");
       const sequence = Number(ev.getFirstPropertyValue("sequence") ?? 0);
       ev.removeAllProperties("sequence");
       ev.addPropertyWithValue("sequence", sequence + 1);
@@ -854,7 +913,7 @@ export class CalDavProvider implements CalendarProvider {
         tentative: "TENTATIVE",
       }[change.selfResponse];
       for (const a of ev.getAllProperties("attendee")) {
-        if (mailto(a.getFirstValue()) === self) a.setParameter("partstat", partstat);
+        if (self.has(mailto(a.getFirstValue()))) a.setParameter("partstat", partstat);
       }
       // The note goes with the answer, as an iCalendar COMMENT of the user's copy.
       if (change.comment !== undefined) set("comment", change.comment);
@@ -1020,7 +1079,7 @@ export class CalDavProvider implements CalendarProvider {
       from,
       to,
       this.#zone,
-      this.#creds.email,
+      await this.#self(),
     ).find((e) => e.id === eventId);
     if (!found) throw new ProviderError("other", 500, "Instance missing after update");
     return found;
