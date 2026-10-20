@@ -49,6 +49,7 @@ interface Form {
   every?: string;
   level?: 1 | 2 | 3 | 4;
   remove?: boolean;
+  noticeHours?: number;
 }
 
 async function fillMeeting(page: Page, m: Form) {
@@ -65,6 +66,8 @@ async function fillMeeting(page: Page, m: Form) {
       await ideal.getByLabel(d, { exact: true }).setChecked(m.days.includes(d));
   }
   if (m.level) await form.getByLabel("Priority").selectOption(String(m.level));
+  if (m.noticeHours !== undefined)
+    await form.getByLabel("Move notice (hours)").fill(String(m.noticeHours));
   if (m.remove)
     await form
       .getByLabel("When there is no time")
@@ -428,11 +431,13 @@ test("a daily meeting kept in conflict counts each day it stayed in conflict as 
   const wed = () => cal.events(at(day(2), "00:00"), at(day(3), "00:00"));
   await eventually(wed, (l) => expect(starts(l, "Deep work")).toEqual([`${day(2)} 16:00-17:00`]));
   // The default rule keeps an occurrence with no time at its ideal time, in conflict.
+  // No move notice, so Wednesday's occurrence can move on Wednesday morning (rule 8).
   await addMeeting(page, {
     title: "Standup",
     guests: "dana@example.com",
     every: "Every day",
     level: 3,
+    noticeHours: 0,
   });
   const days = (l: Evs) => starts(l, "Standup").filter((x) => x < `${day(5)}`);
   const week = () => cal.events(at(W, "00:00"), at(day(5), "00:00"));
