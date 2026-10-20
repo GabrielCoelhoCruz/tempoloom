@@ -1066,19 +1066,37 @@ T.update({
     "pg_manual": "manual start mode moves an unstarted chunk or habit event later that day, and Start moves a running one to now (PRG-1, PRG-3 to PRG-5)",
     "pg_log": "logging past work in the planner writes a past event for a task or a habit and reduces the remaining work (PRG-20 to PRG-22; habits rule 32)",
     "pg_edge": "Start with no chunk makes one from now up to the next busy event, Start on a running chunk changes nothing, and an early Stop removes it (edge cases 1 to 4)",
+    "pg_locked": "manual start mode: a chunk the user locked or dragged that ends without Start still moves later that day (PRG-3)",
+    "pg_unlock": "Unlock on a started chunk or on logged work that ended keeps it as done work, and its event stays (PRG-1, PRG-3, PRG-20)",
+    "pg_left": "manual start mode: a chunk that ended without Start is work left in the task list, the Tasks panel and its title (PRG-3)",
+    "pg_twice": "two Start requests at once make one chunk, and an early Stop is in the change log (edge cases 1 and 4)",
+    "pg_planner": "Start now and End now in the planner move a task chunk to now and end it now (PRG-10, PRG-11, PRG-13)",
+    "pg_cal": "logged work goes to the task calendar of the task's hours set, and a drag over a past time sets its start and length (PRG-21, PRG-22)",
 })
 E2E.update({
-    31: ["pg_past", "pg_manual"], 32: ["pg_past"], 33: ["pg_manual"], 37: ["pg_log"], 184: ["pg_log"],
+    31: ["pg_past", "pg_manual", "pg_locked", "pg_unlock", "pg_left"],
+    32: ["pg_past", "pg_unlock"],
+    33: ["pg_manual", "pg_locked"],
+    37: ["pg_log", "pg_cal"],
+    38: ["pg_log", "pg_cal"],
+    184: ["pg_log", "pg_cal"],
+    185: ["pg_manual"],
 })
 E2E_NOTES.update({
-    31: "Start in manual mode locks the event; a locked event counts as started. Events from before the switch to manual mode keep counting",
-    37: "Log work opens on a click on a past time in the planner, or from its toolbar; the event goes to the task's calendar (PRG-22 proposed default)",
-    184: "Log work opens on a click on a past time in the planner, or from its toolbar",
+    31: "Start, Stop, the timer and logged work mark an event as started; a lock or a drag does not. Events from before the switch to manual mode keep counting",
+    37: "Log work opens on a click or a drag on a past time in the planner, or from its toolbar; the event goes to the task calendar of the task's hours set, else the main calendar (PRG-22 proposed default)",
+    38: "A click opens Log work at that time with 30 minutes; a drag sets the start and the minutes",
+    184: "Log work opens on a click or a drag on a past time in the planner, or from its toolbar",
+    185: "The start mode setting is one for task chunks and habit events (PRG-5)",
 })
-PARTIAL.update({
-    34: "Start works in the task list, with full UI E2E on CalDAV (E2E: \u201c" + T["pg_start"] + "\u201d; \u201c" + T["pg_edge"] + "\u201d); Start from the Google Calendar add-on, the chat app and the launcher (PRG-13) needs those vendor apps",
-    35: "Stop works in the task list, with full UI E2E on CalDAV (E2E: \u201c" + T["pg_start"] + "\u201d; \u201c" + T["pg_edge"] + "\u201d); Stop from the Google Calendar add-on, the chat app and the launcher (PRG-13) needs those vendor apps",
-})
+VENDOR_STARTS = ("the Google Calendar add-on (integrations-calendar-add-on.md), the Slack chat app (integrations-slack.md) "
+                 "and the Raycast launcher extension (integrations-raycast.md), which are vendor apps outside the project")
+BLOCKED[34] = ("Start from " + VENDOR_STARTS + " (PRG-13) needs those vendor apps; Start in the task list and in the planner is built, "
+               "with full UI E2E on CalDAV (E2E: \u201c" + T["pg_start"] + "\u201d; \u201c" + T["pg_planner"] + "\u201d; \u201c"
+               + T["pg_edge"] + "\u201d; \u201c" + T["pg_twice"] + "\u201d)")
+BLOCKED[35] = ("Stop from " + VENDOR_STARTS + " (PRG-13) needs those vendor apps; Stop in the task list and in the planner is built, "
+               "with full UI E2E on CalDAV (E2E: \u201c" + T["pg_start"] + "\u201d; \u201c" + T["pg_planner"] + "\u201d; \u201c"
+               + T["pg_edge"] + "\u201d; \u201c" + T["pg_twice"] + "\u201d)")
 # --- end U31 ---
 
 # Google Calendar proof. docs/e2e-google-run.tsv records a full E2E run on Google

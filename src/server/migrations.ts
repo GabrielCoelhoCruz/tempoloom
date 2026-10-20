@@ -1195,4 +1195,11 @@ export const MIGRATIONS: readonly string[] = [
   -- The attendees' meeting hours and time zones the last plan used (rule 11).
   ALTER TABLE meetings ADD COLUMN attendee_hours TEXT NOT NULL DEFAULT '';
   `,
+  // 34: the user started this task chunk or habit event, or logged it as work
+  // (planning-task-progress.md PRG-3, PRG-4, PRG-20). In manual start mode only
+  // a started event counts as done work; a lock or a drag does not start it.
+  `
+  ALTER TABLE managed_events ADD COLUMN started INTEGER NOT NULL DEFAULT 0;
+  UPDATE managed_events SET started = 1 WHERE key LIKE '%:log-%';
+  `,
 ];

@@ -18,6 +18,7 @@ import { editedEventSettings, eventSettingsInput, newEventSettings } from "../ev
 import { jsonBody, notFound } from "../http.ts";
 import { createItemHours, dropItemHours, itemHoursSchema, saveItemHours } from "../item-hours.ts";
 import { automationCount, limitRefusal } from "../limits.ts";
+import { taskDoneMinutes } from "../planner/progress.ts";
 import { getSettings } from "../settings.ts";
 import type { SyncService } from "../sync/service.ts";
 
@@ -268,17 +269,17 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
         ?.report ?? "[]",
     ) as { itemKind: string; itemId: string; status: string; reason: string }[];
     const t = now();
+    const done = taskDoneMinutes(db, user.id, t);
+    const manual = getSettings(db, user.id).startMode === "manual";
     return c.json({
       tasks: tasks.map((task) => {
-        const chunks = all<{ start_ms: number; end_ms: number }>(
+        const chunks = all<{ start_ms: number; end_ms: number; started: number }>(
           db,
-          "SELECT start_ms, end_ms FROM managed_events WHERE user_id = ? AND kind = 'task' AND source_id = ?",
+          "SELECT start_ms, end_ms, started FROM managed_events WHERE user_id = ? AND kind = 'task' AND source_id = ?",
           user.id,
           task.id,
         );
-        const used = chunks
-          .filter((ch) => ch.end_ms <= t)
-          .reduce((a, ch) => a + (ch.end_ms - ch.start_ms) / 60_000, 0);
+        const used = done.get(task.id) ?? 0;
         const scheduled = chunks
           .filter((ch) => ch.end_ms > t)
           .reduce((a, ch) => a + (ch.end_ms - ch.start_ms) / 60_000, 0);
@@ -295,7 +296,10 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
         return {
           ...task,
           // PRG-10, PRG-11: a chunk is running now, so Stop applies.
-          inProgress: chunks.some((ch) => ch.start_ms <= t && ch.end_ms > t),
+          // In manual start mode only a started chunk is in progress (PRG-3).
+          inProgress: chunks.some(
+            (ch) => ch.start_ms <= t && ch.end_ms > t && (!manual || ch.started === 1),
+          ),
           scheduledMinutes: scheduled,
           remainingMinutes: remaining,
           state,

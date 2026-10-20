@@ -21,8 +21,9 @@
 // - Stop right after the start leaves a stub                              -> no event
 import type { Page } from "@playwright/test";
 import { addDays, localToUtc } from "../../src/shared/time.ts";
+import { openSettings } from "./calendar-helpers.ts";
 import type { AppServer, CalendarDriver } from "./fixtures.ts";
-import { at, eventually, expect, local, test, ZONE } from "./fixtures.ts";
+import { at, BACKEND, eventually, expect, local, test, ZONE } from "./fixtures.ts";
 import { addHabit, addTask, MIN, openEvent, openWeek, titled, W } from "./helpers.ts";
 import { alwaysHours, chooseSetting } from "./s3-helpers.ts";
 
@@ -39,6 +40,27 @@ const dayEvents = (cal: CalendarDriver, date = D) =>
   cal.events(at(date, "00:00"), localToUtc(ZONE, addDays(date, 1), 0));
 const times = (l: Awaited<ReturnType<CalendarDriver["events"]>>, title: string) =>
   titled(l, title).map((e) => `${local(e.start)}-${local(e.end).slice(11)}`);
+
+const FIVE = 5 * MIN;
+const floor5 = (t: number) => Math.floor(t / FIVE) * FIVE;
+/** The server clock, read through the API. */
+const serverNow = (page: Page) =>
+  page.evaluate(() =>
+    fetch("/api/now")
+      .then((r) => r.json())
+      .then((b: { now: number }) => b.now),
+  );
+
+/**
+ * Sets the server clock to `t` right before a Start click and returns the
+ * starts that Start may give: `t` and the time after the click, rounded down
+ * to 5 minutes. The two are the same unless the click took minutes.
+ */
+async function startAt(page: Page, app: AppServer, t: number, click: () => Promise<void>) {
+  await clockAt(app, t);
+  await click();
+  return [floor5(t), floor5(await serverNow(page))];
+}
 
 async function taskRow(page: Page, title: string) {
   await page.reload();
@@ -71,18 +93,29 @@ test("Start moves the first chunk to now and Stop ends it now; the rest is place
   );
 
   // Start at 09:03: the chunk begins at 09:00 and keeps its 60 minutes.
-  await clockAt(app, at(D, "09:03"));
   let row = await taskRow(page, "AT-P1");
-  await row.getByRole("button", { name: "Start now" }).click();
-  await eventually(
-    () => dayEvents(cal),
-    (l) => expect(times(l, "AT-P1")).toEqual([`${D} 09:00-10:00`]),
+  const starts = await startAt(page, app, at(D, "09:03"), () =>
+    row.getByRole("button", { name: "Start now" }).click(),
   );
+  const [started] = titled(
+    await eventually(
+      () => dayEvents(cal),
+      (l) => {
+        expect(titled(l, "AT-P1")).toHaveLength(1);
+        expect(starts).toContain(titled(l, "AT-P1")[0]?.start);
+      },
+    ),
+    "AT-P1",
+  );
+  const s0 = started?.start ?? 0;
+  expect(started?.end).toBe(s0 + 60 * MIN);
   row = await taskRow(page, "AT-P1");
   await expect(row.getByTestId("task-started")).toBeVisible();
   // The next plan run keeps it there.
   await page.evaluate(() => fetch("/api/planner/sync", { method: "POST" }));
-  expect(times(await dayEvents(cal), "AT-P1")).toEqual([`${D} 09:00-10:00`]);
+  expect(titled(await dayEvents(cal), "AT-P1").map((e) => [e.start, e.end])).toEqual([
+    [s0, s0 + 60 * MIN],
+  ]);
 
   // Stop at 09:40: the chunk ends then, and the other 20 minutes go later.
   await clockAt(app, at(D, "09:40"));
@@ -93,7 +126,7 @@ test("Start moves the first chunk to now and Stop ends it now; the rest is place
     (l) => {
       const [first, rest] = titled(l, "AT-P1");
       expect(titled(l, "AT-P1")).toHaveLength(2);
-      expect(first?.start).toBe(at(D, "09:00"));
+      expect(first?.start).toBe(s0);
       expect(first?.end).toBeGreaterThanOrEqual(at(D, "09:40"));
       expect(first?.end).toBeLessThanOrEqual(at(D, "09:42"));
       expect(rest?.start).toBeGreaterThanOrEqual(first?.end ?? 0);
@@ -102,7 +135,7 @@ test("Start moves the first chunk to now and Stop ends it now; the rest is place
       );
     },
   );
-  const worked = ((titled(evs, "AT-P1")[0]?.end ?? 0) - at(D, "09:00")) / MIN;
+  const worked = ((titled(evs, "AT-P1")[0]?.end ?? 0) - s0) / MIN;
   row = await taskRow(page, "AT-P1");
   await expect(row.getByTestId("task-left")).toHaveText(`${60 - worked} min left`);
 });
@@ -214,15 +247,24 @@ test("manual start mode moves an unstarted chunk or habit event later that day, 
   await expect(row.getByTestId("task-left")).toHaveText("15 min left");
 
   // 7 minutes into the moved chunk the user presses Start: it starts 5 minutes in (rounded down).
-  const start = (moved?.start ?? 0) + 5 * MIN;
-  await clockAt(app, (moved?.start ?? 0) + 7 * MIN);
   row = await taskRow(page, "AT-P5");
-  await row.getByRole("button", { name: "Start now" }).click();
-  await eventually(
-    () => dayEvents(cal),
-    (l) =>
-      expect(titled(l, "AT-P5").map((e) => [e.start, e.end])).toEqual([[start, start + 15 * MIN]]),
+  const starts = await startAt(page, app, (moved?.start ?? 0) + 7 * MIN, () =>
+    row.getByRole("button", { name: "Start now" }).click(),
   );
+  expect(starts[0]).toBe((moved?.start ?? 0) + 5 * MIN);
+  const start =
+    titled(
+      await eventually(
+        () => dayEvents(cal),
+        (l) => {
+          const [ev] = titled(l, "AT-P5");
+          expect(titled(l, "AT-P5")).toHaveLength(1);
+          expect(starts).toContain(ev?.start);
+          expect((ev?.end ?? 0) - (ev?.start ?? 0)).toBe(15 * MIN);
+        },
+      ),
+      "AT-P5",
+    )[0]?.start ?? 0;
 
   // 13:20: the started chunk ended and counts; the habit event ended unstarted and moves.
   await clockAt(app, at(D, "13:20"));
@@ -244,18 +286,24 @@ test("manual start mode moves an unstarted chunk or habit event later that day, 
   );
 
   // Start on the running habit event moves its start to now, rounded down.
-  const habitStart = (habit?.start ?? 0) + 5 * MIN;
-  await clockAt(app, (habit?.start ?? 0) + 7 * MIN);
   await openWeek(page, W);
   await openEvent(page, "AT-H5");
-  await page.getByTestId("event-drawer").getByRole("button", { name: "Start now" }).click();
-  await eventually(
-    () => dayEvents(cal),
-    (l) =>
-      expect(titled(l, "AT-H5").map((e) => [e.start, e.end])).toEqual([
-        [habitStart, habitStart + 15 * MIN],
-      ]),
+  const habitStarts = await startAt(page, app, (habit?.start ?? 0) + 7 * MIN, () =>
+    page.getByTestId("event-drawer").getByRole("button", { name: "Start now" }).click(),
   );
+  const habitStart =
+    titled(
+      await eventually(
+        () => dayEvents(cal),
+        (l) => {
+          const [h] = titled(l, "AT-H5");
+          expect(titled(l, "AT-H5")).toHaveLength(1);
+          expect(habitStarts).toContain(h?.start);
+          expect((h?.end ?? 0) - (h?.start ?? 0)).toBe(15 * MIN);
+        },
+      ),
+      "AT-H5",
+    )[0]?.start ?? 0;
   // After its end it stays: it was started, so it is done.
   await clockAt(app, habitStart + 20 * MIN);
   await openWeek(page, W);
@@ -369,14 +417,21 @@ test("Start with no chunk makes one from now up to the next busy event, Start on
   expect(times(await dayEvents(cal), "AT-Edge")).toEqual([]);
 
   let row = await taskRow(page, "AT-Edge");
-  await row.getByRole("button", { name: "Start now" }).click();
+  const starts = await startAt(page, app, at(D, "10:02"), () =>
+    row.getByRole("button", { name: "Start now" }).click(),
+  );
   const [chunk] = titled(
     await eventually(
       () => dayEvents(cal),
-      (l) => expect(times(l, "AT-Edge")).toEqual([`${D} 10:00-10:30`]),
+      (l) => {
+        expect(titled(l, "AT-Edge")).toHaveLength(1);
+        expect(starts).toContain(titled(l, "AT-Edge")[0]?.start);
+        expect(titled(l, "AT-Edge")[0]?.end).toBe(at(D, "10:30"));
+      },
     ),
     "AT-Edge",
   );
+  const edgeStart = chunk?.start ?? 0;
   expect(chunk?.summary).toContain("🔒");
   row = await taskRow(page, "AT-Edge");
   await expect(row.getByTestId("task-started")).toBeVisible();
@@ -388,11 +443,13 @@ test("Start with no chunk makes one from now up to the next busy event, Start on
   await row.getByRole("button", { name: "Start now" }).click();
   expect((await again).ok()).toBe(true);
   await page.evaluate(() => fetch("/api/planner/sync", { method: "POST" }));
-  expect(times(await dayEvents(cal), "AT-Edge")).toEqual([`${D} 10:00-10:30`]);
+  expect(titled(await dayEvents(cal), "AT-Edge").map((e) => [e.start, e.end])).toEqual([
+    [edgeStart, at(D, "10:30")],
+  ]);
 
   // Stop 3 minutes after the start: the chunk goes and all its time returns.
-  await clockAt(app, at(D, "10:03"));
   row = await taskRow(page, "AT-Edge");
+  await clockAt(app, edgeStart + 3 * MIN);
   await row.getByRole("button", { name: "End now" }).click();
   await eventually(
     () => dayEvents(cal),
@@ -401,4 +458,395 @@ test("Start with no chunk makes one from now up to the next busy event, Start on
   row = await taskRow(page, "AT-Edge");
   await expect(row.getByTestId("task-left")).toHaveText("1 h left");
   await expect(row.getByTestId("task-started")).toHaveCount(0);
+});
+
+/** Locks or unlocks one event in the planner's details panel and waits for the save. */
+async function toggleLock(page: Page, app: AppServer, title: string, locked: boolean) {
+  await openWeek(page, W);
+  await openEvent(page, title);
+  await page
+    .getByTestId("event-drawer")
+    .getByRole("button", { name: locked ? "Lock" : "Unlock", exact: true })
+    .click();
+  await expect
+    .poll(() =>
+      app.query<{ locked: number }>(
+        "SELECT locked FROM managed_events WHERE title LIKE ?",
+        `%${title}%`,
+      ),
+    )
+    .toEqual([{ locked: locked ? 1 : 0 }]);
+}
+
+test("manual start mode: a chunk the user locked or dragged that ends without Start still moves later that day (PRG-3)", async ({
+  page,
+  cal,
+  app,
+  signIn,
+}) => {
+  await clockAt(app, at(D, "11:50"));
+  await signIn();
+  await alwaysHours(page);
+  await chooseSetting(page, "Start mode", "Count only after I press Start");
+  for (const [title, from] of [
+    ["AT-Locked", "12:00"],
+    ["AT-Dragged", "13:00"],
+  ] as const)
+    await addTask(page, {
+      title,
+      minutes: 15,
+      split: false,
+      due: "",
+      hours: "AT-Always",
+      startAfter: `${D}T${from}`,
+    });
+  await eventually(
+    () => dayEvents(cal),
+    (l) => {
+      expect(times(l, "AT-Locked")).toEqual([`${D} 12:00-12:15`]);
+      expect(times(l, "AT-Dragged")).toEqual([`${D} 13:00-13:15`]);
+    },
+  );
+
+  // The user locks one chunk and drags the other 30 minutes earlier (the drag locks it too).
+  await toggleLock(page, app, "AT-Locked", true);
+  await openWeek(page, W);
+  const box = page.locator(".ev-task", { hasText: "AT-Dragged" }).first();
+  await box.hover({ position: { x: 10, y: 5 } });
+  const b = await box.boundingBox();
+  if (!b) throw new Error("no box");
+  await page.mouse.move(b.x + b.width / 2, b.y + 5);
+  await page.mouse.down();
+  await page.mouse.move(b.x + b.width / 2, b.y + 5 - 12, { steps: 4 });
+  await page.mouse.move(b.x + b.width / 2, b.y + 5 - 24, { steps: 4 });
+  await page.mouse.up();
+  await eventually(
+    () => dayEvents(cal),
+    (l) => expect(times(l, "AT-Dragged")).toEqual([`${D} 12:30-12:45`]),
+  );
+  expect(
+    app.query<{ locked: number }>(
+      "SELECT locked FROM managed_events WHERE title LIKE '%AT-Dragged%'",
+    ),
+  ).toEqual([{ locked: 1 }]);
+
+  // 12:50: both ended and nobody pressed Start, so neither counts. Both move later that day.
+  await clockAt(app, at(D, "12:50"));
+  await eventually(
+    () => dayEvents(cal),
+    (l) => {
+      for (const title of ["AT-Locked", "AT-Dragged"]) {
+        const [ev] = titled(l, title);
+        expect(titled(l, title)).toHaveLength(1);
+        expect(ev?.start).toBeGreaterThanOrEqual(at(D, "12:50"));
+        expect((ev?.end ?? 0) - (ev?.start ?? 0)).toBe(15 * MIN);
+      }
+    },
+  );
+  for (const title of ["AT-Locked", "AT-Dragged"]) {
+    const row = await taskRow(page, title);
+    await expect(row.getByTestId("task-state")).toHaveText("scheduled");
+    await expect(row.getByTestId("task-left")).toHaveText("15 min left");
+  }
+});
+
+test("Unlock on a started chunk or on logged work that ended keeps it as done work, and its event stays (PRG-1, PRG-3, PRG-20)", async ({
+  page,
+  cal,
+  app,
+  signIn,
+}) => {
+  await clockAt(app, at(D, "08:50"));
+  await signIn();
+  await alwaysHours(page);
+  await chooseSetting(page, "Start mode", "Count only after I press Start");
+  await addTask(page, {
+    title: "AT-Begun",
+    minutes: 15,
+    split: false,
+    due: "",
+    hours: "AT-Always",
+    startAfter: `${D}T09:00`,
+  });
+  await addTask(page, {
+    title: "AT-Logged",
+    minutes: 30,
+    split: false,
+    due: "",
+    hours: "AT-Always",
+    startAfter: `${D}T14:00`,
+  });
+  await eventually(
+    () => dayEvents(cal),
+    (l) => {
+      expect(times(l, "AT-Begun")).toEqual([`${D} 09:00-09:15`]);
+      expect(times(l, "AT-Logged")).toEqual([`${D} 14:00-14:30`]);
+    },
+  );
+
+  // The user logs all 30 minutes of AT-Logged at 08:00: its future chunk goes.
+  await openWeek(page, W);
+  await page.getByRole("button", { name: "Log work" }).click();
+  const form = page.getByTestId("log-work");
+  await form.getByLabel("Start").fill(`${D}T08:00`);
+  await form.getByLabel("Work on").selectOption({ label: "AT-Logged" });
+  await form.getByLabel("Minutes").fill("30");
+  await form.getByRole("button", { name: "Log work" }).click();
+  await expect(form).toBeHidden();
+  await eventually(
+    () => dayEvents(cal),
+    (l) => expect(times(l, "AT-Logged")).toEqual([`${D} 08:00-08:30`]),
+  );
+
+  // The user presses Start during AT-Begun.
+  let row = await taskRow(page, "AT-Begun");
+  await clockAt(app, at(D, "09:02"));
+  await row.getByRole("button", { name: "Start now" }).click();
+  row = await taskRow(page, "AT-Begun");
+  await expect(row.getByTestId("task-started")).toBeVisible();
+
+  // After its end both count as done work. The user unlocks both in the planner.
+  await clockAt(app, at(D, "09:30"));
+  for (const title of ["AT-Begun", "AT-Logged"]) {
+    row = await taskRow(page, title);
+    await expect(row.getByTestId("task-state")).toHaveText("time-used");
+  }
+  await toggleLock(page, app, "AT-Begun", false);
+  await toggleLock(page, app, "AT-Logged", false);
+  await page.evaluate(() => fetch("/api/planner/sync", { method: "POST" }));
+  await page.evaluate(() => fetch("/api/planner/sync", { method: "POST" }));
+
+  // They stay done work, at their times.
+  const l = await dayEvents(cal);
+  expect(times(l, "AT-Begun")).toEqual([`${D} 09:00-09:15`]);
+  expect(times(l, "AT-Logged")).toEqual([`${D} 08:00-08:30`]);
+  for (const title of ["AT-Begun", "AT-Logged"]) {
+    row = await taskRow(page, title);
+    await expect(row.getByTestId("task-state")).toHaveText("time-used");
+    await expect(row.getByTestId("task-left")).toHaveText("0 min left");
+  }
+});
+
+test("manual start mode: a chunk that ended without Start is work left in the task list, the Tasks panel and its title (PRG-3)", async ({
+  page,
+  cal,
+  app,
+  signIn,
+}) => {
+  await clockAt(app, at(D, "09:50"));
+  await signIn();
+  await alwaysHours(page);
+  await chooseSetting(page, "Start mode", "Count only after I press Start");
+  await addTask(page, {
+    title: "AT-Unstarted",
+    minutes: 15,
+    split: false,
+    due: "",
+    hours: "AT-Always",
+    startAfter: `${D}T10:00`,
+  });
+  await eventually(
+    () => dayEvents(cal),
+    (l) => expect(times(l, "AT-Unstarted")).toEqual([`${D} 10:00-10:15`]),
+  );
+  // A locked chunk stays in suggestions mode, and no new chunk is placed, so it cannot move.
+  await toggleLock(page, app, "AT-Unstarted", true);
+  await chooseSetting(page, "Task placement", "Suggestions only (no task events)");
+  await page.evaluate(() => fetch("/api/planner/sync", { method: "POST" }));
+  expect(times(await dayEvents(cal), "AT-Unstarted")).toEqual([`${D} 10:00-10:15`]);
+
+  // 10:20: it ended and nobody pressed Start. Every view counts its 15 minutes as left.
+  await clockAt(app, at(D, "10:20"));
+  await page.evaluate(() => fetch("/api/planner/sync", { method: "POST" }));
+  const row = await taskRow(page, "AT-Unstarted");
+  await expect(row.getByTestId("task-left")).toHaveText("15 min left");
+  await expect(row.getByTestId("task-state")).toHaveText("unscheduled");
+  await openWeek(page, W);
+  await page.getByTestId("now-bar").getByRole("button", { name: "Tasks" }).click();
+  await expect(
+    page.getByTestId("suggested-now").locator('[data-task-title="AT-Unstarted"]'),
+  ).toBeVisible();
+  const [ev] = titled(await dayEvents(cal), "AT-Unstarted");
+  expect(ev?.summary).not.toContain("✅");
+});
+
+test("two Start requests at once make one chunk, and an early Stop is in the change log (edge cases 1 and 4)", async ({
+  page,
+  cal,
+  app,
+  signIn,
+}) => {
+  await clockAt(app, at(D, "10:00"));
+  await signIn();
+  await chooseSetting(page, "Task placement", "Suggestions only (no task events)");
+  await addTask(page, { title: "AT-Twice", minutes: 60, split: false, due: "" });
+  const [task] = app.query<{ id: string }>("SELECT id FROM tasks WHERE title = 'AT-Twice'");
+  const id = task?.id ?? "";
+
+  // Two Start requests at the same time, as from two fast clicks or two tabs.
+  const statuses = await page.evaluate(
+    (id) =>
+      Promise.all(
+        [0, 1].map(() => fetch(`/api/tasks/${id}/start`, { method: "POST" }).then((r) => r.status)),
+      ),
+    id,
+  );
+  expect(statuses).toEqual([200, 200]);
+  const [chunk] = titled(
+    await eventually(
+      () => dayEvents(cal),
+      (l) => expect(titled(l, "AT-Twice")).toHaveLength(1),
+    ),
+    "AT-Twice",
+  );
+  await page.evaluate(() => fetch("/api/planner/sync", { method: "POST" }));
+  expect(titled(await dayEvents(cal), "AT-Twice")).toHaveLength(1);
+  expect(
+    app.query<{ n: number }>("SELECT COUNT(*) AS n FROM managed_events WHERE source_id = ?", id),
+  ).toEqual([{ n: 1 }]);
+
+  // Stop 2 minutes after the start removes the chunk, and the change log has the delete.
+  const row = await taskRow(page, "AT-Twice");
+  await clockAt(app, (chunk?.start ?? 0) + 2 * MIN);
+  await row.getByRole("button", { name: "End now" }).click();
+  await eventually(
+    () => dayEvents(cal),
+    (l) => expect(titled(l, "AT-Twice")).toHaveLength(0),
+  );
+  await expect
+    .poll(() =>
+      app.query<{ action: string; reason: string }>(
+        "SELECT action, reason FROM change_log WHERE event_id = ? ORDER BY id",
+        chunk?.id ?? "",
+      ),
+    )
+    .toContainEqual({ action: "delete", reason: "stopped" });
+});
+
+test("Start now and End now in the planner move a task chunk to now and end it now (PRG-10, PRG-11, PRG-13)", async ({
+  page,
+  cal,
+  app,
+  signIn,
+}) => {
+  await clockAt(app, at(D, "08:00"));
+  // The browser shows End now only during the chunk, so its clock follows the server's.
+  await page.clock.install({ time: new Date(at(D, "08:00")) });
+  await signIn();
+  await alwaysHours(page);
+  await addTask(page, {
+    title: "AT-Planner",
+    minutes: 60,
+    split: false,
+    due: "",
+    hours: "AT-Always",
+    startAfter: `${D}T14:00`,
+  });
+  await eventually(
+    () => dayEvents(cal),
+    (l) => expect(times(l, "AT-Planner")).toEqual([`${D} 14:00-15:00`]),
+  );
+
+  await openWeek(page, W);
+  await openEvent(page, "AT-Planner");
+  const starts = await startAt(page, app, at(D, "09:03"), () =>
+    page.getByTestId("event-drawer").getByRole("button", { name: "Start now" }).click(),
+  );
+  expect(starts[0]).toBe(at(D, "09:00"));
+  const [started] = titled(
+    await eventually(
+      () => dayEvents(cal),
+      (l) => {
+        expect(titled(l, "AT-Planner")).toHaveLength(1);
+        expect(starts).toContain(titled(l, "AT-Planner")[0]?.start);
+      },
+    ),
+    "AT-Planner",
+  );
+  const s0 = started?.start ?? 0;
+  expect(started?.end).toBe(s0 + 60 * MIN);
+
+  // End now at 09:40 in the planner: the chunk ends then, and the rest is placed later.
+  await clockAt(app, at(D, "09:40"));
+  await page.clock.setSystemTime(new Date(at(D, "09:40")));
+  await openWeek(page, W);
+  await openEvent(page, "AT-Planner");
+  await page.getByTestId("event-drawer").getByRole("button", { name: "End now" }).click();
+  await eventually(
+    () => dayEvents(cal),
+    (l) => {
+      const [first, rest] = titled(l, "AT-Planner");
+      expect(titled(l, "AT-Planner")).toHaveLength(2);
+      expect(first?.start).toBe(s0);
+      expect(first?.end).toBeGreaterThanOrEqual(at(D, "09:40"));
+      expect(first?.end).toBeLessThanOrEqual(at(D, "09:42"));
+      expect(rest?.start).toBeGreaterThanOrEqual(first?.end ?? 0);
+      expect((rest?.end ?? 0) - (rest?.start ?? 0)).toBe(
+        60 * MIN - ((first?.end ?? 0) - (first?.start ?? 0)),
+      );
+    },
+  );
+  await page.reload();
+  expect(titled(await dayEvents(cal), "AT-Planner")).toHaveLength(2);
+});
+
+test("logged work goes to the task calendar of the task's hours set, and a drag over a past time sets its start and length (PRG-21, PRG-22)", async ({
+  page,
+  cal,
+  app,
+  signIn,
+}) => {
+  test.skip(BACKEND === "google", "The test adds a second CalDAV calendar.");
+  await clockAt(app, at(D, "12:00"));
+  await page.clock.install({ time: new Date(at(D, "12:00")) });
+  await signIn();
+  const tasks = await cal.newCalendar("Tasks");
+  await openSettings(page);
+  await page.getByRole("button", { name: "Refresh calendar list" }).click();
+  await expect(page.getByTestId("calendar-list")).toContainText("Tasks");
+  await page.reload();
+  const pick = page.getByTestId("hours-personal").getByLabel("Calendar for task chunks");
+  await pick.selectOption({ label: "Tasks" });
+  await expect(page.getByTestId("settings-message")).toHaveText("Saved");
+  await addTask(page, { title: "AT-Home", minutes: 120, due: "", hours: "Personal hours" });
+  await addTask(page, { title: "AT-Office", minutes: 120, due: "", hours: "Work hours" });
+
+  const yesterday = addDays(D, -1);
+  const dragLog = async (title: string, from: number, to: number) => {
+    await openWeek(page, W);
+    await expect(page.locator(".ev", { hasText: "AT-Home" }).first()).toBeVisible();
+    // Positions inside the day column: Playwright scrolls each one into view.
+    const col = page.locator(`.day-col[data-date="${yesterday}"]`);
+    const y = (h: number) => ({ position: { x: 20, y: h * 48 + 4 } });
+    await col.hover(y(from));
+    await page.mouse.down();
+    await col.hover(y((from + to) / 2));
+    await col.hover(y(to));
+    await page.mouse.up();
+    const form = page.getByTestId("log-work");
+    await expect(form.getByLabel("Start")).toHaveValue(
+      `${yesterday}T${String(from).padStart(2, "0")}:00`,
+    );
+    await expect(form.getByLabel("Minutes")).toHaveValue(String((to - from) * 60));
+    await form.getByLabel("Work on").selectOption({ label: title });
+    await form.getByRole("button", { name: "Log work" }).click();
+    await expect(form).toBeHidden();
+  };
+  // A drag from 10:00 to 11:00 yesterday logs 60 minutes of AT-Home.
+  await dragLog("AT-Home", 10, 11);
+  await dragLog("AT-Office", 13, 14);
+
+  const day = (c: CalendarDriver) => dayEvents(c, yesterday);
+  await eventually(
+    () => day(tasks),
+    (l) => expect(times(l, "AT-Home")).toEqual([`${yesterday} 10:00-11:00`]),
+  );
+  await eventually(
+    () => day(cal),
+    (l) => expect(times(l, "AT-Office")).toEqual([`${yesterday} 13:00-14:00`]),
+  );
+  expect(times(await day(cal), "AT-Home")).toEqual([]);
+  expect(times(await day(tasks), "AT-Office")).toEqual([]);
+  const row = await taskRow(page, "AT-Home");
+  await expect(row.getByTestId("task-left")).toHaveText("1 h left");
 });

@@ -4,6 +4,11 @@
 import { describe, expect, it } from "vitest";
 import type { Snapshot, TaskItem } from "../../src/scheduler/model.ts";
 import { plan } from "../../src/scheduler/plan.ts";
+import {
+  doneMinutes,
+  endedUnstarted,
+  type ProgressRow,
+} from "../../src/server/planner/progress.ts";
 import { localToUtc } from "../../src/shared/time.ts";
 
 const ZONE = "Europe/Berlin";
@@ -54,5 +59,32 @@ describe("chunk keys after ended chunks", () => {
   });
   it("starts at 0 without ended chunks", () => {
     expect(plan(snapshot({})).placements.map((p) => p.key)).toEqual(["task:t:0"]);
+  });
+});
+
+describe("done work in manual start mode", () => {
+  const manual = { startMode: "manual" as const, manualSince: now - 86_400_000 };
+  const row = (o: Partial<ProgressRow>): ProgressRow => ({
+    kind: "task",
+    source_id: "t",
+    start_ms: now - 3_600_000,
+    end_ms: now - 1_800_000,
+    event_id: "e",
+    started: 0,
+    ...o,
+  });
+  it("counts an ended chunk only when it was started; a lock alone does not start it", () => {
+    expect(doneMinutes([row({})], now, manual).get("t")).toBeUndefined();
+    expect(doneMinutes([row({ started: 1 })], now, manual).get("t")).toBe(30);
+    expect(endedUnstarted(row({ started: 1 }), now, manual)).toBe(false);
+  });
+  it("counts every ended chunk in auto mode and chunks from before manual mode began", () => {
+    expect(doneMinutes([row({})], now, { startMode: "auto", manualSince: null }).get("t")).toBe(30);
+    expect(doneMinutes([row({})], now, { ...manual, manualSince: now }).get("t")).toBe(30);
+  });
+  it("does not count a running chunk", () => {
+    expect(
+      doneMinutes([row({ started: 1, end_ms: now + 1 })], now, manual).get("t"),
+    ).toBeUndefined();
   });
 });

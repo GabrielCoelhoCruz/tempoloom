@@ -227,7 +227,15 @@ interface WorkItem {
  * rule 32): minutes on a task or a habit from a past start time. Tempoloom
  * writes a past event for it, and a task's remaining work goes down.
  */
-export function LogWork({ start, onClose }: { start: number; onClose: (saved: boolean) => void }) {
+export function LogWork({
+  start,
+  minutes = 30,
+  onClose,
+}: {
+  start: number;
+  minutes?: number | undefined;
+  onClose: (saved: boolean) => void;
+}) {
   const z = zone();
   const [items, setItems] = useState<WorkItem[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -282,7 +290,14 @@ export function LogWork({ start, onClose }: { start: number; onClose: (saved: bo
       </label>
       <label>
         Minutes
-        <input type="number" name="minutes" min={1} max={1440} required defaultValue="30" />
+        <input
+          type="number"
+          name="minutes"
+          min={1}
+          max={1440}
+          required
+          defaultValue={String(minutes)}
+        />
       </label>
       <button type="submit" class="primary">
         Log work

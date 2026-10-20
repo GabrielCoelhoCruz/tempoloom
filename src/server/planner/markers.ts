@@ -2,9 +2,10 @@
 import { DAY } from "../../shared/time.ts";
 import { all, type Db, one, run } from "../db.ts";
 import type { CalendarProvider } from "../providers/types.ts";
-import type { Settings } from "../settings.ts";
+import { getSettings, type Settings } from "../settings.ts";
 import { cacheEvent } from "../sync/pull.ts";
 import { type CachedEvent, categoryContext, externalCategory } from "./categories.ts";
+import { endedUnstarted, taskDoneMinutes } from "./progress.ts";
 import { MANAGED_PROP, type ManagedRow } from "./push.ts";
 
 /** Type markers (marker table): they come before the state marker (rule 2). */
@@ -102,21 +103,16 @@ export async function markEnded(
         "SELECT status, total_minutes, logged_minutes FROM tasks WHERE id = ?",
         taskId,
       );
-      const used =
-        one<{ m: number | null }>(
-          db,
-          `SELECT SUM(end_ms - start_ms) / 60000.0 AS m FROM managed_events
-           WHERE user_id = ? AND kind = 'task' AND source_id = ? AND end_ms <= ?`,
-          userId,
-          taskId,
-          now,
-        )?.m ?? 0;
+      const used = taskDoneMinutes(db, userId, now, taskId).get(taskId) ?? 0;
       left = t !== undefined && t.status === "open" && t.total_minutes - t.logged_minutes > used;
       workLeft.set(taskId, left);
     }
     return left;
   };
+  const settings = getSettings(db, userId);
   for (const row of rows) {
+    // PRG-3: in manual start mode an event nobody started is not done; the plan moves it.
+    if (endedUnstarted(row, now, settings)) continue;
     const state = row.kind === "task" && hasWorkLeft(row.source_id) ? "partial" : "done";
     const title = withState(markers, row.title, state);
     if (title === row.title || !row.event_id) continue;

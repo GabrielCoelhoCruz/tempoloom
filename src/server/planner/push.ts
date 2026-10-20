@@ -47,6 +47,8 @@ export interface ManagedRow {
   extra: string;
   /** Buffers: the length the user gave this event in the calendar (buffers rule 14). */
   kept_minutes: number | null;
+  /** 1 when the user started the event or logged it as work (PRG-3, PRG-20). */
+  started: number;
 }
 
 /** Guests, location, reminders and visibility as stored in `managed_events.extra`. */

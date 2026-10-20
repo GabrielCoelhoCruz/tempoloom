@@ -344,6 +344,23 @@ export function EventExtras({ event, onDone }: { event: PlannerEvent; onDone: ()
               Start now
             </button>
           )}
+          {kind === "task" && event.start <= Date.now() && event.end > Date.now() && (
+            <button
+              type="button"
+              title="Stop: this chunk ends now, and the rest is placed later"
+              onClick={() =>
+                void api("POST", `/api/tasks/${event.sourceId}/stop`)
+                  .then(() => planNow())
+                  .then(() => {
+                    plannerReload.value++;
+                    onDone();
+                  })
+                  .catch((err) => setError(reason(err)))
+              }
+            >
+              End now
+            </button>
+          )}
         </div>
       )}
       {error && <p class="error">{error}</p>}

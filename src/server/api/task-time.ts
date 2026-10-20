@@ -146,6 +146,7 @@ export function taskTimeRoutes(
       end,
       title: it.title,
       description: eventDescription(it.notes, baseUrl, t.kind, t.item_id),
+      started: true,
     };
     await writeLocked(db, sync, user.id, body.calendarId, [event]);
     run(db, "DELETE FROM item_timers WHERE user_id = ?", user.id);

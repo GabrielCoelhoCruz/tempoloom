@@ -67,9 +67,11 @@ const EventActions = lazyComponent<{
 const CurrentTasks = lazyComponent(() =>
   import("./planner-extras.tsx").then((m) => m.CurrentTasks),
 );
-const LogWork = lazyComponent<{ start: number; onClose: (saved: boolean) => void }>(() =>
-  import("./planner-extras.tsx").then((m) => m.LogWork),
-);
+const LogWork = lazyComponent<{
+  start: number;
+  minutes?: number | undefined;
+  onClose: (saved: boolean) => void;
+}>(() => import("./planner-extras.tsx").then((m) => m.LogWork));
 const FocusProgress = lazyComponent<{ week: string }>(() =>
   import("./planner-extras.tsx").then((m) => m.FocusProgress),
 );
@@ -92,7 +94,7 @@ export function Planner() {
   const [report, setReport] = useState<ReportEntry[]>([]);
   const [selected, setSelected] = useState<PlannerEvent | null>(null);
   // PRG-20, PRG-21: the log work form, opened on a past time or from the toolbar.
-  const [logStart, setLogStart] = useState<number | null>(null);
+  const [logAt, setLogAt] = useState<{ start: number; minutes?: number | undefined } | null>(null);
   // The drawer names calendars as the calendar list does; that list loads on the first open.
   const external = selected?.kind === "external";
   useEffect(() => {
@@ -239,7 +241,9 @@ export function Planner() {
         </span>
         <button
           type="button"
-          onClick={() => setLogStart(Math.floor((Date.now() - 3_600_000) / 900_000) * 900_000)}
+          onClick={() =>
+            setLogAt({ start: Math.floor((Date.now() - 3_600_000) / 900_000) * 900_000 })
+          }
         >
           Log work
         </button>
@@ -252,13 +256,15 @@ export function Planner() {
           Plan now
         </button>
       </div>
-      {logStart !== null && (
+      {logAt !== null && (
         <LogWork
-          key={logStart}
-          start={logStart}
+          key={`${logAt.start}:${logAt.minutes}`}
+          start={logAt.start}
+          minutes={logAt.minutes}
           onClose={(saved) => {
-            setLogStart(null);
-            if (saved) void run(async () => {});
+            setLogAt(null);
+            // The new past event changes the plan: plan again, then draw the week.
+            if (saved) void planNow().then(load);
           }}
         />
       )}
@@ -285,9 +291,9 @@ export function Planner() {
         onSelect={(id) => setSelected(events.find((e) => e.id === id) ?? null)}
         flagged={conflictIds.value}
         extraZone={extraZone.value}
-        onPickPast={(t) => {
+        onPickPast={(start, minutes) => {
           setSelected(null);
-          setLogStart(t);
+          setLogAt({ start, minutes });
         }}
       />
       {settled.value && <IssuesPanel />}

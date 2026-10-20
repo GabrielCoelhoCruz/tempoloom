@@ -27,8 +27,11 @@ interface Props {
   flagged?: ReadonlySet<string>;
   /** A second time column in this zone (timezones-home-and-travel.md rule 10). */
   extraZone?: string | null;
-  /** A click on a past time, rounded down to 15 minutes (planning-task-progress.md PRG-21). */
-  onPickPast?: (t: number) => void;
+  /**
+   * A click or a drag on a past time (planning-task-progress.md PRG-21): the
+   * start, rounded down to 15 minutes, and for a drag its length in minutes.
+   */
+  onPickPast?: (t: number, minutes?: number) => void;
 }
 
 const city = (z: string) => (z.split("/").at(-1) ?? z).replace(/_/g, " ");
@@ -117,6 +120,32 @@ export function WeekView({
     ? Array.from({ length: 24 }, (_, h) => utcToLocal(extraZone, localToUtc(zone, ref, h * 60)))
     : null;
   const labelCols = extra ? "56px 56px" : "56px";
+
+  /** PRG-21: a click or a drag down an empty day column on a past time opens Log work. */
+  const pickPast = (
+    e: PointerEvent,
+    date: LocalDate,
+    pick: (t: number, minutes?: number) => void,
+  ) => {
+    if (e.button !== 0 || e.target !== e.currentTarget) return;
+    const el = e.currentTarget as HTMLElement;
+    el.setPointerCapture(e.pointerId);
+    const minuteAt = (y: number) =>
+      Math.min(24 * 60, Math.max(0, ((y - el.getBoundingClientRect().top) / HOUR_PX) * 60));
+    const from = minuteAt(e.clientY);
+    el.addEventListener(
+      "pointerup",
+      (u) => {
+        const to = minuteAt(u.clientY);
+        const lo = Math.floor(Math.min(from, to) / SNAP_MIN) * SNAP_MIN;
+        const hi = Math.round(Math.max(from, to) / SNAP_MIN) * SNAP_MIN;
+        const t = localToUtc(zone, date, lo);
+        if (t >= Date.now()) return;
+        pick(t, hi - lo >= SNAP_MIN && Math.abs(to - from) >= SNAP_MIN / 2 ? hi - lo : undefined);
+      },
+      { once: true },
+    );
+  };
 
   const startDrag = (e: PointerEvent, box: Box) => {
     if (e.button !== 0) return;
@@ -224,12 +253,7 @@ export function WeekView({
                 key={d}
                 data-date={d}
                 // The toolbar's "Log work" button is the keyboard path.
-                onPointerUp={(e) => {
-                  if (e.button !== 0) return;
-                  const minute = Math.floor((e.offsetY / HOUR_PX) * (60 / SNAP_MIN)) * SNAP_MIN;
-                  const t = localToUtc(zone, d, minute);
-                  if (t < Date.now()) onPickPast?.(t);
-                }}
+                onPointerDown={(e) => onPickPast && pickPast(e, d, onPickPast)}
               />
             ))}
             {todayIdx >= 0 && (

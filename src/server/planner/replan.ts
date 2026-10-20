@@ -48,6 +48,7 @@ import {
 import { recordMeetingChanges } from "./meeting-log.ts";
 import { attendeeOccurrences, attendeesOf, meetingItems } from "./meetings.ts";
 import { LABELS, mirrorCopies } from "./mirror.ts";
+import { doneMinutes, endedUnstarted, nextIndexAfter } from "./progress.ts";
 import { type DesiredEvent, type ManagedRow, type PushResult, pushSchedule } from "./push.ts";
 import { type Paint, type PaintJob, repaintRequest } from "./repaint.ts";
 
@@ -158,9 +159,8 @@ export function loadSnapshot(
   ];
 
   const rows = all<ManagedRow>(db, "SELECT * FROM managed_events WHERE user_id = ?", userId);
-  // PRG-3, PRG-5: in manual start mode an ended chunk or habit event counts only
-  // after Start (Start locks it); else it goes back to the plan. Events from before
-  // the switch to manual mode keep counting.
+  // PRG-3, PRG-5: in manual start mode an ended chunk or habit event that nobody
+  // started goes back to the plan (src/server/planner/progress.ts).
   const openItems = new Set([
     ...all<{ id: string }>(
       db,
@@ -173,17 +173,9 @@ export function loadSnapshot(
       userId,
     ).map((h) => `habit:${h.id}`),
   ]);
-  const reopen =
-    settings.startMode === "manual"
-      ? rows.filter(
-          (r) =>
-            r.end_ms <= now &&
-            r.locked === 0 &&
-            r.event_id !== null &&
-            r.start_ms >= (settings.manualSince ?? Number.POSITIVE_INFINITY) &&
-            openItems.has(`${r.kind}:${r.source_id}`),
-        )
-      : [];
+  const reopen = rows.filter(
+    (r) => endedUnstarted(r, now, settings) && openItems.has(`${r.kind}:${r.source_id}`),
+  );
   const reopened = new Set(reopen.map((r) => r.id));
   const toPlacement = (r: ManagedRow): CurrentPlacement => ({
     key: r.key,
@@ -233,19 +225,11 @@ export function loadSnapshot(
   const hoursKind = new Map(hoursRows.map((h) => [h.id, h.kind]));
 
   // PRG-1: ended chunks are done work. A new chunk never takes the key of an ended one.
-  const consumed = new Map<string, number>();
+  const consumed = doneMinutes(rows, now, settings);
   const nextIndex = new Map<string, number>();
   for (const r of rows) {
-    if (r.kind !== "task") continue;
-    const n = Number(r.key.slice(`task:${r.source_id}:`.length));
-    if (Number.isInteger(n))
-      nextIndex.set(r.source_id, Math.max(nextIndex.get(r.source_id) ?? 0, n + 1));
-    if (r.end_ms <= now && !reopened.has(r.id)) {
-      consumed.set(
-        r.source_id,
-        (consumed.get(r.source_id) ?? 0) + (r.end_ms - r.start_ms) / 60_000,
-      );
-    }
+    if (r.kind === "task")
+      nextIndex.set(r.source_id, nextIndexAfter(nextIndex.get(r.source_id) ?? 0, r));
   }
   const tasks = all<{
     id: string;
