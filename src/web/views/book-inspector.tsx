@@ -98,7 +98,7 @@ export function Inspector({
     void api<{ until: number; times: Inspected[] }>("GET", `/api/booking/inspect?${q}`).then(
       setData,
     );
-  }, [page, link, duration, from]);
+  }, [page, link, duration, from, view.zone]);
   const days = useMemo(() => {
     const m = new Map<string, Inspected[]>();
     for (const t of data?.times ?? []) {

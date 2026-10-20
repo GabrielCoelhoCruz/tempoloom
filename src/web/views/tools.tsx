@@ -3,7 +3,6 @@
 // Both work without sign-in; the timer keeps its data in this browser only.
 import { render } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
-import { addDays } from "../../shared/time.ts";
 import { duration } from "../lib/format.ts";
 
 const OCCURRENCES = {
@@ -276,8 +275,10 @@ export function counters(log: TimerLog, now: number) {
   ).getTime();
   const monthStart = new Date(d.getFullYear(), d.getMonth(), 1).getTime();
   const days = new Set(log.sessions.map((s) => dayStr(s.at)));
+  const dayBack = (k: number) =>
+    dayStr(new Date(d.getFullYear(), d.getMonth(), d.getDate() - k).getTime());
   let streak = 0;
-  for (let d = today; days.has(d); d = addDays(d, -1)) streak++;
+  while (days.has(dayBack(streak))) streak++;
   return {
     today: log.sessions.filter((s) => dayStr(s.at) === today).length,
     week: log.sessions.filter((s) => s.at >= weekStart).length,

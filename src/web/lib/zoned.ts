@@ -33,5 +33,8 @@ export const dayText = (v: View, t: number) =>
   }).format(t);
 export const dayOf = (v: View, t: number) => utcToLocal(v.zone, t).date;
 
-/** Times show two weeks per page: 14 local days in the selected zone, also across a DST change. */
+/**
+ * Times show two weeks per page: a page ends 14 local days after its start, at
+ * the same wall-clock time in the selected zone, also across a DST change.
+ */
 export const addPages = (v: View, t: number, pages: number) => addLocalDays(t, 14 * pages, v.zone);

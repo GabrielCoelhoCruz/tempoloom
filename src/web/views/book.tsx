@@ -243,7 +243,7 @@ function Times({
         if (pick) onPick(pick);
       }
     });
-  }, [page, link, duration, from, token]);
+  }, [page, link, duration, from, token, view.zone]);
   useEffect(() => {
     if (!overlay) {
       setMine([]);
@@ -253,7 +253,7 @@ function Times({
       "GET",
       `/api/booking/overlay?from=${from}&to=${addPages(view, from, 1)}`,
     ).then((r) => setMine(r.events));
-  }, [overlay, from]);
+  }, [overlay, from, view.zone]);
   const byDay = useMemo(() => {
     const m = new Map<string, Offered[]>();
     for (const t of times ?? [])

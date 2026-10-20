@@ -37,14 +37,19 @@ test("a task with only a title gets P2, a due date in 3 days and work-hour chunk
 });
 
 // 3 x 24 hours from 2026-10-24 00:30 CEST is 2026-10-26 23:30 CET (summer
-// time ends on 2026-10-25); 3 local days is 2026-10-27 00:30.
+// time ends on 2026-10-25); 3 local days is 2026-10-27 00:30. The server and
+// the browser both start at that instant, so the server's check "due after
+// start" holds on any real date.
 test("the task form proposes a due date 3 local days ahead across a DST change (TSK-1)", async ({
   page,
   app,
   signIn,
 }) => {
   await signIn();
-  await page.clock.install({ time: new Date(at("2026-10-24", "00:30")) });
+  const start = at("2026-10-24", "00:30");
+  app.env.TEST_CLOCK_START = new Date(start).toISOString();
+  await app.restart();
+  await page.clock.install({ time: new Date(start) });
   await page.reload();
   await page.getByRole("link", { name: "Tasks" }).click();
   const form = page.getByTestId("task-form");

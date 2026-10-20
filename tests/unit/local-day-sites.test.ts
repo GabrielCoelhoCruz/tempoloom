@@ -6,9 +6,14 @@
 // 3. The at-risk digest (meetings-flexible-rescheduling.md rule 35) takes the
 //    wrong last date for "the next 14 days".
 // 4. NTF-21 sends (or skips) a change email at the edge of meetingChangeDaysAhead.
+// 5. The buffer preview list ends the scheduling window N x 7 x 24 h from now,
+//    not at 24:00 local as the planner does (planning-scheduling-window.md).
+// Rules outside the scheduler (1 to 4) count in the home zone, also during a
+// trip; the scheduling window (5) uses the planning zone, as replan.ts.
 import { Hono } from "hono";
 import { describe, expect, it } from "vitest";
 import { ensureUser, type User } from "../../src/server/accounts.ts";
+import { bufferFilterRoutes } from "../../src/server/api/buffer-filters.ts";
 import { itemRoutes } from "../../src/server/api/items.ts";
 import { matchingTasks } from "../../src/server/api/task-searches.ts";
 import type { AppEnv } from "../../src/server/app.ts";
@@ -16,7 +21,7 @@ import { DailyMailWorker } from "../../src/server/daily-mail.ts";
 import { type Db, one, openDb, run } from "../../src/server/db.ts";
 import type { Mailer, Message } from "../../src/server/mail.ts";
 import { updatePrefs } from "../../src/server/meeting-prefs.ts";
-import { notifyFor } from "../../src/server/planner/meeting-log.ts";
+import { logChange } from "../../src/server/planner/meeting-log.ts";
 import type { SyncService } from "../../src/server/sync/service.ts";
 import { utcToLocal } from "../../src/shared/time.ts";
 
@@ -34,23 +39,28 @@ function userIn(db: Db, zone: string, t: number): User {
   return { ...u, time_zone: zone };
 }
 
-function itemsApp(db: Db, user: User, now: number) {
-  const sync = { request: () => {} } as unknown as SyncService;
+function poster(user: User, routes: Hono<AppEnv>, path: string) {
   const app = new Hono<AppEnv>();
   app.use("*", async (c, next) => {
     c.set("user", user);
     await next();
   });
-  app.route(
-    "/api",
-    itemRoutes(db, sync, () => now),
-  );
+  app.route("/api", routes);
   return (body: unknown) =>
-    app.request("/api/tasks", {
+    app.request(`/api${path}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
     });
+}
+
+function itemsApp(db: Db, user: User, now: number) {
+  const sync = { request: () => {} } as unknown as SyncService;
+  return poster(
+    user,
+    itemRoutes(db, sync, () => now),
+    "/tasks",
+  );
 }
 
 describe("default due date of a new task (dueInDays 3)", () => {
@@ -101,7 +111,7 @@ describe("task search: due within N days", () => {
 });
 
 describe("at-risk digest: the next 14 days", () => {
-  function setup(zone: string, dailyTime: string, period: string, t0: number) {
+  function setup(zone: string, dailyTime: string, periods: string[], t0: number) {
     const db = openDb(":memory:");
     const user = userIn(db, zone, t0);
     run(
@@ -116,9 +126,14 @@ describe("at-risk digest: the next 14 days", () => {
       db,
       "INSERT INTO plan_reports (user_id, report, planned_at) VALUES (?, ?, ?)",
       user.id,
-      JSON.stringify([
-        { itemKind: "meeting", itemId: "m1", status: "unplaced", demandKey: `m1:${period}` },
-      ]),
+      JSON.stringify(
+        periods.map((p, i) => ({
+          itemKind: "meeting",
+          itemId: `m${i}`,
+          status: "unplaced",
+          demandKey: `m${i}:${p}`,
+        })),
+      ),
       t0,
     );
     const sent: Message[] = [];
@@ -141,7 +156,7 @@ describe("at-risk digest: the next 14 days", () => {
     const { tick, atRisk } = setup(
       "America/New_York",
       "00:30",
-      "2026-11-09",
+      ["2026-11-09"],
       at("2026-10-25T16:00:00Z"),
     );
     await tick(at("2026-10-25T16:00:00Z"));
@@ -149,32 +164,65 @@ describe("at-risk digest: the next 14 days", () => {
     expect(atRisk()).toHaveLength(1);
   });
 
-  it("excludes the 15th local day when DST starts in between (Lisbon, 23:30)", async () => {
+  it("names the 14th local day and not the 15th when DST starts in between (Lisbon, 23:30)", async () => {
     // 2026-03-15 23:30 WET + 14 local days = 2026-03-29; 14 x 24 h ends on 2026-03-30 00:30 WEST.
     const { tick, atRisk } = setup(
       "Europe/Lisbon",
       "23:30",
-      "2026-03-30",
+      ["2026-03-29", "2026-03-30"],
       at("2026-03-15T12:00:00Z"),
     );
     await tick(at("2026-03-15T12:00:00Z"));
     await tick(at("2026-03-15T23:30:00Z"));
-    expect(atRisk()).toHaveLength(0);
+    expect(atRisk()).toHaveLength(1);
+    expect(atRisk()[0]?.subject).toBe("Meetings at risk: 1 in the next 14 days");
+    expect(atRisk()[0]?.text).toContain("in the period from 2026-03-29");
+    expect(atRisk()[0]?.text).not.toContain("2026-03-30");
   });
 });
 
 describe("NTF-21: change emails within meetingChangeDaysAhead days", () => {
-  const change = (start: number) => ({
-    meetingId: "m",
-    key: "k",
-    oldStart: null,
-    oldEnd: null,
-    newStart: start,
-    newEnd: start + 1_800_000,
-    actor: "tempoloom",
-    reason: "conflict" as const,
-    written: true,
-  });
+  function setup(zone: string, now: number) {
+    const db = openDb(":memory:");
+    const user = userIn(db, zone, now);
+    const hours = one<{ id: string }>(db, "SELECT id FROM hours_sets WHERE user_id = ?", user.id);
+    run(
+      db,
+      `INSERT INTO meetings (id, user_id, title, level, frequency, ideal_minute, duration_minutes,
+         shortest_minutes, hours_mode, hours_set_id, defense, when_unplaceable, created_at, rules_changed_at)
+       VALUES ('m', ?, '1:1', 2, '{}', 600, 30, 30, 'everyone', ?, 'adaptive', 'remove', ?, ?)`,
+      user.id,
+      hours?.id ?? null,
+      now,
+      now,
+    );
+    /** The notify flag that logChange stores for a moved occurrence that starts at `start`. */
+    const notify = (start: number) => {
+      logChange(
+        db,
+        user.id,
+        {
+          meetingId: "m",
+          key: `k${start}`,
+          oldStart: null,
+          oldEnd: null,
+          newStart: start,
+          newEnd: start + 1_800_000,
+          actor: "tempoloom",
+          reason: "conflict",
+          written: true,
+        },
+        now,
+      );
+      return one<{ notify: number }>(
+        db,
+        "SELECT notify FROM meeting_changes WHERE occurrence_key = ?",
+        `k${start}`,
+      )?.notify;
+    };
+    return { db, user, notify };
+  }
+
   it.each([
     // 7 local days after 2026-10-30 12:00 EDT is 2026-11-06 12:00 EST (17:00 UTC).
     ["America/New_York", "2026-10-30T16:00:00Z", "2026-11-06T16:30:00Z", "2026-11-06T17:30:00Z"],
@@ -183,10 +231,67 @@ describe("NTF-21: change emails within meetingChangeDaysAhead days", () => {
   ])(
     "in %s from %s: a start inside the 7th local day gets an email, one after it does not",
     (zone, now, inside, outside) => {
-      const db = openDb(":memory:");
-      const user = userIn(db, zone, at(now));
-      expect(notifyFor(db, user.id, change(at(inside)), at(now))).toBe(1);
-      expect(notifyFor(db, user.id, change(at(outside)), at(now))).toBe(0);
+      const { notify } = setup(zone, at(now));
+      expect(notify(at(inside))).toBe(1);
+      expect(notify(at(outside))).toBe(0);
     },
   );
+
+  it("counts the days in the home zone during a trip (New York home, Tokyo trip)", () => {
+    // 7 local days after 2026-10-30 12:00 EDT is 2026-11-06 12:00 EST (17:00 UTC);
+    // in Tokyo (no DST) 7 local days end one hour sooner, at 16:00 UTC.
+    const now = at("2026-10-30T16:00:00Z");
+    const { db, user, notify } = setup("America/New_York", now);
+    run(
+      db,
+      `INSERT INTO travel_zones (id, user_id, tz, start_date, end_date, created_at)
+       VALUES ('trip', ?, 'Asia/Tokyo', '2026-10-28', '2026-11-10', ?)`,
+      user.id,
+      now,
+    );
+    expect(notify(at("2026-11-06T16:30:00Z"))).toBe(1);
+  });
+});
+
+describe("buffer preview: the scheduling window ends at 24:00 local", () => {
+  it("lists an event on the last window day, and none on the day after (Berlin, 3 weeks)", async () => {
+    // 2026-10-20 10:00 CEST + 21 local days = 2026-11-10; the window ends at
+    // 2026-11-11 00:00 CET (2026-11-10T23:00Z). 21 x 24 h ends at 2026-11-10T08:00Z.
+    const now = at("2026-10-20T08:00:00Z");
+    const db = openDb(":memory:");
+    const user = userIn(db, "Europe/Berlin", now);
+    run(
+      db,
+      `INSERT INTO accounts (id, user_id, provider, external_id, email, credentials, created_at)
+       VALUES ('acc', ?, 'caldav', 'owner', 'owner@example.com', '', ?)`,
+      user.id,
+      now,
+    );
+    run(
+      db,
+      `INSERT INTO calendars (id, account_id, provider_id, name, is_primary, check_availability)
+       VALUES ('cal', 'acc', 'cal', 'Work', 1, 1)`,
+    );
+    for (const [id, start] of [
+      ["last-day", "2026-11-10T14:00:00Z"],
+      ["day-after", "2026-11-10T23:30:00Z"],
+    ] as const)
+      run(
+        db,
+        `INSERT INTO events (calendar_id, event_id, summary, start_ms, end_ms, busy)
+         VALUES ('cal', ?, ?, ?, ?, 1)`,
+        id,
+        id,
+        at(start),
+        at(start) + 1_800_000,
+      );
+    const res = await poster(
+      user,
+      bufferFilterRoutes(db, () => now),
+      "/buffers/matches",
+    )({ filter: {} });
+    expect(res.status, await res.clone().text()).toBe(200);
+    const body = (await res.json()) as { events: { title: string }[] };
+    expect(body.events.map((e) => e.title)).toEqual(["last-day"]);
+  });
 });

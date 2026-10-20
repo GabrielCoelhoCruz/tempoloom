@@ -197,6 +197,14 @@ export function addLocalDays(epochMs: number, days: number, zone: string): numbe
   return back.date === date && back.minuteOfDay === l.minuteOfDay ? first + pass : first;
 }
 
+/**
+ * End of the scheduling window: 24:00 local in `zone` on the day `weeks` x 7
+ * days after today (docs/specs/planning-scheduling-window.md, "Window end").
+ */
+export function schedulingWindowEnd(zone: string, now: number, weeks: number): number {
+  return localToUtc(zone, addDays(utcToLocal(zone, now).date, weeks * 7 + 1), 0);
+}
+
 export function weekdayOf(date: LocalDate): IsoWeekday {
   const [y, mo, d] = parseDate(date);
   const js = new Date(Date.UTC(y, mo - 1, d)).getUTCDay();

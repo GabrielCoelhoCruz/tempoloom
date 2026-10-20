@@ -11,7 +11,8 @@ beforeAll(() => {
   process.env.TZ = "America/New_York";
 });
 afterAll(() => {
-  process.env.TZ = saved;
+  if (saved === undefined) delete process.env.TZ;
+  else process.env.TZ = saved;
 });
 
 const at = (iso: string) => Date.parse(iso);
