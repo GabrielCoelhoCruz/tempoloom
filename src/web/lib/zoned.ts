@@ -1,6 +1,6 @@
 // Times on booking pages: in a chosen zone and a 12- or 24-hour format
 // (docs/specs/booking-links-booking-page.md rules 6-8).
-import { utcToLocal } from "../../shared/time.ts";
+import { addLocalDays, utcToLocal } from "../../shared/time.ts";
 import { pad } from "./format.ts";
 
 /** How times are written: the selected zone and the 12- or 24-hour format (rules 6-8). */
@@ -32,3 +32,6 @@ export const dayText = (v: View, t: number) =>
     month: "long",
   }).format(t);
 export const dayOf = (v: View, t: number) => utcToLocal(v.zone, t).date;
+
+/** Times show two weeks per page: 14 local days in the selected zone, also across a DST change. */
+export const addPages = (v: View, t: number, pages: number) => addLocalDays(t, 14 * pages, v.zone);

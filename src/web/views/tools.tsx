@@ -3,6 +3,7 @@
 // Both work without sign-in; the timer keeps its data in this browser only.
 import { render } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
+import { addDays } from "../../shared/time.ts";
 import { duration } from "../lib/format.ts";
 
 const OCCURRENCES = {
@@ -276,7 +277,7 @@ export function counters(log: TimerLog, now: number) {
   const monthStart = new Date(d.getFullYear(), d.getMonth(), 1).getTime();
   const days = new Set(log.sessions.map((s) => dayStr(s.at)));
   let streak = 0;
-  for (let t = now; days.has(dayStr(t)); t -= 86_400_000) streak++;
+  for (let d = today; days.has(d); d = addDays(d, -1)) streak++;
   return {
     today: log.sessions.filter((s) => dayStr(s.at) === today).length,
     week: log.sessions.filter((s) => s.at >= weekStart).length,
@@ -285,12 +286,7 @@ export function counters(log: TimerLog, now: number) {
   };
 }
 
-const DAY = 86_400_000;
 type Grouping = "day" | "week" | "month";
-const startOfDay = (t: number) => {
-  const d = new Date(t);
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-};
 const startOfWeek = (t: number) => {
   const d = new Date(t);
   return new Date(d.getFullYear(), d.getMonth(), d.getDate() - ((d.getDay() + 6) % 7)).getTime();
@@ -300,14 +296,14 @@ const startOfWeek = (t: number) => {
 export function timerStats(log: TimerLog, now: number, by: Grouping) {
   const c = counters(log, now);
   const today = dayStr(now);
-  const since = startOfDay(now) - 29 * DAY;
+  const n = new Date(now);
+  const since = new Date(n.getFullYear(), n.getMonth(), n.getDate() - 29).getTime();
   const recent = log.sessions.filter((s) => s.at >= since);
   const recentMinutes = recent.reduce((a, s) => a + s.minutes, 0);
   const started = log.started.filter((t) => t >= since).length;
   const breaks = log.breaks.filter((b) => dayStr(b.at) === today);
   const minutesIn = (from: number, to: number) =>
     log.sessions.filter((s) => s.at >= from && s.at < to).reduce((a, s) => a + s.minutes, 0);
-  const n = new Date(now);
   const bars =
     by === "day"
       ? [6, 5, 4, 3, 2, 1, 0].map((k) => {

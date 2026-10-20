@@ -1,7 +1,7 @@
 // Tasks: defaults, priority, dates, next up, free/busy status, notes, hours
 // and the reasons shown for work that cannot be placed.
-import { addDays } from "../../src/shared/time.ts";
-import { at, blockUntil, eventually, expect, local, test } from "./fixtures.ts";
+import { addDays, addLocalDays } from "../../src/shared/time.ts";
+import { at, blockUntil, eventually, expect, local, test, ZONE } from "./fixtures.ts";
 import { addTask, allEvents, inHours, MIN, openWeek, titled, W } from "./helpers.ts";
 
 const day = (n: number) => addDays(W, n);
@@ -29,11 +29,32 @@ test("a task with only a title gets P2, a due date in 3 days and work-hour chunk
     "SELECT due_at, level FROM tasks WHERE title = 'AT-T3'",
   );
   // The form proposes now + 3 days when it opens; allow the time the test took.
-  expect(Math.abs((stored?.due_at ?? 0) - (created + 3 * 86_400_000))).toBeLessThan(5 * MIN);
+  expect(Math.abs((stored?.due_at ?? 0) - addLocalDays(created, 3, ZONE))).toBeLessThan(5 * MIN);
   await page.reload();
   await expect(page.locator('[data-task-title="AT-T3"]').getByTestId("task-level")).toHaveText(
     "P2 high",
   );
+});
+
+// 3 x 24 hours from 2026-10-24 00:30 CEST is 2026-10-26 23:30 CET (summer
+// time ends on 2026-10-25); 3 local days is 2026-10-27 00:30.
+test("the task form proposes a due date 3 local days ahead across a DST change (TSK-1)", async ({
+  page,
+  app,
+  signIn,
+}) => {
+  await signIn();
+  await page.clock.install({ time: new Date(at("2026-10-24", "00:30")) });
+  await page.reload();
+  await page.getByRole("link", { name: "Tasks" }).click();
+  const form = page.getByTestId("task-form");
+  await expect(form.getByLabel("Due")).toHaveValue("2026-10-27T00:30");
+  await addTask(page, { title: "AT-DST" });
+  await expect
+    .poll(() => app.query<{ due_at: number }>("SELECT due_at FROM tasks WHERE title = 'AT-DST'"))
+    .toEqual([{ due_at: at("2026-10-27", "00:30") }]);
+  await page.reload();
+  await expect(page.locator('[data-task-title="AT-DST"]').getByTestId("task-due")).toBeVisible();
 });
 
 test("a P1 task takes the first free slot ahead of a P4 task, and due dates order one level (PRI-1, PRI-4)", async ({

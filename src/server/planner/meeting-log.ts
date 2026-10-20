@@ -7,7 +7,13 @@
 import { randomUUID } from "node:crypto";
 import type { MeetingFrequency } from "../../scheduler/model.ts";
 import { meetingAnchor, meetingPeriodStart } from "../../scheduler/plan.ts";
-import { addDays, DAY, type LocalDate, localToUtc, utcToLocal } from "../../shared/time.ts";
+import {
+  addDays,
+  addLocalDays,
+  type LocalDate,
+  localToUtc,
+  utcToLocal,
+} from "../../shared/time.ts";
 import { all, type Db, one, run, tx } from "../db.ts";
 import { getPrefs } from "../meeting-prefs.ts";
 import { seriesInstanceDate } from "../meeting-series.ts";
@@ -39,13 +45,14 @@ interface Change {
 }
 
 /** NTF-20 to NTF-22: an email is due when emails are on and the occurrence is near enough. */
-function notifyFor(db: Db, userId: string, c: Change, now: number): number {
+export function notifyFor(db: Db, userId: string, c: Change, now: number): number {
   if (!c.written) return 0;
   const prefs = getPrefs(db, userId);
   if (!prefs.meetingChangeEmails || prefs.meetingChangeDaysAhead === 0) return 0;
   const starts = [c.oldStart, c.newStart].filter((t): t is number => t !== null);
   if (starts.length === 0) return 0;
-  return Math.min(...starts) - now <= prefs.meetingChangeDaysAhead * DAY ? 1 : 0;
+  const limit = addLocalDays(now, prefs.meetingChangeDaysAhead, planningZone(db, userId));
+  return Math.min(...starts) <= limit ? 1 : 0;
 }
 
 export function logChange(db: Db, userId: string, c: Change, now: number): void {
