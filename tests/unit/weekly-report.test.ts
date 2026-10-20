@@ -6,6 +6,7 @@
 // 2. A deactivated user, a user who never signed in, or a user without a
 //    working calendar account gets the report.
 // 3. The report counts events after the send time on the send day (rule 5).
+// 4. A task on personal hours counts as solo work, not personal time (rule 6).
 import { describe, expect, it } from "vitest";
 import { ensureUser } from "../../src/server/accounts.ts";
 import { DailyMailWorker } from "../../src/server/daily-mail.ts";
@@ -111,5 +112,50 @@ describe("weekly report delivery", () => {
     const report = sent.filter((m) => m.subject.startsWith("Your week"));
     expect(report).toHaveLength(1);
     expect(report[0]?.text).toContain("Solo work: 2 h\n");
+  });
+
+  it("counts a task on personal hours as personal time and a task on work hours as solo work", async () => {
+    const { db, sent, user, tick } = setup();
+    const id = user("ana@example.com");
+    const hours = (kind: string) =>
+      (
+        db
+          .prepare("SELECT id FROM hours_sets WHERE user_id = ? AND kind = ? LIMIT 1")
+          .get(id, kind) as { id: string }
+      ).id;
+    const task = (title: string, kind: string, date: string, from: string, to: string) => {
+      run(
+        db,
+        `INSERT INTO tasks (id, user_id, title, level, total_minutes, min_chunk_minutes, max_chunk_minutes,
+           start_after, hours_set_id, created_at, rules_changed_at)
+         VALUES (?, ?, ?, 3, 60, 60, 60, ?, ?, ?, ?)`,
+        title,
+        id,
+        title,
+        T0,
+        hours(kind),
+        T0,
+        T0,
+      );
+      run(
+        db,
+        `INSERT INTO managed_events (id, user_id, calendar_id, key, kind, source_id, start_ms, end_ms, busy, title)
+         VALUES (?, ?, ?, ?, 'task', ?, ?, ?, 1, ?)`,
+        `me-${title}`,
+        id,
+        "cal-ana@example.com",
+        `task:${title}`,
+        title,
+        t(date, from),
+        t(date, to),
+        title,
+      );
+    };
+    task("Draft plan", "work", "2026-11-10", "09:00", "10:00");
+    task("Pay bills", "personal", "2026-11-11", "19:00", "20:30");
+    await tick(t(FRI, "09:30"));
+    const report = sent.find((m) => m.subject.startsWith("Your week"));
+    expect(report?.text).toContain("Solo work: 1 h\n");
+    expect(report?.text).toContain("Personal time: 1 h 30 min\n");
   });
 });

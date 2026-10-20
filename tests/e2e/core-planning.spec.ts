@@ -660,6 +660,9 @@ test("events of another connected calendar stay P1: the control is disabled with
   await other.addEvent({ title: "AT-School run", start: at(W, "10:00"), end: at(W, "11:00") });
   await cal.addEvent({ title: "AT-Main call", start: at(W, "14:00"), end: at(W, "15:00") });
   await page.getByRole("button", { name: "Refresh calendar list" }).click();
+  await expect(page.getByTestId("calendars-message")).toHaveText("Calendar list updated");
+  // Both events were written straight to the calendars: wait for the sync that reads them.
+  await planNow(page);
   await openWeek(page);
   await page.locator(".ev-external", { hasText: "AT-School run" }).click();
   const control = page.getByTestId("external-priority-fixed");
@@ -685,6 +688,7 @@ test("events of another connected calendar stay P1: the control is disabled with
   await page.getByRole("button", { name: "Refresh calendar list" }).click();
   // Its primary calendar counts for availability from the start.
   await expect(calendarRow(page, extra.email).getByRole("checkbox")).toBeChecked();
+  await planNow(page);
   await openWeek(page);
   await page.locator(".ev-external", { hasText: "AT-Added primary" }).click();
   await expect(page.getByTestId("external-priority-fixed")).toContainText(

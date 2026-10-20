@@ -586,6 +586,14 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
     ).map((h) => [h.id, h.task_calendar_id]),
   );
   const taskHours = new Map(snapshot.tasks.map((t) => [t.id, t.hours]));
+  // CNT-20, CNT-24: chunks of a private task are private events.
+  const privateTasks = new Set(
+    all<{ id: string }>(
+      db,
+      "SELECT id FROM tasks WHERE user_id = ? AND visibility = 'private'",
+      userId,
+    ).map((t) => t.id),
+  );
   // Guests and location of each flexible meeting (meetings-flexible.md rules 35, 41).
   const meetingRows = new Map(
     all<{ id: string; location: string }>(
@@ -661,6 +669,9 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
       colorId: null,
       ...(p.kind === "habit" && es?.location ? { location: es.location } : {}),
       ...reminderFields(p.kind, es),
+      ...(p.kind === "task" && privateTasks.has(p.itemId)
+        ? { visibility: "private" as const }
+        : {}),
       ...(p.kind === "meeting"
         ? meetingGuests(
             meetingRows.get(p.itemId),
@@ -833,11 +844,13 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
   await afterPush(db, userId, (accountId) => ctx.provider(accountId), now);
   run(
     db,
-    `INSERT INTO plan_reports (user_id, report, planned_at) VALUES (?, ?, ?)
-     ON CONFLICT (user_id) DO UPDATE SET report = excluded.report, planned_at = excluded.planned_at`,
+    `INSERT INTO plan_reports (user_id, report, planned_at, task_order) VALUES (?, ?, ?, ?)
+     ON CONFLICT (user_id) DO UPDATE SET report = excluded.report, planned_at = excluded.planned_at,
+       task_order = excluded.task_order`,
     userId,
     JSON.stringify(result.report),
     now,
+    JSON.stringify(result.taskOrder),
   );
   return { push, report: result.report, paint: { paints, requestedAt } };
 }

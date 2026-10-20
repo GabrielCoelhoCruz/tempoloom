@@ -48,6 +48,7 @@ const MeetingChecks = lazyComponent(() =>
 const Automations = lazyComponent(() =>
   import("./views/automations.tsx").then((m) => m.Automations),
 );
+const Priorities = lazyComponent(() => import("./views/priorities.tsx").then((m) => m.Priorities));
 const AutomationForm = lazyComponent(() =>
   import("./views/automation-form.tsx").then((m) => m.AutomationForm),
 );
@@ -79,6 +80,7 @@ const NAV: { href: string; label: string }[] = [
   { href: "/meetings", label: "Meetings" },
   { href: "/meeting-checks", label: "Meeting checks" },
   { href: "/automations", label: "Automations" },
+  { href: "/priorities", label: "Priorities" },
   { href: "/library", label: "Library" },
   { href: "/links", label: "Booking links" },
   { href: "/stats", label: "Stats" },
@@ -156,6 +158,8 @@ function Page() {
       return <MeetingChecks />;
     case "/automations":
       return <Automations />;
+    case "/priorities":
+      return <Priorities />;
     case "/profile":
       return <ProfilePage />;
     default:

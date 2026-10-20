@@ -11,15 +11,16 @@ import {
   ITEM_COLORS,
   readEventSettings,
 } from "../../shared/event-settings.ts";
-import { addLocalDays, utcToLocal } from "../../shared/time.ts";
+import { utcToLocal } from "../../shared/time.ts";
 import type { AppEnv } from "../app.ts";
 import { all, type Db, one, run, tx } from "../db.ts";
 import { editedEventSettings, eventSettingsInput, newEventSettings } from "../event-settings.ts";
 import { jsonBody, notFound } from "../http.ts";
 import { createItemHours, dropItemHours, itemHoursSchema, saveItemHours } from "../item-hours.ts";
 import { automationCount, limitRefusal } from "../limits.ts";
-import { getSettings } from "../settings.ts";
 import type { SyncService } from "../sync/service.ts";
+import { markTaskDone, taskOrderChanged } from "../task-order.ts";
+import { createTask, deleteTask } from "../tasks.ts";
 
 const level = z.number().int().min(1).max(4);
 const minutes = z
@@ -30,7 +31,7 @@ const minutes = z
   .multipleOf(15);
 export const hhmm = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/);
 
-const taskInput = z.object({
+export const taskInput = z.object({
   title: z.string().trim().min(1).max(255),
   notes: z.string().max(10_000).optional(),
   minutes: minutes.optional(),
@@ -44,7 +45,10 @@ const taskInput = z.object({
   nextUp: z.boolean().optional(),
   /** events-categories-and-colors.md rule 9: overrides the category color. */
   color: z.enum(ITEM_COLORS).optional(),
+  /** planning-event-content.md CNT-20. */
+  visibility: z.enum(["calendar_default", "private"]).optional(),
 });
+export type TaskInput = z.infer<typeof taskInput>;
 
 /**
  * habits-automation.md "Frequency". `interval` above 1 is the custom frequency;
@@ -240,6 +244,7 @@ export interface TaskRow {
   status: "open" | "done";
   created_at: number;
   color: string;
+  visibility: "calendar_default" | "private";
 }
 
 export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<AppEnv> {
@@ -263,10 +268,21 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
       user.id,
       status,
     );
-    const report = JSON.parse(
-      one<{ report: string }>(db, "SELECT report FROM plan_reports WHERE user_id = ?", user.id)
-        ?.report ?? "[]",
-    ) as { itemKind: string; itemId: string; status: string; reason: string }[];
+    const last = one<{ report: string; task_order: string }>(
+      db,
+      "SELECT report, task_order FROM plan_reports WHERE user_id = ?",
+      user.id,
+    );
+    const report = JSON.parse(last?.report ?? "[]") as {
+      itemKind: string;
+      itemId: string;
+      status: string;
+      reason: string;
+    }[];
+    // TSK-61: the order the last plan processed the tasks, urgency lifts included.
+    const ranks = new Map(
+      (JSON.parse(last?.task_order ?? "[]") as string[]).map((id, i) => [id, i]),
+    );
     const t = now();
     return c.json({
       tasks: tasks.map((task) => {
@@ -294,6 +310,7 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
                 : "time-used";
         return {
           ...task,
+          schedulingRank: ranks.get(task.id) ?? null,
           scheduledMinutes: scheduled,
           remainingMinutes: remaining,
           state,
@@ -306,54 +323,7 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
   r.post("/tasks", async (c) => {
     const user = c.get("user");
     const body = await jsonBody(c, taskInput);
-    const d = getSettings(db, user.id).taskDefaults;
-    const t = now();
-    const total = body.minutes ?? d.minutes;
-    const split = body.splitUp ?? d.splitUp;
-    const min = split ? (body.minChunkMinutes ?? Math.min(d.minChunkMinutes, total)) : total;
-    const max = split
-      ? (body.maxChunkMinutes ?? Math.min(Math.max(d.maxChunkMinutes, min), total))
-      : total;
-    if (min > max) badRequest("minChunkMinutes", "Minimum chunk is longer than maximum chunk");
-    const startAfter = body.startAfter ?? t + d.startDelayMinutes * 60_000;
-    const dueAt =
-      body.dueAt === undefined
-        ? d.dueInDays === null
-          ? null
-          : addLocalDays(t, d.dueInDays, user.time_zone)
-        : body.dueAt;
-    if (dueAt !== null && dueAt <= startAfter)
-      badRequest("dueAt", "Due date must be after the start date");
-    const id = randomUUID();
-    const hours = hoursSetId(db, user.id, body.hoursSetId, "work");
-    const rank = body.nextUp
-      ? (one<{ r: number | null }>(
-          db,
-          "SELECT MAX(next_up_rank) AS r FROM tasks WHERE user_id = ?",
-          user.id,
-        )?.r ?? -1) + 1
-      : null;
-    run(
-      db,
-      `INSERT INTO tasks (id, user_id, title, notes, level, total_minutes, min_chunk_minutes, max_chunk_minutes,
-         start_after, due_at, hours_set_id, next_up_rank, created_at, rules_changed_at, color)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      id,
-      user.id,
-      body.title,
-      body.notes ?? "",
-      body.level ?? d.level,
-      total,
-      min,
-      max,
-      startAfter,
-      dueAt,
-      hours,
-      rank,
-      t,
-      t,
-      body.color ?? "category",
-    );
+    const id = createTask(db, user, body, now());
     changed(user.id);
     return c.json({ task: one<TaskRow>(db, "SELECT * FROM tasks WHERE id = ?", id) }, 201);
   });
@@ -379,10 +349,11 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
     const dueAt = body.dueAt === undefined ? task.due_at : body.dueAt;
     if (dueAt !== null && dueAt <= startAfter)
       badRequest("dueAt", "Due date must be after the start date");
+    taskOrderChanged(db, user.id, task.id, (body.level ?? task.level) > task.level, now());
     run(
       db,
       `UPDATE tasks SET title = ?, notes = ?, level = ?, total_minutes = ?, min_chunk_minutes = ?, max_chunk_minutes = ?,
-         start_after = ?, due_at = ?, hours_set_id = ?, rules_changed_at = ?, color = ? WHERE id = ?`,
+         start_after = ?, due_at = ?, hours_set_id = ?, rules_changed_at = ?, color = ?, visibility = ? WHERE id = ?`,
       body.title ?? task.title,
       body.notes ?? task.notes,
       body.level ?? task.level,
@@ -394,6 +365,7 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
       body.hoursSetId ? hoursSetId(db, user.id, body.hoursSetId, "work") : task.hours_set_id,
       now(),
       body.color ?? task.color,
+      body.visibility ?? task.visibility,
       task.id,
     );
     changed(user.id);
@@ -404,7 +376,7 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
     const user = c.get("user");
     const id = c.req.param("id");
     if (!one(db, "SELECT 1 FROM tasks WHERE id = ? AND user_id = ?", id, user.id)) notFound("task");
-    run(db, "UPDATE tasks SET status = 'done', rules_changed_at = ? WHERE id = ?", now(), id);
+    markTaskDone(db, id, now());
     changed(user.id);
     return c.json({ ok: true });
   });
@@ -438,41 +410,7 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
     const user = c.get("user");
     const id = c.req.param("id");
     if (!one(db, "SELECT 1 FROM tasks WHERE id = ? AND user_id = ?", id, user.id)) notFound("task");
-    // TSK-42: delete every chunk, past and future, then the task.
-    await sync.exclusive(user.id, async (pool) => {
-      const rows = all<{
-        id: string;
-        calendar_id: string;
-        event_id: string | null;
-        account_id: string;
-        provider_id: string;
-      }>(
-        db,
-        `SELECT m.id, m.calendar_id, m.event_id, c.account_id, c.provider_id FROM managed_events m
-         JOIN calendars c ON c.id = m.calendar_id WHERE m.user_id = ? AND m.kind = 'task' AND m.source_id = ?`,
-        user.id,
-        id,
-      );
-      for (const row of rows) {
-        if (row.event_id) await pool.get(row.account_id).deleteEvent(row.provider_id, row.event_id);
-        run(
-          db,
-          "DELETE FROM events WHERE calendar_id = ? AND event_id = ?",
-          row.calendar_id,
-          row.event_id,
-        );
-        run(db, "DELETE FROM managed_events WHERE id = ?", row.id);
-      }
-      tx(db, () => {
-        run(
-          db,
-          "DELETE FROM item_exclusions WHERE user_id = ? AND kind = 'task' AND item_id = ?",
-          user.id,
-          id,
-        );
-        run(db, "DELETE FROM tasks WHERE id = ?", id);
-      });
-    });
+    await deleteTask(db, sync, user.id, id);
     return c.body(null, 204);
   });
 

@@ -13,6 +13,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          # Full history: build-parity.py compares each Google-proven test with
+          # its source at the commit of the Google run (docs/e2e-google-run.tsv).
+          fetch-depth: 0
       - uses: actions/setup-node@v5
         with:
           node-version: 24

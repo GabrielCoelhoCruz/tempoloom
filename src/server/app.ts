@@ -43,11 +43,13 @@ import { oooRoutes } from "./api/ooo.ts";
 import { plannerRoutes } from "./api/planner.ts";
 import { policyRoutes } from "./api/policies.ts";
 import { previewRoutes } from "./api/preview.ts";
+import { priorityRoutes } from "./api/priorities.ts";
 import { provisioningRoutes } from "./api/provisioning.ts";
 import { scimRoutes } from "./api/scim.ts";
 import { settingsRoutes } from "./api/settings.ts";
 import { ssoAdminRoutes, ssoAuthRoutes } from "./api/sso.ts";
 import { statsRoutes } from "./api/stats.ts";
+import { taskActionRoutes } from "./api/task-actions.ts";
 import { taskSearchRoutes } from "./api/task-searches.ts";
 import { taskTimeRoutes } from "./api/task-time.ts";
 import { publicInviteRoutes, teamRoutes } from "./api/team.ts";
@@ -437,6 +439,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
     return c.json({
       user,
       actor: actor ?? null,
+      live: live.mark(user.id),
       owners: ownersOf(db, (actor ?? user).id),
       settings: getSettings(db, user.id),
       accounts: all(
@@ -462,6 +465,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
 
   app.route("/api", settingsRoutes(db, sync, now));
   app.route("/api", itemRoutes(db, sync, now));
+  app.route("/api", taskActionRoutes(db, sync, now));
   app.route("/api", meetingRoutes(db, sync, now, deps.mailer));
   app.route("/api/planner", plannerRoutes(db, sync, now));
   app.route("/api/booking", bookingRoutes(db, now, config.ONEOFF_LINK_DAYS));
@@ -516,6 +520,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   app.route("/api", bufferFilterRoutes(db, now));
   app.route("/api", meetingCheckRoutes(db, sync, now));
   app.route("/api", automationRoutes(db, sync, now));
+  app.route("/api", priorityRoutes(db, sync, now));
 
   // Round 3 s4: connected calendars, holiday feeds and mirroring policies.
   app.route(
