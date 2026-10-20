@@ -331,6 +331,8 @@ function Times({
 interface LinkInfo {
   link: PublicLink;
   organizers: string[];
+  /** The owner's Google profile picture; '' for none. */
+  picture: string;
   branding: Branding;
   oneOff: { expiresAt: number; expired: boolean } | null;
 }
@@ -628,6 +630,7 @@ function BookingPage({ page, link }: { page: string; link: string }) {
   return (
     <div data-testid="booking-page">
       <Brand b={info.branding} />
+      <Picture url={info.picture} />
       <h1>{info.link.title}</h1>
       {info.organizers.length > 0 && <p class="status">{withWhom(info.organizers)}</p>}
       {info.link.description && <p>{info.link.description}</p>}
@@ -741,9 +744,17 @@ function BookingPage({ page, link }: { page: string; link: string }) {
   );
 }
 
+/** The owner's profile picture (settings-profile.md PRF-5). */
+function Picture({ url }: { url: string }) {
+  return url ? (
+    <img class="avatar" src={url} alt="" width={64} height={64} data-testid="owner-picture" />
+  ) : null;
+}
+
 function PageLinks({ page }: { page: string }) {
   const [data, setData] = useState<{
     name: string;
+    picture: string;
     /** A link group's title; null for a main booking page. */
     title: string | null;
     links: PublicLink[];
@@ -760,6 +771,7 @@ function PageLinks({ page }: { page: string }) {
   return (
     <div data-testid="public-page">
       <Brand b={data.branding} />
+      <Picture url={data.picture} />
       <h1>{data.title ?? `Book time with ${data.name}`}</h1>
       {data.links.length === 0 && <p>This page has no links yet.</p>}
       <div class="list">

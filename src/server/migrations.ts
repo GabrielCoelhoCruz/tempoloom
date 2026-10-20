@@ -1220,4 +1220,8 @@ export const MIGRATIONS: readonly string[] = [
   -- The task ids in the order the last plan processed them (planning-tasks.md TSK-61).
   ALTER TABLE plan_reports ADD COLUMN task_order TEXT NOT NULL DEFAULT '[]';
   `,
+  // 37: the profile picture from the main Google account (settings-profile.md PRF-2, PRF-5).
+  `
+  ALTER TABLE users ADD COLUMN avatar_url TEXT NOT NULL DEFAULT '';
+  `,
 ];

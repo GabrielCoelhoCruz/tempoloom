@@ -130,8 +130,26 @@ export class ProviderError extends Error {
   }
 }
 
+/** Display settings of the account (settings-profile.md PRF-2); a value the account lacks is left out. */
+export interface ProfileSettings {
+  weekStart?: 1 | 7;
+  timeFormat?: "24h" | "12h";
+  dateFormat?: "YMD" | "DMY" | "MDY";
+}
+
 export interface CalendarProvider {
   listCalendars(): Promise<ProviderCalendar[]>;
+  /** Week start, time format and date format of the account. Only Google has them. */
+  profileSettings?(): Promise<ProfileSettings>;
+  /**
+   * Busy intervals of other people's calendars, by email (Google free/busy).
+   * An email with no data is left out of the map. Only Google has it.
+   */
+  freeBusy?(
+    emails: string[],
+    timeMin: number,
+    timeMax: number,
+  ): Promise<Map<string, { start: number; end: number }[]>>;
   /**
    * Reads events in [timeMin, timeMax) with recurring series expanded. With a
    * sync token, the backend may return only the changes since that token.

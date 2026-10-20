@@ -8,6 +8,7 @@ import {
   ProviderError,
   type ProviderEvent,
 } from "../providers/types.ts";
+import { updateSettings } from "../settings.ts";
 
 /** Events from 12 weeks ago (the stats range) to 120 days ahead are cached. */
 const WINDOW_PAST = 84 * DAY;
@@ -36,6 +37,27 @@ export interface CalendarRow {
   window_end: number | null;
 }
 
+/**
+ * Week start, time format and date format follow the user's main account
+ * (settings-profile.md PRF-2, PRF-3): read with each calendar list sync. A
+ * grant without the settings scope keeps the current values.
+ */
+async function readProfileSettings(
+  db: Db,
+  provider: CalendarProvider,
+  accountId: string,
+  userId: string,
+): Promise<void> {
+  if (!provider.profileSettings) return;
+  if (!one(db, "SELECT 1 FROM accounts WHERE id = ? AND is_main = 1", accountId)) return;
+  try {
+    const found = await provider.profileSettings();
+    if (Object.keys(found).length > 0) updateSettings(db, userId, found);
+  } catch (err) {
+    console.error("Reading the Google Calendar settings failed", err);
+  }
+}
+
 export async function syncCalendarList(
   db: Db,
   provider: CalendarProvider,
@@ -43,6 +65,7 @@ export async function syncCalendarList(
   userId: string,
 ): Promise<void> {
   const listed = await provider.listCalendars();
+  await readProfileSettings(db, provider, accountId, userId);
   // Keep the account's main calendar stable: a backend without a primary flag
   // (CalDAV) must not move the main calendar when calendars are added.
   const current = one<{ provider_id: string }>(

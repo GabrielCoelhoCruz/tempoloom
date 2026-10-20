@@ -719,10 +719,6 @@ E2E.update({282: ["s1_habit_es", "s1_task_color", "s4_labels"]})
 E2E_NOTES.update({282: "Habits, focus time, buffers and tasks have their own color (stream s1); a mirroring policy has a color override (stream s4)"})
 # Rows this round did not build, each with the concrete reason.
 BLOCKED[451] = "Needs Google and Microsoft calendar accounts; mirroring between calendars of two CalDAV accounts is built (rows 453, 460)"
-PARTIAL[145] = ("Google sign-in takes the name when it makes the user, and each sync takes the time zone from the primary Google "
-                "calendar. Not built: the picture is read but not kept or shown, the name does not follow later changes, and week "
-                "start, time format and date format are not read from Google. Google sign-in has no E2E (row 510). The editable "
-                "profile fields are built (row 146)")
 BLOCKED[491] = "Needs a Google Workspace account: the trigger is Google calendar sharing"
 BLOCKED[492] = "Needs a Google Workspace account: the help covers Workspace sharing and Gmail-made events"
 BLOCKED[493] = "Needs Google or Microsoft accounts that subscribe to the iCloud calendar; a CalDAV server connects directly"
@@ -816,8 +812,6 @@ E2E_NOTES.update({
 PARTIAL[78] = ("Each sync takes the home time zone from the primary Google calendar (src/server/sync/pull.ts), and the hours page "
                "shows the zone that hours apply in and an active trip (E2E on CalDAV and Google: \u201ca browser that reports UTC gets a "
                "warning\u2026\u201d). No E2E or unit test sets a Google Calendar time zone and checks that the home zone follows it")
-# Row 90 stays partial: E2E does not cover buffers inside a level.
-PARTIAL[90] = "E2E on CalDAV covers flexible meetings, habits, tasks, next-up tasks and focus time in the order (\u201cinside one level meetings go first, then habits, then tasks\u2026\u201d, \u201ca next-up task goes before other tasks of any level\u201d, \u201cfocus time goes after a P4 task\u2026\u201d); buffers inside a level have unit tests only"
 # Row 76 stays partial: planning-hours.md says focus time, flexible meetings and
 # booking links do not offer item-specific hours "yet", so only habits are built.
 # --- end U03 ---
@@ -1197,14 +1191,12 @@ BLOCKED[770] = "Not needed: no legacy users (platform-current-version rule 11)"
 
 # Buildable rows that no unit has built yet. Rows that units U31 to U33 and PR #23 build now keep their text.
 PLANNED = "Buildable; not built yet (planned)"
-for n in [36, 38, 40, 102, 118, 121, 122, 123, 128, 129, 140, 144, 167, 169, 170, 183, 185, 187, 189,
+for n in [36, 38, 40, 118, 121, 122, 123, 128, 129, 140, 144, 167, 169, 170, 183, 185, 187, 189,
           201, 205, 232, 326, 327, 340, 347, 361, 362, 365, 370, 375, 542, 543, 635, 636, 637, 775, 776, 783, 784]:
     BLOCKED[n] = PLANNED
 BLOCKED[92] = PLANNED + ": the reason for each move and skip, and a view per item; the change log of every calendar write is built (src/server/change-log.ts)"
 BLOCKED[507] = PLANNED + ": the link's events go to the calendar chosen on the link (\u201c" + T["u7_locations"] + "\u201d); the choice of an added account, whose primary calendar gets the events and sends the invitations, is not built"
 BLOCKED[540] = PLANNED + ": the Repair action; looking up one event with its change log is built (src/server/diagnosis.ts)"
-BLOCKED[322] = (PLANNED + ": the Google free/busy query for attendees who are not users here (the Google client has a freeBusy method that no code calls); "
-                "its proof needs a Google account. The availability of attendees who are users here is E2E-proven (rows 321, 339)")
 # --- end U30 ---
 
 # --- U32: calendar edits and locks, part A (tests/e2e/chunk-edits.spec.ts, auto-lock.spec.ts) ---
@@ -1256,6 +1248,31 @@ BLOCKED[43] = ("Needs the Google Calendar add-on's developer app and a test acco
                "page, done leaving the queue, and an up arrow that moves no other task (\u201c" + T["u35_arrows"] + "\u201d; \u201c"
                + T["u35_panel"] + "\u201d; \u201c" + T["u35_page"] + "\u201d; \u201c" + T["u35_sticky"] + "\u201d)")
 # --- end U35 ---
+
+# --- U56: order proof, task chunks on a secondary calendar, Google profile and guest free/busy ---
+T.update({
+    "u56_secondary": "task chunks on a secondary calendar hold their time against other items but leave it open to booking links and colleagues' meetings (DEF-50)",
+})
+E2E.update({
+    90: ["meeting", "u03_order", "mr_rank", "t_prio", "u03_urgency", "t_next", "u03_focus", "u4_buffer_prio"],
+    102: ["u56_secondary"],
+})
+E2E_NOTES.update({
+    90: "Buffers take part in the level order: a P1 buffer gets its slot before a P3 habit, a P4 buffer after it",
+    102: "Booking links and other people's flexible meetings read main-calendar availability: a task chunk on another calendar does not block them, also when it is locked (Tempoloom decision); the user's own plan keeps the chunk's time",
+})
+GOOGLE_CONSENT = "Needs a Google E2E run with the owner's OAuth consent (a Google account that signs in through Tempoloom's OAuth client, row 510)"
+BLOCKED[145] = (GOOGLE_CONSENT + ". Built, with unit tests against a fake Google API (tests/unit/google-profile.test.ts): the name and picture "
+                "of the main Google account are kept at each sign-in and each token refresh (at least daily), a hidden picture shows none, "
+                "and the picture shows on the profile page and booking pages; week start, time format and date format are read from the "
+                "Google Calendar settings (scope calendar.settings.readonly) at each calendar list sync and show on the profile page, "
+                "with the note to change them in the calendar account; each sync takes the time zone from the primary Google calendar. "
+                "The editable profile fields are E2E-proven (row 146)")
+BLOCKED[322] = (GOOGLE_CONSENT + " and a second Google account that is not a Tempoloom user, as a guest. Built, with unit tests against a "
+                "fake Google API (tests/unit/guest-free-busy.test.ts): the organizer's Google account asks Google free/busy for required "
+                "guests who are not users here, the meeting keeps away from their busy time, and a guest with no data or a failed query "
+                "is unknown. The availability of attendees who are users here is E2E-proven (rows 321, 339)")
+# --- end U56 ---
 
 # Google Calendar proof. docs/e2e-google-run.tsv records a full E2E run on Google
 # (a "# commit <sha>" line, then status, test id, title per line; docs/e2e-google-run.md

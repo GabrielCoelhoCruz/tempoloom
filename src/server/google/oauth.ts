@@ -9,6 +9,8 @@ export const GOOGLE_SCOPES = [
   "https://www.googleapis.com/auth/calendar.events",
   "https://www.googleapis.com/auth/calendar.calendarlist.readonly",
   "https://www.googleapis.com/auth/calendar.freebusy",
+  // weekStart, time format and date format (settings-profile.md PRF-2).
+  "https://www.googleapis.com/auth/calendar.settings.readonly",
 ] as const;
 
 export interface OAuthClient {

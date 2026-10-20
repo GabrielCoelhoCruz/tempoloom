@@ -3,6 +3,7 @@ import type { SecretBox } from "./crypto.ts";
 import { all, type Db, one, run, tx } from "./db.ts";
 import {
   type GoogleIdentity,
+  identityFromIdToken,
   type OAuthClient,
   OAuthError,
   refreshAccessToken,
@@ -275,6 +276,22 @@ export function loginTarget(
  * (the operator CLI), the account goes to that user, and an account that
  * another user holds is an error.
  */
+/**
+ * Name and picture follow the user's main Google account at each sign-in and
+ * each token refresh, so at least daily (settings-profile.md PRF-2, PRF-3). A
+ * picture the user hides in Google is not in the token: no picture (PRF-5).
+ */
+export function applyGoogleIdentity(db: Db, accountId: string, identity: GoogleIdentity): void {
+  run(
+    db,
+    `UPDATE users SET name = ?, avatar_url = ?
+     WHERE id = (SELECT user_id FROM accounts WHERE id = ? AND provider = 'google' AND is_main = 1)`,
+    identity.name,
+    identity.picture ?? "",
+    accountId,
+  );
+}
+
 export function upsertGoogleLogin(
   db: Db,
   box: SecretBox,
@@ -320,6 +337,7 @@ export function upsertGoogleLogin(
       },
       now,
     );
+    applyGoogleIdentity(db, accountId, identity);
     return { user, accountId };
   });
 }
@@ -386,5 +404,6 @@ export async function googleAccessToken(
     }
   }
   saveAccessToken(db, box, accountId, tokens);
+  if (tokens.idToken) applyGoogleIdentity(db, accountId, identityFromIdToken(tokens.idToken));
   return tokens.accessToken;
 }

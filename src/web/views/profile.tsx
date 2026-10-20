@@ -7,6 +7,12 @@ import { COMPANY_SIZES, USE_CASES } from "../../shared/profile.ts";
 import { api } from "../lib/api.ts";
 import { loadMe, me } from "../lib/state.ts";
 
+const DATE_FORMATS: Record<Settings["dateFormat"], string> = {
+  YMD: "Year-month-day",
+  DMY: "Day-month-year",
+  MDY: "Month-day-year",
+};
+
 const USE_CASE_LABELS: Record<(typeof USE_CASES)[number], string> = {
   work: "Work",
   personal: "Personal",
@@ -38,6 +44,16 @@ export function ProfilePage() {
       )}
       <section data-testid="profile-fixed">
         <h2>From your calendar account</h2>
+        {m.user.avatarUrl && (
+          <img
+            class="avatar"
+            src={m.user.avatarUrl}
+            alt=""
+            width={64}
+            height={64}
+            data-testid="profile-picture"
+          />
+        )}
         <div class="list">
           <div class="row">
             <span>Name</span>
@@ -54,6 +70,14 @@ export function ProfilePage() {
           <div class="row">
             <span>Week starts on</span>
             <strong>{m.settings.weekStart === 7 ? "Sunday" : "Monday"}</strong>
+          </div>
+          <div class="row">
+            <span>Time format</span>
+            <strong>{m.settings.timeFormat === "12h" ? "12-hour" : "24-hour"}</strong>
+          </div>
+          <div class="row">
+            <span>Date format</span>
+            <strong>{DATE_FORMATS[m.settings.dateFormat]}</strong>
           </div>
         </div>
         <p class="status">
