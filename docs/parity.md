@@ -1041,4 +1041,4 @@ the open questions in each spec list what is unknown.
 | # | Feature | Evidence | Spec | Status | Proof or reason |
 |---|---|---|---|---|---|
 | X1 | Sign in with a CalDAV account (Radicale, Nextcloud, Fastmail) | none | [accounts-login-emails-permissions.md](specs/accounts-login-emails-permissions.md) | partial | CalDAV E2E passes: “signs in with CalDAV, rejects a wrong password, and keeps the session”. Not a reference feature, so no Google E2E applies. |
-| X2 | Self-hosting with one process and one SQLite file, Docker image | none | [../adr/0001-stack.md](adr/0001-stack.md) | partial | Docker image builds; no deployment test yet. |
+| X2 | Self-hosting with one process and one SQLite file, Docker image | none | [../adr/0001-stack.md](adr/0001-stack.md) | done (CalDAV) | CalDAV E2E passes: “the Docker image keeps the session, a task and its event in one SQLite volume across restarts (X2)”; CI job self-host builds the image and runs it. Not a reference feature, so no Google E2E applies. |
