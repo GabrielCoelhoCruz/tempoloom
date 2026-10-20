@@ -160,6 +160,12 @@ function attendeeFacts(ev: ICAL.Component, selfEmail: string) {
   };
 }
 
+const CLASSES: Record<string, ProviderEvent["visibility"]> = {
+  PUBLIC: "public",
+  PRIVATE: "private",
+  CONFIDENTIAL: "confidential",
+};
+
 function baseEvent(
   comp: ICAL.Component,
   id: string,
@@ -192,6 +198,7 @@ function baseEvent(
     // RFC 7986 CONFERENCE: a video call link (automations-meeting-quality.md, video_link).
     conference: str("conference"),
     alerts: comp.getAllSubcomponents("valarm").length > 0,
+    visibility: CLASSES[str("class").toUpperCase()] ?? "default",
   };
 }
 
@@ -582,6 +589,7 @@ export class CalDavProvider implements CalendarProvider {
       colorId: fallback.colorId,
       updated: this.#now(),
       privateProps: fallback.privateProps,
+      visibility: fallback.visibility ?? "default",
     };
   }
 
@@ -726,6 +734,11 @@ export class CalDavProvider implements CalendarProvider {
     if (change.busy !== undefined) {
       ev.removeAllProperties("transp");
       ev.addPropertyWithValue("transp", change.busy ? "OPAQUE" : "TRANSPARENT");
+    }
+    if (change.visibility !== undefined) {
+      ev.removeAllProperties("class");
+      if (change.visibility !== "default")
+        ev.addPropertyWithValue("class", change.visibility.toUpperCase());
     }
     if (change.end !== undefined) {
       ev.removeAllProperties("duration");

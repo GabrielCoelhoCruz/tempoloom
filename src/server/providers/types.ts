@@ -43,6 +43,8 @@ export interface ProviderEvent {
   conference?: string;
   /** The event alerts: a VALARM, or Google reminders. Mirroring copies never do. */
   alerts?: boolean;
+  /** The event privacy: CalDAV CLASS, or Google visibility. */
+  visibility?: "default" | "public" | "private" | "confidential";
 }
 
 export interface EventWrite {
@@ -87,6 +89,8 @@ export interface ExternalChange {
   end?: number;
   /** A new start, for an event the user organizes (preview mode apply). */
   start?: number;
+  /** Privacy written back on a meeting occurrence (MEET-02 rule 22). */
+  visibility?: "default" | "public" | "private";
 }
 
 export interface EventChanges {

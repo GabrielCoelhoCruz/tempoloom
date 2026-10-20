@@ -148,14 +148,20 @@ interface Cached {
   end_ms: number;
   color_id: string | null;
   alerts: number;
+  visibility: string;
 }
 
+/**
+ * Whether a managed event needs a write: "plan" when Tempoloom's own values
+ * changed, "drift" when only the calendar copy drifted (a user edit that does
+ * not lock), or null.
+ */
 function differs(
   row: ManagedRow,
   cached: Cached | undefined,
   d: DesiredEvent,
   fullCheck: boolean,
-): boolean {
+): "plan" | "drift" | null {
   if (
     row.start_ms !== d.start ||
     row.end_ms !== d.end ||
@@ -166,11 +172,11 @@ function differs(
     row.calendar_id !== d.calendarId ||
     row.extra !== extraOf(d)
   ) {
-    return true;
+    return "plan";
   }
   if (row.kind === "mirror" && cached) {
     // A copy never alerts (mirroring rule 30).
-    if (cached.alerts) return true;
+    if (cached.alerts) return "plan";
     // The full reconcile also puts back a copy's time and color (rules 38, 39).
     if (
       fullCheck &&
@@ -178,15 +184,17 @@ function differs(
         cached.end_ms !== d.end ||
         (cached.color_id ?? null) !== (d.colorId ?? null))
     )
-      return true;
+      return "plan";
   }
   // The calendar copy drifted (a user edit that does not lock): write it back.
-  return (
-    cached !== undefined &&
+  // A meeting occurrence also gets its privacy back (MEET-02 rule 22).
+  return cached !== undefined &&
     (cached.summary !== d.title ||
       cached.description !== d.description ||
-      Boolean(cached.busy) !== d.busy)
-  );
+      Boolean(cached.busy) !== d.busy ||
+      (row.kind === "meeting" && d.visibility !== undefined && cached.visibility !== d.visibility))
+    ? "drift"
+    : null;
 }
 
 /**
@@ -250,20 +258,33 @@ export async function pushSchedule(
     if (row.locked && (row.start_ms !== d.start || row.end_ms !== d.end)) continue;
     const cached = one<Cached>(
       db,
-      `SELECT summary, description, busy, etag, start_ms, end_ms, color_id, alerts
+      `SELECT summary, description, busy, etag, start_ms, end_ms, color_id, alerts, visibility
        FROM events WHERE calendar_id = ? AND event_id = ?`,
       row.calendar_id,
       row.event_id,
     );
-    if (!differs(row, cached, d, ctx.fullCheck ?? false)) continue;
+    const change = differs(row, cached, d, ctx.fullCheck ?? false);
+    if (!change) continue;
     const { provider, providerCalendarId } = ctx.target(row.calendar_id);
+    const etag = cached?.etag ?? row.etag;
+    // A meeting occurrence that only drifted gets back its free/busy and privacy
+    // alone: the organizer's other edits stay (MEET-02 rule 22). The title and
+    // description are already Tempoloom's values (a title edit is kept on the row).
+    const patch =
+      change === "drift" &&
+      row.kind === "meeting" &&
+      !row.event_id.includes("#") &&
+      cached?.summary === d.title &&
+      cached.description === d.description;
     try {
-      const ev = await provider.updateEvent(
-        providerCalendarId,
-        row.event_id,
-        write(userId, d),
-        cached?.etag ?? row.etag,
-      );
+      const ev = patch
+        ? await provider.editExternal(
+            providerCalendarId,
+            row.event_id,
+            { busy: d.busy, visibility: d.visibility ?? "default" },
+            etag,
+          )
+        : await provider.updateEvent(providerCalendarId, row.event_id, write(userId, d), etag);
       cacheEvent(db, row.calendar_id, ev);
       saveRow(db, userId, d, ev.id, ev.etag, row.id);
       const moved = row.start_ms !== d.start || row.end_ms !== d.end;

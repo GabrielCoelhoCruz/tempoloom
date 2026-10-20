@@ -59,6 +59,7 @@ export function fromGoogleEvent(e: GoogleEvent, zone: string): ProviderEvent {
     ),
     conference: e.hangoutLink ?? "",
     alerts: e.reminders?.useDefault === true || (e.reminders?.overrides?.length ?? 0) > 0,
+    visibility: e.visibility ?? "default",
   };
 }
 
@@ -204,6 +205,7 @@ export class GoogleProvider implements CalendarProvider {
     if (change.summary !== undefined) patch.summary = change.summary;
     if (change.description !== undefined) patch.description = change.description;
     if (change.busy !== undefined) patch.transparency = change.busy ? "opaque" : "transparent";
+    if (change.visibility !== undefined) patch.visibility = change.visibility;
     if (change.end !== undefined) patch.end = { dateTime: new Date(change.end).toISOString() };
     if (change.start !== undefined)
       patch.start = { dateTime: new Date(change.start).toISOString() };

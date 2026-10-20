@@ -29,7 +29,8 @@ function exclude(db: Db, userId: string, kind: string, itemId: string, start: nu
  * follows its anchor (buffers rule 14); a moved task
  * chunk leaves an exclusion at its old time (CED-10); a deleted event leaves an
  * exclusion or a dismissed key by kind (CED-20, CED-24, CED-25); a title edit
- * of a non-task event locks it (CED-40).
+ * of a non-task event locks it (CED-40); the description edit of a meeting
+ * occurrence is kept without a lock (MEET-02 rule 22).
  */
 export function applyCalendarEdits(
   db: Db,
@@ -53,10 +54,11 @@ export function applyCalendarEdits(
         start_ms: number;
         end_ms: number;
         summary: string;
+        description: string;
         etag: string | null;
       }>(
         db,
-        "SELECT start_ms, end_ms, summary, etag FROM events WHERE calendar_id = ? AND event_id = ?",
+        "SELECT start_ms, end_ms, summary, description, etag FROM events WHERE calendar_id = ? AND event_id = ?",
         row.calendar_id,
         row.event_id,
       );
@@ -102,6 +104,16 @@ export function applyCalendarEdits(
         run(db, "DELETE FROM managed_events WHERE id = ?", row.id);
         summary.deleted++;
         continue;
+      }
+      // The organizer's description of a meeting occurrence is kept (MEET-02 rule 22).
+      if (row.kind === "meeting" && cached.description !== row.description) {
+        run(
+          db,
+          "UPDATE managed_events SET description = ?, user_edited = 1, etag = ? WHERE id = ?",
+          cached.description,
+          cached.etag,
+          row.id,
+        );
       }
       const moved = cached.start_ms !== row.start_ms || cached.end_ms !== row.end_ms;
       const retitled = row.kind !== "task" && cached.summary !== row.title;
