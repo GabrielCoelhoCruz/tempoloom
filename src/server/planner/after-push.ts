@@ -143,14 +143,21 @@ async function autoDecline(db: Db, userId: string, provider: Provider, now: numb
   }
 }
 
-/** Every address of the user: sign-in email, account emails and calendar ids. */
+/**
+ * Every address of the user: sign-in email, account emails (a Google primary
+ * calendar's id is its account's email) and the ids of the user's Google
+ * secondary calendars. Calendars of other people that the user added keep
+ * their owner's email as id, so other calendar ids do not count.
+ */
 function ownAddresses(db: Db, userId: string): Set<string> {
   return new Set(
     all<{ address: string }>(
       db,
       `SELECT email AS address FROM users WHERE id = ?
        UNION SELECT email FROM accounts WHERE user_id = ?
-       UNION SELECT c.provider_id FROM calendars c JOIN accounts a ON a.id = c.account_id WHERE a.user_id = ?`,
+       UNION SELECT c.provider_id FROM calendars c JOIN accounts a ON a.id = c.account_id
+         WHERE a.user_id = ? AND a.provider = 'google' AND c.writable = 1
+           AND c.provider_id LIKE '%@group.calendar.google.com'`,
       userId,
       userId,
       userId,

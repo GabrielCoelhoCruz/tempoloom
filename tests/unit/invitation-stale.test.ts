@@ -100,6 +100,12 @@ describe("auto-decline on Google", () => {
       "cal-acc1",
       fromGoogleEvent(invite("side-copy", "side123@group.calendar.google.com", ME, 27), "UTC"),
     );
+    // The user added a colleague's calendar: its id is the colleague's email, not the user's.
+    run(
+      db,
+      `INSERT INTO calendars (id, account_id, provider_id, name, is_primary, writable, check_availability)
+       VALUES ('cal-boss', 'acc1', 'boss@example.com', 'Boss', 0, 0, 0)`,
+    );
     cacheEvent(db, "cal-acc1", fromGoogleEvent(invite("boss", "boss@example.com", ME, 28), "UTC"));
     const answered: string[] = [];
     const provider = {
