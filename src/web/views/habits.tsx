@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "preact/hooks";
 import type { HabitFrequency } from "../../scheduler/model.ts";
 import { defaultEventSettings, readEventSettings } from "../../shared/event-settings.ts";
 import { api } from "../lib/api.ts";
+import { CalendarDisconnected } from "../lib/calendars.tsx";
 import { duration, hhmm } from "../lib/format.ts";
 import { frequencyText, readFrequency } from "../lib/frequency.ts";
 import { lazyComponent } from "../lib/lazy.ts";
@@ -21,6 +22,8 @@ import {
 
 interface Habit {
   id: string;
+  /** The email of the disconnected account that holds the habit's calendar. */
+  disconnected: string | null;
   title: string;
   level: number;
   enabled: number;
@@ -277,6 +280,7 @@ export function Habits() {
                     : ""}
                   {h.enabled ? "" : " · off"} <PolicyMark id={h.id} />
                 </div>
+                <CalendarDisconnected email={h.disconnected} />
               </div>
               <div class="actions">
                 <button type="button" onClick={() => setTarget({ edit: h.id })}>

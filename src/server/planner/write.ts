@@ -28,6 +28,22 @@ export function writableCalendar(db: Db, userId: string, calendarId: string) {
   );
 }
 
+/**
+ * The email of the disconnected account that holds a calendar, or null
+ * (accounts-login-emails-permissions.md rule 16): items that write to it wait.
+ */
+export function disconnectedEmail(db: Db, calendarId: string | null | undefined): string | null {
+  if (!calendarId) return null;
+  return (
+    one<{ email: string }>(
+      db,
+      `SELECT a.email FROM calendars c JOIN accounts a ON a.id = c.account_id
+       WHERE c.id = ? AND a.status <> 'ok'`,
+      calendarId,
+    )?.email ?? null
+  );
+}
+
 export function writableCalendars(db: Db, userId: string) {
   return all<{ id: string; name: string }>(
     db,

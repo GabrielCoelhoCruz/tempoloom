@@ -44,6 +44,7 @@ import type { Mailer } from "../mail.ts";
 import { getPrefs } from "../meeting-prefs.ts";
 import { MANAGED_PROP } from "../planner/push.ts";
 import { writeCalendar } from "../planner/replan.ts";
+import { disconnectedEmail } from "../planner/write.ts";
 import { getSettings } from "../settings.ts";
 import type { SyncService } from "../sync/service.ts";
 import { membership, sameTeam } from "../teams.ts";
@@ -645,6 +646,8 @@ function linkView(db: Db, link: LinkRow, oneOffDays: number) {
     page: link.group_id ?? (link.hidden ? "hidden" : "main"),
     pageSlug: linkPageSlug(db, link),
     expiresAt: oneOffExpiry(link, oneOffDays, zoneOf(db, link.user_id)),
+    // Accounts rule 16: the link's calendar is on a disconnected account; bookings wait.
+    disconnected: disconnectedEmail(db, link.calendar_id),
     organizers: people
       .filter((p) => p.kind === "organizer")
       .map((p) => ({ ...view(p), required: p.required, isHost: p.isHost })),
@@ -1501,6 +1504,9 @@ export function publicBookingRoutes(
       (e) => e !== body.email.toLowerCase(),
     );
     const zone = body.timeZone ?? zoneOf(db, link.user_id);
+    // Accounts rule 16: no new events on a calendar of a disconnected account.
+    if (disconnectedEmail(db, link.calendar_id))
+      return c.json({ error: "calendar_disconnected" }, 503);
     const result = await sync.exclusive(link.user_id, async () => {
       // Check again inside the owner's queue so two bookers cannot take one slot.
       const slot = slotAt(link, body.start, body.duration, undefined, chosen);

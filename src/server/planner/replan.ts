@@ -37,6 +37,7 @@ import { planningZone } from "../travel.ts";
 import { afterPush } from "./after-push.ts";
 import { categoryContext, colorFor, externalPaints } from "./categories.ts";
 import { externalEvents } from "./events.ts";
+import { recordItemChanges } from "./item-log.ts";
 import {
   eventTitle,
   markEnded,
@@ -59,6 +60,8 @@ export interface ReplanContext {
   baseUrl: string;
   /** The full mirroring reconcile: copies are checked field by field (mirroring rule 39). */
   fullMirror?: boolean;
+  /** Managed keys to repair: written again from the plan, compared field by field. */
+  repair?: ReadonlySet<string>;
 }
 
 export interface ReplanResult {
@@ -616,7 +619,13 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
     const cal = id ? calendars.get(id) : undefined;
     return cal?.writable === 1 && cal.ok === 1 ? cal.id : undefined;
   };
-  const chosenCalendar = (es: EventSettings | undefined) => writable(es?.calendarId);
+  // A chosen calendar of a disconnected account stays chosen: the push writes
+  // nothing to it, so the item gets no new events until reconnect (accounts rule 16).
+  const chosen = (id: string | null | undefined) => {
+    const cal = id ? calendars.get(id) : undefined;
+    return cal?.writable === 1 ? cal.id : undefined;
+  };
+  const chosenCalendar = (es: EventSettings | undefined) => chosen(es?.calendarId);
   const travelBuffers = new Set(
     snapshot.buffers.filter((b) => b.filter.travel || b.filter.flight).map((b) => b.id),
   );
@@ -629,7 +638,7 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
     // that cannot be written now stays, and other events stay where they are.
     const taskCalendarId =
       p.kind === "task" && !row?.locked && (!row || writable(row.calendar_id))
-        ? (writable(taskCalendar.get(taskHours.get(p.itemId) ?? "")) ?? target.id)
+        ? (chosen(taskCalendar.get(taskHours.get(p.itemId) ?? "")) ?? target.id)
         : undefined;
     const calendarId = taskCalendarId ?? row?.calendar_id ?? chosenCalendar(es) ?? target.id;
     const keepUserTitle = row?.user_edited === 1;
@@ -781,6 +790,7 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
       userId,
       now,
       fullCheck: ctx.fullMirror ?? false,
+      ...(ctx.repair ? { repair: ctx.repair } : {}),
       target: (calendarId) => {
         const c = calendars.get(calendarId);
         if (!c) throw new Error(`Unknown calendar ${calendarId}`);
@@ -790,6 +800,7 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
     desired,
   );
   recordMeetingChanges(db, userId, rows, now, last);
+  recordItemChanges(db, userId, rows, snapshot, result, now);
   // Rule 8: a new color also repaints managed events that ended, up to 90 days back.
   // Rule 12, "repaint all": every managed event gets its color again, also where
   // the user changed the color in the calendar. The run only lists the paints;

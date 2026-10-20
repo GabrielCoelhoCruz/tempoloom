@@ -4,6 +4,7 @@ import { CATEGORIES } from "../../scheduler/categories.ts";
 import type { Settings as UserSettings } from "../../server/settings.ts";
 import { defaultEventSettings, readEventSettings } from "../../shared/event-settings.ts";
 import { api } from "../lib/api.ts";
+import { CalendarDisconnected } from "../lib/calendars.tsx";
 import { CATEGORY_LABELS, COLORS } from "../lib/categories.ts";
 import { hhmm, parseHhmm } from "../lib/format.ts";
 import { lazyComponent } from "../lib/lazy.ts";
@@ -29,6 +30,8 @@ interface HoursSet {
   name: string;
   weekly: Record<string, [number, number][]>;
   task_calendar_id?: string | null;
+  /** The email of the disconnected account that holds the task calendar. */
+  disconnected?: string | null;
 }
 const FocusRecommendation = lazyComponent(() =>
   import("./team-recommendations.tsx").then((m) => m.FocusRecommendation),
@@ -396,6 +399,7 @@ export function Settings() {
             {(dirty) => (
               <>
                 <TaskCalendar set={h} calendars={taskCalendars} dirty={dirty} act={act} />
+                <CalendarDisconnected email={h.disconnected} />
                 {h.kind === "custom" && <DeleteHoursSet set={h} sets={hours} act={act} />}
               </>
             )}

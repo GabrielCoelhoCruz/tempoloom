@@ -296,9 +296,16 @@ export function lookupEvent(db: Db, userId: string, q: string, now: number) {
           name: policyName(p),
           decision: copied ? "copied" : "skipped",
           reason: copied ? "" : skipReason(db, userId, p, e, now),
+          key: p.enabled ? mirrorKey(p.id, e.event_id) : null,
         };
       });
+  // Rule 10: repair runs the copy decision again for a copy, or for each policy of a source.
+  const repair = [
+    ...(managed?.kind === "mirror" ? [managed.key] : []),
+    ...policies.flatMap((p) => (p.key ? [p.key] : [])),
+  ];
   return {
+    repair,
     event: {
       title: e.summary,
       when: e.all_day ? "all day" : when(zone, e.start_ms, e.end_ms),
@@ -312,7 +319,7 @@ export function lookupEvent(db: Db, userId: string, q: string, now: number) {
     },
     item,
     copy,
-    policies,
+    policies: policies.map(({ key: _, ...p }) => p),
     changes: changesOf(db, userId, e.calendar_id, e.event_id, managed?.key ?? null).map((c) => ({
       at: when(zone, c.at),
       action: c.action,

@@ -297,6 +297,7 @@ interface Lookup {
   copy: { policy: string; source: { title: string; calendar: string } | null } | null;
   policies: { name: string; decision: "copied" | "skipped"; reason: string }[];
   changes: { at: string; action: string; reason: string; range: string; actor: string }[];
+  repairable: boolean;
 }
 
 const ERRORS: Record<string, string> = {
@@ -311,8 +312,10 @@ function LookupView() {
   const [q, setQ] = useState(() => new URLSearchParams(location.search).get("q") ?? "");
   const [result, setResult] = useState<Lookup | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [repairing, setRepairing] = useState<"busy" | "done" | null>(null);
   const run = async (value: string) => {
     setError(null);
+    setRepairing(null);
     setResult(null);
     if (!value.trim()) return;
     try {
@@ -320,6 +323,18 @@ function LookupView() {
     } catch (err) {
       const code = err instanceof ApiError ? (err.body as { error?: string })?.error : undefined;
       setError(ERRORS[code ?? ""] ?? "The lookup failed. Try again.");
+    }
+  };
+  // Rule 10: the copy decision runs again for this one event, and its result is written.
+  const repair = async () => {
+    setError(null);
+    setRepairing("busy");
+    try {
+      setResult(await api<Lookup>("POST", "/api/help/repair", { q }));
+      setRepairing("done");
+    } catch {
+      setRepairing(null);
+      setError("The repair failed. Try again.");
     }
   };
   // A link to this page with ?q= shows that event, also after a reload.
@@ -393,6 +408,18 @@ function LookupView() {
                 </li>
               ))}
             </ul>
+          )}
+          {result.repairable && (
+            <div class="actions">
+              <button type="button" disabled={repairing === "busy"} onClick={() => void repair()}>
+                Repair
+              </button>
+              {repairing === "done" && (
+                <span class="status" role="status" data-testid="repair-message">
+                  Repaired: Tempoloom wrote this event again as its copy rules give it.
+                </span>
+              )}
+            </div>
           )}
           <h3>Changes by Tempoloom</h3>
           {result.changes.length === 0 ? (

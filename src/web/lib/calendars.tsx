@@ -71,3 +71,16 @@ export function Confirm({ ask, onClose }: { ask: Ask; onClose: () => void }) {
     </div>
   );
 }
+
+/**
+ * Accounts rule 16: the item writes to a calendar of a disconnected account,
+ * so it gets no new events until the user reconnects that account.
+ */
+export function CalendarDisconnected({ email }: { email: string | null | undefined }) {
+  if (!email) return null;
+  return (
+    <div class="status error" role="alert" data-testid="calendar-disconnected">
+      Waiting: {email} is disconnected. Reconnect it on the Account page.
+    </div>
+  );
+}

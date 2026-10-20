@@ -7,6 +7,7 @@ import { useLive } from "../lib/live.ts";
 import { loadPolicyMarks, PolicyMark, policyMarks } from "../lib/policy-marks.tsx";
 import { onLinkClick } from "../lib/router.ts";
 import { LEVEL_NAMES, planNow } from "../lib/state.ts";
+import { ItemChanges } from "./item-changes.tsx";
 
 interface Automation {
   type: string;
@@ -20,6 +21,14 @@ interface Automation {
   /** Meeting checks: a built-in check has no Remove; a locked company check has no actions. */
   check?: { kind: "built_in" | "company"; locked: boolean };
 }
+
+/** The planner kind of each automation type that places events (SCH-119 change log). */
+const PLANNED: Record<string, string> = {
+  habit: "habit",
+  focus_time: "focus",
+  buffer: "buffer",
+  flexible_meeting: "meeting",
+};
 
 /** One automation type. A new type adds one entry here and one in src/server/api/automations.ts. */
 interface TypeInfo {
@@ -157,6 +166,7 @@ export function Automations() {
     const company = a.check?.kind === "company";
     // Meeting quality rule 11: only team admins change a company check.
     const actions = info && !a.check?.locked;
+    const planned = PLANNED[a.type];
     return (
       <li
         class={`row automation${a.enabled ? "" : " off"}`}
@@ -202,6 +212,7 @@ export function Automations() {
             )}
             {a.enabled ? "" : " · Off"} <PolicyMark id={a.id} />
           </div>
+          {planned && <ItemChanges kind={planned} id={a.id} />}
         </div>
         <div class="actions">
           {actions && (

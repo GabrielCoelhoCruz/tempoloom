@@ -118,6 +118,13 @@ provider only for the permissions that the features in use need.
     write its calendars. Mirroring policies and items that use them show an
     error state.
 
+    Tempoloom decision: habits, focus time, flexible meetings, task calendars
+    of hours sets and booking links whose calendar is on that account show
+    "Waiting: <email> is disconnected" and get no new events; they do not move
+    to the main calendar. Their events stay as they are. A booking on such a
+    link is refused with "cannot take bookings right now". On reconnect the
+    next run writes the waiting events.
+
 ### Provider permissions
 
 17. Google permissions come in three groups (E-0079):

@@ -470,6 +470,8 @@ function DetailsForm({
               setError(
                 "This time leaves no travel time for that location. Pick another location or time.",
               );
+            } else if (err instanceof ApiError && err.status === 503) {
+              setError("This booking link cannot take bookings right now. Please try again later.");
             } else if (err instanceof ApiError && err.status === 409) {
               onTaken();
             } else if (err instanceof ApiError && err.status === 400) {

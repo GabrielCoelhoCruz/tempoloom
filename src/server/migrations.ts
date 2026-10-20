@@ -1213,4 +1213,25 @@ export const MIGRATIONS: readonly string[] = [
     PRIMARY KEY (user_id, kind)
   ) STRICT;
   `,
+  // 36: the change log per item (planning-scheduler.md SCH-119): each placement,
+  // move and removal a plan run made, with its SCH-116 reason code; 30 days.
+  `
+  CREATE TABLE item_changes (
+    id INTEGER PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,
+    item_id TEXT NOT NULL,
+    demand_key TEXT NOT NULL,
+    action TEXT NOT NULL
+      CHECK (action IN ('placed', 'moved', 'removed', 'skipped', 'conflict', 'status')),
+    old_start INTEGER,
+    old_end INTEGER,
+    new_start INTEGER,
+    new_end INTEGER,
+    reason TEXT NOT NULL DEFAULT '',
+    at INTEGER NOT NULL
+  ) STRICT;
+  CREATE INDEX item_changes_item ON item_changes(user_id, kind, item_id);
+  CREATE INDEX item_changes_time ON item_changes(at);
+  `,
 ];

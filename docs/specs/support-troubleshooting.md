@@ -88,6 +88,12 @@ that come from the calendar provider or the device, not from Tempoloom.
     decision for that one event and writes the result. (The reference has a
     repair button in its calendar add-on, E-0160, legacy evidence.)
 
+    Tempoloom decision: repair is offered for a copy and for a source event
+    of a mirroring policy. It runs one sync that writes the copies of that
+    event again and compares them in full, as the full reconcile does
+    (`sync-calendar-mirroring.md` rule 39). The change log names the write
+    "copy restored".
+
 ### Event history
 
 11. In Google Workspace, an admin can search the calendar audit log by event

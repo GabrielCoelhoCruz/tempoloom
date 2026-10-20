@@ -1,6 +1,7 @@
 import { Fragment } from "preact";
 import { useCallback, useEffect, useState } from "preact/hooks";
 import { api } from "../lib/api.ts";
+import { CalendarDisconnected } from "../lib/calendars.tsx";
 import { formatWhen } from "../lib/format.ts";
 import { lazyComponent } from "../lib/lazy.ts";
 import { freeName, templateFromUrl } from "../lib/library.ts";
@@ -238,6 +239,7 @@ export function Links() {
             </a>
           </div>
           {peopleLine(l) && <div class="meta">{peopleLine(l)}</div>}
+          <CalendarDisconnected email={l.disconnected} />
           {endpoints.length > 0 && (
             <div class="meta" data-testid="link-webhooks">
               Send webhooks to:{" "}

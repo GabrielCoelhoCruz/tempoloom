@@ -772,10 +772,6 @@ BLOCKED[513] = ("Needs a Microsoft 365 account and a Microsoft Graph provider, w
                 "and Google accounts connect through Google sign-in. That test skips on Google, because it adds CalDAV accounts, and "
                 "the Google Calendar run (docs/e2e-google-run.md) connects its one Google user with the operator command, "
                 "so adding a Google account in the UI has no E2E")
-PARTIAL[517] = ("Disconnect, paused policies and reconnect have full UI E2E on CalDAV (\u201c" + T["u8_reconnect"] + "\u201d): "
-                "the server rejects the stored password and the user types a new one; a Google account reconnects through Google sign-in "
-                "with the account's email as the hint and refuses another identity (unit tests). Items that write to a calendar of the "
-                "disconnected account show no error state yet (rule 16): their events stay as they are")
 # --- end U08 ---
 
 # --- U03: core planning ---
@@ -1165,9 +1161,7 @@ PLANNED = "Buildable; not built yet (planned)"
 for n in [36, 38, 40, 102, 118, 121, 122, 123, 128, 129, 140, 144, 167, 169, 170, 183, 185, 187, 189,
           201, 205, 232, 326, 327, 340, 347, 361, 362, 365, 370, 375, 542, 543, 635, 636, 637, 775, 776, 783, 784]:
     BLOCKED[n] = PLANNED
-BLOCKED[92] = PLANNED + ": the reason for each move and skip, and a view per item; the change log of every calendar write is built (src/server/change-log.ts)"
 BLOCKED[507] = PLANNED + ": the link's events go to the calendar chosen on the link (\u201c" + T["u7_locations"] + "\u201d); the choice of an added account, whose primary calendar gets the events and sends the invitations, is not built"
-BLOCKED[540] = PLANNED + ": the Repair action; looking up one event with its change log is built (src/server/diagnosis.ts)"
 BLOCKED[322] = (PLANNED + ": the Google free/busy query for attendees who are not users here (the Google client has a freeBusy method that no code calls); "
                 "its proof needs a Google account. The availability of attendees who are users here is E2E-proven (rows 321, 339)")
 # --- end U30 ---
@@ -1221,6 +1215,28 @@ BLOCKED[43] = ("Needs the Google Calendar add-on's developer app and a test acco
                "page, done leaving the queue, and an up arrow that moves no other task (\u201c" + T["u35_arrows"] + "\u201d; \u201c"
                + T["u35_panel"] + "\u201d; \u201c" + T["u35_page"] + "\u201d; \u201c" + T["u35_sticky"] + "\u201d)")
 # --- end U35 ---
+
+# --- U52: change log per item, repair one event, items of a disconnected account ---
+T.update({
+    "u52_items": "habits, flexible meetings and task calendars that write to a disconnected account show an error and get no new events until reconnect (accounts rule 16)",
+    "u52_links": "a booking link whose calendar is on a disconnected account shows an error and refuses bookings until reconnect (accounts rule 16)",
+    "u52_log": "each item keeps a change log of its placements, moves and removals, each with the time and a reason code (SCH-114, SCH-116, SCH-119)",
+    "u52_repair": "repair on the lookup page runs the copy decision again for one event and writes it: a copy repainted by hand gets the policy color back (SPEC-SUPPORT-01 rule 10)",
+})
+E2E.update({
+    517: ["u8_reconnect", "u52_items", "u52_links"],
+    92: ["u52_log", "u7_notime"],
+    540: ["u52_repair"],
+})
+E2E_NOTES.update({
+    517: ("A Google account reconnects through Google sign-in with the account's email as the hint and refuses another identity "
+          "(unit tests); waiting items do not move to the main calendar, and their events stay as they are"),
+    92: ("The log shows under each task and automation and on the flexible meeting view, for 30 days; a move the report does not "
+         "explain gets no-space-fixed, no-space-priority, rules-changed or rearranged (Tempoloom decision, SCH-119). The log of "
+         "calendar writes is in the event lookup (src/server/change-log.ts)"),
+    540: "Repair is offered for a copy and for a source event of a mirroring policy; the change log names the write “copy restored”",
+})
+# --- end U52 ---
 
 # Google Calendar proof. docs/e2e-google-run.tsv records a full E2E run on Google
 # (a "# commit <sha>" line, then status, test id, title per line; docs/e2e-google-run.md

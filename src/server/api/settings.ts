@@ -10,7 +10,7 @@ import { autoLock, turnedOn } from "../planner/auto-lock.ts";
 import { wakeOrganizers } from "../planner/meetings.ts";
 import { requestRepaint } from "../planner/repaint.ts";
 import { writeCalendar } from "../planner/replan.ts";
-import { writableCalendar, writableCalendars } from "../planner/write.ts";
+import { disconnectedEmail, writableCalendar, writableCalendars } from "../planner/write.ts";
 import { getSettings, updateSettings } from "../settings.ts";
 import type { SyncService } from "../sync/service.ts";
 import { badRequest } from "./items.ts";
@@ -123,7 +123,12 @@ export function settingsRoutes(db: Db, sync: SyncService, now: () => number): Ho
         db,
         "SELECT id, kind, name, weekly, task_calendar_id FROM hours_sets WHERE user_id = ? AND item_specific = 0 ORDER BY created_at",
         userId,
-      ).map((h) => ({ ...h, weekly: JSON.parse(h.weekly) })),
+      ).map((h) => ({
+        ...h,
+        weekly: JSON.parse(h.weekly),
+        // Accounts rule 16: task chunks wait while this calendar's account is disconnected.
+        disconnected: disconnectedEmail(db, h.task_calendar_id),
+      })),
       // HRS-12: the calendars that can take task chunks, besides the main one.
       taskCalendars: writableCalendars(db, userId).filter((cal) => cal.id !== main),
     });

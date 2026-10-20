@@ -88,10 +88,8 @@ export function pushReason(
   how: { restored?: boolean; moved?: boolean } = {},
 ): string {
   const mirror = kind === "mirror";
-  if (action === "create") {
-    if (how.restored) return mirror ? "copy restored" : "event restored";
-    return mirror ? "source copied" : "placed";
-  }
+  if (how.restored && action !== "delete") return mirror ? "copy restored" : "event restored";
+  if (action === "create") return mirror ? "source copied" : "placed";
   if (action === "delete") return mirror ? "source removed" : "no longer planned";
   if (how.moved) return mirror ? "source moved" : "moved";
   return mirror ? "source changed" : "details changed";
@@ -105,15 +103,17 @@ export function logManaged(
   action: ChangeAction,
   values: { title: string; start: number; end: number; moved?: boolean },
   now: number,
+  how: { restored?: boolean } = {},
 ): void {
   const restored =
-    action === "create" &&
-    all(
-      db,
-      "SELECT 1 FROM change_log WHERE user_id = ? AND event_key = ? AND action = 'create' LIMIT 1",
-      userId,
-      e.key,
-    ).length > 0;
+    how.restored === true ||
+    (action === "create" &&
+      all(
+        db,
+        "SELECT 1 FROM change_log WHERE user_id = ? AND event_key = ? AND action = 'create' LIMIT 1",
+        userId,
+        e.key,
+      ).length > 0);
   logChange(
     db,
     userId,

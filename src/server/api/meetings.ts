@@ -25,6 +25,7 @@ import {
 } from "../planner/meetings.ts";
 import { KEY_PROP, MANAGED_PROP, type ManagedRow } from "../planner/push.ts";
 import { loadSnapshot, meetingGuests } from "../planner/replan.ts";
+import { disconnectedEmail } from "../planner/write.ts";
 import type { ProviderPool } from "../providers/index.ts";
 import { getSettings } from "../settings.ts";
 import { cacheEvent } from "../sync/pull.ts";
@@ -368,6 +369,11 @@ export function meetingRoutes(
       frequency: JSON.parse(m.frequency) as unknown,
       item_hours: itemWeekly(db, m.hours_set_id),
       event_settings: readEventSettings(m.event_settings, defaultEventSettings("meeting")),
+      // Accounts rule 16: the meeting's calendar is on a disconnected account.
+      disconnected: disconnectedEmail(
+        db,
+        readEventSettings(m.event_settings, defaultEventSettings("meeting")).calendarId,
+      ),
       attendees: attendeesOf(db, m.id).map((a) => ({ ...a, ...person(db, a.email) })),
       occurrences: all<{
         id: string;

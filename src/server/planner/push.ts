@@ -116,6 +116,8 @@ export interface PushContext {
   now: number;
   /** Also compare the time and color of mirroring copies with the calendar (full reconcile). */
   fullCheck?: boolean;
+  /** Keys to repair (support-troubleshooting.md rule 10): compared in full, logged as restored. */
+  repair?: ReadonlySet<string>;
 }
 
 export interface PushResult {
@@ -259,6 +261,7 @@ export async function pushSchedule(
 ): Promise<PushResult> {
   const { db, userId, now } = ctx;
   const result: PushResult = { created: 0, updated: 0, deleted: 0, conflicts: 0 };
+  const repaired = (key: string) => ctx.repair?.has(key) ?? false;
   // Calendars of a disconnected account are neither read nor written
   // (accounts-login-emails-permissions.md rule 16): their events stay as they are.
   const frozen = new Set(
@@ -318,7 +321,7 @@ export async function pushSchedule(
     const change =
       row.kind === "meeting"
         ? meetingChange(row, cached, d)
-        : differs(row, cached, d, ctx.fullCheck ?? false);
+        : differs(row, cached, d, (ctx.fullCheck ?? false) || repaired(row.key));
     if (!change) continue;
     const { provider, providerCalendarId } = ctx.target(row.calendar_id);
     const etag = cached?.etag ?? row.etag;
@@ -330,7 +333,9 @@ export async function pushSchedule(
       cacheEvent(db, row.calendar_id, ev);
       saveRow(db, userId, d, ev.id, ev.etag, row.id);
       const moved = row.start_ms !== d.start || row.end_ms !== d.end;
-      logManaged(db, userId, desiredRef(d, ev.id), "update", { ...d, moved }, now);
+      logManaged(db, userId, desiredRef(d, ev.id), "update", { ...d, moved }, now, {
+        restored: repaired(row.key),
+      });
       result.updated++;
     } catch (err) {
       // precondition_failed: the user changed the event since our last read. The

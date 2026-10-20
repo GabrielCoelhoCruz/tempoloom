@@ -2,12 +2,14 @@ import { useCallback, useEffect, useState } from "preact/hooks";
 import { defaultEventSettings, type EventSettings } from "../../shared/event-settings.ts";
 import { itemRangeOf } from "../../shared/item-hours.ts";
 import { api } from "../lib/api.ts";
+import { CalendarDisconnected } from "../lib/calendars.tsx";
 import { duration, formatWhen, hhmm } from "../lib/format.ts";
 import { freeName, templateFromUrl } from "../lib/library.ts";
 import { useLive } from "../lib/live.ts";
 import { LEVEL_NAMES, planNow, zone } from "../lib/state.ts";
 import { EventSettingsFields, eventSettingsFrom } from "./event-settings.tsx";
 import { describeWeekly, ItemHoursFields, itemHoursFrom } from "./hours-field.tsx";
+import { ItemChanges } from "./item-changes.tsx";
 
 interface Person {
   email: string;
@@ -18,6 +20,8 @@ interface Person {
 
 interface Meeting {
   id: string;
+  /** The email of the disconnected account that holds the meeting's calendar. */
+  disconnected: string | null;
   title: string;
   level: number;
   enabled: number;
@@ -852,6 +856,7 @@ export function Meetings() {
                         : ""}{" "}
                       · {DEFENSE[m.defense] ?? m.defense}
                     </div>
+                    <CalendarDisconnected email={m.disconnected} />
                     <div class="meta" data-testid="meeting-settings">
                       {m.item_hours
                         ? `Item-specific hours: ${describeWeekly(JSON.parse(m.item_hours))}`
@@ -922,6 +927,7 @@ export function Meetings() {
                           </div>
                         );
                       })}
+                    <ItemChanges kind="meeting" id={m.id} />
                     {m.changes.length > 0 && (
                       <details class="meta" open>
                         <summary>Changes</summary>
