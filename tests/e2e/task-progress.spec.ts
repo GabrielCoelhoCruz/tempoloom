@@ -525,7 +525,11 @@ test("manual start mode: a chunk the user locked or dragged that ends without St
 
   // The user locks one chunk and drags the other 30 minutes earlier (the drag locks it too).
   await toggleLock(page, app, "AT-Locked", true);
+  // Let the plan run after the lock end, so no live reload redraws the week during the drag.
+  await page.evaluate(() => fetch("/api/planner/sync", { method: "POST" }));
   await openWeek(page, W);
+  // The now bar shows last; once it is there the week no longer shifts under the mouse.
+  await expect(page.getByTestId("next-up")).toBeVisible();
   const box = page.locator(".ev-task", { hasText: "AT-Dragged" }).first();
   await box.hover({ position: { x: 10, y: 5 } });
   const b = await box.boundingBox();
@@ -534,7 +538,11 @@ test("manual start mode: a chunk the user locked or dragged that ends without St
   await page.mouse.down();
   await page.mouse.move(b.x + b.width / 2, b.y + 5 - 12, { steps: 4 });
   await page.mouse.move(b.x + b.width / 2, b.y + 5 - 24, { steps: 4 });
+  const move = page.waitForResponse(
+    (r) => r.request().method() === "POST" && r.url().endsWith("/move"),
+  );
   await page.mouse.up();
+  expect((await move).ok()).toBe(true);
   await eventually(
     () => dayEvents(cal),
     (l) => expect(times(l, "AT-Dragged")).toEqual([`${D} 12:30-12:45`]),
@@ -832,6 +840,7 @@ test("logged work goes to the task calendar of the task's hours set, and a drag 
   const yesterday = addDays(D, -1);
   const dragLog = async (title: string, from: number, to: number) => {
     await openWeek(page, W);
+    await expect(page.getByTestId("next-up")).toBeVisible();
     await expect(page.locator(".ev", { hasText: "AT-Home" }).first()).toBeVisible();
     // Positions inside the day column: Playwright scrolls each one into view.
     const col = page.locator(`.day-col[data-date="${yesterday}"]`);
