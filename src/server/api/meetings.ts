@@ -87,8 +87,51 @@ const meetingInput = z.object({
   eventSettings: eventSettingsInput.optional(),
   /** Attach the rules to this recurring series (meetings-flexible.md rule 1). */
   series: z.object({ calendarId: z.string(), seriesId: z.string() }).optional(),
+  /**
+   * Guests from outside only (automations-library.md entry 32): no guest on the
+   * user's own mail domain and no user of this instance. Checked on create.
+   */
+  externalOnly: z.boolean().optional(),
 });
 type MeetingInput = z.infer<typeof meetingInput>;
+
+/** Mail domains that many people share: a guest there is not on the user's own domain. */
+const SHARED_DOMAINS = new Set([
+  "gmail.com",
+  "googlemail.com",
+  "outlook.com",
+  "hotmail.com",
+  "live.com",
+  "yahoo.com",
+  "icloud.com",
+  "me.com",
+  "proton.me",
+  "protonmail.com",
+  "gmx.de",
+  "web.de",
+]);
+
+/** Refuses a guest on the user's own domain or a user of this instance (library entry 32). */
+function checkExternal(db: Db, userId: string, attendees: { email: string }[]) {
+  const domain = (e: string) => e.slice(e.lastIndexOf("@") + 1).toLowerCase();
+  const own = new Set(
+    all<{ email: string }>(
+      db,
+      "SELECT email FROM users WHERE id = ? UNION SELECT email FROM accounts WHERE user_id = ?",
+      userId,
+      userId,
+    )
+      .map((r) => domain(r.email))
+      .filter((d) => !SHARED_DOMAINS.has(d)),
+  );
+  const why = "Recurring client meetings take external guests only.";
+  for (const { email } of attendees) {
+    if (own.has(domain(email)))
+      badRequest("attendees", `${email.toLowerCase()} is on your own domain. ${why}`);
+    if (one(db, "SELECT 1 FROM users WHERE email = ? COLLATE NOCASE", email))
+      badRequest("attendees", `${email.toLowerCase()} uses Tempoloom here. ${why}`);
+  }
+}
 
 function rowFrom(
   db: Db,
@@ -484,6 +527,7 @@ export function meetingRoutes(
   r.post("/meetings", async (c) => {
     const user = c.get("user");
     const body = await jsonBody(c, meetingInput);
+    if (body.externalOnly) checkExternal(db, user.id, body.attendees);
     const id = randomUUID();
     const series = body.series
       ? adoptableSeries(db, user.id, now()).find(

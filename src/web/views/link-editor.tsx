@@ -2,6 +2,13 @@
 // (docs/specs/booking-links.md, booking-links-team.md). Co-organizers use it
 // too; only the owner sees the URL and page fields.
 import { useEffect, useState } from "preact/hooks";
+import {
+  changedHours,
+  type ItemRange,
+  itemHoursOf,
+  itemRangeOf,
+  type Weekly,
+} from "../../shared/item-hours.ts";
 import { ApiError, api } from "../lib/api.ts";
 import { LEVEL_NAMES } from "../lib/state.ts";
 
@@ -17,6 +24,27 @@ interface Person {
   name: string;
   email: string;
   hoursSetId: string | null;
+  /** The saved item-specific hours of the person on the link, if any. */
+  itemHours?: Weekly | null;
+  /** The item-specific hours in the form; null: a named set. Missing: as saved. */
+  item?: ItemRange | null;
+}
+
+const ITEM = "item";
+const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+/** The item-specific hours the form shows for a person, or null. */
+const itemOf = (p: Person): ItemRange | null =>
+  p.item === undefined ? (p.itemHours ? itemRangeOf(p.itemHours) : null) : p.item;
+
+/**
+ * A person's hours as the API takes them: a named set, or item-specific hours.
+ * Item-specific hours the user did not change keep their saved set.
+ */
+export function hoursBody(p: Person): { hoursSetId: string | null; itemHours?: Weekly } {
+  const item = itemOf(p);
+  const changed = item && changedHours(p.itemHours ?? null, itemHoursOf(item));
+  return changed ? { hoursSetId: null, itemHours: changed } : { hoursSetId: p.hoursSetId };
 }
 export interface Organizer extends Person {
   required: boolean;
@@ -75,6 +103,16 @@ export interface EditableLink {
   pageSlug: string | null;
   organizers: Organizer[];
   pool: PoolMember[];
+}
+
+interface WritableCalendar {
+  id: string;
+  name: string;
+  email: string;
+  account_id: string;
+  is_primary: number;
+  /** The primary calendar of the main account. */
+  main: number;
 }
 
 export interface LocationOption {
@@ -292,6 +330,7 @@ const fromDrafts = (drafts: QuestionDraft[]): Question[] =>
           : [],
     }));
 
+/** A person's hours on a link: a named set or item-specific hours (planning-hours.md). */
 function HoursPicker({
   person,
   people,
@@ -299,24 +338,79 @@ function HoursPicker({
 }: {
   person: Person;
   people: PersonOption[];
-  onChange: (id: string | null) => void;
+  onChange: (change: Partial<Person>) => void;
 }) {
   const sets = people.find((p) => p.userId === person.userId)?.hoursSets ?? [];
+  const item = itemOf(person);
+  const setItem = (change: Partial<ItemRange>) =>
+    item && onChange({ item: { ...item, ...change } });
   return (
-    <label>
-      Hours
-      <select
-        value={person.hoursSetId ?? ""}
-        onChange={(e) => onChange(e.currentTarget.value || null)}
-      >
-        <option value="">Their meeting hours</option>
-        {sets.map((h) => (
-          <option value={h.id} key={h.id}>
-            {h.name}
-          </option>
-        ))}
-      </select>
-    </label>
+    <>
+      <label>
+        Hours
+        <select
+          value={item ? ITEM : (person.hoursSetId ?? "")}
+          onChange={(e) => {
+            const v = e.currentTarget.value;
+            onChange(
+              v === ITEM
+                ? {
+                    item: person.itemHours
+                      ? itemRangeOf(person.itemHours)
+                      : { days: [], from: "09:00", to: "17:00" },
+                  }
+                : { item: null, hoursSetId: v || null },
+            );
+          }}
+        >
+          <option value="">Their meeting hours</option>
+          {sets.map((h) => (
+            <option value={h.id} key={h.id}>
+              {h.name}
+            </option>
+          ))}
+          <option value={ITEM}>Item-specific hours</option>
+        </select>
+      </label>
+      {item && (
+        <span class="item-hours" data-testid="item-hours">
+          {DAYS.map((d, i) => (
+            <label class="inline" key={d}>
+              <input
+                type="checkbox"
+                checked={item.days.includes(i + 1)}
+                onChange={(e) =>
+                  setItem({
+                    days: e.currentTarget.checked
+                      ? [...item.days, i + 1].sort((a, b) => a - b)
+                      : item.days.filter((x) => x !== i + 1),
+                  })
+                }
+              />
+              {d}
+            </label>
+          ))}
+          <label class="inline">
+            From
+            <input
+              type="time"
+              step={900}
+              value={item.from}
+              onInput={(e) => setItem({ from: e.currentTarget.value })}
+            />
+          </label>
+          <label class="inline">
+            To
+            <input
+              type="time"
+              step={900}
+              value={item.to}
+              onInput={(e) => setItem({ to: e.currentTarget.value })}
+            />
+          </label>
+        </span>
+      )}
+    </>
   );
 }
 
@@ -360,7 +454,7 @@ export function OrganizersEditor({
               <HoursPicker
                 person={o}
                 people={people}
-                onChange={(id) => setOrganizer(o.userId, { hoursSetId: id })}
+                onChange={(change) => setOrganizer(o.userId, change)}
               />
               <label class="inline">
                 <input
@@ -452,18 +546,22 @@ export function LinkEditor({
   const [locations, setLocations] = useState<LocationOption[]>(
     link.locations.length > 0 ? link.locations : [{ kind: "custom", value: "" }],
   );
-  const [calendars, setCalendars] = useState<{ id: string; name: string; email: string }[]>([]);
+  const [calendars, setCalendars] = useState<WritableCalendar[]>([]);
   // The saved calendar stays chosen and is sent only when the owner changes it,
   // so a save before the list loads, or when it fails to load, keeps it.
   const [calendarId, setCalendarId] = useState(link.calendar_id ?? "");
   useEffect(() => {
-    void api<{ calendars: { id: string; name: string; email: string; writable: number }[] }>(
-      "GET",
-      "/api/calendars",
-    )
+    void api<{ calendars: (WritableCalendar & { writable: number })[] }>("GET", "/api/calendars")
       .then((r) => setCalendars(r.calendars.filter((c) => c.writable)))
       .catch(() => undefined);
   }, []);
+  // The added account whose primary calendar gets the events (connected calendars rule 22).
+  const mainAccount = calendars.find((c) => c.main)?.account_id;
+  const mainEmail = calendars.find((c) => c.main)?.email;
+  const accounts = [...new Map(calendars.map((c) => [c.account_id, c.email]))].filter(
+    ([id]) => id !== mainAccount,
+  );
+  const chosenAccount = calendars.find((c) => c.id === calendarId)?.account_id;
   // Main and hidden links share the main page URL; a group has its own (sharing rule 5).
   const urlPage = (p: string) => (p === "main" || p === "hidden" ? "" : p);
   const [error, setError] = useState<string | null>(null);
@@ -516,17 +614,13 @@ export function LinkEditor({
           },
           redirectUrl: String(f.get("redirectUrl") ?? ""),
           ...(isOwner ? { slug: String(f.get("slug")), page: pageChoice } : {}),
-          organizers: organizers.map(({ userId, hoursSetId, required, isHost }) => ({
-            userId,
-            hoursSetId,
-            required,
-            isHost,
+          organizers: organizers.map((o) => ({
+            userId: o.userId,
+            ...hoursBody(o),
+            required: o.required,
+            isHost: o.isHost,
           })),
-          pool: pool.map(({ userId, hoursSetId, preferred }) => ({
-            userId,
-            hoursSetId,
-            preferred,
-          })),
+          pool: pool.map((m) => ({ userId: m.userId, ...hoursBody(m), preferred: m.preferred })),
         })
           .then(() => onSaved(String(f.get("title") ?? "")))
           .catch((err) => {
@@ -639,6 +733,26 @@ export function LinkEditor({
           ))}
         </select>
       </label>
+      {isOwner && (
+        <label>
+          Account for booked events
+          <select
+            value={chosenAccount && chosenAccount !== mainAccount ? chosenAccount : ""}
+            onChange={(e) => {
+              const id = e.currentTarget.value;
+              const own = calendars.filter((c) => c.account_id === id);
+              setCalendarId(id ? ((own.find((c) => c.is_primary) ?? own[0])?.id ?? "") : "");
+            }}
+          >
+            <option value="">{mainEmail ? `Main account (${mainEmail})` : "Main account"}</option>
+            {accounts.map(([id, email]) => (
+              <option value={id} key={id}>
+                {email}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
       {isOwner && (
         <label>
           Calendar for booked events
@@ -787,7 +901,7 @@ export function LinkEditor({
                 <HoursPicker
                   person={m}
                   people={people}
-                  onChange={(id) => setMember(m.userId, { hoursSetId: id })}
+                  onChange={(change) => setMember(m.userId, change)}
                 />
                 <label class="inline">
                   <input

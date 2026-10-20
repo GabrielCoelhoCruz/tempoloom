@@ -136,6 +136,9 @@ kind of event.
 22. Booking-link events: Tempoloom writes them to the primary calendar of the
     added account chosen on the link, and sends the invitations from that
     account (E-0063, legacy evidence).
+    Tempoloom decision: the link editor's "Account for booked events" sets
+    the link's calendar to that account's primary calendar; the account of
+    the link's calendar is the organizer of each booked event.
 23. Focus time and buffers: the evidence names no target choice. Proposed:
     the main calendar.
 24. Mirrored copies: Tempoloom writes them to the destination calendar of the

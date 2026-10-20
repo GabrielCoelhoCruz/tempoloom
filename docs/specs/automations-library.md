@@ -123,6 +123,12 @@ have none (`automations-overview.md`), so their presets set no priority.
     email); they show "Added" once saved while their checks stay on. Entry 33
     opens the weekly no-meeting day on the Settings page and shows "Added"
     while that day exists.
+12. Tempoloom decision: entry 32 refuses a guest on the user's own mail
+    domain (the domains of the user's emails, except shared mail services) or
+    a user of this instance, and names the guest. Entry 38 asks for an old and
+    a new calendar and saves both policies in one save. Entry 39 asks for the
+    job calendars and saves one policy per ordered pair in one save. A pair
+    that is refused (`sync-calendar-mirroring.md` edge case 14) saves nothing.
 
 ## Outputs
 

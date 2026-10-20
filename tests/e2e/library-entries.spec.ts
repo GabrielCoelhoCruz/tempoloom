@@ -631,7 +631,65 @@ test("library entries 32, 34 and 37: flexible meetings repeat at their period wi
   await expectAdded(page, ["Recurring client meetings", "One-on-ones", "Priority booking link"]);
 });
 
-test("library mirroring entries 38 and 39 copy busy time only between job calendars, both ways, never copying a copy", async ({
+test("library entry 32 takes external guests only: a guest on the user's own domain or a user of this instance is refused with the reason, an outside guest saves (entry 32 preset)", async ({
+  page,
+  cal,
+  signIn,
+  people,
+}) => {
+  await blockUntil(cal, W);
+  // A user of this instance whose address is on another domain.
+  const partner = await people(3, "pat@partner.example");
+  await partner.signIn();
+  await signIn();
+  const meeting = page.getByTestId("meeting-form");
+  const guests = meeting.getByLabel("Guests (comma list)", { exact: true });
+  const alert = page.getByTestId("meetings-page").locator("p.error");
+  const twoWeeks = () => cal.events(at(W, "00:00"), at(day(14), "00:00"));
+
+  // The default: a meeting made without the entry takes any guest.
+  await page.getByRole("link", { name: "Meetings" }).click();
+  await meeting.getByLabel("Title").fill("Team sync");
+  await guests.fill("lee@tempoloom.test");
+  await meeting.getByRole("button", { name: "Add meeting" }).click();
+  await expect(page.locator('[data-meeting-title="Team sync"]')).toBeVisible();
+
+  await use(page, "Recurring client meetings");
+  await guests.fill("client@example.com, lee@tempoloom.test");
+  await meeting.getByRole("button", { name: "Add meeting" }).click();
+  await expect(alert).toHaveText(
+    "lee@tempoloom.test is on your own domain. Recurring client meetings take external guests only.",
+  );
+  await guests.fill("pat@partner.example");
+  await meeting.getByRole("button", { name: "Add meeting" }).click();
+  await expect(alert).toHaveText(
+    "pat@partner.example uses Tempoloom here. Recurring client meetings take external guests only.",
+  );
+  await page.reload();
+  await expect(page.locator('[data-meeting-title="Recurring client meetings"]')).toHaveCount(0);
+
+  await guests.fill("client@example.com");
+  await meeting.getByRole("button", { name: "Add meeting" }).click();
+  await expect(page.locator('[data-meeting-title="Recurring client meetings"]')).toBeVisible();
+  const placed = await eventually(twoWeeks, (l) =>
+    expect(titled(l, "Recurring client meetings")).toHaveLength(1),
+  );
+  const client = titled(placed, "Recurring client meetings")[0];
+  expect(await cal.guests(client?.id ?? "")).toEqual([
+    { email: "client@example.com", optional: false },
+  ]);
+  await page.reload();
+  await expect(page.locator('[data-meeting-title="Recurring client meetings"]')).toBeVisible();
+  await expect(page.locator('[data-meeting-title="Team sync"]')).toBeVisible();
+});
+
+const mirrorCopies = (l: Awaited<ReturnType<typeof week>>) =>
+  l
+    .filter((e) => e.privateProps.tl_key?.startsWith("mirror:"))
+    .map((e) => `${e.summary} ${local(e.start)}`)
+    .sort();
+
+test("library entry 38 saves a two-way busy-only mirror between the old and the new calendar in one save, and copies never chain (entry 38 preset)", async ({
   page,
   cal,
   signIn,
@@ -645,7 +703,52 @@ test("library mirroring entries 38 and 39 copy busy time only between job calend
     "Mirroring needs two connected calendars",
   );
   const oldJob = await cal.newCalendar("Old job");
+  await oldJob.addEvent({ title: "Old review", start: at(W, "10:00"), end: at(W, "11:00") });
+  await cal.addEvent({
+    title: "New standup",
+    start: at(day(2), "09:00"),
+    end: at(day(2), "09:30"),
+  });
+  await page.getByRole("button", { name: "Refresh calendar list" }).click();
+  await expect(page.getByTestId("calendar-list")).toContainText("Old job");
+  await expect(page.getByTestId("mirror-needs-two")).toHaveCount(0);
+
+  const form = page.getByTestId("mirror-form");
+  await expect(form.getByLabel("Copies show")).toHaveValue("busy_only");
+  await form.getByLabel("Old calendar").selectOption({ label: "Old job" });
+  await form.getByLabel("New calendar").selectOption({ label: "Work" });
+  await form.getByRole("button", { name: "Add mirroring both ways" }).click();
+  const list = page.getByTestId("mirror-list");
+  await expect(list.locator("[data-mirror]")).toHaveCount(2);
+  await expect(list).toContainText("Old job → Work · busy only");
+  await expect(list).toContainText("Work → Old job · busy only");
+
+  // Each calendar gets one "Busy" copy of the other's event, and no copy of a copy.
+  await eventually(
+    () => week(cal),
+    (l) => expect(mirrorCopies(l)).toEqual([`Busy ${W} 10:00`]),
+  );
+  await eventually(
+    () => week(oldJob),
+    (l) => expect(mirrorCopies(l)).toEqual([`Busy ${day(2)} 09:00`]),
+  );
+  expect((await week(cal)).filter((e) => e.summary.includes("Old review"))).toEqual([]);
+  await page.reload();
+  await expect(page.getByTestId("mirror-list").locator("[data-mirror]")).toHaveCount(2);
+  await expectAdded(page, ["Mirror calendars after a merger or role change"]);
+});
+
+test("library entry 39 saves one busy-only policy per ordered pair of the chosen job calendars in one save; each event gets one copy on every other calendar; a set with a pair that exists saves nothing (entry 39 preset)", async ({
+  page,
+  cal,
+  signIn,
+}) => {
+  test.skip(BACKEND === "google", "Mirroring E2E uses CalDAV calendars.");
+  await blockUntil(cal, W);
+  await signIn();
+  const oldJob = await cal.newCalendar("Old job");
   const second = await cal.newCalendar("Second job");
+  await cal.newCalendar("Family");
   await oldJob.addEvent({ title: "Old review", start: at(W, "10:00"), end: at(W, "11:00") });
   await second.addEvent({ title: "Gig", start: at(day(1), "15:00"), end: at(day(1), "16:00") });
   await cal.addEvent({
@@ -653,35 +756,50 @@ test("library mirroring entries 38 and 39 copy busy time only between job calend
     start: at(day(2), "09:00"),
     end: at(day(2), "09:30"),
   });
+  await page.getByRole("link", { name: "Settings", exact: true }).click();
   await page.getByRole("button", { name: "Refresh calendar list" }).click();
-  await expect(page.getByTestId("calendar-list")).toContainText("Second job");
-  await expect(page.getByTestId("mirror-needs-two")).toHaveCount(0);
+  await expect(page.getByTestId("calendar-list")).toContainText("Family");
+  const form = page.getByTestId("mirror-form");
+  const list = page.getByTestId("mirror-list");
+  // A plain policy first: a set with a pair that exists already saves nothing.
+  await form.getByLabel("Copy events from").selectOption({ label: "Second job" });
+  await form.getByLabel("To").selectOption({ label: "Old job" });
+  await form.getByRole("button", { name: "Add mirroring" }).click();
+  await expect(list.locator("[data-mirror]")).toHaveCount(1);
 
-  const mirrorForm = page.getByTestId("mirror-form");
-  const addPolicy = async (from: string, to: string) => {
-    await expect(mirrorForm.getByLabel("Copies show")).toHaveValue("busy_only");
-    await mirrorForm.getByLabel("Copy events from").selectOption({ label: from });
-    await mirrorForm.getByLabel("To").selectOption({ label: to });
-    await mirrorForm.getByRole("button", { name: "Add mirroring" }).click();
-    await expect(page.getByTestId("mirror-list")).toContainText(`${from} → ${to}`);
-  };
-  // Entry 38: two ways between the old and the new work calendar.
-  await addPolicy("Old job", "Work");
-  await addPolicy("Work", "Old job");
-  // Entry 39: each job calendar into each other one.
   await use(page, "Mirror calendars across several jobs");
-  await addPolicy("Second job", "Work");
-  await addPolicy("Work", "Second job");
-  await addPolicy("Second job", "Old job");
-  await addPolicy("Old job", "Second job");
+  const jobs = form.getByRole("group", { name: "Job calendars" });
+  await expect(form.getByLabel("Copies show")).toHaveValue("busy_only");
+  for (const name of ["Work", "Old job", "Second job"]) await jobs.getByLabel(name).check();
+  await form.getByRole("button", { name: "Add mirroring between all" }).click();
+  await expect(page.getByTestId("mirror-message")).toHaveText(
+    "A mirroring policy from Second job to Old job already exists.",
+  );
+  await expect(list.locator("[data-mirror]")).toHaveCount(1);
+  await list
+    .locator('[data-mirror="Second job → Old job"]')
+    .getByRole("button", { name: "Delete" })
+    .click();
+  await page.getByRole("dialog").getByRole("button", { name: "Delete policy" }).click();
+  await expect(list.locator("[data-mirror]")).toHaveCount(0);
 
-  const copies = (l: Awaited<ReturnType<typeof week>>) =>
-    l
-      .filter((e) => e.privateProps.tl_key?.startsWith("mirror:"))
-      .map((e) => `${e.summary} ${local(e.start)}`)
-      .sort();
+  for (const name of ["Work", "Old job", "Second job"]) await jobs.getByLabel(name).check();
+  await expect(jobs.getByLabel("Family")).not.toBeChecked();
+  await form.getByRole("button", { name: "Add mirroring between all" }).click();
+  await expect(list.locator("[data-mirror]")).toHaveCount(6);
+  for (const [from, to] of [
+    ["Work", "Old job"],
+    ["Work", "Second job"],
+    ["Old job", "Work"],
+    ["Old job", "Second job"],
+    ["Second job", "Work"],
+    ["Second job", "Old job"],
+  ]) {
+    await expect(list.locator(`[data-mirror="${from} → ${to}"]`)).toContainText("busy only");
+  }
+
   const originals = [`${W} 10:00`, `${day(1)} 15:00`, `${day(2)} 09:00`];
-  // Each calendar gets a "Busy" copy of the two others' events and nothing more.
+  // Each job calendar gets a "Busy" copy of the two others' events and nothing more.
   for (const [c, own] of [
     [cal, `${day(2)} 09:00`],
     [oldJob, `${W} 10:00`],
@@ -689,17 +807,11 @@ test("library mirroring entries 38 and 39 copy busy time only between job calend
   ] as const) {
     await eventually(
       () => week(c),
-      (l) => expect(copies(l)).toEqual(originals.filter((o) => o !== own).map((o) => `Busy ${o}`)),
+      (l) =>
+        expect(mirrorCopies(l)).toEqual(originals.filter((o) => o !== own).map((o) => `Busy ${o}`)),
     );
   }
-  const work = await week(cal);
-  expect(work.filter((e) => e.summary.includes("Old review") || e.summary.includes("Gig"))).toEqual(
-    [],
-  );
   await page.reload();
-  await expect(page.getByTestId("mirror-list")).toContainText("Old job → Second job");
-  await expectAdded(page, [
-    "Mirror calendars after a merger or role change",
-    "Mirror calendars across several jobs",
-  ]);
+  await expect(page.getByTestId("mirror-list").locator("[data-mirror]")).toHaveCount(6);
+  await expectAdded(page, ["Mirror calendars across several jobs"]);
 });

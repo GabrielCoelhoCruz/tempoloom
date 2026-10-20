@@ -215,10 +215,10 @@ export async function writeBookingEvents(
 ): Promise<{ calendarId: string; eventId: string } | null> {
   const touched = new Set<string>();
   const calendarOf = (id: string) =>
-    one<{ account_id: string; provider_id: string; provider: string }>(
+    one<{ account_id: string; provider_id: string; provider: string; email: string }>(
       db,
-      `SELECT c.account_id, c.provider_id, a.provider FROM calendars c JOIN accounts a ON a.id = c.account_id
-       WHERE c.id = ?`,
+      `SELECT c.account_id, c.provider_id, a.provider, a.email FROM calendars c
+       JOIN accounts a ON a.id = c.account_id WHERE c.id = ?`,
       id,
     );
   const remove = async (userId: string, calendarId: string, eventId: string) => {
@@ -263,9 +263,11 @@ export async function writeBookingEvents(
     await remove(prev.hostId, prev.calendarId, prev.eventId);
   }
   if (next && write) {
+    // The account of the host's calendar sends the invitations (connected calendars rule 22).
     if (sameHost && prev?.calendarId && prev.eventId) {
       const cal = calendarOf(prev.calendarId);
       if (!cal) throw new Error("no_calendar");
+      write.organizer = cal.email;
       const ev = await sync
         .pool(next.hostId)
         .get(cal.account_id)
@@ -275,6 +277,8 @@ export async function writeBookingEvents(
     } else {
       const target = writeCalendar(db, next.hostId, next.event.calendarId);
       if (!target) throw new Error("no_calendar");
+      const sender = calendarOf(target.id)?.email;
+      if (sender) write.organizer = sender;
       const ev = await sync
         .pool(next.hostId)
         .get(target.account_id)

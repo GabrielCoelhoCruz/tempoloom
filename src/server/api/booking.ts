@@ -39,6 +39,7 @@ import {
 } from "../booking-team.ts";
 import { all, type Db, one, run, tx } from "../db.ts";
 import { jsonBody, notFound } from "../http.ts";
+import { createItemHours, dropItemHours, itemHoursSchema } from "../item-hours.ts";
 import { limitRefusal } from "../limits.ts";
 import type { Mailer } from "../mail.ts";
 import { getPrefs } from "../meeting-prefs.ts";
@@ -258,11 +259,13 @@ const BRANDINGS = ["sameAsGroup", "default", "none", "custom"] as const;
 const linkChanges = linkInput.partial().extend({
   useRecoveryBuffer: z.boolean().optional(),
   branding: z.enum(BRANDINGS).optional(),
+  /** `itemHours`: new item-specific hours for the person; `hoursSetId` is then ignored. */
   organizers: z
     .array(
       z.object({
         userId: z.string(),
         hoursSetId: z.string().nullable(),
+        itemHours: itemHoursSchema.optional(),
         required: z.boolean(),
         isHost: z.boolean(),
       }),
@@ -271,7 +274,12 @@ const linkChanges = linkInput.partial().extend({
     .optional(),
   pool: z
     .array(
-      z.object({ userId: z.string(), hoursSetId: z.string().nullable(), preferred: z.boolean() }),
+      z.object({
+        userId: z.string(),
+        hoursSetId: z.string().nullable(),
+        itemHours: itemHoursSchema.optional(),
+        preferred: z.boolean(),
+      }),
     )
     .max(50)
     .optional(),
@@ -621,6 +629,20 @@ interface PersonView {
   name: string;
   email: string;
   hoursSetId: string | null;
+  /** The ranges when `hoursSetId` is the person's item-specific hours on the link. */
+  itemHours: WeeklyHours | null;
+}
+
+/** The ranges of an item-specific hours set, or null for a named set or none. */
+function itemWeekly(db: Db, setId: string | null): WeeklyHours | null {
+  const row =
+    setId &&
+    one<{ weekly: string }>(
+      db,
+      "SELECT weekly FROM hours_sets WHERE id = ? AND item_specific = 1",
+      setId,
+    );
+  return row ? (JSON.parse(row.weekly) as WeeklyHours) : null;
 }
 
 /** A link as its owner and co-organizers see it, with its people. */
@@ -635,6 +657,7 @@ function linkView(db: Db, link: LinkRow, oneOffDays: number) {
     userId: p.userId,
     ...user(p.userId),
     hoursSetId: p.hoursSetId,
+    itemHours: itemWeekly(db, p.hoursSetId),
   });
   return {
     ...link,
@@ -656,13 +679,19 @@ function linkView(db: Db, link: LinkRow, oneOffDays: number) {
 
 type Changes = z.infer<typeof linkChanges>;
 
-/** Team rules 1, 3, 9, 12 and 13: who may be on a link and in which role. */
+/**
+ * Team rules 1, 3, 9, 12 and 13: who may be on a link and in which role. A
+ * person's hours are a named set of theirs, or the item-specific hours they
+ * have on this link already (planning-hours.md, item-specific hours).
+ */
 function checkPeople(
   db: Db,
-  ownerId: string,
+  link: LinkRow,
   organizers: NonNullable<Changes["organizers"]>,
   pool: NonNullable<Changes["pool"]>,
 ): void {
+  const ownerId = link.user_id;
+  const current = new Map(linkPeople(db, link.id).map((p) => [p.userId, p.hoursSetId]));
   const ids = [...organizers, ...pool].map((p) => p.userId);
   if (new Set(ids).size !== ids.length) invalid("duplicate_person");
   if (organizers.length === 0 && pool.length === 0) invalid("no_people");
@@ -673,8 +702,15 @@ function checkPeople(
   for (const p of [...organizers, ...pool]) {
     if (!sameTeam(db, ownerId, p.userId)) invalid("not_in_team");
     if (
+      !p.itemHours &&
       p.hoursSetId &&
-      !one(db, "SELECT 1 FROM hours_sets WHERE id = ? AND user_id = ?", p.hoursSetId, p.userId)
+      p.hoursSetId !== current.get(p.userId) &&
+      !one(
+        db,
+        "SELECT 1 FROM hours_sets WHERE id = ? AND user_id = ? AND item_specific = 0",
+        p.hoursSetId,
+        p.userId,
+      )
     ) {
       invalid("unknown_hours");
     }
@@ -851,7 +887,7 @@ export function bookingRoutes(db: Db, now: () => number, oneOffDays: number): Ho
     const sets = all<{ id: string; user_id: string; name: string }>(
       db,
       `SELECT h.id, h.user_id, h.name FROM hours_sets h JOIN team_members m ON m.user_id = h.user_id
-       WHERE m.team_id = ? ORDER BY h.created_at`,
+       WHERE m.team_id = ? AND h.item_specific = 0 ORDER BY h.created_at`,
       team.id,
     );
     return c.json({
@@ -935,7 +971,7 @@ export function bookingRoutes(db: Db, now: () => number, oneOffDays: number): Ho
       linkPeople(db, link.id)
         .filter((p) => p.kind === "pool")
         .map((p) => ({ ...p }));
-    if (b.organizers || b.pool) checkPeople(db, link.user_id, organizers, pool);
+    if (b.organizers || b.pool) checkPeople(db, link, organizers, pool);
     const columns: [string, string | number | null | undefined][] = [
       ["title", b.title],
       ["description", b.description],
@@ -983,6 +1019,12 @@ export function bookingRoutes(db: Db, now: () => number, oneOffDays: number): Ho
         );
       }
       if (b.organizers || b.pool) {
+        const before = linkPeople(db, link.id).map((p) => p.hoursSetId);
+        // New item-specific hours get a new private set: a one-off link may share the old one.
+        for (const p of [...organizers, ...pool]) {
+          if ("itemHours" in p && p.itemHours)
+            p.hoursSetId = createItemHours(db, p.userId, link.title, p.itemHours);
+        }
         run(db, "DELETE FROM booking_link_people WHERE link_id = ?", link.id);
         const add = run.bind(
           null,
@@ -1005,6 +1047,7 @@ export function bookingRoutes(db: Db, now: () => number, oneOffDays: number): Ho
         pool.forEach((p, i) => {
           add(link.id, p.userId, "pool", p.hoursSetId, 1, 0, p.preferred ? 1 : 0, i);
         });
+        for (const id of before) if (id) dropItemHours(db, id);
       }
     });
   }
@@ -1089,7 +1132,9 @@ export function bookingRoutes(db: Db, now: () => number, oneOffDays: number): Ho
     const { link, owner } = editable(c.req.param("id"), c.get("user").id);
     if (!owner) forbidden();
     // Booked events stay (booking-links rule 20).
+    const sets = linkPeople(db, link.id).map((p) => p.hoursSetId);
     run(db, "DELETE FROM booking_links WHERE id = ?", link.id);
+    for (const id of sets) if (id) dropItemHours(db, id);
     return c.body(null, 204);
   });
 
