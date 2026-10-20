@@ -4,7 +4,7 @@ import { sendDueReminders } from "./booking-mail.ts";
 import { clockOf, loadConfig } from "./config.ts";
 import { SecretBox } from "./crypto.ts";
 import { DailyMailWorker } from "./daily-mail.ts";
-import { onConnectionBroken, openDb } from "./db.ts";
+import { exitOnBroken, openDb } from "./db.ts";
 import type { OAuthClient } from "./google/oauth.ts";
 import { parseServiceAccountKey } from "./google/service-account.ts";
 import { createMailer } from "./mail.ts";
@@ -15,7 +15,9 @@ import { WebhookWorker } from "./webhooks.ts";
 const config = loadConfig();
 // One clock for the app and its workers; tests may start it at TEST_CLOCK_START.
 const now = clockOf(config);
-const db = openDb(config.dbPath);
+// A failed ROLLBACK closes the connection: stop taking requests and exit at
+// once, with no drain, so the supervisor restarts the server.
+const db = openDb(config.dbPath, { onBroken: exitOnBroken(() => server.close()) });
 const box = new SecretBox(config.SECRET_KEY);
 const oauth: OAuthClient | undefined =
   config.GOOGLE_CLIENT_ID && config.GOOGLE_CLIENT_SECRET
@@ -84,8 +86,11 @@ const reminders = setInterval(() => {
 }, 60_000);
 
 // Stop taking requests, let queued calendar writes finish, then exit.
+// Concurrent calls keep the highest exit code asked for.
 let stopping = false;
+let exitCode = 0;
 async function shutdown(code = 0) {
+  exitCode = Math.max(exitCode, code);
   if (stopping) return;
   stopping = true;
   server.close();
@@ -95,9 +100,7 @@ async function shutdown(code = 0) {
   await sync.stop();
   await webhooks.stop();
   if (db.isOpen) db.close();
-  process.exit(code);
+  process.exit(exitCode);
 }
 process.once("SIGINT", () => void shutdown());
 process.once("SIGTERM", () => void shutdown());
-// A failed ROLLBACK closes the connection: exit so the supervisor restarts.
-onConnectionBroken(() => void shutdown(1));

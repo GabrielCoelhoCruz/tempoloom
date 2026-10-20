@@ -6,17 +6,38 @@
 // 3. When the ROLLBACK itself fails, both errors must surface and the failure
 //    must be logged.
 // 4. After a failed ROLLBACK no later write may report success while it is
-//    lost in the stuck transaction: the connection is closed and later calls
-//    throw.
+//    lost in the stuck transaction: the connection is closed, later calls
+//    throw "restart the server", and the connection's onBroken runs once.
 // 5. A tx() inside a tx body joins the outer transaction, which commits once.
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it, vi } from "vitest";
-import { tx } from "../../src/server/db.ts";
+import { all, exitOnBroken, one, openDb, run, tx } from "../../src/server/db.ts";
 
 function memDb(): DatabaseSync {
   const db = new DatabaseSync(":memory:");
   db.exec("CREATE TABLE t (x INTEGER)");
   return db;
+}
+
+/** Runs a failing tx() whose ROLLBACK also fails; returns what tx() threw. */
+function breakRollback(db: DatabaseSync): unknown {
+  const exec = db.exec.bind(db);
+  const spy = vi.spyOn(db, "exec").mockImplementation((sql) => {
+    if (sql === "ROLLBACK") throw new Error("disk I/O error");
+    exec(sql);
+  });
+  const log = vi.spyOn(console, "error").mockImplementation(() => {});
+  let thrown: unknown;
+  try {
+    tx(db, () => {
+      throw new Error("body failed");
+    });
+  } catch (err) {
+    thrown = err;
+  }
+  log.mockRestore();
+  spy.mockRestore();
+  return thrown;
 }
 
 describe("tx", () => {
@@ -69,32 +90,44 @@ describe("tx", () => {
 
   it("never loses a later write after a failed ROLLBACK", () => {
     const db = memDb();
-    const exec = db.exec.bind(db);
-    vi.spyOn(db, "exec").mockImplementation((sql) => {
-      if (sql === "ROLLBACK") throw new Error("disk I/O error");
-      exec(sql);
-    });
-    const log = vi.spyOn(console, "error").mockImplementation(() => {});
-    expect(() =>
-      tx(db, () => {
-        throw new Error("body failed");
-      }),
-    ).toThrow(AggregateError);
-    log.mockRestore();
-    vi.mocked(db.exec).mockRestore();
+    breakRollback(db);
+    expect(() => tx(db, () => db.exec("INSERT INTO t VALUES (2)"))).toThrow(/restart the server/);
+    expect(() => run(db, "INSERT INTO t VALUES (3)")).toThrow(/restart the server/);
+    expect(() => one(db, "SELECT 1")).toThrow(/restart the server/);
+    expect(() => all(db, "SELECT 1")).toThrow(/restart the server/);
+  });
 
-    let committed = false;
-    try {
-      tx(db, () => db.exec("INSERT INTO t VALUES (2)"));
-      committed = true;
-    } catch (err) {
-      expect(String(err)).toMatch(/ROLLBACK failed/);
-    }
-    if (committed) {
-      expect(db.isTransaction).toBe(false);
-      expect(db.prepare("SELECT COUNT(*) AS n FROM t").get()).toEqual({ n: 1 });
-    }
-    expect(() => db.prepare("INSERT INTO t VALUES (3)").run()).toThrow();
+  it("calls the connection's onBroken once with the AggregateError", () => {
+    const onBroken = vi.fn();
+    const db = openDb(":memory:", { onBroken });
+    db.exec("CREATE TABLE t (x INTEGER)");
+    const other = openDb(":memory:", { onBroken: vi.fn() });
+    const thrown = breakRollback(db);
+    expect(thrown).toBeInstanceOf(AggregateError);
+    expect(onBroken).toHaveBeenCalledTimes(1);
+    expect(onBroken).toHaveBeenCalledWith(thrown);
+    expect(() => tx(db, () => {})).toThrow(/restart the server/);
+    expect(onBroken).toHaveBeenCalledTimes(1);
+    // The handler belongs to its connection: another connection still works.
+    expect(one(other, "SELECT 1 AS n")).toEqual({ n: 1 });
+  });
+
+  it("exitOnBroken stops the server and exits with code 1 at once", () => {
+    const exit = vi.spyOn(process, "exit").mockImplementation((() => {}) as never);
+    const stop = vi.fn();
+    const onBroken = exitOnBroken(stop);
+    onBroken(new AggregateError([], "x"));
+    expect(stop).toHaveBeenCalledTimes(1);
+    expect(exit).toHaveBeenCalledWith(1);
+    exit.mockClear();
+    // A failing server.close() must not skip the exit.
+    expect(() =>
+      exitOnBroken(() => {
+        throw new Error("close failed");
+      })(new AggregateError([], "x")),
+    ).toThrow("close failed");
+    expect(exit).toHaveBeenCalledWith(1);
+    exit.mockRestore();
   });
 
   it("joins a nested tx() and commits once", () => {
