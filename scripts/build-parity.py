@@ -1227,33 +1227,43 @@ BLOCKED[43] = ("Needs the Google Calendar add-on's developer app and a test acco
 T.update({
     "u46_focus_links": "with offer to booking links off, focus time is hidden from every booking link, also a P1 link (rule 32; offer_to_booking_links)",
     "u46_focus_resched": "reschedule moves a focus event to the first free time at least the chosen delay from now, and it stays there (rule 22)",
+    "u46_focus_deleted": "reschedule does not put a focus event back where the user deleted one of the goal (rules 21, 22)",
     "u46_recovery": "a recovery buffer gives its time to a habit when that is the habit's last slot, and keeps it where the habit has room (buffers rule 18)",
-    "u46_int_cards": "Settings > Integrations shows one card per integration by category; tools without a client on this server show Not configured on this server with Connect disabled (rules 1, 13)",
-    "u46_int_calendar": "the Google Calendar card follows the server's Google client and the Outlook Calendar card is not configured; Suggest a tool opens the server's support address or the project's issue form (rules 2, 13; calendar cards)",
+    "u46_int_cards": "Settings > Integrations shows one card per integration by category; tools Tempoloom does not build yet show Not available yet with Connect disabled (rules 1, 13)",
+    "u46_int_calendar": ("the Google Calendar card follows the server's Google client and offers a CalDAV user no Connect that would sign in as another user; "
+                         "the Outlook Calendar card is not available yet; Suggest a tool opens the server's support address or the project's issue form (rules 2, 13; calendar cards)"),
     "u46_wr_preview": "the weekly report previews next week's calendar by day with the busiest and the lightest day, and lists the top open tasks and next week's habits by priority; each links into the app (rules 8, 9)",
-    "u46_wr_share": "a share action makes a public page of the report's top part: name, week, totals and facts, no event titles; X, LinkedIn and Facebook links carry the page link (rules 10-12, edge case 6)",
+    "u46_wr_share": ("a share link asks first; the confirmed share makes a public noindex page of the report's top part: week, totals and facts, no login name "
+                     "and no event titles; X, LinkedIn and Facebook get the page link; the owner can stop sharing (rules 10-12, edge case 6)"),
 })
 E2E.update({
-    201: ["u46_focus_links"], 205: ["u46_focus_resched"], 232: ["u46_recovery"],
+    201: ["u46_focus_links"], 205: ["u46_focus_resched", "u46_focus_deleted"], 232: ["u46_recovery"],
     635: ["u46_wr_preview"], 636: ["u46_wr_preview"], 637: ["u46_wr_share"],
-    775: ["u46_int_cards"], 776: ["u46_int_calendar"], 783: ["u46_int_calendar"],
+    775: ["u46_int_cards"], 776: ["u46_int_calendar"],
     784: ["u46_int_cards", "u46_int_calendar"],
 })
 E2E_NOTES.update({
     201: "The setting is in the focus time options in Settings; it is on for a new focus goal",
     205: ("The delays are 15 and 30 minutes, 1 to 4 hours and 1 day; the new time is in the focus goal's hours, free of blocking events and other "
-          "Tempoloom events, not the old time, and the moved event is locked there like a move (rule 20)"),
+          "Tempoloom events, not the old time and not a range where the user deleted an event of the goal (rule 21), and the moved event is "
+          "locked there like a move (rule 20). A focus event in progress is not offered the action"),
     232: ("A recovery buffer is the after side of a buffer that is not travel time; it gives way only when no allowed day of the occurrence has "
-          "other room, and a locked buffer does not give way. The rule applies whatever the buffer's priority (rule 18 over rule 17)"),
+          "other room and the habit turns busy there (adaptive or always busy; an always-free habit leaves it, unit test), and a locked buffer "
+          "does not give way. The rule applies whatever the buffer's priority; task events follow rule 17 (buffers-automation.md rule 18 decision)"),
     635: "Next week's events on the primary calendar of the main account, on each workday (Monday to Friday without work hours); days and events link to the planner week of that day",
     636: "The 5 open tasks with the highest priority, then the nearest due date, and the habits with an event next week; each links to its edit form",
-    637: "The email has the four share links; the page is public only after one of them is opened, and shows the top part as it was sent",
-    775: ("Tools with no provider client in Tempoloom (Outlook, Slack, Zoom, Gong, the task apps, the calendar add-on) show Not configured on this "
-          "server; webhooks, Raycast, Zapier and AI tools link to their settings; the connect flow of each tool is in rows 777 to 782"),
+    637: ("Each share link of the email opens a confirm page; only its button makes the page public, so a mail scanner shares nothing. The page "
+          "shows the top part as it was sent, a display name only when the user set one (never an email or a login name; unit test), is noindex, "
+          "and the owner can stop sharing in Settings"),
+    775: ("Tools Tempoloom does not build yet (Outlook, Slack, Zoom, Gong, the task apps, the calendar add-on) show Not available yet; "
+          "webhooks, Raycast, Zapier and AI tools link to their settings; the connect flow of each tool is in rows 777 to 782"),
     776: "The link goes to the server's SUPPORT_URL, else to the project's issue form",
-    783: "Not configured on this server without a Google client; Not connected with a Connect link, Connected or Needs attention with the account's email when the server has one",
-    784: "The Microsoft Graph calendar provider is not built (rows 520 to 536), so the card is always Not configured on this server",
+    784: "The Microsoft Graph calendar provider is not built (rows 520 to 536), so the card is always Not available yet",
 })
+BLOCKED[783] = ("Needs a Google OAuth client and a Google test account to prove the Connected (with the account's email) and Needs attention "
+                "(with Reconnect) states and the connect journey (rows 777 to 782); adding a Google account to a user who signed in with CalDAV "
+                "needs the same to prove, so the card offers no Connect there. The built part has E2E on CalDAV: Not configured on this server "
+                "without a Google client, and Not connected with no Connect that would sign in as another user (\u201c" + T["u46_int_calendar"] + "\u201d)")
 # --- end U46 ---
 
 # Google Calendar proof. docs/e2e-google-run.tsv records a full E2E run on Google

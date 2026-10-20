@@ -1,12 +1,15 @@
 // Settings > Integrations (docs/specs/integrations-overview.md rules 1, 2, 13;
-// Outputs): one card per integration, grouped by category, the "Not configured
-// on this server" state for OAuth tools this server has no client for, the
-// Google Calendar and Outlook Calendar cards, and the "Suggest a tool" link.
+// Outputs): one card per integration, grouped by category, "Not available yet"
+// for tools Tempoloom does not build yet, the Google Calendar card ("Not
+// configured on this server" without a Google client), the Outlook Calendar
+// card, and the "Suggest a tool" link.
 //
 // Ways it can fail, and the check that catches each:
 // - a tool of the table has no card, or a card sits in the wrong group -> card names per group
-// - an unconfigured OAuth card offers Connect                          -> disabled Connect, state text
-// - the Google card ignores the server's Google client                 -> Connect link after a restart with one
+// - a tool that is not built offers Connect, or sends the operator to a
+//   setting that does not exist                                        -> disabled Connect, Not available yet
+// - the Google card ignores the server's Google client                 -> state after a restart with one
+// - the Google card's Connect signs a CalDAV user in as another user   -> no Connect without a Google account
 // - a connected account does not show on its card                      -> CalDAV account label is not on the Google card;
 //                                                                         Google card state per configuration
 // - "Suggest a tool" is missing or ignores the server's support address -> link target before and after
@@ -46,7 +49,7 @@ async function openIntegrations(page: Page) {
   await expect(page.getByRole("heading", { name: "Integrations", level: 1 })).toBeVisible();
 }
 
-test("Settings > Integrations shows one card per integration by category; tools without a client on this server show Not configured on this server with Connect disabled (rules 1, 13)", async ({
+test("Settings > Integrations shows one card per integration by category; tools Tempoloom does not build yet show Not available yet with Connect disabled (rules 1, 13)", async ({
   page,
   signIn,
 }) => {
@@ -60,9 +63,7 @@ test("Settings > Integrations shows one card per integration by category; tools 
     await expect(group.getByTestId("integration-card").locator("h3")).toHaveText(names);
   }
   for (const name of NOT_BUILT) {
-    await expect(card(page, name).getByTestId("integration-state")).toHaveText(
-      "Not configured on this server",
-    );
+    await expect(card(page, name).getByTestId("integration-state")).toHaveText("Not available yet");
     await expect(card(page, name).getByRole("button", { name: "Connect" })).toBeDisabled();
   }
   // Built parts link to their settings.
@@ -79,7 +80,7 @@ test("Settings > Integrations shows one card per integration by category; tools 
   );
 });
 
-test("the Google Calendar card follows the server's Google client and the Outlook Calendar card is not configured; Suggest a tool opens the server's support address or the project's issue form (rules 2, 13; calendar cards)", async ({
+test("the Google Calendar card follows the server's Google client and offers a CalDAV user no Connect that would sign in as another user; the Outlook Calendar card is not available yet; Suggest a tool opens the server's support address or the project's issue form (rules 2, 13; calendar cards)", async ({
   page,
   app,
   signIn,
@@ -91,7 +92,7 @@ test("the Google Calendar card follows the server's Google client and the Outloo
   await expect(google.getByTestId("integration-state")).toHaveText("Not configured on this server");
   await expect(google.getByRole("button", { name: "Connect" })).toBeDisabled();
   await expect(card(page, "Outlook Calendar").getByTestId("integration-state")).toHaveText(
-    "Not configured on this server",
+    "Not available yet",
   );
   const suggest = page.getByRole("link", { name: "Suggest a tool" });
   await expect(suggest).toHaveAttribute(
@@ -106,14 +107,17 @@ test("the Google Calendar card follows the server's Google client and the Outloo
   await app.restart();
   await page.reload();
   await expect(google.getByTestId("integration-state")).toHaveText("Not connected");
-  await expect(google.getByRole("link", { name: "Connect" })).toHaveAttribute(
-    "href",
-    "/auth/google/start",
+  // Google sign-in would make another user; adding a Google account is not built.
+  await expect(google.getByTestId("integration-account")).toHaveText(
+    "Adding a Google account to this sign-in is not available yet.",
   );
+  await expect(google.getByRole("link")).toHaveCount(0);
+  await expect(google.getByRole("button")).toHaveCount(0);
+  await expect(page.locator('a[href^="/auth/google"]')).toHaveCount(0);
   // The CalDAV account is not a Google account.
   await expect(google).not.toContainText("e2e@tempoloom.test");
   await expect(card(page, "Outlook Calendar").getByTestId("integration-state")).toHaveText(
-    "Not configured on this server",
+    "Not available yet",
   );
   await expect(page.getByRole("link", { name: "Suggest a tool" })).toHaveAttribute(
     "href",

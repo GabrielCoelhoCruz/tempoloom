@@ -1,9 +1,11 @@
 // Settings > Integrations (docs/specs/integrations-overview.md rules 1, 2, 13;
-// Outputs): one card per integration, grouped by category. An OAuth tool that
-// this server has no client for shows "Not configured on this server" with
-// Connect disabled; tools that work through API keys, the MCP server or team
-// webhooks link to their settings. The Google Calendar card follows the
-// server's Google client and the user's Google accounts.
+// Outputs): one card per integration, grouped by category. A tool that
+// Tempoloom does not build yet shows "Not available yet" with Connect disabled;
+// tools that work through API keys, the MCP server or team webhooks link to
+// their settings. The Google Calendar card shows "Not configured on this
+// server" without a Google client, else the user's Google accounts. It offers
+// no Connect: Google sign-in would sign in as another user, and adding a Google
+// account to a user who signed in another way is not built yet.
 import type { ComponentChildren } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import { api } from "../lib/api.ts";
@@ -94,7 +96,7 @@ function Card({ tool, google }: { tool: Tool; google: boolean }) {
   const accounts = (me.value?.accounts ?? []).filter((a) => a.provider === "google" && !a.viaGrant);
   let state: string;
   let detail: string | null = null;
-  let action: ComponentChildren;
+  let action: ComponentChildren = null;
   if (tool.name === "Google Calendar" && google) {
     const ok = accounts.filter((a) => a.status === "ok");
     if (ok.length > 0) {
@@ -115,11 +117,7 @@ function Card({ tool, google }: { tool: Tool; google: boolean }) {
       );
     } else {
       state = "Not connected";
-      action = (
-        <a class="button primary" href="/auth/google/start">
-          Connect
-        </a>
-      );
+      detail = "Adding a Google account to this sign-in is not available yet.";
     }
   } else if (tool.settings) {
     state = "Available";
@@ -129,7 +127,7 @@ function Card({ tool, google }: { tool: Tool; google: boolean }) {
       </a>
     );
   } else {
-    state = "Not configured on this server";
+    state = tool.name === "Google Calendar" ? "Not configured on this server" : "Not available yet";
     action = (
       <button type="button" disabled>
         Connect
@@ -160,7 +158,10 @@ export function Integrations() {
   const [google, setGoogle] = useState<boolean | null>(null);
   const [support, setSupport] = useState<string | null>(null);
   useEffect(() => {
-    void api<{ google: boolean }>("GET", "/auth/methods").then((m) => setGoogle(m.google));
+    void api<{ google: boolean }>("GET", "/auth/methods").then(
+      (m) => setGoogle(m.google),
+      () => setGoogle(false),
+    );
     void api<{ supportUrl: string | null }>("GET", "/api/help").then((h) =>
       setSupport(h.supportUrl),
     );
