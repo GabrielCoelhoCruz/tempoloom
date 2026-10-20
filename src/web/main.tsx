@@ -48,6 +48,7 @@ const MeetingChecks = lazyComponent(() =>
 const Automations = lazyComponent(() =>
   import("./views/automations.tsx").then((m) => m.Automations),
 );
+const Priorities = lazyComponent(() => import("./views/priorities.tsx").then((m) => m.Priorities));
 const AutomationForm = lazyComponent(() =>
   import("./views/automation-form.tsx").then((m) => m.AutomationForm),
 );
@@ -57,6 +58,9 @@ const NewTaskDialog = lazyComponent<{ onClose: () => void }>(() =>
   import("./views/task-dialog.tsx").then((m) => m.NewTaskDialog),
 );
 const Alerts = lazyComponent(() => import("./views/alerts.tsx").then((m) => m.Alerts));
+const OAuthConsent = lazyComponent(() =>
+  import("./views/oauth-consent.tsx").then((m) => m.OAuthConsent),
+);
 // The sign-in page is for signed-out visitors only; it loads on demand.
 const Login = lazyComponent(() => import("./views/login.tsx").then((m) => m.Login));
 const CalDavLogin = lazyComponent(() => import("./views/login.tsx").then((m) => m.CalDavLogin));
@@ -76,6 +80,7 @@ const NAV: { href: string; label: string }[] = [
   { href: "/meetings", label: "Meetings" },
   { href: "/meeting-checks", label: "Meeting checks" },
   { href: "/automations", label: "Automations" },
+  { href: "/priorities", label: "Priorities" },
   { href: "/library", label: "Library" },
   { href: "/links", label: "Booking links" },
   { href: "/stats", label: "Stats" },
@@ -153,6 +158,8 @@ function Page() {
       return <MeetingChecks />;
     case "/automations":
       return <Automations />;
+    case "/priorities":
+      return <Priorities />;
     case "/profile":
       return <ProfilePage />;
     default:
@@ -184,6 +191,8 @@ function App() {
   if (me.value === null && path.value.startsWith("/join/"))
     return <JoinPage token={path.value.slice(6)} login={<CalDavLogin />} />;
   if (me.value === null) return <Login />;
+  // An AI tool's OAuth sign-in: the consent page, without the app around it.
+  if (path.value === "/oauth/authorize") return <OAuthConsent />;
   return (
     <div class="shell" data-testid="app-shell">
       <nav class="nav">

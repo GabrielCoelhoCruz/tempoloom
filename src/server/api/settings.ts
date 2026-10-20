@@ -6,6 +6,7 @@ import type { AppEnv } from "../app.ts";
 import { all, type Db, one, run, tx } from "../db.ts";
 import { jsonBody, notFound } from "../http.ts";
 import { instanceLimit, limitMessage } from "../limits.ts";
+import { autoLock, turnedOn } from "../planner/auto-lock.ts";
 import { wakeOrganizers } from "../planner/meetings.ts";
 import { requestRepaint } from "../planner/repaint.ts";
 import { writeCalendar } from "../planner/replan.ts";
@@ -91,6 +92,7 @@ export function settingsRoutes(db: Db, sync: SyncService, now: () => number): Ho
       const message = limitMessage("max_scheduling_window_weeks", windowLimit);
       return c.json({ error: "limit_reached", message }, 400);
     }
+    const before = getSettings(db, user.id).autoLock;
     const parsed = (() => {
       try {
         // manualSince is the server's record of the switch to manual mode, never user input.
@@ -106,6 +108,9 @@ export function settingsRoutes(db: Db, sync: SyncService, now: () => number): Ho
     })();
     if (parsed instanceof Error)
       return c.json({ error: "invalid_body", message: parsed.message }, 400);
+    // LCK-32: a kind turned off and on again locks its current day or week at once.
+    const on = turnedOn(before, parsed.autoLock);
+    if (on.length > 0) autoLock(db, user.id, parsed, now(), on);
     sync.request(user.id);
     return c.json({ settings: parsed });
   });

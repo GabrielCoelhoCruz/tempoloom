@@ -21,39 +21,20 @@
 // - a large import creates everyone at once instead of at a paced rate
 //   (rule 10)                                                                 -> creation times
 // - imported people lose their attributes or land outside the team           -> directory rows, roles
-import type { Page } from "@playwright/test";
 import { addDays } from "../../src/shared/time.ts";
 import { at, BACKEND, EMAIL, expect, managed, test } from "./fixtures.ts";
 import { allEvents, W } from "./helpers.ts";
 import { scim } from "./scim.ts";
-import { openTeam, role, teamOfTwo } from "./team-helpers.ts";
+import {
+  openTeam,
+  role,
+  directoryRow as row,
+  rowShows,
+  setGrant,
+  teamOfTwo,
+} from "./team-helpers.ts";
 
 test.skip(BACKEND === "google", "Calendar grant E2E uses several CalDAV users.");
-
-const row = (p: Page, email: string) =>
-  p.getByTestId("directory").locator(`[data-directory="${email}"]`);
-
-/** Reloads the page until the directory row of `email` contains `text`. */
-async function rowShows(p: Page, email: string, text: string, timeout = 30_000): Promise<void> {
-  await expect(async () => {
-    await p.reload();
-    await expect(row(p, email)).toContainText(text, { timeout: 1000 });
-  }).toPass({ timeout });
-}
-
-async function setGrant(
-  p: Page,
-  g: { url: string; username: string; password: string },
-): Promise<void> {
-  await openTeam(p);
-  const grant = p.getByTestId("calendar-grant");
-  await grant.getByLabel("CalDAV server URL").fill(g.url);
-  await grant.getByLabel("User name").fill(g.username);
-  await grant.getByLabel("Password").fill(g.password);
-  await expect(grant.getByLabel("Calendar home of each person")).toHaveValue("{local}/");
-  await grant.getByRole("button", { name: "Save calendar access" }).click();
-  await expect(grant.getByTestId("grant-saved")).toBeVisible();
-}
 
 test("Calendar access attaches each provisioned person's calendar read-only, reads it on a slow cycle until first sign-in and in real time after it, and writes nothing before it (rules 12, 14-17; T3, T4)", async ({
   page,

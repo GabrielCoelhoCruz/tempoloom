@@ -14,7 +14,7 @@ import { eventTitle, placementState, withState } from "../planner/markers.ts";
 import { openTasks } from "../planner/now.ts";
 import { type ManagedRow, rowWrite } from "../planner/push.ts";
 import { eventDescription, writeCalendar } from "../planner/replan.ts";
-import { insertLocked, nextChunkIndex, writableCalendar, writeLocked } from "../planner/write.ts";
+import { insertLocked, writableCalendar, writeLocked } from "../planner/write.ts";
 import type { ProviderPool } from "../providers/index.ts";
 import { getSettings } from "../settings.ts";
 import { cacheEvent } from "../sync/pull.ts";
@@ -160,7 +160,6 @@ export function taskProgressRoutes(
       const at = Math.floor(now() / FIVE) * FIVE;
       await insertLocked(db, pool, user.id, calendarId, [
         {
-          key: `task:${id}:${nextChunkIndex(db, user.id, id)}`,
           kind: "task",
           sourceId: id,
           start: at,

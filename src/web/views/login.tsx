@@ -100,6 +100,12 @@ export function CalDavLogin() {
   );
 }
 
+/** Google sign-in; from an AI tool's consent page it comes back to that page. */
+const googleStart = () =>
+  location.pathname === "/oauth/authorize"
+    ? `/auth/google/start?return_to=${encodeURIComponent(location.pathname + location.search)}`
+    : "/auth/google/start";
+
 export function Login() {
   const err = new URLSearchParams(location.search).get("login_error");
   const [methods, setMethods] = useState<{ google: boolean } | null>(null);
@@ -117,7 +123,7 @@ export function Login() {
           </p>
         )}
         {methods?.google && (
-          <a class="button primary" href="/auth/google/start">
+          <a class="button primary" href={googleStart()}>
             Sign in with Google
           </a>
         )}

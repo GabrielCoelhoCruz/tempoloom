@@ -10,7 +10,8 @@ import { nextIndexAfter } from "./progress.ts";
 import { KEY_PROP, MANAGED_PROP } from "./push.ts";
 
 export interface LockedEvent {
-  key: string;
+  /** Omitted for a task chunk: the next free chunk key, chosen inside the sync queue. */
+  key?: string;
   kind: "task" | "habit";
   sourceId: string;
   start: number;
@@ -19,6 +20,7 @@ export interface LockedEvent {
   description: string;
   /** The user started this work or logged it (PRG-3, PRG-20); a work block is not started. */
   started?: boolean;
+  visibility?: "private";
 }
 
 /** A calendar of the user that Tempoloom may write to, or undefined. */
@@ -74,6 +76,8 @@ export async function insertLocked(
   const cal = writableCalendar(db, userId, calendarId);
   if (!cal) throw new Error(`Calendar ${calendarId} is not writable`);
   for (const e of events) {
+    // A plan run before this one may have taken the next key of a task.
+    const key = e.key ?? `task:${e.sourceId}:${nextChunkIndex(db, userId, e.sourceId)}`;
     const ev = await pool.get(cal.account_id).insertEvent(cal.provider_id, {
       summary: e.title,
       description: e.description,
@@ -81,7 +85,8 @@ export async function insertLocked(
       end: e.end,
       busy: true,
       colorId: null,
-      privateProps: { [MANAGED_PROP]: "1", [KEY_PROP]: e.key, tl_user: userId },
+      ...(e.visibility ? { visibility: e.visibility } : {}),
+      privateProps: { [MANAGED_PROP]: "1", [KEY_PROP]: key, tl_user: userId },
     });
     cacheEvent(db, cal.id, ev);
     run(
@@ -93,7 +98,7 @@ export async function insertLocked(
       userId,
       cal.id,
       ev.id,
-      e.key,
+      key,
       e.kind,
       e.sourceId,
       e.start,

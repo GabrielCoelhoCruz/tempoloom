@@ -20,14 +20,15 @@ passed in this run.
   The skipped tests need several users, extra calendars, incoming
   invitations or the CalDAV server itself; the Google driver skips them.
 
-`docs/e2e-google-run.tsv` lists every test of the run: status (`passed` or
-`skipped`), test id (`file:line` at the commit above) and title.
+`docs/e2e-google-run.tsv` starts with a line `# commit <sha>` (the commit
+above), then lists every test of the run: status (`passed` or `skipped`), test
+id (`file:line` at the commit above) and title.
 
 To make the file again from the run's Playwright JSON report (a local file, not
 committed):
 
 ```bash
-node scripts/google-run-tsv.ts <report.json> > docs/e2e-google-run.tsv
+node scripts/google-run-tsv.ts <report.json> <commit> > docs/e2e-google-run.tsv
 python3 scripts/build-parity.py
 ```
 
@@ -35,7 +36,33 @@ Each test key in `scripts/build-parity.py` (`T`) is the exact title of one
 test, so a key matches the line with that title. The build stops and names the
 key when a key is not the title of a test in `tests/e2e`, or when it matches
 more than one line. A key with no line was added after the run. A row is
-"done (Google)" only when each of its keys matches a passed test.
+"done (Google)" only when each of its keys matches a passed test whose
+`test(...)` call did not change after the run.
+
+The build compares the `test(...)` call of each passed test at the run commit
+(`git show <commit>:<file>`, found at the test id) with the call that has the
+same title in `tests/e2e` now. It ignores indent and blank lines. When the call
+differs, the test "changed after the Google run" and its rows fall back to
+"done (CalDAV)" with that reason, until a new Google run passes it. The check
+needs the run commit in the clone, so the CI checkout fetches the full history
+(`fetch-depth: 0`).
+
+Limit: the check compares the `test(...)` call only. It does not compare the
+helpers the test calls (for example `addTask` in `tests/e2e/helpers.ts`), hooks
+and file-level calls (`test.beforeEach`, `test.use`, `test.skip`), fixtures, or
+the product code. When one of these changes after the run and the call does not,
+the test keeps its Google claim. Only a new Google run proves those changes on
+Google.
+
+The build reads each `test("...")` call with a small JavaScript tokenizer
+(`scan()` in `scripts/build-parity.py`): it skips strings, template literals,
+comments and regular expressions, so a `test("...")` in a comment is not a test.
+When it cannot read a file (for example an unclosed bracket), the build stops
+with the file and line. Its tests are in `scripts/test_build_parity.py`:
+
+```bash
+python3 -B -m unittest discover -s scripts -p "test_*.py"
+```
 
 ## Passed tests
 

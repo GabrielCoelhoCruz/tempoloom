@@ -311,6 +311,11 @@ label > textarea {
   top: 2px;
   font-size: 10px;
 }
+.ev-pick {
+  background: var(--line);
+  opacity: 0.7;
+  pointer-events: none;
+}
 .ev-drag {
   opacity: 0.85;
   z-index: 4;
@@ -920,4 +925,21 @@ fieldset {
   border-bottom: 1px solid var(--line);
   font-size: 13px;
   white-space: nowrap;
+}
+/* The next-up queue area at the top of the task list (planning-next-up.md NXT-5). */
+.next-up-queue {
+  border: 2px dashed var(--line);
+  border-radius: var(--radius);
+  padding: 4px 8px 8px;
+  margin-bottom: 8px;
+}
+.next-up-queue.over {
+  border-color: var(--accent);
+}
+.next-up-queue h2 {
+  font-size: 14px;
+  margin: 8px 0;
+}
+.task-list {
+  min-height: 32px;
 }

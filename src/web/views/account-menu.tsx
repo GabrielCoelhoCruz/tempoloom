@@ -43,7 +43,7 @@ export function ActingBanner() {
 export function AccountMenu() {
   const [open, setOpen] = useState(false);
   // Connect after the first render, so the planner's cold load does not wait for it.
-  useEffect(() => startLive(() => void loadMe()), []);
+  useEffect(() => startLive(me.value?.live, () => void loadMe()), []);
   // Listen at once, not after paint: an Escape right after opening must close the menu.
   useLayoutEffect(() => {
     if (!open) return;

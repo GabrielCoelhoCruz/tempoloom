@@ -80,21 +80,23 @@ export function delegationRoutes(db: Db, live: LiveHub, now: () => number): Hono
     const user = c.get("user");
     const client = c.req.query("client") ?? "";
     return streamSSE(c, async (stream) => {
-      await stream.writeSSE({ event: "ready", data: "1", retry: 3000 });
-      await new Promise<void>((resolve) => {
-        const off = live.subscribe(user.id, client, () => {
-          stream.writeSSE({ event: "change", data: "1" }).catch(() => {});
-        });
-        const ping = setInterval(
-          () => void stream.write(": ping\n\n").catch(() => {}),
-          KEEP_ALIVE_MS,
-        );
+      // Subscribe before "ready": a change between the two is in the mark or in a signal.
+      const off = live.subscribe(user.id, client, () => {
+        stream.writeSSE({ event: "change", data: live.mark(user.id) }).catch(() => {});
+      });
+      const ping = setInterval(
+        () => void stream.write(": ping\n\n").catch(() => {}),
+        KEEP_ALIVE_MS,
+      );
+      const closed = new Promise<void>((resolve) =>
         stream.onAbort(() => {
           clearInterval(ping);
           off();
           resolve();
-        });
-      });
+        }),
+      );
+      await stream.writeSSE({ event: "ready", data: live.mark(user.id), retry: 3000 });
+      await closed;
     });
   });
 

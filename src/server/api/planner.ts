@@ -10,6 +10,7 @@ import { stripMarker, withState } from "../planner/markers.ts";
 import { mirrorKey, mirrorSource } from "../planner/mirror.ts";
 import { MANAGED_PROP, type ManagedRow, rowWrite } from "../planner/push.ts";
 import { getSettings } from "../settings.ts";
+import { moveTaskStart } from "../sync/edits.ts";
 import { cacheEvent } from "../sync/pull.ts";
 import type { SyncService } from "../sync/service.ts";
 
@@ -347,14 +348,22 @@ export function plannerRoutes(db: Db, sync: SyncService, now: () => number): Hon
       if (row.start_ms <= now()) return "started" as const;
       const end = start + (row.end_ms - row.start_ms);
       const title = row.user_edited ? row.title : withState(markers, row.title, "locked");
-      const ev = await pool
-        .get(row.account_id)
-        .updateEvent(
-          row.provider_id,
-          row.event_id,
-          rowWrite(user.id, row, { start, end, title, busy: true }),
-          row.etag,
-        );
+      // A meeting occurrence keeps the organizer's calendar edits (MEET-02 rule 22).
+      const provider = pool.get(row.account_id);
+      const ev =
+        row.kind === "meeting"
+          ? await provider.editExternal(
+              row.provider_id,
+              row.event_id,
+              { start, end, summary: title, busy: true },
+              row.etag,
+            )
+          : await provider.updateEvent(
+              row.provider_id,
+              row.event_id,
+              rowWrite(user.id, row, { start, end, title, busy: true }),
+              row.etag,
+            );
       cacheEvent(db, row.calendar_id, ev);
       logChange(
         db,
@@ -382,6 +391,7 @@ export function plannerRoutes(db: Db, sync: SyncService, now: () => number): Hon
           row.start_ms,
           row.end_ms,
         );
+        moveTaskStart(db, user.id, row, start);
       }
       run(
         db,
