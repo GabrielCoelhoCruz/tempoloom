@@ -7,19 +7,24 @@ import { CLIENT_ID } from "./api.ts";
 const changes = signal(0);
 let source: EventSource | undefined;
 
-/** Opens the change stream of this page, once. */
-export function startLive(onChange: () => void): void {
+/**
+ * Opens the change stream of this page, once. `mark` is the account's change
+ * mark from the data the page loaded first; the stream starts with the current
+ * mark, so the page reads again only when it missed a change (before the
+ * stream connected, or while it reconnected).
+ */
+export function startLive(mark: string | undefined, onChange: () => void): void {
   if (source) return;
-  source = new EventSource(`/api/live?client=${CLIENT_ID}`);
-  source.addEventListener("change", () => {
+  let seen = mark;
+  const read = (e: MessageEvent<string>) => {
+    if (e.data === seen) return;
+    seen = e.data;
     changes.value++;
     onChange();
-  });
-  // The stream opens after the page's first load and reopens after a drop; a
-  // change made before it (re)connected sent no signal, so the views read again.
-  source.addEventListener("ready", () => {
-    changes.value++;
-  });
+  };
+  source = new EventSource(`/api/live?client=${CLIENT_ID}`);
+  source.addEventListener("ready", read);
+  source.addEventListener("change", read);
 }
 
 /** Calls `load` again after each change to the account by another page or the planner. */
