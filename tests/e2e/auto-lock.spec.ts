@@ -15,6 +15,7 @@
 // - an event placed after the run is locked too, or turning the
 //   setting off and on does not lock the current week at once  -> late habit
 // - the choices are lost after a reload                        -> settings
+// - an ended event loses its lock                              -> Monday habit in the planner
 import { localToUtc } from "../../src/shared/time.ts";
 import { day, openSettings, span } from "./automation-helpers.ts";
 import {
@@ -33,6 +34,7 @@ import { addHabit, addTask, titled, W } from "./helpers.ts";
 import { addMeeting } from "./meeting-helpers.ts";
 
 const LOCK = "🔒";
+const DONE = "✅";
 const SUNDAY = day(-1);
 const twoWeeks = (cal: CalendarDriver) => cal.events(at(W, "00:00"), at(day(14), "00:00"));
 type Evs = Awaited<ReturnType<typeof twoWeeks>>;
@@ -164,16 +166,33 @@ test("auto-lock per kind: from 01:00 a Sunday-start week locks habits, each day 
   );
 
   // Tuesday 01:30: each day locks Tuesday's meeting and focus time; the habit
-  // week ran already, so it does not run again.
+  // week ran already, so it does not run again. Monday's habit has ended: in the
+  // calendar the done marker takes the place of the lock marker (title marker
+  // rule 2), in the same run that locks Tuesday, so the check waits for the done
+  // marker. The lock itself stays: the planner still shows Monday's habit locked.
   app.env.TEST_CLOCK_START = iso(day(1), "01:30");
   await app.restart();
   const tuesday = (l: Evs) => {
-    habits("locked")(l);
+    expect(
+      titled(l, "AT-L4")
+        .filter((e) => local(e.start).slice(0, 10) === day(0))
+        .map((e) => `${span(e)} ${e.summary} ${e.busy ? "busy" : "free"}`),
+    ).toEqual([`${day(0)} 12:00-12:30 ${DONE} AT-L4 busy`]);
+    habits("locked", 1)(l);
     task(l);
     meetings("locked")(l);
     focus("locked")(l);
   };
   await eventually(() => twoWeeks(cal), tuesday, 60_000);
+  const mondayInPlanner = () =>
+    page.evaluate(
+      ([from, to]) =>
+        fetch(`/api/planner/events?from=${from}&to=${to}`)
+          .then((r) => r.json() as Promise<{ events: { title: string; locked: boolean }[] }>)
+          .then((b) => b.events.filter((e) => e.title === "AT-L4").map((e) => e.locked)),
+      [at(day(0), "00:00"), at(day(1), "00:00")] as const,
+    );
+  await expect.poll(mondayInPlanner).toEqual([true]);
 
   // A habit made after the run is not locked, until habits go off and on again.
   await page.reload();
