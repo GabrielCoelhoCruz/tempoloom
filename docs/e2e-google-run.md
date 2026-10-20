@@ -23,6 +23,20 @@ passed in this run.
 `docs/e2e-google-run.tsv` lists every test of the run: status (`passed` or
 `skipped`), test id (`file:line` at the commit above) and title.
 
+To make the file again from the run's Playwright JSON report (a local file, not
+committed):
+
+```bash
+node scripts/google-run-tsv.ts <report.json> > docs/e2e-google-run.tsv
+python3 scripts/build-parity.py
+```
+
+Each test key in `scripts/build-parity.py` (`T`) is the exact title of one
+test, so a key matches the line with that title. The build stops and names the
+key when a key is not the title of a test in `tests/e2e`, or when it matches
+more than one line. A key with no line was added after the run. A row is
+"done (Google)" only when each of its keys matches a passed test.
+
 ## Passed tests
 
 - `tests/e2e/automations.spec.ts:47` the automation list groups every type by priority, filters by type, and keeps focus time in P4 (rules 1, 6-10; PRI-54)
