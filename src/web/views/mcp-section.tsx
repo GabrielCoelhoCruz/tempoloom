@@ -1,11 +1,13 @@
 // The MCP server on the Account page (docs/specs/assistant-mcp-server.md rules
 // 1, 9, 10; integrations-ai-tools.md rules 6-8): the server URL, how AI tools
 // sign in, what they may do here, and the AI tools connected with OAuth, each
-// with a Revoke action.
+// with a Revoke action; setup guides per AI tool (integrations-ai-tools.md rules
+// 10-21).
 import { useCallback, useEffect, useState } from "preact/hooks";
 import { ApiError, api } from "../lib/api.ts";
 import { toLocalInput } from "../lib/format.ts";
 import { zone } from "../lib/state.ts";
+import { McpGuides } from "./mcp-guides.tsx";
 
 interface Grant {
   id: string;
@@ -51,6 +53,7 @@ export function McpSection() {
           ? "AI tools can read your schedule and stage changes in preview mode. Nothing changes on your calendar until you apply it in the planner."
           : "This server gives AI tools read-only access: they can read your schedule, but they cannot propose changes."}
       </p>
+      <McpGuides url={info.url} />
       <h3>Connected AI tools</h3>
       <div class="list" data-testid="oauth-grants">
         {grants?.length === 0 && <p class="status">No AI tool is connected with OAuth.</p>}

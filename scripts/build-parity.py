@@ -635,9 +635,6 @@ E2E_NOTES.update({
     774: "A planner hint with a help page, until the user dismisses it",
     606: "Totals per meeting category over the range, with the busiest and lightest weekday",
 })
-PARTIAL.update({
-    700: "The account page gives the server URL and the API key steps for any MCP client (E2E: \u201can MCP client with an API key reads\u2026\u201d checks the URL); no guide per product (ChatGPT, Claude, Cursor), which integrations-ai-tools.md owns",
-})
 # --- end s7 ---
 
 # --- s8: automation types ---
@@ -1263,6 +1260,15 @@ BLOCKED[949] = "Needs a Claude account (Claude Desktop or the Claude web app) to
 BLOCKED[950] = "Needs Claude Code and an Anthropic account to run claude mcp add with an HTTP URL and the browser sign-in; " + _SERVER
 BLOCKED[952] = "Needs the Cursor app and a Cursor account to add the mcp.json entry and connect; " + _SERVER
 # --- end U34 ---
+
+# --- U57: setup guides per AI tool on the Account page ---
+T["u57_guides"] = "the Account page has a setup guide for ChatGPT, Claude, Claude Code and Cursor with this server's MCP URL, the sign-in steps and troubleshooting, and the URL connects (integrations-ai-tools rules 10-13, 15-20)"
+E2E[700] = ["u57_guides"]
+E2E_NOTES[700] = ("A tab per client (ChatGPT, Claude, Claude Code, Cursor, other MCP clients) with the MCP URL and Copy, the claude mcp add "
+                  "command, the Cursor mcp.json entry, the OAuth steps, troubleshooting and disconnect. The E2E checks the clipboard, "
+                  "that the URL leads to this server's OAuth metadata and consent page, and connects a client with it. The vendor apps "
+                  "themselves are rows 948 to 952")
+# --- end U57 ---
 
 # Google Calendar proof. docs/e2e-google-run.tsv records a full E2E run on Google
 # (a "# commit <sha>" line, then status, test id, title per line; docs/e2e-google-run.md
