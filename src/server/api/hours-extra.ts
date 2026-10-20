@@ -7,6 +7,7 @@ import { defaultEventSettings, readEventSettings } from "../../shared/event-sett
 import type { AppEnv } from "../app.ts";
 import { type Db, one, run, tx } from "../db.ts";
 import { jsonBody, notFound } from "../http.ts";
+import { wakeOrganizers } from "../planner/meetings.ts";
 import type { SyncService } from "../sync/service.ts";
 
 /** Tables whose rows need an hours set; link hours fall back to the meeting hours on their own. */
@@ -71,6 +72,7 @@ export function hoursExtraRoutes(db: Db, sync: SyncService, now: () => number): 
       run(db, "DELETE FROM hours_sets WHERE id = ?", set.id);
     });
     sync.request(user.id, 0);
+    wakeOrganizers(db, sync, user.id);
     return c.body(null, 204);
   });
 

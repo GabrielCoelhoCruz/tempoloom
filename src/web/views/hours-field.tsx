@@ -101,30 +101,40 @@ export function HoursField({
           </span>
         )}
       </span>
-      {chosen === ITEM && (
-        <fieldset class="wide item-hours" data-testid="item-hours">
-          <legend>Item-specific hours</legend>
-          {DAYS.map((d, i) => (
-            <label class="inline" key={d}>
-              <input
-                type="checkbox"
-                name="itemDays"
-                value={i + 1}
-                defaultChecked={item?.days.includes(i + 1) ?? false}
-              />
-              {d}
-            </label>
-          ))}
-          <label class="inline">
-            From
-            <input name="itemFrom" type="time" step={900} defaultValue={item?.from ?? "09:00"} />
-          </label>
-          <label class="inline">
-            To
-            <input name="itemTo" type="time" step={900} defaultValue={item?.to ?? "17:00"} />
-          </label>
-        </fieldset>
-      )}
+      {chosen === ITEM && <ItemHoursFields initial={item} />}
     </>
+  );
+}
+
+/** The days and one time range of item-specific hours; itemHoursFrom() reads them. */
+export function ItemHoursFields({
+  initial,
+}: {
+  /** The range the fields start with; none means 09:00-17:00 on no days. */
+  initial?: ItemRange | undefined;
+}) {
+  return (
+    <fieldset class="wide item-hours" data-testid="item-hours">
+      <legend>Item-specific hours</legend>
+      {DAYS.map((d, i) => (
+        <label class="inline" key={d}>
+          <input
+            type="checkbox"
+            name="itemDays"
+            value={i + 1}
+            defaultChecked={initial?.days.includes(i + 1) ?? false}
+          />
+          {d}
+        </label>
+      ))}
+      <label class="inline">
+        From
+        <input name="itemFrom" type="time" step={900} defaultValue={initial?.from ?? "09:00"} />
+      </label>
+      <label class="inline">
+        To
+        <input name="itemTo" type="time" step={900} defaultValue={initial?.to ?? "17:00"} />
+      </label>
+    </fieldset>
   );
 }

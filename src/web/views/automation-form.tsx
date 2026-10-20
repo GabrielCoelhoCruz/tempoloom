@@ -35,7 +35,11 @@ type Row = Record<string, unknown> & {
   hours_set_id?: string;
 };
 
-const KINDS: Record<SettingsKind, { name: string; list: string; key: string }> = {
+// Flexible meetings have their own page with these settings (meetings.tsx).
+const KINDS: Record<
+  Exclude<SettingsKind, "meeting">,
+  { name: string; list: string; key: string }
+> = {
   habit: { name: "habit", list: "/api/habits", key: "habits" },
   focus_time: { name: "focus time", list: "/api/focus", key: "focus" },
   buffer: { name: "buffer", list: "/api/buffers", key: "buffers" },
@@ -476,7 +480,7 @@ function rulesBody(
 
 export function AutomationForm() {
   const [, , mode, type, itemId] = path.value.split("/");
-  const kind = (type && type in KINDS ? type : null) as SettingsKind | null;
+  const kind = (type && type in KINDS ? type : null) as keyof typeof KINDS | null;
   const id = mode === "edit" ? (itemId ?? "") : null;
   const template = entry(new URLSearchParams(location.search).get("template"));
   const preset = template?.kind === "buffer" ? template.preset : null;

@@ -1188,4 +1188,11 @@ export const MIGRATIONS: readonly string[] = [
   ALTER TABLE oauth_states ADD COLUMN reconnect_account_id TEXT;
   ALTER TABLE mirror_policies DROP COLUMN no_reply_busy;
   `,
+  // 33: event settings of a flexible meeting (meetings-flexible.md visibility,
+  // reminders, targetCalendar).
+  `
+  ALTER TABLE meetings ADD COLUMN event_settings TEXT NOT NULL DEFAULT '{}';
+  -- The attendees' meeting hours and time zones the last plan used (rule 11).
+  ALTER TABLE meetings ADD COLUMN attendee_hours TEXT NOT NULL DEFAULT '';
+  `,
 ];
