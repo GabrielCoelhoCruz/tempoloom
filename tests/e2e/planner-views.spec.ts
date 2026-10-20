@@ -6,6 +6,8 @@
 // - the filter shows the wrong days, or forgets the choice on reload  -> day columns, events
 // - a busy all-day day has no pattern, or a free one has it          -> day-busy class, reload
 // - "view as" shows free events or private titles                    -> event boxes and text
+// - "view as" leaves open details, the now line or the conflicts
+//   panel with titles in them                                        -> drawer, now line, conflicts
 // - a hidden calendar still shows, stops blocking, or is disconnected -> boxes, Radicale, settings
 // - two panels show at once                                          -> panel visibility
 import type { Page } from "@playwright/test";
@@ -143,6 +145,49 @@ test("view as others hides free events and the details of private events (PLN-6)
   await page.getByLabel("View as").selectOption({ label: "Others" });
   await expect(box(page, "AT-Doctor")).toHaveCount(0);
   await expect(page.locator(`.ev[data-start="${at(day(1), "14:00")}"]`)).toHaveText(/^Busy/);
+});
+
+test("view as others closes the open event details and the conflicts panel, and the now line shows a private meeting as busy (PLN-6)", async ({
+  page,
+  cal,
+  signIn,
+}) => {
+  const ics = (t: number) => new Date(t).toISOString().replace(/[-:]|\.\d{3}/g, "");
+  const soon = Math.ceil(Date.now() / 60_000) * 60_000 + 30 * 60_000;
+  await putEvent(cal.calendarId, [
+    `DTSTART:${ics(soon)}`,
+    `DTEND:${ics(soon + 30 * 60_000)}`,
+    "SUMMARY:AT-Secret call",
+    "LOCATION:https://meet.example.test/secret",
+    "CLASS:PRIVATE",
+  ]);
+  await cal.addEvent({ title: "AT-Clash A", start: at(day(1), "10:00"), end: at(day(1), "11:00") });
+  await cal.addEvent({ title: "AT-Clash B", start: at(day(1), "10:30"), end: at(day(1), "11:30") });
+  await signIn();
+  await openWeek(page);
+  const next = page.getByTestId("now-bar").getByTestId("next-meeting");
+  await expect(next).toContainText("Next: AT-Secret call");
+  const viewAs = page.getByLabel("View as");
+
+  // Open details of an event, then switch: the details close.
+  await box(page, "AT-Clash A").click();
+  await expect(page.getByTestId("event-drawer")).toContainText("AT-Clash A");
+  await viewAs.selectOption({ label: "Others" });
+  await expect(page.getByTestId("event-drawer")).toHaveCount(0);
+  // The now line shows the private meeting as busy, with no link.
+  await expect(next).toContainText("Next: Busy");
+  await expect(next.getByRole("link", { name: "Join" })).toHaveCount(0);
+  await expect(page.getByTestId("planner")).not.toContainText("AT-Secret");
+  await expect(page.getByRole("button", { name: "1 conflict" })).toHaveCount(0);
+
+  // As the user again: the conflicts panel opens with both titles; switching closes it.
+  await viewAs.selectOption({ label: "Me" });
+  await expect(next).toContainText("Next: AT-Secret call");
+  await page.getByRole("button", { name: "1 conflict" }).click();
+  await expect(page.getByTestId("conflicts")).toContainText("AT-Clash A and AT-Clash B overlap");
+  await viewAs.selectOption({ label: "Others" });
+  await expect(page.getByTestId("conflicts")).toHaveCount(0);
+  await expect(page.getByTestId("planner")).not.toContainText("AT-Secret");
 });
 
 test("the calendars panel hides a connected calendar from the planner; it still blocks time and stays connected (PLN-20; AT 5)", async ({

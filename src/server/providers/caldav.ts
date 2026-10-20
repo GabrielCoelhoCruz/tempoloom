@@ -375,6 +375,8 @@ export class CalDavProvider implements CalendarProvider {
   #calendars = new Map<string, DAVCalendar>();
   /** Write access of each listed calendar, when the server reports it. */
   #access = new Map<string, "write" | "read" | "none">();
+  /** Whether the server mails guests (calendar-auto-schedule), read once. */
+  #scheduling: Promise<boolean> | undefined;
 
   constructor(creds: CalDavCredentials, zone: string, now: () => number = Date.now) {
     this.#creds = creds;
@@ -715,6 +717,22 @@ export class CalDavProvider implements CalendarProvider {
     const has = (name: string) => new RegExp(`<(?:[\\w-]+:)?${name}\\s*/?>`, "i").test(set);
     if (has("all") || has("write") || has("write-content") || has("bind")) return "write";
     return has("read") ? "read" : "none";
+  }
+
+  /**
+   * A server that has calendar-auto-schedule in its DAV header (RFC 6638)
+   * mails the guests on each change of an event with attendees.
+   */
+  notifiesGuests(calendarId: string): Promise<boolean> {
+    this.#scheduling ??= fetch(calendarId, {
+      method: "OPTIONS",
+      headers: {
+        authorization: `Basic ${Buffer.from(`${this.#creds.username}:${this.#creds.password}`).toString("base64")}`,
+      },
+    })
+      .then((res) => /\bcalendar-auto-schedule\b/i.test(res.headers.get("dav") ?? ""))
+      .catch(() => true);
+    return this.#scheduling;
   }
 
   async editExternal(

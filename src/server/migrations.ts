@@ -1197,10 +1197,21 @@ export const MIGRATIONS: readonly string[] = [
   `,
   // 34: the visibility of Tempoloom's own events as the calendar has it, so a
   // privacy edit of a meeting occurrence is written back (MEET-02 rule 22).
-  // Other events keep NULL. NULL also means "not read since this migration":
-  // no write-back until the next read of that event, so no burst of writes.
+  // Since migration 36 every event keeps its privacy (PLN-6). NULL means "not
+  // read since this migration": no write-back until the next read of that
+  // event, so no burst of writes.
   `
   ALTER TABLE events ADD COLUMN own_visibility TEXT
     CHECK (own_visibility IN ('default', 'public', 'private', 'confidential'));
+  `,
+  // 36 (35 on main is auto_lock_runs): the planner's "view as" reads the
+  // privacy of every event (planning-planner.md PLN-6), so each calendar is
+  // read in full once to fill it for events read before. Event tips
+  // (planning-event-content.md CNT-15) stay off for existing users, so the
+  // upgrade rewrites no event; new users get them on.
+  `
+  UPDATE calendars SET sync_token = NULL;
+  UPDATE users SET settings = json_set(settings, '$.eventTips', json('false'))
+    WHERE json_valid(settings) AND json_type(settings, '$.eventTips') IS NULL;
   `,
 ];

@@ -112,6 +112,13 @@ export function Planner() {
   const dayCount = DAY_COUNT[settings?.plannerDays ?? "all-days"];
   const hidden = useMemo(() => new Set(settings?.hiddenCalendars ?? []), [settings]);
   const others = viewAs.value === "others";
+  // PLN-6: others see no event details and no conflict titles, so a switch
+  // closes the open details and the conflicts panel.
+  useEffect(() => {
+    if (!others) return;
+    setSelectedEvent(null);
+    if (sidePanel.value === "details" || sidePanel.value === "conflicts") sidePanel.value = null;
+  }, [others]);
   // The drawer names calendars as the calendar list does; that list loads on the first open.
   const external = selected?.kind === "external";
   useEffect(() => {
@@ -339,7 +346,7 @@ export function Planner() {
           </ul>
         </details>
       )}
-      {selected && sidePanel.value === "details" && (
+      {selected && !others && sidePanel.value === "details" && (
         <aside class="drawer" data-testid="event-drawer">
           <h2>{selected.title}</h2>
           <div class="status">
