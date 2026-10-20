@@ -118,7 +118,9 @@ function checkExternal(db: Db, userId: string, attendees: { email: string }[]) {
   );
   const why = "Recurring client meetings take external guests only.";
   for (const { email } of attendees) {
-    if (own.has(domainOf(email)))
+    const d = domainOf(email);
+    // A subdomain counts too: eu.acme.com for a user at acme.com.
+    if ([...own].some((o) => d === o || d.endsWith(`.${o}`)))
       badRequest("attendees", `${email.toLowerCase()} is on your own domain. ${why}`);
     if (
       one(

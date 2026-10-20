@@ -510,27 +510,27 @@ export function LinkEditor({
   const [locations, setLocations] = useState<LocationOption[]>(
     link.locations.length > 0 ? link.locations : [{ kind: "custom", value: "" }],
   );
-  const [calendars, setCalendars] = useState<WritableCalendar[]>([]);
+  const [listed, setListed] = useState<(WritableCalendar & { writable: number })[]>([]);
+  const calendars = listed.filter((c) => c.writable);
   // The saved calendar stays chosen and is sent only when the owner changes it,
   // so a save before the list loads, or when it fails to load, keeps it.
   const [calendarId, setCalendarId] = useState(link.calendar_id ?? "");
   useEffect(() => {
     void api<{ calendars: (WritableCalendar & { writable: number })[] }>("GET", "/api/calendars")
-      .then((r) => setCalendars(r.calendars.filter((c) => c.writable)))
+      .then((r) => setListed(r.calendars))
       .catch(() => undefined);
   }, []);
   // The added account whose primary calendar gets the events (connected calendars rule 22).
   const mainAccount = calendars.find((c) => c.main)?.account_id;
   const mainEmail = calendars.find((c) => c.main)?.email;
-  const accounts = [...new Map(calendars.map((c) => [c.account_id, c.email]))].filter(
-    ([id]) => id !== mainAccount,
-  );
-  const chosenAccount = calendars.find((c) => c.id === calendarId)?.account_id;
+  // A saved calendar that is read-only now still shows its own account.
+  const saved = listed.find((c) => c.id === calendarId);
+  const chosenAccount = saved?.account_id;
+  const accounts = [
+    ...new Map([...calendars, ...(saved ? [saved] : [])].map((c) => [c.account_id, c.email])),
+  ].filter(([id]) => id !== mainAccount);
   // The saved calendar's account is gone: show that, not the main account (accounts rule 19).
-  const removed =
-    link.targetError !== null &&
-    calendarId === (link.calendar_id ?? "") &&
-    !calendars.some((c) => c.id === calendarId);
+  const removed = link.targetError !== null && calendarId === (link.calendar_id ?? "") && !saved;
   // Main and hidden links share the main page URL; a group has its own (sharing rule 5).
   const urlPage = (p: string) => (p === "main" || p === "hidden" ? "" : p);
   const [error, setError] = useState<string | null>(null);

@@ -1790,6 +1790,8 @@ export function publicBookingRoutes(
         );
       } catch (err) {
         if (noCalendar(err)) return { error: "no_event" as const };
+        if (err instanceof Error && err.message === "account_disconnected")
+          return { error: "account_disconnected" as const };
         throw err;
       }
       // A moved booking gets its reminder again for the new time (rule 21).
@@ -1837,7 +1839,11 @@ export function publicBookingRoutes(
       });
       return { start, end, assignee: contact(db, plan.assignee) };
     });
-    if ("error" in result) return c.json(result, result.error === "slot_taken" ? 409 : 500);
+    if ("error" in result)
+      return c.json(
+        result,
+        result.error === "slot_taken" || result.error === "account_disconnected" ? 409 : 500,
+      );
     return c.json(result);
   });
 

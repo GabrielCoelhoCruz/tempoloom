@@ -268,17 +268,12 @@ export async function writeBookingEvents(
   if (prev?.calendarId && prev.eventId && !sameHost) {
     await remove(prev.hostId, prev.calendarId, prev.eventId);
   }
-  // The old event's account was removed or is disconnected: the booking moves
-  // to a new event, so the booker can still change it (connected calendars rule 19).
+  // The old event's account was removed: the booking moves to a new event, so
+  // the booker can still change it. A disconnected account still holds the old
+  // event, which Tempoloom cannot delete now: the move waits for the reconnect,
+  // or the booking would show twice after it (connected calendars rules 19, 22).
   const old = sameHost && prev?.calendarId ? calendarOf(prev.calendarId) : undefined;
-  if (sameHost && prev?.calendarId && old?.status !== "ok") {
-    run(
-      db,
-      "DELETE FROM events WHERE calendar_id = ? AND event_id = ?",
-      prev.calendarId,
-      prev.eventId,
-    );
-  }
+  if (old && old.status !== "ok") throw new Error("account_disconnected");
   if (next && write) {
     // The account of the host's calendar sends the invitations (connected calendars rule 22).
     if (sameHost && prev?.calendarId && prev.eventId && old?.status === "ok") {

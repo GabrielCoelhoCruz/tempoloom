@@ -141,9 +141,11 @@ kind of event.
     the link's calendar is the organizer of each booked event. When that
     account is disconnected or removed, the link shows the error (rule 19)
     and takes no new bookings until the user picks another account; it does
-    not fall back to the main calendar. A booking already on a removed or
-    disconnected account can still be moved: the new time goes to the
-    link's calendar, or to the main calendar while the link has none.
+    not fall back to the main calendar. A booking already on a removed
+    account can still be moved: the new time goes to the link's calendar, or
+    to the main calendar while the link has none. A booking on a disconnected
+    account cannot move until the account is reconnected, because Tempoloom
+    cannot remove the old event there; the booker sees why.
 23. Focus time and buffers: the evidence names no target choice. Proposed:
     the main calendar.
 24. Mirrored copies: Tempoloom writes them to the destination calendar of the

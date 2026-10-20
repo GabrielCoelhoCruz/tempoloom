@@ -10,7 +10,9 @@
 // - the choice is lost on reload;
 // - a disconnected or removed account falls back to the main calendar without a
 //   word, the editor shows "Main account" for it, or a booking on a removed
-//   account can no longer be moved (rule 19).
+//   account can no longer be moved (rule 19);
+// - a booking on a disconnected account moves to a new event while the old one
+//   stays on that calendar, so it shows twice after the reconnect.
 import type { Page } from "@playwright/test";
 import { addDays } from "../../src/shared/time.ts";
 import { accountRow, addCalDavAccount, openAccount } from "./delegation-helpers.ts";
@@ -93,7 +95,7 @@ test("a booking link writes its events to the primary calendar of the added acco
 const lostTarget = (page: Page) =>
   page.locator('[data-link-title="Consult"]').getByTestId("link-target-error");
 
-test("a link whose account for booked events is disconnected shows the error, keeps showing that account, and takes no bookings until the user picks another account (accounts rules 19, 22)", async ({
+test("a link whose account for booked events is disconnected shows the error, keeps showing that account, and takes no bookings until the user picks another account; a booking on that account moves only after the reconnect, and stays one event (accounts rules 19, 22)", async ({
   page,
   browser,
   cal,
@@ -125,7 +127,15 @@ test("a link whose account for booked events is disconnected shows the error, ke
     await expect(lostTarget(page)).toHaveCount(0);
     const v = await visitor(browser);
     await v.goto("/book/yara/consult");
-    await expect(slot(v, at(W, "10:00"))).toBeVisible();
+    await book(v, at(W, "10:00"), "Bob", "bob@example.com");
+    const bob = () =>
+      allEvents(extra.cal).then((l) =>
+        l.filter((e) => e.summary === "Consult with Bob").map((e) => local(e.start)),
+      );
+    await eventually(bob, (l) => expect(l).toEqual([`${W} 10:00`]));
+    await v.getByTestId("manage-link").click();
+    await expect(v.getByTestId("manage-page")).toBeVisible();
+    const manage = v.url();
 
     // The server no longer takes the stored password.
     setPassword(six.username, 6, `new-${Date.now()}`);
@@ -154,6 +164,19 @@ test("a link whose account for booked events is disconnected shows the error, ke
     );
     await expect(v.getByTestId("times")).toHaveCount(0);
 
+    // Bob's event is on the disconnected account, which Tempoloom cannot change now:
+    // the move is refused with the reason, and nothing is written.
+    const wed = addDays(W, 2);
+    await v.goto(manage);
+    await v.getByRole("button", { name: "Reschedule" }).click();
+    await slot(v, at(wed, "14:00")).click();
+    await expect(v.getByTestId("manage-page").locator("p.status")).toHaveText(
+      "This booking cannot move now: the organizer's calendar account that holds it is disconnected. Try again later, or ask the organizer.",
+    );
+    expect(
+      (await allEvents(cal)).filter((e) => e.summary === "Consult with Bob").map((e) => e.start),
+    ).toEqual([]);
+
     // Another account: the error goes and the link takes bookings again, on the main calendar.
     await ed
       .getByLabel("Account for booked events")
@@ -162,14 +185,36 @@ test("a link whose account for booked events is disconnected shows the error, ke
     await page.reload();
     await expect(lostTarget(page)).toHaveCount(0);
     await v.goto("/book/yara/consult");
-    await book(v, at(W, "10:00"), "Ann", "ann@example.com");
+    await book(v, at(addDays(W, 1), "10:00"), "Ann", "ann@example.com");
     await eventually(
       () => allEvents(cal),
       (l) =>
         expect(
           l.filter((e) => e.summary === "Consult with Ann").map((e) => local(e.start)),
-        ).toEqual([`${W} 10:00`]),
+        ).toEqual([`${addDays(W, 1)} 10:00`]),
     );
+
+    // After the reconnect Bob moves the booking: one event, at the new time.
+    // The server takes the old password again, which the test's own reader uses.
+    setPassword(six.username, 6, six.password);
+    await openAccount(page);
+    await accountRow(page, extra.email).getByRole("button", { name: "Reconnect" }).click();
+    const form = page.getByTestId("reconnect-form");
+    await form.getByLabel(`Password for ${extra.email}`).fill(six.password);
+    await form.getByRole("button", { name: "Reconnect account" }).click();
+    await expect(page.getByTestId("account-message")).toHaveText(
+      `${extra.email} is connected again.`,
+    );
+    await v.goto(manage);
+    await v.getByRole("button", { name: "Reschedule" }).click();
+    await slot(v, at(wed, "14:00")).click();
+    await expect(v.getByText("Your booking has a new time.")).toBeVisible();
+    await eventually(bob, (l) => expect(l).toEqual([`${wed} 14:00`]));
+    await planNow(page);
+    expect(await bob()).toEqual([`${wed} 14:00`]);
+    expect(
+      (await allEvents(cal)).filter((e) => e.summary === "Consult with Bob").map((e) => e.start),
+    ).toEqual([]);
   } finally {
     setPassword(six.username, 6, six.password);
   }

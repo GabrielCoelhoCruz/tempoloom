@@ -4,17 +4,27 @@
 // (library entry 32).
 
 /** Services with one address domain per country, such as yahoo.co.uk or gmx.at. */
-const FAMILIES = new Set(["gmail", "yahoo", "hotmail", "outlook", "live", "msn", "gmx", "yandex"]);
+const FAMILIES = new Set([
+  "gmail",
+  "googlemail",
+  "yahoo",
+  "ymail",
+  "aol",
+  "hotmail",
+  "outlook",
+  "live",
+  "msn",
+  "windowslive",
+  "gmx",
+  "yandex",
+]);
 
 /** A country or generic ending: de, com, co.uk, com.br. */
 const ENDING = /^(?:[a-z]{2,3}|(?:co|com|net|org)\.[a-z]{2})$/;
 
 const SERVICES = new Set([
   // International
-  "googlemail.com",
-  "aol.com",
   "aim.com",
-  "ymail.com",
   "rocketmail.com",
   "icloud.com",
   "me.com",
@@ -67,6 +77,7 @@ const SERVICES = new Set([
   "home.nl",
   "planet.nl",
   "btinternet.com",
+  "btopenworld.com",
   "sky.com",
   "virginmedia.com",
   "ntlworld.com",

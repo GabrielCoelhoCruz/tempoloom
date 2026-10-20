@@ -82,6 +82,14 @@ describe("library entry 32: guests from outside only", () => {
     expect(await add("client@example.com")).toBe("saved");
   });
 
+  it("refuses a guest on a subdomain of the user's own domain, not on a look-alike domain", async () => {
+    const { add } = setup();
+    expect(await add("kim@eu.acme.example")).toContain(
+      "kim@eu.acme.example is on your own domain.",
+    );
+    expect(await add("kim@notacme.example")).toBe("saved");
+  });
+
   it("does not take the name of a subscribed ICS feed as an own mail domain", async () => {
     const { add, account } = setup();
     account("ics", "jane@client.example");
@@ -101,6 +109,10 @@ describe("library entry 32: guests from outside only", () => {
     ["owner@mail.com", "client@mail.com"],
     ["owner@hotmail.co.uk", "client@hotmail.co.uk"],
     ["owner@outlook.de", "client@outlook.de"],
+    ["owner@aol.co.uk", "client@aol.co.uk"],
+    ["owner@aol.de", "client@aol.de"],
+    ["owner@googlemail.co.uk", "client@googlemail.co.uk"],
+    ["owner@btopenworld.com", "client@btopenworld.com"],
   ])("a user at %s may invite %s: a public mail service is no own domain", async (me, guest) => {
     const { add } = setup(me);
     expect(await add(guest)).toBe("saved");

@@ -124,13 +124,14 @@ have none (`automations-overview.md`), so their presets set no priority.
     opens the weekly no-meeting day on the Settings page and shows "Added"
     while that day exists.
 12. Tempoloom decision: entry 32 refuses a guest on the user's own mail
-    domain (the domains of the main email and the added calendar accounts;
-    not ICS feeds, and not public mail services) or a person of the user's
-    team, and names the guest. Users of other teams are not checked, so the
-    refusal does not show who has an account on the instance. Entry 38 asks for an old and
-    a new calendar and saves both policies in one save. Entry 39 asks for the
-    job calendars and saves one policy per ordered pair in one save. A pair
-    that is refused (`sync-calendar-mirroring.md` edge case 14) saves nothing.
+    domain or its subdomains (the domains of the main email and the added
+    calendar accounts; not ICS feeds, and not public mail services) or a
+    person of the user's team, and names the guest. Users of other teams are
+    not checked, so the refusal does not show who has an account on the
+    instance. Entry 38 asks for an old and a new calendar and saves both
+    policies in one save. Entry 39 asks for the job calendars and saves one
+    policy per ordered pair in one save. A pair that is refused
+    (`sync-calendar-mirroring.md` edge case 14) saves nothing.
 
 ## Outputs
 

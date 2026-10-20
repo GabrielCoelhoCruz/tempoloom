@@ -860,11 +860,21 @@ function Manage({ token }: { token: string }) {
             void api("POST", `/pub/bookings/${token}/reschedule`, {
               start: t.start,
               timeZone: view.zone,
-            }).then(() => {
-              setMode("view");
-              setMessage("Your booking has a new time.");
-              load();
             })
+              .then(() => {
+                setMode("view");
+                setMessage("Your booking has a new time.");
+                load();
+              })
+              .catch((err) => {
+                setMode("view");
+                setMessage(
+                  err instanceof ApiError &&
+                    (err.body as { error?: string } | null)?.error === "account_disconnected"
+                    ? "This booking cannot move now: the organizer's calendar account that holds it is disconnected. Try again later, or ask the organizer."
+                    : "The new time could not be saved. Please try again.",
+                );
+              })
           }
         />
       )}

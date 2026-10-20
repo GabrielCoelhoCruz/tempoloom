@@ -1220,7 +1220,7 @@ T.update({
     "u50_lib38": "library entry 38 saves a two-way busy-only mirror between the old and the new calendar in one save, and copies never chain (entry 38 preset)",
     "u50_lib39": "library entry 39 saves one busy-only policy per ordered pair of the chosen job calendars in one save; each event gets one copy on every other calendar; a set with a pair that exists saves nothing (entry 39 preset)",
     "u50_account": "a booking link writes its events to the primary calendar of the added account chosen on the link, with that account as organizer; the main calendar is the default (accounts rule 22)",
-    "u50_account_lost": "a link whose account for booked events is disconnected shows the error, keeps showing that account, and takes no bookings until the user picks another account (accounts rules 19, 22)",
+    "u50_account_lost": "a link whose account for booked events is disconnected shows the error, keeps showing that account, and takes no bookings until the user picks another account; a booking on that account moves only after the reconnect, and stays one event (accounts rules 19, 22)",
     "u50_account_removed": "a link whose account for booked events is removed shows the error and the removed account; a booking on that account can still be moved (accounts rules 19, 22)",
 })
 E2E.update({
@@ -1232,10 +1232,10 @@ E2E.update({
 })
 E2E_NOTES.update({
     76: "Habits, focus time, flexible meetings and booking links offer item-specific hours: weekdays with one range; on a booking link each organizer and pool member has their own",
-    750: "The entry refuses a guest on one of the user's own mail domains (the main email and added calendar accounts; ICS feeds and public mail services excepted) or a person of the user's team, and names the guest; users of other teams are not checked, so the refusal reveals no account",
+    750: "The entry refuses a guest on one of the user's own mail domains or their subdomains (the main email and added calendar accounts; ICS feeds and public mail services excepted) or a person of the user's team, and names the guest; users of other teams are not checked, so the refusal reveals no account",
     756: "The entry asks for an old and a new calendar and saves both busy-only policies in one save",
     757: "The entry asks for the job calendars and saves one busy-only policy per ordered pair in one save; a refused pair saves nothing",
-    507: "The link's \u201cAccount for booked events\u201d sets its calendar to that account's primary calendar; the account of that calendar is the event organizer. When that account is disconnected or removed, the link shows the error and takes no new bookings until the user picks another account; a booking on a removed account can still be moved, to the main calendar",
+    507: "The link's \u201cAccount for booked events\u201d sets its calendar to that account's primary calendar; the account of that calendar is the event organizer. When that account is disconnected or removed, the link shows the error and takes no new bookings until the user picks another account; a booking on a removed account can still be moved, to the main calendar; a booking on a disconnected account moves only after the reconnect, and stays one event",
 })
 # --- end U50 ---
 
