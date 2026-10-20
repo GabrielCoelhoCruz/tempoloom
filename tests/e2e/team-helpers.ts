@@ -72,3 +72,35 @@ export async function teamOfTwo(
   await expect(status(page, b.email)).toHaveText("active");
   return pb;
 }
+
+/** The directory row of a person on the team page. */
+export const directoryRow = (p: Page, email: string) =>
+  p.getByTestId("directory").locator(`[data-directory="${email}"]`);
+
+/** Reloads the page until the directory row of `email` contains `text`. */
+export async function rowShows(
+  p: Page,
+  email: string,
+  text: string,
+  timeout = 30_000,
+): Promise<void> {
+  await expect(async () => {
+    await p.reload();
+    await expect(directoryRow(p, email)).toContainText(text, { timeout: 1000 });
+  }).toPass({ timeout });
+}
+
+/** Saves the team's CalDAV calendar access (admin-sso-provisioning.md rule 12). */
+export async function setGrant(
+  p: Page,
+  g: { url: string; username: string; password: string },
+): Promise<void> {
+  await openTeam(p);
+  const grant = p.getByTestId("calendar-grant");
+  await grant.getByLabel("CalDAV server URL").fill(g.url);
+  await grant.getByLabel("User name").fill(g.username);
+  await grant.getByLabel("Password").fill(g.password);
+  await expect(grant.getByLabel("Calendar home of each person")).toHaveValue("{local}/");
+  await grant.getByRole("button", { name: "Save calendar access" }).click();
+  await expect(grant.getByTestId("grant-saved")).toBeVisible();
+}
