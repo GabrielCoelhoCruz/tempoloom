@@ -333,9 +333,8 @@ function Times({
 interface LinkInfo {
   link: PublicLink;
   organizers: string[];
-  /** The owner's Google profile picture; '' for none (initials then). */
-  picture: string;
-  ownerName: string;
+  /** The owner, with the Google profile picture ('' for none: initials); null on a round-robin link. */
+  owner: { name: string; picture: string } | null;
   branding: Branding;
   oneOff: { expiresAt: number; expired: boolean } | null;
 }
@@ -633,7 +632,9 @@ function BookingPage({ page, link }: { page: string; link: string }) {
   return (
     <div data-testid="booking-page">
       <Brand b={info.branding} />
-      <Avatar url={info.picture} name={info.ownerName} testId="owner-picture" />
+      {info.owner && (
+        <Avatar url={info.owner.picture} name={info.owner.name} testId="owner-picture" />
+      )}
       <h1>{info.link.title}</h1>
       {info.organizers.length > 0 && <p class="status">{withWhom(info.organizers)}</p>}
       {info.link.description && <p>{info.link.description}</p>}

@@ -1369,11 +1369,14 @@ export function publicBookingRoutes(
   r.get("/pages/:page/:link", (c) => {
     const link = findLink(c.req.param("page"), c.req.param("link"));
     if (!link) notFound("link");
+    // A round-robin link names nobody before confirmation (rule 17): no owner picture or name.
+    const anonymous = linkPeople(db, link.id).some((p) => p.kind === "pool");
     return c.json({
       link: publicLink(link),
       organizers: organizerNames(db, link),
-      picture: pictureOf(db, link.user_id),
-      ownerName: nameOf(db, link.user_id),
+      owner: anonymous
+        ? null
+        : { name: nameOf(db, link.user_id), picture: pictureOf(db, link.user_id) },
       timeZone: zoneOf(db, link.user_id),
       branding: brandingFor(db, link.user_id, resolveLinkBranding(db, link)),
       oneOff: link.source_id ? { expiresAt: expiryOf(link), expired: expired(link) } : null,
