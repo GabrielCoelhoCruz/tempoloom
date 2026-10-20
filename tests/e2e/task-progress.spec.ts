@@ -885,7 +885,8 @@ test("a drag from a past time into the future logs work only up to now (PRG-21, 
   signIn,
 }) => {
   await clockAt(app, at(D, "12:00"));
-  await page.clock.install({ time: new Date(at(D, "12:00")) });
+  // The browser clock stays at 12:00, so the time left before now is exactly 60 minutes.
+  await page.clock.setFixedTime(new Date(at(D, "12:00")));
   await signIn();
   // It starts the next day, so its chunks leave the dragged column free.
   await addTask(page, {
@@ -894,7 +895,11 @@ test("a drag from a past time into the future logs work only up to now (PRG-21, 
     due: "",
     startAfter: `${addDays(D, 1)}T09:00`,
   });
+  // Let the plan run end, so no live reload redraws the week during the drag.
+  await page.evaluate(() => fetch("/api/planner/sync", { method: "POST" }));
   await openWeek(page, W);
+  // The now bar shows last; once it is there the week no longer shifts under the mouse.
+  await expect(page.getByTestId("next-up")).toBeVisible();
   await expect(page.locator(".ev", { hasText: "AT-Now" }).first()).toBeVisible();
   // From 11:00 down to 14:00: two hours of the drag lie after now (12:00).
   const col = page.locator(`.day-col[data-date="${D}"]`);
@@ -906,12 +911,11 @@ test("a drag from a past time into the future logs work only up to now (PRG-21, 
   await page.mouse.up();
   const form = page.getByTestId("log-work");
   await expect(form.getByLabel("Start")).toHaveValue(`${D}T11:00`);
-  // Without the clamp the form shows 180 minutes and the server refuses it.
+  // The minutes up to now on the browser clock; without the clamp the form shows 180.
   const room = await page.evaluate((t) => Math.floor((Date.now() - t) / 60_000), at(D, "11:00"));
-  expect(room).toBeLessThan(180);
-  const minutes = Number(await form.getByLabel("Minutes").inputValue());
-  expect(minutes).toBeGreaterThanOrEqual(60);
-  expect(minutes).toBeLessThanOrEqual(room);
+  expect(room).toBe(60);
+  await expect(form.getByLabel("Minutes")).toHaveValue(String(room));
+  const minutes = room;
   await form.getByLabel("Work on").selectOption({ label: "AT-Now" });
   const saved = page.waitForResponse(
     (r) => r.request().method() === "POST" && new URL(r.url()).pathname === "/api/log-work",
