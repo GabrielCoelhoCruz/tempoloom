@@ -239,11 +239,16 @@ export function loadMemberDays(
       ...(e.bookedViaLink ? { booking: true } : {}),
     });
   }
-  const personalHabits = new Set(
+  // Weekly report rule 6: tasks and habits on personal hours are personal time.
+  const personalItems = new Set(
     all<{ id: string }>(
       db,
       `SELECT h.id FROM habits h JOIN hours_sets s ON s.id = h.hours_set_id
-       WHERE h.user_id = ? AND s.kind = 'personal'`,
+       WHERE h.user_id = ? AND s.kind = 'personal'
+       UNION ALL
+       SELECT t.id FROM tasks t JOIN hours_sets s ON s.id = t.hours_set_id
+       WHERE t.user_id = ? AND s.kind = 'personal'`,
+      userId,
       userId,
     ).map((h) => h.id),
   );
@@ -274,11 +279,16 @@ export function loadMemberDays(
     end,
   )) {
     const at = { start: m.start_ms, end: m.end_ms };
-    if (m.kind === "task") spans.push({ ...at, kind: "solo", tag: "task" });
+    if (m.kind === "task")
+      spans.push(
+        personalItems.has(m.source_id)
+          ? { ...at, kind: "personal" }
+          : { ...at, kind: "solo", tag: "task" },
+      );
     else if (m.kind === "focus") spans.push({ ...at, kind: "solo", tag: "focus" });
     else if (m.kind === "habit")
       spans.push(
-        personalHabits.has(m.source_id)
+        personalItems.has(m.source_id)
           ? { ...at, kind: "personal" }
           : { ...at, kind: "solo", tag: "workHabit" },
       );

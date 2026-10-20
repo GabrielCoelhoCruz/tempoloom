@@ -272,27 +272,16 @@ PARTIAL = StatusMap("PARTIAL", {
 
 # Row id -> reason, for rows that cannot work yet because a feature they build on is missing.
 BLOCKED = StatusMap("BLOCKED", {
-    718: "Needs the assistant chat, which is not implemented",
-    627: "Needs the assistant chat, which is not implemented",
     630: "Not needed for parity: the reference lists these reports as coming soon (analytics-organization.md rule 16)",
     644: "Needs a Google Workspace domain and a super admin to grant domain-wide delegation; the CalDAV organization grant covers the same need for CalDAV servers (E2E: \u201cCalendar access attaches each provisioned person's calendar read-only\u2026\u201d)",
     645: "Needs a Microsoft 365 tenant and a Microsoft Graph calendar provider, which is not implemented",
-    568: "Needs the assistant chat, which is not implemented: a switch with nothing to switch off has no effect to prove",
-    569: "Needs the assistant chat, which is not implemented",
     581: "Needs a Slack app and a Slack test workspace",
-    582: "Needs the assistant chat, which is not implemented",
     217: "No benchmark data: the evidence gives no targets per role (teams-policies.md open question 3)",
     594: "No benchmark data: the evidence gives no targets per role (teams-policies.md open question 3)",
-    436: "Needs video conferencing integrations, which need vendor apps and test accounts",
     673: "The evidence names it only on the pricing page and gives no behavior to build (plans-feature-inventory.md open questions); org-chart data exists through SCIM managers",
-    928: "Needs the vendor's Zapier app and a Zapier account",
-    929: "Needs the vendor's Zapier app and a Zapier account",
     591: "Needs a Slack app and a Slack test workspace",
     592: "Needs a Slack app and a Slack test workspace",
-    688: "Needs the assistant chat, which is not implemented",
 })
-for n in [5, 6, 12, 14, 15, 16, 17, 18, 20, 21, 22, 24, 31]:
-    BLOCKED[718 + n] = "A prompt entry: needs the assistant chat, which is not implemented"
 
 # Row id -> limits, for rows implemented with unit or property tests only.
 UNIT = StatusMap("UNIT", {
@@ -728,15 +717,6 @@ PARTIAL.update({
 E2E.update({282: ["s1_habit_es", "s1_task_color", "s4_labels"]})
 E2E_NOTES.update({282: "Habits, focus time, buffers and tasks have their own color (stream s1); a mirroring policy has a color override (stream s4)"})
 # Rows this round did not build, each with the concrete reason.
-CHAT = "Needs the assistant chat (a language-model chat), which is not built; preview mode and the MCP server, which it would use, exist"
-for n in [6, 47, 130, 316, 369, 609, 612, 661, 662, 672, 674, 675, 676, 677, 678, 679, 680, 681,
-          682, 684, 685, 686, 687, 689]:
-    BLOCKED[n] = CHAT
-BLOCKED[683] = CHAT + "; the morning email digest of meeting checks is built (row 317)"
-BLOCKED[769] = "Needs the assistant chat, which is not built; the other parts of the baseline are built (preview mode, automations, issues, insights, MCP server)"
-MICROSOFT = "Needs a Microsoft 365 account and a Microsoft Graph calendar provider, which is not built"
-for n in [520, 521, 526, 527, 528, 529, 530, 531, 532, 533, 534, 535, 536, 669, 670]:
-    BLOCKED[n] = MICROSOFT
 BLOCKED[451] = "Needs Google and Microsoft calendar accounts; mirroring between calendars of two CalDAV accounts is built (rows 453, 460)"
 PARTIAL[145] = ("Google sign-in takes the name when it makes the user, and each sync takes the time zone from the primary Google "
                 "calendar. Not built: the picture is read but not kept or shown, the name does not follow later changes, and week "
@@ -747,8 +727,6 @@ BLOCKED[492] = "Needs a Google Workspace account: the help covers Workspace shar
 BLOCKED[493] = "Needs Google or Microsoft accounts that subscribe to the iCloud calendar; a CalDAV server connects directly"
 BLOCKED[519] = "Needs a Google Workspace domain and a super admin"
 BLOCKED[671] = "Needs Google Meet (a Google account and the Calendar conference API)"
-for n in [446, 447]:
-    BLOCKED[n] = "Needs the Gmail and Google Calendar add-on, a vendor app; the same actions exist on the Booking links page (rows 440 to 443)"
 for n in [268, 293]:
     BLOCKED[n] = "Needs a Slack app and a Slack test workspace"
 BLOCKED[344] = "Needs the vendor apps of third-party agenda tools (Docs notes, Lattice, Fellow)"
@@ -797,9 +775,6 @@ PARTIAL[517] = ("Disconnect, paused policies and reconnect have full UI E2E on C
                 "the server rejects the stored password and the user types a new one; a Google account reconnects through Google sign-in "
                 "with the account's email as the hint and refuses another identity (unit tests). Items that write to a calendar of the "
                 "disconnected account show no error state yet (rule 16): their events stay as they are")
-# Same status as row 147 (incremental consent): both need a Google account to prove.
-BLOCKED[518] = ("Not built: Google sign-in asks for the calendar scopes up front (with include_granted_scopes), and no feature asks "
-                "for more, because the features that need more Google access (Google Tasks, Gmail) are not built")
 # --- end U08 ---
 
 # --- U03: core planning ---
@@ -840,8 +815,6 @@ E2E_NOTES.update({
 PARTIAL[78] = ("Each sync takes the home time zone from the primary Google calendar (src/server/sync/pull.ts), and the hours page "
                "shows the zone that hours apply in and an active trip (E2E on CalDAV and Google: \u201ca browser that reports UTC gets a "
                "warning\u2026\u201d). No E2E or unit test sets a Google Calendar time zone and checks that the home zone follows it")
-BLOCKED[147] = ("Not built: Google sign-in asks for the calendar scopes up front (with include_granted_scopes), and no feature asks "
-                "for more, because the features that need more Google access (Google Tasks, Gmail) are not built")
 # Row 90 stays partial: E2E does not cover buffers inside a level.
 PARTIAL[90] = "E2E on CalDAV covers flexible meetings, habits, tasks, next-up tasks and focus time in the order (\u201cinside one level meetings go first, then habits, then tasks\u2026\u201d, \u201ca next-up task goes before other tasks of any level\u201d, \u201cfocus time goes after a P4 task\u2026\u201d); buffers inside a level have unit tests only"
 # Row 76 stays partial: planning-hours.md says focus time, flexible meetings and
@@ -1058,34 +1031,39 @@ E2E_NOTES.update({
     353: "Flexible meetings count as one-to-one or group time by their number of people",
     356: "An edit of the rules, a rank or priority change, and an hours change of the organizer or of an attendee who is a user here place future occurrences again, outside the move limit; an edit of the title, notes or location keeps the times, and an attendee's time zone change or new meeting hours set also places again (unit tests)",
 })
-BLOCKED[322] = ("Not built: the scheduler reads the availability of attendees who are users here (E2E-proven, rows 321, 339), but "
-                "it does not query Google free/busy for other emails; the Google API client has a freeBusy method that no code calls")
 BLOCKED[345] = "Needs Google Meet (a Google account), the Zoom vendor app and Google Workspace room resources; an address or a custom text or link is written as the location of every occurrence (E2E: \u201c" + T["mr_settings"] + "\u201d)"
 # --- end U06 ---
 
 # --- U30: exact blocked and partial reasons (audit of the blocked rows) ---
 T.update({
-    "u30_weekly_counts": "the weekly report counts work tasks and work habits as solo work and personal habits and a personal calendar's events as personal time; turned off and on again, it goes out again, also on an out-of-office Friday",
+    "u30_weekly_counts": "the weekly report counts work tasks and work habits as solo work and personal tasks, personal habits and a personal calendar's events as personal time; turned off and on, it goes out, also on an out-of-office Friday",
+    "u30_weekly_change": "work hours changed during the week move that week's report to the new last workday (edge case 3)",
+    "u30_weekly_who": "only users who signed in, are active and have a working calendar account get the weekly report: never signed in, deactivated or disconnected users get none (rule 5)",
     "u30_weekly_thu": "with work hours Monday to Thursday 10:00 to 18:00 the weekly report goes out on Thursday between 10:00 and 11:00, and not on Friday",
     "u30_weekly_clock": "the server sends the weekly report by its own clock in the first work hour of Friday",
     "u30_weekly_none": "without work hours the weekly report goes out on Friday between 09:00 and 10:00, and an empty week has zero totals",
 })
 E2E.update({
     631: ["u9_weekly", "u30_weekly_counts"],
-    632: ["u9_weekly", "u30_weekly_thu", "u30_weekly_clock", "u30_weekly_none", "u30_weekly_counts"],
+    632: ["u9_weekly", "u30_weekly_thu", "u30_weekly_clock", "u30_weekly_none", "u30_weekly_counts", "u30_weekly_change",
+          "u30_weekly_who"],
     633: ["u9_weekly", "u30_weekly_counts", "u30_weekly_none"],
     505: ["s1_habit_es", "mr_settings"],
-    836: ["s2_habit_tasks", "s2_focus_tasks"],
 })
 E2E_NOTES.update({
     631: "On for a new user; the switch is in Settings, and off and on again survive a reload",
-    632: "Rules 3-5 and edge cases 1, 2, 5: the last weekday with work hours, its first work hour, Friday 09:00 without work hours, the week counted up to the send time; the operator command weekly-reports --now runs one tick of the server's email worker, and one test lets the server's own clock (TEST_CLOCK_START) reach the send hour.",
-    633: "Meetings are events with other invitees; solo work is work tasks, work habits and events without invitees; personal time is personal habits and events of a calendar that a mirroring policy labels personal",
+    632: ("Rules 3-5 and edge cases 1, 2, 3, 5: the last weekday with work hours, its first work hour, Friday 09:00 without work hours, "
+          "the work hours in force at send time after a change during the week, the week counted up to the send time; only users who "
+          "signed in, are not deactivated and have a connected calendar account get it (a user who never signed in also has no account); "
+          "the operator command weekly-reports --now runs one tick of the server's email worker, and one test lets the server's own "
+          "clock (TEST_CLOCK_START) reach the send hour"),
+    633: ("Meetings are events with other invitees; solo work is work tasks, work habits and events without invitees; personal time is "
+          "tasks and habits on personal hours and events of a calendar that a mirroring policy labels personal (the test event's title "
+          "has no personal keyword)"),
     505: "Habits and flexible meetings write to the calendar chosen at creation; the edit form shows it disabled",
-    836: "A search matches Tempoloom tasks; imported tasks need a task-app integration (row 835)",
 })
 PARTIAL.update({
-    944: ("One MCP URL per instance (/mcp), shown on the Settings page, with full UI E2E on CalDAV (\u201c" + T["s7_mcp_read"] + "\u201d). "
+    944: ("One MCP URL per instance (/mcp), shown on the Account page, with full UI E2E on CalDAV (\u201c" + T["s7_mcp_read"] + "\u201d). "
           "Any MCP client that can send a bearer token connects with a personal API key. Not built: OAuth 2.1 with PKCE and a consent page "
           "(Fields: Authorization), which clients that sign in only with OAuth need; it is buildable on the server"),
     945: ("Read tools answer at once and change nothing, and write tools stage the change in preview mode with a link to it, with full UI E2E on CalDAV "
@@ -1094,8 +1072,8 @@ PARTIAL.update({
     946: ("Built with full UI E2E on CalDAV: view schedule, find meeting times, analyze the week, create, move and delete events as staged changes, "
           "and review and apply them (\u201c" + T["s7_mcp_read"] + "\u201d; \u201c" + T["s7_mcp_stage"] + "\u201d). Not built: tools to respond "
           "to invitations, protect focus time and record work sessions; they are buildable"),
-    947: ("A client is disconnected by deleting its personal API key (\u201c" + T["acct_keys"] + "\u201d); "
-          "deleting a key changes no calendar connection and no event. Not built: per-client OAuth grants with a Revoke action (rule 8), which come with MCP OAuth (row 944)"),
+    947: ("A client is disconnected by deleting its personal API key: the key gets 401 at once (\u201c" + T["acct_keys"] + "\u201d). "
+          "No test checks that deleting a key keeps the calendar connections and events (rules 6, 7). Not built: per-client OAuth grants with a Revoke action (rule 8), which come with MCP OAuth (row 944)"),
     953: ("Any client that sends the personal API key as a bearer token uses the same URL, with full UI E2E on CalDAV (\u201c" + T["s7_mcp_read"] + "\u201d). "
           "Not built: OAuth sign-in for clients that support only OAuth; it is buildable on the server (row 944)"),
 })
@@ -1109,7 +1087,8 @@ for n in [6, 47, 316, 369, 569, 582, 609, 612, 627, 661, 662, 672, 674, 675, 676
 for n in [723, 724, 730, 732, 733, 734, 735, 736, 738, 739, 740, 742, 749]:
     BLOCKED[n] = G2 + ": a prompt entry opens the assistant chat"
 BLOCKED[568] = G2 + ": the switch turns off the assistant chat, so without the chat it has no effect to prove"
-BLOCKED[683] = G2 + " for the nightly review by chat; the morning email digest of meeting checks is built (row 317)"
+BLOCKED[683] = (G2 + " for the nightly review by chat, and a Slack app and a Slack test workspace for the chat-app channel; "
+                "the morning email digest of meeting checks is built (row 317)")
 BLOCKED[769] = G2 + " for the chat; the other parts of the baseline are built (preview mode, automations, issues, insights, MCP server)"
 BLOCKED[130] = G2 + " for the chat panel; the automations panel and the suggested tasks in the planner are built"
 
@@ -1125,7 +1104,7 @@ CLICKUP = "Needs a ClickUp developer app and a ClickUp test workspace"
 JIRA_ROVO = "Needs a Jira Cloud test site whose admin allowlists the Atlassian Rovo MCP server"
 JIRA_APP = "Needs an Atlassian Marketplace app and a Jira Cloud test site"
 LINEAR = "Needs a Linear OAuth app and a Linear test workspace"
-RAYCAST = "Needs a Raycast extension in the Raycast Store and a Mac with Raycast"
+RAYCAST = "Needs a Mac with Raycast to run the Raycast extension, a macOS client of the Tempoloom API"
 WORKSPACE_ADDON = "Needs a Google Workspace Marketplace add-on (Calendar and Gmail) and a Google Workspace test account"
 OUTSIDE = {
     SLACK: [236] + list(range(785, 822)),
@@ -1167,6 +1146,8 @@ BLOCKED[950] = ("Needs Claude Code and an Anthropic account; claude mcp add with
                 "and is buildable (row 944). The MCP server with API keys is built (rows 697 to 699)")
 BLOCKED[951] = ("Needs a Claude account to show the per-tool settings, which are a Claude feature. Tempoloom's part is built: each tool has a name, a "
                 "description, readOnlyHint and destructiveHint (unit tests in tests/unit/mcp.test.ts; E2E lists the tools: \u201c" + T["s7_mcp_read"] + "\u201d)")
+BLOCKED[836] = (TASK_APPS + " for imported tasks. A saved search over Tempoloom tasks on a habit and on focus time has full UI E2E "
+                "on CalDAV (\u201c" + T["s2_habit_tasks"] + "\u201d; \u201c" + T["s2_focus_tasks"] + "\u201d)")
 BLOCKED[952] = ("Needs the Cursor app; its HTTP MCP entry signs in with MCP OAuth, which is not built on the server and is buildable (row 944). "
                 "The MCP server with API keys is built (rows 697 to 699)")
 

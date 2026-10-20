@@ -9,17 +9,32 @@
 // - a fact with a zero value shows, or more than 4 facts show;
 // - the report is off for a new user, or the opt-out is lost on reload or ignored;
 // - only the operator command sends it, not the server's own clock;
-// - work tasks or work habits miss solo work, or a personal calendar's events
-//   miss personal time (rule 6);
+// - work tasks or work habits miss solo work, or personal tasks, personal habits or
+//   a personal calendar's events miss personal time (rule 6);
 // - turning the report on again does not send it again (rule 2);
 // - a user without work hours, or whose last workday is out of office, gets no
-//   report, or an empty week sends nothing (edge cases 1, 2, 5).
+//   report, or an empty week sends nothing (edge cases 1, 2, 5);
+// - work hours changed during the week are ignored, so the report keeps the old send day (edge case 3);
+// - a user who never signed in, is deactivated or whose calendar account is
+//   disconnected still gets the report (rule 5 decision).
 import type { Page } from "@playwright/test";
 import { addDays, localToUtc } from "../../src/shared/time.ts";
 import { addPolicy, copies, week } from "./calendar-helpers.ts";
-import { at, BACKEND, blockUntil, eventually, expect, test, ZONE } from "./fixtures.ts";
+import {
+  at,
+  BACKEND,
+  blockUntil,
+  EMAIL,
+  eventually,
+  expect,
+  planNow,
+  test,
+  ZONE,
+} from "./fixtures.ts";
 import { addHabit, addTask, book, claimPage, MIN, titled, visitor, W } from "./helpers.ts";
 import { outOfOffice } from "./ics.ts";
+import { setPassword } from "./radicale-users.ts";
+import { scim } from "./scim.ts";
 
 const day = (n: number) => addDays(W, n);
 const iso = (date: string, hhmm: string) => {
@@ -207,7 +222,7 @@ test("the server sends the weekly report by its own clock in the first work hour
   expect(await mail.count("e2e@tempoloom.test", REPORT)).toBe(1);
 });
 
-test("the weekly report counts work tasks and work habits as solo work and personal habits and a personal calendar's events as personal time; turned off and on again, it goes out again, also on an out-of-office Friday", async ({
+test("the weekly report counts work tasks and work habits as solo work and personal tasks, personal habits and a personal calendar's events as personal time; turned off and on, it goes out, also on an out-of-office Friday", async ({
   page,
   cal,
   app,
@@ -219,7 +234,8 @@ test("the weekly report counts work tasks and work habits as solo work and perso
   await signIn();
   // Made after sign-in, so that the main calendar stays Work.
   const priv = await cal.newCalendar("Private");
-  await priv.addEvent({ title: "Dentist", start: at(day(1), "12:00"), end: at(day(1), "13:00") });
+  // A neutral title: no keyword makes it personal, only the calendar's label does.
+  await priv.addEvent({ title: "Call", start: at(day(1), "12:00"), end: at(day(1), "13:00") });
   // Edge case 2: the last workday is a full out-of-office day; the report goes out anyway.
   await outOfOffice(cal.calendarId, "Day off", { from: day(4), to: day(5) });
   await addHabit(page, {
@@ -233,6 +249,13 @@ test("the weekly report counts work tasks and work habits as solo work and perso
   await page.reload();
   await addHabit(page, { title: "Inbox", ideal: "16:00", min: 30, max: 30, days: ["Tue"] });
   await addTask(page, { title: "Draft plan", minutes: 90, split: false, due: `${day(3)}T17:00` });
+  await addTask(page, {
+    title: "Pay bills",
+    minutes: 60,
+    split: false,
+    due: `${day(2)}T22:00`,
+    hours: "Personal hours",
+  });
   // The private calendar is personal: its events count as personal time (rule 6).
   await addPolicy(page, { from: "Private", to: "Work", label: "Personal commitment" });
   const placed = await eventually(
@@ -241,11 +264,12 @@ test("the weekly report counts work tasks and work habits as solo work and perso
       expect(titled(l, "Evening run")).toHaveLength(1);
       expect(titled(l, "Inbox")).toHaveLength(1);
       expect(titled(l, "Draft plan")).toHaveLength(1);
+      expect(titled(l, "Pay bills")).toHaveLength(1);
       expect(copies(l).filter((e) => e.start === at(day(1), "12:00"))).toHaveLength(1);
     },
   );
   // Every item ends before the send time on Friday at 09:30.
-  for (const e of [...titled(placed, "Inbox"), ...titled(placed, "Draft plan")])
+  for (const e of ["Inbox", "Draft plan", "Pay bills"].flatMap((t) => titled(placed, t)))
     expect(e.end).toBeLessThanOrEqual(at(day(4), "09:30"));
 
   // Off, then on again: the switch is on after reload, and the report goes out.
@@ -264,8 +288,8 @@ test("the weekly report counts work tasks and work habits as solo work and perso
   expect(report.subject).toBe(`Your week: ${W} to ${day(4)}`);
   // The 90-minute task and the 30-minute work habit; the copy of the personal event is not counted twice.
   expect(report.text).toContain("Solo work: 2 h\n");
-  // The personal habit and the event of the personal calendar.
-  expect(report.text).toContain("Personal time: 2 h\n");
+  // The personal task, the personal habit and the event of the personal calendar.
+  expect(report.text).toContain("Personal time: 3 h\n");
   expect(report.text).toContain("Meetings: 0 min\n");
   expect(await mail.count("e2e@tempoloom.test", REPORT)).toBe(1);
 });
@@ -302,4 +326,105 @@ test("without work hours the weekly report goes out on Friday between 09:00 and 
   expect(report.text).toContain("Personal time: 0 min\n");
   expect(report.text).toContain("No facts this week.");
   expect(await mail.count("e2e@tempoloom.test", REPORT)).toBe(1);
+});
+
+test("work hours changed during the week move that week's report to the new last workday (edge case 3)", async ({
+  page,
+  cal,
+  app,
+  mail,
+  signIn,
+}) => {
+  await blockUntil(cal, W);
+  await signIn();
+  // Wednesday of the test week, with the default hours (Monday to Friday 09:00 to 17:00): nothing yet.
+  expect(app.cli("weekly-reports", "--now", iso(day(2), "09:30"))).toContain("sent 0 reports");
+  // The user then ends the week on Thursday, starting at 10:00.
+  await page.getByRole("link", { name: "Settings" }).click();
+  const editor = page.locator("#hours");
+  const thursday = editor.getByTestId("range-work-4-0");
+  await thursday.locator("input").first().fill("10:00");
+  await editor.getByTestId("range-work-5-0").getByRole("button", { name: "−" }).click();
+  await page.getByRole("button", { name: "Save work hours" }).click();
+  await expect(page.getByTestId("settings-message")).toHaveText("Saved");
+  await page.reload();
+  await expect(editor.getByTestId("range-work-5-0")).toHaveCount(0);
+  await expect(thursday.locator("input").first()).toHaveValue("10:00");
+
+  // The hours in force at send time decide: Thursday 10:00 to 11:00, and no Friday report.
+  expect(app.cli("weekly-reports", "--now", iso(day(3), "09:30"))).toContain("sent 0 reports");
+  expect(app.cli("weekly-reports", "--now", iso(day(3), "10:30"))).toContain("sent 1 report");
+  expect(app.cli("weekly-reports", "--now", iso(day(4), "09:30"))).toContain("sent 0 reports");
+  const report = await mail.message("e2e@tempoloom.test", REPORT);
+  expect(report.subject).toBe(`Your week: ${W} to ${day(3)}`);
+  expect(await mail.count("e2e@tempoloom.test", REPORT)).toBe(1);
+});
+
+test("only users who signed in, are active and have a working calendar account get the weekly report: never signed in, deactivated or disconnected users get none (rule 5)", async ({
+  page,
+  cal,
+  app,
+  mail,
+  signIn,
+  people,
+  radicale,
+}) => {
+  const five = radicale?.users[5];
+  if (!radicale || !five) throw new Error("This test needs the CalDAV backend.");
+  await blockUntil(cal, W);
+  await signIn();
+  app.cli("seat-limit", "--email", EMAIL, "--seats", "5");
+  await page.getByRole("link", { name: "Team", exact: true }).click();
+  const directory = page.getByTestId("directory");
+  await directory.getByRole("button", { name: "Create SCIM token" }).click();
+  const token = (await directory.getByTestId("scim-token").textContent()) ?? "";
+  const idp = scim(token);
+  // In the directory, but never signed in.
+  const never = "never@tempoloom.test";
+  await idp.create({ userName: never, displayName: "Nemo" });
+  const v = await people(4);
+  const vId = await idp.create({ userName: v.email, displayName: "Vera" });
+  await v.signIn();
+  const d = await people(5);
+  const pd = await d.signIn();
+
+  // This week: the three users who signed in get it; the one who never did gets none.
+  expect(app.cli("weekly-reports", "--now", iso(day(4), "09:30"))).toContain("sent 3 reports");
+  expect((await mail.message(v.email, REPORT)).subject).toBe(`Your week: ${W} to ${day(4)}`);
+  expect((await mail.message(d.email, REPORT)).subject).toBe(`Your week: ${W} to ${day(4)}`);
+  expect(await mail.count(never, REPORT)).toBe(0);
+
+  try {
+    // Vera is deactivated, and the CalDAV server stops taking Dan's stored password.
+    expect((await idp.patch(vId, [{ op: "replace", path: "active", value: false }])).status).toBe(
+      200,
+    );
+    await page.reload();
+    await expect(directory.locator(`[data-directory="${v.email}"]`)).toContainText("deactivated");
+    setPassword(five.username, 5, `new-${Date.now()}`);
+    await planNow(pd);
+    await pd.getByRole("link", { name: "Account", exact: true }).click();
+    await expect
+      .poll(
+        async () => {
+          await pd.reload();
+          return pd
+            .getByTestId("account-list")
+            .locator(`[data-account="${d.email}"]`)
+            .getByTestId("account-status")
+            .textContent();
+        },
+        { timeout: 45_000 },
+      )
+      .toBe("Disconnected");
+
+    // Next week only the admin gets one.
+    expect(app.cli("weekly-reports", "--now", iso(day(11), "09:30"))).toContain("sent 1 report");
+    await expect.poll(() => mail.count("e2e@tempoloom.test", REPORT)).toBe(2);
+    expect(await mail.count(v.email, REPORT)).toBe(1);
+    expect(await mail.count(d.email, REPORT)).toBe(1);
+    expect(await mail.count(never, REPORT)).toBe(0);
+  } finally {
+    setPassword(five.username, 5, five.password);
+  }
 });
