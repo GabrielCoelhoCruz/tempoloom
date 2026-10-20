@@ -31,6 +31,9 @@ function exclude(db: Db, userId: string, kind: string, itemId: string, start: nu
  * exclusion or a dismissed key by kind (CED-20, CED-24, CED-25); a title edit
  * of a non-task event locks it (CED-40). Other edits of a meeting occurrence
  * need nothing here: push never writes them over (MEET-02 rule 22).
+ * An event outside the calendar's read window is not in the cache because it
+ * was not read, not because it was deleted: its row stays as it is, so done
+ * and logged work of old chunks still counts.
  */
 export function applyCalendarEdits(
   db: Db,
@@ -48,6 +51,18 @@ export function applyCalendarEdits(
     userId,
     ...calendarIds,
   );
+  const windows = new Map(
+    all<{ id: string; window_start: number | null; window_end: number | null }>(
+      db,
+      `SELECT id, window_start, window_end FROM calendars WHERE id IN (${marks})`,
+      ...calendarIds,
+    ).map((c) => [c.id, c]),
+  );
+  const outsideWindow = (row: ManagedRow) => {
+    const w = windows.get(row.calendar_id);
+    if (!w || w.window_start === null || w.window_end === null) return false;
+    return row.end_ms <= w.window_start || row.start_ms >= w.window_end;
+  };
   tx(db, () => {
     for (const row of rows) {
       const cached = one<{
@@ -61,6 +76,7 @@ export function applyCalendarEdits(
         row.calendar_id,
         row.event_id,
       );
+      if (!cached && outsideWindow(row)) continue;
       if (row.kind === "mirror") {
         // The source event is the source of truth (mirroring rule 38): a deleted
         // or edited copy is written again by the next push, and never locks.
