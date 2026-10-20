@@ -1,8 +1,10 @@
 // Public booking pages: no sign-in. Times show in the zone the booker picks,
 // in a 12- or 24-hour format (docs/specs/booking-links-booking-page.md).
+
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { isValidTimeZone, localToUtc } from "../../shared/time.ts";
 import { ApiError, api } from "../lib/api.ts";
+import { Avatar } from "../lib/avatar.tsx";
 import { lazyComponent } from "../lib/lazy.ts";
 import {
   addPages,
@@ -331,8 +333,9 @@ function Times({
 interface LinkInfo {
   link: PublicLink;
   organizers: string[];
-  /** The owner's Google profile picture; '' for none. */
+  /** The owner's Google profile picture; '' for none (initials then). */
   picture: string;
+  ownerName: string;
   branding: Branding;
   oneOff: { expiresAt: number; expired: boolean } | null;
 }
@@ -630,7 +633,7 @@ function BookingPage({ page, link }: { page: string; link: string }) {
   return (
     <div data-testid="booking-page">
       <Brand b={info.branding} />
-      <Picture url={info.picture} />
+      <Avatar url={info.picture} name={info.ownerName} testId="owner-picture" />
       <h1>{info.link.title}</h1>
       {info.organizers.length > 0 && <p class="status">{withWhom(info.organizers)}</p>}
       {info.link.description && <p>{info.link.description}</p>}
@@ -744,13 +747,6 @@ function BookingPage({ page, link }: { page: string; link: string }) {
   );
 }
 
-/** The owner's profile picture (settings-profile.md PRF-5). */
-function Picture({ url }: { url: string }) {
-  return url ? (
-    <img class="avatar" src={url} alt="" width={64} height={64} data-testid="owner-picture" />
-  ) : null;
-}
-
 function PageLinks({ page }: { page: string }) {
   const [data, setData] = useState<{
     name: string;
@@ -771,7 +767,7 @@ function PageLinks({ page }: { page: string }) {
   return (
     <div data-testid="public-page">
       <Brand b={data.branding} />
-      <Picture url={data.picture} />
+      <Avatar url={data.picture} name={data.name} testId="owner-picture" />
       <h1>{data.title ?? `Book time with ${data.name}`}</h1>
       {data.links.length === 0 && <p>This page has no links yet.</p>}
       <div class="list">

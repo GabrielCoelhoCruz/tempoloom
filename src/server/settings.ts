@@ -27,6 +27,11 @@ const autoLockMode = z.enum(["off", "day", "week"]);
 export const settingsSchema = z.object({
   schedulingWindowWeeks: z.number().int().min(1).max(12).default(3),
   weekStart: z.union([z.literal(1), z.literal(7)]).default(1),
+  // A week start read from Google waits for the next week (settings-profile.md edge case 3).
+  weekStartNext: z
+    .object({ weekStart: z.union([z.literal(1), z.literal(7)]), from: z.string() })
+    .nullable()
+    .default(null),
   // settings-profile.md PRF-2: read from the main Google account's calendar settings.
   timeFormat: z.enum(["24h", "12h"]).default("24h"),
   dateFormat: z.enum(["YMD", "DMY", "MDY"]).default("YMD"),

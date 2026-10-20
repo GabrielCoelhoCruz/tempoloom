@@ -444,8 +444,9 @@ export function calendarItems(db: Db, userId: string, from: number, to: number):
     to,
   )) {
     const span = { start: m.start_ms, end: m.end_ms, title: m.title };
-    if (m.off_main) items.push({ ...span, cls: "free" });
-    else if (m.locked) items.push({ ...span, cls: "fixed" });
+    // A locked chunk never moves (LCK-2), so it blocks links also off the main calendar.
+    if (m.locked) items.push({ ...span, cls: "fixed" });
+    else if (m.off_main) items.push({ ...span, cls: "free" });
     else if (!m.busy) items.push({ ...span, cls: "free" });
     else {
       // Placed focus time counts as P2 for booking links.
@@ -1372,6 +1373,7 @@ export function publicBookingRoutes(
       link: publicLink(link),
       organizers: organizerNames(db, link),
       picture: pictureOf(db, link.user_id),
+      ownerName: nameOf(db, link.user_id),
       timeZone: zoneOf(db, link.user_id),
       branding: brandingFor(db, link.user_id, resolveLinkBranding(db, link)),
       oneOff: link.source_id ? { expiresAt: expiryOf(link), expired: expired(link) } : null,

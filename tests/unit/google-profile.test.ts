@@ -12,7 +12,10 @@
 // 4. A picture the user hides in Google stays at the old value.
 // 5. Week start, time format and date format are not read from the Google
 //    Calendar settings, or a grant without the settings scope stops the
-//    calendar list sync.
+//    calendar list sync, or logs a failure at every sync.
+// 6. A token refresh whose ID token lacks a claim fails the API call, or wipes
+//    the name or picture.
+// 7. A picture URL that is not https reaches the pages.
 import { randomBytes } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { googleAccessToken, upsertGoogleLogin } from "../../src/server/accounts.ts";
@@ -20,7 +23,7 @@ import { publicBookingRoutes } from "../../src/server/api/booking.ts";
 import { SecretBox } from "../../src/server/crypto.ts";
 import { all, type Db, one, openDb, run } from "../../src/server/db.ts";
 import { GoogleCalendarApi } from "../../src/server/google/calendar.ts";
-import type { GoogleIdentity } from "../../src/server/google/oauth.ts";
+import { GOOGLE_SCOPES, type GoogleIdentity } from "../../src/server/google/oauth.ts";
 import type { Mailer } from "../../src/server/mail.ts";
 import { GoogleProvider } from "../../src/server/providers/google.ts";
 import { getSettings } from "../../src/server/settings.ts";
@@ -91,7 +94,12 @@ const identity = (over: Partial<GoogleIdentity> = {}): GoogleIdentity => ({
   ...over,
 });
 
-const tokens = { accessToken: "a", expiresAt: T0 + 3_600_000, refreshToken: "r", scope: "openid" };
+const tokens = {
+  accessToken: "a",
+  expiresAt: T0 + 3_600_000,
+  refreshToken: "r",
+  scope: GOOGLE_SCOPES.join(" "),
+};
 
 const profile = (db: Db, id: string) =>
   one<{ name: string; avatar_url: string }>(
@@ -149,6 +157,42 @@ describe("name and picture from Google", () => {
     expect(profile(db, user.id)).toEqual({ name: "Ana L.", avatar_url: PIC_2 });
   });
 
+  it("a refresh ID token without name or picture keeps them, and a bad ID token does not fail the refresh", async () => {
+    const { db, box } = setup();
+    const { user, accountId } = upsertGoogleLogin(db, box, identity(), tokens, T0);
+    run(db, "UPDATE accounts SET access_expires_at = 0 WHERE id = ?", accountId);
+    refreshClaims = { sub: "sub-ana", email: "ana@example.com" };
+    expect(await googleAccessToken(db, box, accountId, { oauth: CLIENT, now: T0 })).toBe(
+      "fresh-token",
+    );
+    expect(profile(db, user.id)).toEqual({ name: "Ana Lima", avatar_url: PIC_1 });
+    run(db, "UPDATE accounts SET access_expires_at = 0 WHERE id = ?", accountId);
+    refreshClaims = { name: "No subject" };
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      expect(await googleAccessToken(db, box, accountId, { oauth: CLIENT, now: T0 })).toBe(
+        "fresh-token",
+      );
+    } finally {
+      log.mockRestore();
+    }
+    expect(profile(db, user.id)).toEqual({ name: "Ana Lima", avatar_url: PIC_1 });
+  });
+
+  it("keeps only an https picture", () => {
+    const { db, box } = setup();
+    const { user } = upsertGoogleLogin(
+      db,
+      box,
+      identity({ picture: "http://lh3.googleusercontent.com/a/plain" }),
+      tokens,
+      T0,
+    );
+    expect(profile(db, user.id)?.avatar_url).toBe("");
+    upsertGoogleLogin(db, box, identity({ picture: "javascript:alert(1)" }), tokens, T0);
+    expect(profile(db, user.id)?.avatar_url).toBe("");
+  });
+
   it("booking pages show the owner's picture", async () => {
     const { db, box } = setup();
     const { user } = upsertGoogleLogin(db, box, identity(), tokens, T0);
@@ -181,9 +225,11 @@ describe("Calendar settings from Google", () => {
       timeFormat: "24h",
       dateFormat: "YMD",
     });
-    await syncCalendarList(db, provider(db, box, accountId), accountId, user.id);
+    await syncCalendarList(db, provider(db, box, accountId), accountId, user.id, T0);
+    // The new week start waits for the next week (edge case 3; tests/unit/week-start-switch.test.ts).
     expect(getSettings(db, user.id)).toMatchObject({
-      weekStart: 7,
+      weekStart: 1,
+      weekStartNext: { weekStart: 7, from: "2026-10-26" },
       timeFormat: "12h",
       dateFormat: "MDY",
     });
@@ -195,15 +241,33 @@ describe("Calendar settings from Google", () => {
           { id: "dateFieldOrder", value: "DMY" },
         ],
       });
-    await syncCalendarList(db, provider(db, box, accountId), accountId, user.id);
+    await syncCalendarList(db, provider(db, box, accountId), accountId, user.id, T0);
     expect(getSettings(db, user.id)).toMatchObject({
       weekStart: 1,
+      weekStartNext: null,
       timeFormat: "24h",
       dateFormat: "DMY",
     });
   });
 
-  it("keeps the values when the grant lacks the settings scope, and still syncs the calendars", async () => {
+  it("keeps the values and asks nothing when the grant lacks the settings scope, and still syncs the calendars", async () => {
+    const { db, box } = setup();
+    const { user, accountId } = upsertGoogleLogin(
+      db,
+      box,
+      identity(),
+      { ...tokens, scope: GOOGLE_SCOPES.filter((s) => !s.endsWith("settings.readonly")).join(" ") },
+      T0,
+    );
+    await syncCalendarList(db, provider(db, box, accountId), accountId, user.id, T0);
+    expect(requests.filter((r) => r.endsWith("/users/me/settings"))).toEqual([]);
+    expect(getSettings(db, user.id)).toMatchObject({ weekStart: 1, timeFormat: "24h" });
+    expect(all(db, "SELECT provider_id FROM calendars")).toEqual([
+      { provider_id: "ana@example.com" },
+    ]);
+  });
+
+  it("logs a refused settings read once, not at every sync", async () => {
     const { db, box } = setup();
     const { user, accountId } = upsertGoogleLogin(db, box, identity(), tokens, T0);
     settings = () =>
@@ -217,11 +281,17 @@ describe("Calendar settings from Google", () => {
         },
         { status: 403 },
       );
-    await syncCalendarList(db, provider(db, box, accountId), accountId, user.id);
-    expect(getSettings(db, user.id)).toMatchObject({ weekStart: 1, timeFormat: "24h" });
-    expect(all(db, "SELECT provider_id FROM calendars")).toEqual([
-      { provider_id: "ana@example.com" },
-    ]);
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      for (let i = 0; i < 3; i++)
+        await syncCalendarList(db, provider(db, box, accountId), accountId, user.id, T0);
+      expect(log.mock.calls.filter((c) => String(c[0]).includes("Calendar settings"))).toHaveLength(
+        1,
+      );
+      expect(getSettings(db, user.id)).toMatchObject({ weekStart: 1, timeFormat: "24h" });
+    } finally {
+      log.mockRestore();
+    }
   });
 
   it("does not read the settings of an added account that is not the main account", async () => {

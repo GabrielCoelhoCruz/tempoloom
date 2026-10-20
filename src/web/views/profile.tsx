@@ -5,6 +5,7 @@ import { useState } from "preact/hooks";
 import type { Settings } from "../../server/settings.ts";
 import { COMPANY_SIZES, USE_CASES } from "../../shared/profile.ts";
 import { api } from "../lib/api.ts";
+import { Avatar } from "../lib/avatar.tsx";
 import { loadMe, me } from "../lib/state.ts";
 
 const DATE_FORMATS: Record<Settings["dateFormat"], string> = {
@@ -44,16 +45,11 @@ export function ProfilePage() {
       )}
       <section data-testid="profile-fixed">
         <h2>From your calendar account</h2>
-        {m.user.avatarUrl && (
-          <img
-            class="avatar"
-            src={m.user.avatarUrl}
-            alt=""
-            width={64}
-            height={64}
-            data-testid="profile-picture"
-          />
-        )}
+        <Avatar
+          url={m.user.avatarUrl}
+          name={m.user.name || m.user.email}
+          testId="profile-picture"
+        />
         <div class="list">
           <div class="row">
             <span>Name</span>

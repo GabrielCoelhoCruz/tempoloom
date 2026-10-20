@@ -3,9 +3,9 @@ import type { SecretBox } from "./crypto.ts";
 import { all, type Db, one, run, tx } from "./db.ts";
 import {
   type GoogleIdentity,
-  identityFromIdToken,
   type OAuthClient,
   OAuthError,
+  profileClaims,
   refreshAccessToken,
   type TokenSet,
 } from "./google/oauth.ts";
@@ -270,28 +270,43 @@ export function loginTarget(
 }
 
 /**
+ * Name and picture follow the user's main Google account at each sign-in and
+ * each token refresh, so at least daily (settings-profile.md PRF-2, PRF-3). A
+ * picture the user hides in Google is not in the sign-in token: no picture
+ * (PRF-5). A refresh token can leave out the optional claims: a claim that is
+ * not there keeps the stored value. Only an https picture is kept.
+ */
+export function applyGoogleIdentity(
+  db: Db,
+  accountId: string,
+  claims: { name?: string; picture?: string },
+  signIn: boolean,
+): void {
+  const picture =
+    claims.picture === undefined
+      ? signIn
+        ? ""
+        : undefined
+      : claims.picture.startsWith("https://")
+        ? claims.picture
+        : "";
+  run(
+    db,
+    `UPDATE users SET name = coalesce(?, name), avatar_url = coalesce(?, avatar_url)
+     WHERE id = (SELECT user_id FROM accounts WHERE id = ? AND provider = 'google' AND is_main = 1)`,
+    claims.name ?? null,
+    picture ?? null,
+    accountId,
+  );
+}
+
+/**
  * Creates or updates the user and Google account after a successful login.
  * Google returns a refresh token only on first consent, so an existing one is kept.
  * A new user joins `teamId` when given (SSO domain capture). With `forUserId`
  * (the operator CLI), the account goes to that user, and an account that
  * another user holds is an error.
  */
-/**
- * Name and picture follow the user's main Google account at each sign-in and
- * each token refresh, so at least daily (settings-profile.md PRF-2, PRF-3). A
- * picture the user hides in Google is not in the token: no picture (PRF-5).
- */
-export function applyGoogleIdentity(db: Db, accountId: string, identity: GoogleIdentity): void {
-  run(
-    db,
-    `UPDATE users SET name = ?, avatar_url = ?
-     WHERE id = (SELECT user_id FROM accounts WHERE id = ? AND provider = 'google' AND is_main = 1)`,
-    identity.name,
-    identity.picture ?? "",
-    accountId,
-  );
-}
-
 export function upsertGoogleLogin(
   db: Db,
   box: SecretBox,
@@ -337,7 +352,7 @@ export function upsertGoogleLogin(
       },
       now,
     );
-    applyGoogleIdentity(db, accountId, identity);
+    applyGoogleIdentity(db, accountId, identity, true);
     return { user, accountId };
   });
 }
@@ -404,6 +419,13 @@ export async function googleAccessToken(
     }
   }
   saveAccessToken(db, box, accountId, tokens);
-  if (tokens.idToken) applyGoogleIdentity(db, accountId, identityFromIdToken(tokens.idToken));
+  if (tokens.idToken) {
+    // Best effort: a bad ID token must not fail the API call that wanted the token.
+    try {
+      applyGoogleIdentity(db, accountId, profileClaims(tokens.idToken), false);
+    } catch (err) {
+      console.error("Reading the profile from the Google ID token failed", err);
+    }
+  }
   return tokens.accessToken;
 }

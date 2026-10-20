@@ -9,7 +9,7 @@ import { MANAGED_PROP } from "./push.ts";
  * SQL test on managed_events m: a task chunk the user sent to a calendar other
  * than the main calendar (DEF-50, HRS-12). It holds its time in the user's own
  * plan, but other people see main-calendar availability: booking links and
- * colleagues' meetings can use that time.
+ * colleagues' meetings can use that time, unless the chunk is locked.
  */
 export const OFF_MAIN_TASK_CHUNK = `m.kind = 'task' AND NOT EXISTS (SELECT 1 FROM calendars oc
   JOIN accounts oa ON oa.id = oc.account_id WHERE oc.id = m.calendar_id AND oa.is_main = 1 AND oc.is_primary = 1)`;

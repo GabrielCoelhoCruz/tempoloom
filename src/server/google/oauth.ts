@@ -2,6 +2,9 @@
 // https://developers.google.com/identity/protocols/oauth2/web-server
 import { createHash, randomBytes } from "node:crypto";
 
+/** Week start, time format and date format (settings-profile.md PRF-2). */
+export const GOOGLE_SETTINGS_SCOPE = "https://www.googleapis.com/auth/calendar.settings.readonly";
+
 export const GOOGLE_SCOPES = [
   "openid",
   "email",
@@ -9,8 +12,7 @@ export const GOOGLE_SCOPES = [
   "https://www.googleapis.com/auth/calendar.events",
   "https://www.googleapis.com/auth/calendar.calendarlist.readonly",
   "https://www.googleapis.com/auth/calendar.freebusy",
-  // weekStart, time format and date format (settings-profile.md PRF-2).
-  "https://www.googleapis.com/auth/calendar.settings.readonly",
+  GOOGLE_SETTINGS_SCOPE,
 ] as const;
 
 export interface OAuthClient {
@@ -165,6 +167,19 @@ export async function revokeToken(token: string): Promise<void> {
  * token endpoint over TLS. Per Google's guidance, the signature check is not
  * needed for a token received directly from that endpoint.
  */
+/** The name and picture claims of an ID token, each only when present (both are optional). */
+export function profileClaims(idToken: string): { name?: string; picture?: string } {
+  const claims = JSON.parse(
+    Buffer.from(idToken.split(".")[1] ?? "", "base64url").toString("utf8"),
+  ) as Record<string, unknown>;
+  if (typeof claims.sub !== "string")
+    throw new OAuthError("invalid_id_token", "ID token has no subject");
+  return {
+    ...(typeof claims.name === "string" ? { name: claims.name } : {}),
+    ...(typeof claims.picture === "string" ? { picture: claims.picture } : {}),
+  };
+}
+
 export function identityFromIdToken(idToken: string): GoogleIdentity {
   const payload = idToken.split(".")[1];
   if (!payload) throw new OAuthError("invalid_id_token", "Malformed ID token");

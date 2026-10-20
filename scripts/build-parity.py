@@ -1252,25 +1252,37 @@ BLOCKED[43] = ("Needs the Google Calendar add-on's developer app and a test acco
 # --- U56: order proof, task chunks on a secondary calendar, Google profile and guest free/busy ---
 T.update({
     "u56_secondary": "task chunks on a secondary calendar hold their time against other items but leave it open to booking links and colleagues' meetings (DEF-50)",
+    "u56_locked": "a locked task chunk on a secondary calendar blocks booking links like any locked event (DEF-50, LCK-1)",
+    "u56_initials": "without a picture from the calendar account the profile and booking pages show initials (edge case 1)",
 })
 E2E.update({
-    90: ["meeting", "u03_order", "mr_rank", "t_prio", "u03_urgency", "t_next", "u03_focus", "u4_buffer_prio"],
-    102: ["u56_secondary"],
+    102: ["u56_secondary", "u56_locked"],
 })
 E2E_NOTES.update({
-    90: "Buffers take part in the level order: a P1 buffer gets its slot before a P3 habit, a P4 buffer after it",
-    102: "Booking links and other people's flexible meetings read main-calendar availability: a task chunk on another calendar does not block them, also when it is locked (Tempoloom decision); the user's own plan keeps the chunk's time",
+    102: "Booking links and other people's flexible meetings read main-calendar availability: an unlocked task chunk on another calendar does not block them; a locked one blocks them, as every locked event does (LCK-1), because it never moves (Tempoloom decision); the user's own plan keeps the chunk's time",
 })
+PARTIAL[90] = ("E2E on CalDAV covers: an external event before demands, levels and kinds (\u201c" + T["u03_order"] + "\u201d), rank drag, "
+               "the due date, urgency, a next-up task before other tasks of any level and the queue order (\u201c" + T["t_next"] + "\u201d; \u201c"
+               + T["u35_rank"] + "\u201d), focus time after a P4 task (\u201c" + T["u03_focus"] + "\u201d), buffers across levels (\u201c"
+               + T["u4_buffer_prio"] + "\u201d) and suggestions mode (\u201c" + T["s3_suggest"] + "\u201d). Not covered by E2E: SCH-61 (locked "
+               "managed events and booking-link meetings are in place before any demand), SCH-67 (P1 habits and P1 flexible meetings go "
+               "before next-up tasks), SCH-68 (focus time goes after habits, flexible meetings and buffers of any level), SCH-71 (kind "
+               "order inside one level, buffers before habits), SCH-72 and SCH-74 (the task key and its tie-breaks: remaining minutes, "
+               "creation time)")
 GOOGLE_CONSENT = "Needs a Google E2E run with the owner's OAuth consent (a Google account that signs in through Tempoloom's OAuth client, row 510)"
-BLOCKED[145] = (GOOGLE_CONSENT + ". Built, with unit tests against a fake Google API (tests/unit/google-profile.test.ts): the name and picture "
-                "of the main Google account are kept at each sign-in and each token refresh (at least daily), a hidden picture shows none, "
-                "and the picture shows on the profile page and booking pages; week start, time format and date format are read from the "
-                "Google Calendar settings (scope calendar.settings.readonly) at each calendar list sync and show on the profile page, "
-                "with the note to change them in the calendar account; each sync takes the time zone from the primary Google calendar. "
-                "The editable profile fields are E2E-proven (row 146)")
+PARTIAL[145] = ("Not built: PRF-6, the planner, hours page and date displays do not use the time format, date format and week start "
+                "(only the profile page shows them). Built, with unit tests against a fake Google API (tests/unit/google-profile.test.ts, "
+                "tests/unit/week-start-switch.test.ts): the name and picture of the main Google account are kept at each sign-in and "
+                "each token refresh (at least daily; a refresh without the claims keeps them; only https pictures), a picture hidden at "
+                "sign-in shows none, and the picture shows on the profile page and booking pages; week start, time format and date "
+                "format are read from the Google Calendar settings (scope calendar.settings.readonly) at each calendar list sync, a new "
+                "week start from the next week on (edge case 3); each sync takes the time zone from the primary Google calendar. E2E on "
+                "CalDAV: initials without a picture (\u201c" + T["u56_initials"] + "\u201d) and the editable profile fields (row 146). "
+                "The Google reads also need " + GOOGLE_CONSENT[0].lower() + GOOGLE_CONSENT[1:])
 BLOCKED[322] = (GOOGLE_CONSENT + " and a second Google account that is not a Tempoloom user, as a guest. Built, with unit tests against a "
                 "fake Google API (tests/unit/guest-free-busy.test.ts): the organizer's Google account asks Google free/busy for required "
-                "guests who are not users here, the meeting keeps away from their busy time, and a guest with no data or a failed query "
+                "guests who are not users here (at most 50 per request, a 5-second limit, the answer kept for 5 minutes), the meeting "
+                "keeps away from their busy time but not from its own invitation, and a guest with no data or a failed or slow query "
                 "is unknown. The availability of attendees who are users here is E2E-proven (rows 321, 339)")
 # --- end U56 ---
 

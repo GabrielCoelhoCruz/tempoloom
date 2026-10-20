@@ -8,6 +8,8 @@
 // - one set's choice leaks to another set                      -> work-hours task stays on Work
 // - chunks on a secondary calendar stop holding their time     -> the habit keeps away from the chunk
 // - chunks on a secondary calendar still block other people    -> link offers the time; colleague's meeting takes it
+// - a locked chunk on a secondary calendar is open to bookings -> the link stops offering the time after Lock
+//   (a booking there would overlap a chunk that never moves, LCK-1, LCK-2)
 
 import { addDays } from "../../src/shared/time.ts";
 import { openSettings } from "./calendar-helpers.ts";
@@ -18,6 +20,8 @@ import {
   allEvents,
   claimPage,
   inHours,
+  openEvent,
+  openWeek,
   slot,
   titled,
   visitor,
@@ -165,4 +169,61 @@ test("task chunks on a secondary calendar hold their time against other items bu
   const mine = await range(cal);
   const [chunk] = titled(await range(tasks), "DEF-Report");
   for (const walk of titled(mine, "DEF-Walk")) expect(overlap(walk, chunk ?? sync)).toBe(false);
+});
+
+test("a locked task chunk on a secondary calendar blocks booking links like any locked event (DEF-50, LCK-1)", async ({
+  page,
+  browser,
+  cal,
+  signIn,
+}) => {
+  await blockUntil(cal, W);
+  await signIn();
+  const tasks = await cal.newCalendar("Tasks");
+  await openSettings(page);
+  await page.getByRole("button", { name: "Refresh calendar list" }).click();
+  await expect(page.getByTestId("calendar-list")).toContainText("Tasks");
+  await page.reload();
+  await page
+    .getByTestId("hours-work")
+    .getByLabel("Calendar for task chunks")
+    .selectOption({ label: "Tasks" });
+  await expect(page.getByTestId("settings-message")).toHaveText("Saved");
+
+  const nine = at(W, "09:00");
+  const range = () => tasks.events(at(W, "00:00"), at(addDays(W, 1), "00:00"));
+  await addTask(page, {
+    title: "DEF-Locked",
+    minutes: 60,
+    split: false,
+    due: `${W}T10:00`,
+    level: 1,
+  });
+  await eventually(range, (l) =>
+    expect(titled(l, "DEF-Locked").map((e) => e.start)).toEqual([nine]),
+  );
+
+  // Unlocked, the chunk leaves the time open to the link (the rule above).
+  await claimPage(page, "def-locked");
+  const v = await visitor(browser);
+  await v.goto("/book/def-locked/meeting");
+  await expect(v.getByTestId("times")).toBeVisible();
+  await expect(slot(v, nine)).toBeVisible();
+
+  await openWeek(page);
+  await openEvent(page, "DEF-Locked");
+  await page.getByTestId("event-drawer").getByRole("button", { name: "Lock" }).click();
+  await eventually(range, (l) =>
+    expect(titled(l, "DEF-Locked")[0]?.summary).toBe("\u{1F512} DEF-Locked"),
+  );
+  // Locked, it never moves, so the link must not offer its time.
+  await eventually(
+    async () => {
+      await v.reload();
+      await expect(v.getByTestId("times")).toBeVisible();
+      return slot(v, nine).count();
+    },
+    (n) => expect(n).toBe(0),
+  );
+  expect(titled(await range(), "DEF-Locked").map((e) => e.start)).toEqual([nine]);
 });
