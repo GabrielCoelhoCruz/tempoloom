@@ -4,7 +4,11 @@
 //    SQLITE_FULL, SQLITE_IOERR and similar), the ROLLBACK must not hide the
 //    body's error with "cannot rollback - no transaction is active".
 // 3. When the ROLLBACK itself fails, both errors must surface and the failure
-//    must be logged: the connection may be left in a transaction.
+//    must be logged.
+// 4. After a failed ROLLBACK no later write may report success while it is
+//    lost in the stuck transaction: the connection is closed and later calls
+//    throw.
+// 5. A tx() inside a tx body joins the outer transaction, which commits once.
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it, vi } from "vitest";
 import { tx } from "../../src/server/db.ts";
@@ -59,10 +63,51 @@ describe("tx", () => {
     expect(thrown).toBeInstanceOf(AggregateError);
     const messages = (thrown as AggregateError).errors.map((e: Error) => e.message);
     expect(messages).toEqual(["body failed", "disk I/O error"]);
-    expect(log).toHaveBeenCalledWith(expect.stringMatching(/left in a transaction/), thrown);
+    expect(log).toHaveBeenCalledWith(expect.stringMatching(/ROLLBACK failed/), thrown);
+    log.mockRestore();
+  });
+
+  it("never loses a later write after a failed ROLLBACK", () => {
+    const db = memDb();
+    const exec = db.exec.bind(db);
+    vi.spyOn(db, "exec").mockImplementation((sql) => {
+      if (sql === "ROLLBACK") throw new Error("disk I/O error");
+      exec(sql);
+    });
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(() =>
+      tx(db, () => {
+        throw new Error("body failed");
+      }),
+    ).toThrow(AggregateError);
     log.mockRestore();
     vi.mocked(db.exec).mockRestore();
-    exec("ROLLBACK");
+
+    let committed = false;
+    try {
+      tx(db, () => db.exec("INSERT INTO t VALUES (2)"));
+      committed = true;
+    } catch (err) {
+      expect(String(err)).toMatch(/ROLLBACK failed/);
+    }
+    if (committed) {
+      expect(db.isTransaction).toBe(false);
+      expect(db.prepare("SELECT COUNT(*) AS n FROM t").get()).toEqual({ n: 1 });
+    }
+    expect(() => db.prepare("INSERT INTO t VALUES (3)").run()).toThrow();
+  });
+
+  it("joins a nested tx() and commits once", () => {
+    const db = memDb();
+    const exec = vi.spyOn(db, "exec");
+    tx(db, () => {
+      db.exec("INSERT INTO t VALUES (1)");
+      tx(db, () => db.exec("INSERT INTO t VALUES (2)"));
+      expect(db.isTransaction).toBe(true);
+    });
+    expect(exec.mock.calls.filter(([sql]) => sql === "COMMIT")).toHaveLength(1);
+    expect(db.isTransaction).toBe(false);
+    expect(db.prepare("SELECT COUNT(*) AS n FROM t").get()).toEqual({ n: 2 });
   });
 
   it("commits when the body returns", () => {

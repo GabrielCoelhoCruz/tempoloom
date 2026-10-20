@@ -4,7 +4,7 @@ import { sendDueReminders } from "./booking-mail.ts";
 import { clockOf, loadConfig } from "./config.ts";
 import { SecretBox } from "./crypto.ts";
 import { DailyMailWorker } from "./daily-mail.ts";
-import { openDb } from "./db.ts";
+import { onConnectionBroken, openDb } from "./db.ts";
 import type { OAuthClient } from "./google/oauth.ts";
 import { parseServiceAccountKey } from "./google/service-account.ts";
 import { createMailer } from "./mail.ts";
@@ -84,15 +84,20 @@ const reminders = setInterval(() => {
 }, 60_000);
 
 // Stop taking requests, let queued calendar writes finish, then exit.
-async function shutdown() {
+let stopping = false;
+async function shutdown(code = 0) {
+  if (stopping) return;
+  stopping = true;
   server.close();
   clearInterval(reminders);
   await provisioning.stop();
   await dailyMail.stop();
   await sync.stop();
   await webhooks.stop();
-  db.close();
-  process.exit(0);
+  if (db.isOpen) db.close();
+  process.exit(code);
 }
 process.once("SIGINT", () => void shutdown());
 process.once("SIGTERM", () => void shutdown());
+// A failed ROLLBACK closes the connection: exit so the supervisor restarts.
+onConnectionBroken(() => void shutdown(1));

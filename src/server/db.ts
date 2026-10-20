@@ -43,8 +43,18 @@ function migrate(db: Db): void {
   }
 }
 
+const broken = new WeakSet<Db>();
+let brokenHandler: ((err: AggregateError) => void) | undefined;
+
+/** Sets the action for a connection that tx() closed after a failed ROLLBACK. */
+export function onConnectionBroken(fn: (err: AggregateError) => void): void {
+  brokenHandler = fn;
+}
+
 /** Runs fn in a write transaction. Nested calls join the outer transaction. */
 export function tx<T>(db: Db, fn: () => T): T {
+  if (broken.has(db))
+    throw new Error("Database connection closed: an earlier ROLLBACK failed; restart the server");
   if (db.isTransaction) return fn();
   db.exec("BEGIN IMMEDIATE");
   try {
@@ -62,7 +72,17 @@ export function tx<T>(db: Db, fn: () => T): T {
         [err, rollbackErr],
         "ROLLBACK failed after a failed transaction",
       );
-      console.error("ROLLBACK failed: the connection may be left in a transaction", both);
+      // A connection left in the transaction would make every later tx() join
+      // it and never commit. Closing discards the transaction, and every later
+      // call on the connection throws instead of losing its write.
+      broken.add(db);
+      try {
+        db.close();
+      } catch (closeErr) {
+        both.errors.push(closeErr);
+      }
+      console.error("ROLLBACK failed: connection closed", both);
+      brokenHandler?.(both);
       throw both;
     }
     throw err;
