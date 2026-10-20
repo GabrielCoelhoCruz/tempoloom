@@ -14,7 +14,6 @@ import { openTasks } from "../planner/now.ts";
 import { eventDescription, loadSnapshot, writeCalendar } from "../planner/replan.ts";
 import {
   type LockedEvent,
-  nextChunkIndex,
   writableCalendar,
   writableCalendars,
   writeLocked,
@@ -231,7 +230,6 @@ export function taskTimeRoutes(
       const settings = getSettings(db, user.id);
       await writeLocked(db, sync, user.id, calendarId, [
         {
-          key: `task:${id}:${nextChunkIndex(db, user.id, id)}`,
           kind: "task",
           sourceId: id,
           start: body.start,
@@ -273,14 +271,12 @@ export function taskTimeRoutes(
     const calendarId = defaultCalendar(user.id, "task", it);
     if (!calendarId) notFound("calendar");
     const settings = getSettings(db, user.id);
-    let n = nextChunkIndex(db, user.id, id);
     await writeLocked(
       db,
       sync,
       user.id,
       calendarId,
       blocks.map((b) => ({
-        key: `task:${id}:${n++}`,
         kind: "task" as const,
         sourceId: id,
         start: b.start,

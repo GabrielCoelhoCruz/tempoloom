@@ -8,7 +8,8 @@ import type { SyncService } from "../sync/service.ts";
 import { KEY_PROP, MANAGED_PROP } from "./push.ts";
 
 export interface LockedEvent {
-  key: string;
+  /** Omitted for a task chunk: the next free chunk key, chosen inside the sync queue. */
+  key?: string;
   kind: "task" | "habit";
   sourceId: string;
   start: number;
@@ -65,6 +66,8 @@ export async function writeLocked(
   if (!cal) throw new Error(`Calendar ${calendarId} is not writable`);
   await sync.exclusive(userId, async (pool) => {
     for (const e of events) {
+      // A plan run before this one may have taken the next key of a task.
+      const key = e.key ?? `task:${e.sourceId}:${nextChunkIndex(db, userId, e.sourceId)}`;
       const ev = await pool.get(cal.account_id).insertEvent(cal.provider_id, {
         summary: e.title,
         description: e.description,
@@ -73,7 +76,7 @@ export async function writeLocked(
         busy: true,
         colorId: null,
         ...(e.visibility ? { visibility: e.visibility } : {}),
-        privateProps: { [MANAGED_PROP]: "1", [KEY_PROP]: e.key, tl_user: userId },
+        privateProps: { [MANAGED_PROP]: "1", [KEY_PROP]: key, tl_user: userId },
       });
       cacheEvent(db, cal.id, ev);
       run(
@@ -85,7 +88,7 @@ export async function writeLocked(
         userId,
         cal.id,
         ev.id,
-        e.key,
+        key,
         e.kind,
         e.sourceId,
         e.start,
