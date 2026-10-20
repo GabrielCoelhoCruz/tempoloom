@@ -8,6 +8,9 @@
 //   setting is lost on reload                             -> P1 slot before and after; checkbox
 // - the reschedule ignores the delay, or the goal adds a second event for the
 //   moved one, or the move is put back by the next plan   -> spans for a 1-hour and a 3-hour delay
+// - the reschedule is offered on a focus event in progress -> no form at 11:10
+// - the reschedule uses a range where the user deleted a
+//   focus event of the goal (rule 21)                     -> span after a 4-hour delay
 // - a recovery buffer keeps the habit's last slot, or yields where the habit
 //   has other room                                        -> buffer and habit spans in two weeks
 import { addDays, localToUtc } from "../../src/shared/time.ts";
@@ -120,6 +123,77 @@ test("reschedule moves a focus event to the first free time at least the chosen 
     const f = titled(l, "Deep work");
     expect(f.map(span)).toEqual([`${W} 11:00-12:00`]);
     expect(minutesOf(f)).toBe(60);
+  };
+  await eventually(() => week(cal), check);
+  await page.reload();
+  await planNow(page);
+  check(await week(cal));
+
+  // While the event runs (the clock at 11:10), the planner does not offer the reschedule.
+  app.env.TEST_CLOCK_START = new Date(localToUtc(ZONE, W, 11 * 60 + 10)).toISOString();
+  await app.restart();
+  await openWeek(page);
+  await openEvent(page, "Deep work");
+  await expect(page.getByTestId("event-actions")).toBeVisible();
+  await expect(page.getByTestId("focus-reschedule-form")).toHaveCount(0);
+  check(await week(cal));
+});
+
+test("reschedule does not put a focus event back where the user deleted one of the goal (rules 21, 22)", async ({
+  page,
+  app,
+  cal,
+  signIn,
+}) => {
+  await blockUntil(cal, W);
+  // Monday has free time 09:00-10:00, 11:00-12:00 and 13:00-14:30.
+  await cal.addEvent({ title: "Review", start: at(W, "10:00"), end: at(W, "11:00") });
+  await cal.addEvent({ title: "Sync", start: at(W, "12:00"), end: at(W, "13:00") });
+  await cal.addEvent({ title: "Workshop", start: at(W, "14:30"), end: at(W, "17:00") });
+  app.env.TEST_CLOCK_START = new Date(localToUtc(ZONE, W, 7 * 60 + 30)).toISOString();
+  await app.restart();
+  await signIn();
+  const form = await create(page, "Focus time");
+  await form.getByLabel("Title").fill("Deep work");
+  await form.getByLabel("Weekly goal (hours)").fill("1");
+  await form.getByLabel("Daily minimum (hours)").fill("0");
+  await form.getByLabel("Daily maximum (hours)").fill("1");
+  await form.getByLabel("Shortest block (minutes)").fill("60");
+  await form.getByLabel("Longest block (minutes)").fill("60");
+  await save(form);
+  const [placed] = titled(
+    await eventually(
+      () => week(cal),
+      (l) => expect(titled(l, "Deep work").map(span)).toEqual([`${W} 13:00-14:00`]),
+    ),
+    "Deep work",
+  );
+  if (!placed) throw new Error("no focus event");
+  // The user deletes it: the goal places its hour in another range.
+  await cal.remove(placed.id);
+  await eventually(
+    () => week(cal),
+    (l) => {
+      const f = titled(l, "Deep work");
+      expect(f).toHaveLength(1);
+      expect(f[0]?.start).not.toBe(at(W, "13:00"));
+    },
+  );
+  await openWeek(page);
+  await openEvent(page, "Deep work");
+  const f = page.getByTestId("focus-reschedule-form");
+  await f.getByLabel("At least").selectOption({ label: "4 hours" });
+  const done = page.waitForResponse(
+    (r) => r.request().method() === "POST" && /\/reschedule$/.test(new URL(r.url()).pathname),
+  );
+  await f.getByRole("button", { name: "Reschedule" }).click();
+  expect((await done).ok()).toBe(true);
+  // 4 hours from 07:30 is 11:30. The first free hour after it is 13:00, where
+  // the user deleted the focus event; 14:00 to 14:30 is too short.
+  const check = (l: Awaited<ReturnType<typeof week>>) => {
+    const moved = titled(l, "Deep work");
+    expect(moved).toHaveLength(1);
+    expect(moved[0]?.start).toBeGreaterThanOrEqual(at(W, "14:30"));
   };
   await eventually(() => week(cal), check);
   await page.reload();

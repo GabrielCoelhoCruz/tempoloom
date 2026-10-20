@@ -16,6 +16,7 @@ interface Actions {
   sourceId?: string;
   date?: string | null;
   ended?: boolean;
+  started?: boolean;
   done?: boolean;
   search?: { kind: string; id: string; searchId: string | null } | null;
 }
@@ -149,7 +150,7 @@ export function EventActions({
           <button type="submit">Reschedule</button>
         </form>
       )}
-      {info.kind === "focus" && !info.ended && (
+      {info.kind === "focus" && !info.started && (
         <form
           class="inline"
           data-testid="focus-reschedule-form"

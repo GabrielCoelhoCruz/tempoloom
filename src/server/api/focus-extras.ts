@@ -126,13 +126,14 @@ export const RESCHEDULE_DELAYS = [15, 30, 60, 120, 180, 240, 1440] as const;
 /**
  * Rule 22: the start of the first free range in the event's hours that starts
  * at or after `earliest` and holds the event's length. Free means no blocking
- * event and no other Tempoloom event; the event's old time is not used again.
- * Null when the scheduling window has no such range.
+ * event, no other Tempoloom event, and no range where the user deleted an
+ * event of this goal (rule 21); the event's old time is not used again. Null
+ * when the scheduling window has no such range.
  */
 export function rescheduleStart(
   db: Db,
   userId: string,
-  event: { id: string; source_id: string; start_ms: number; end_ms: number },
+  event: { id: string; kind: string; source_id: string; start_ms: number; end_ms: number },
   earliest: number,
   now: number,
 ): number | null {
@@ -159,6 +160,15 @@ export function rescheduleStart(
       from,
       to,
     ).map((m) => ({ start: m.start_ms, end: m.end_ms })),
+    ...all<{ start_ms: number; end_ms: number }>(
+      db,
+      "SELECT start_ms, end_ms FROM item_exclusions WHERE user_id = ? AND kind = ? AND item_id = ? AND end_ms > ? AND start_ms < ?",
+      userId,
+      event.kind,
+      event.source_id,
+      from,
+      to,
+    ).map((x) => ({ start: x.start_ms, end: x.end_ms })),
     { start: event.start_ms, end: event.end_ms },
   ];
   for (const t of taken) free.subtract(t);
@@ -241,23 +251,34 @@ export function focusExtraRoutes(db: Db, sync: SyncService, now: () => number): 
           .refine((m) => RESCHEDULE_DELAYS.some((d) => d === m)),
       }),
     );
-    const row = one<{ id: string; source_id: string; start_ms: number; end_ms: number }>(
+    const row = one<{ id: string }>(
       db,
-      "SELECT id, source_id, start_ms, end_ms FROM managed_events WHERE id = ? AND user_id = ? AND kind = 'focus'",
+      "SELECT id FROM managed_events WHERE id = ? AND user_id = ? AND kind = 'focus'",
       c.req.param("id"),
       user.id,
     );
     if (!row) notFound("focus event");
-    const t = now();
-    if (row.start_ms <= t) return c.json({ error: "event_started" }, 409);
-    const start = rescheduleStart(db, user.id, row, t + delayMinutes * 60_000, t);
-    if (start === null) return c.json({ error: "no_free_time" }, 409);
-    const moved = await moveManaged(db, sync, now, user.id, row.id, start, {
-      actor: c.get("actor")?.email ?? "",
-      reason: `rescheduled at least ${delayMinutes} minutes from now`,
-    });
+    // A focus event in progress is not rescheduled; the planner does not offer it.
+    let start: number | null = null;
+    const moved = await moveManaged(
+      db,
+      sync,
+      now,
+      user.id,
+      row.id,
+      (event) => {
+        const t = now();
+        start = rescheduleStart(db, user.id, event, t + delayMinutes * 60_000, t);
+        return start;
+      },
+      {
+        actor: c.get("actor")?.email ?? "",
+        reason: `rescheduled at least ${delayMinutes} minutes from now`,
+      },
+    );
     if (moved === null) notFound("focus event");
     if (moved === "started") return c.json({ error: "event_started" }, 409);
+    if (moved === "no_time") return c.json({ error: "no_free_time" }, 409);
     sync.request(user.id, 0);
     return c.json({ start });
   });

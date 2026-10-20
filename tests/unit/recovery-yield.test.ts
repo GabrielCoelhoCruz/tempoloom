@@ -6,6 +6,7 @@
 //  2. A before buffer (prep) or travel time yields too.
 //  3. A locked buffer yields.
 //  4. The freed time is not given back, so a later item cannot use what the habit left.
+//  5. A habit that never turns busy (always free) takes the buffer's time.
 import { describe, expect, it } from "vitest";
 import type {
   BufferItem,
@@ -185,5 +186,11 @@ describe("recovery buffer and a habit at its last slot (buffers rule 18)", () =>
     );
     expect(spans(of(r, "rec"))).toEqual([`${MON}T12:00/12:15`]);
     expect(of(r, "walk")).toEqual([]);
+  });
+
+  it("keeps the buffer for a habit that is always free, because it never turns busy", () => {
+    const r = plan(snapshot({ habits: [{ ...habit, defense: "always-free" }] }));
+    expect(spans(of(r, "rec"))).toEqual([`${MON}T12:00/12:15`]);
+    expect(spans(of(r, "walk")).some((s) => s.startsWith(`${MON}T12:00`))).toBe(false);
   });
 });

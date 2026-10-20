@@ -346,9 +346,11 @@ export function plannerRoutes(db: Db, sync: SyncService, now: () => number): Hon
 }
 
 /**
- * Moves a managed event to `start` with the same length and locks it there
- * (CED-50; focus-time.md rules 20 and 22). Null: no such event; "started": it
- * has begun, so it does not move.
+ * Moves a managed event to `to` with the same length and locks it there
+ * (CED-50; focus-time.md rules 20 and 22). `to` is a start, or a function that
+ * picks the start inside the user's exclusive section, so no plan run takes the
+ * time between the choice and the move. Null: no such event; "started": it has
+ * begun, so it does not move; "no_time": the function found no start.
  */
 export function moveManaged(
   db: Db,
@@ -356,9 +358,9 @@ export function moveManaged(
   now: () => number,
   userId: string,
   id: string,
-  start: number,
+  to: number | ((row: ManagedRow) => number | null),
   { actor, reason }: { actor: string; reason: string },
-): Promise<"moved" | "started" | null> {
+): Promise<"moved" | "started" | "no_time" | null> {
   const markers = getSettings(db, userId).markers;
   return sync.exclusive(userId, async (pool) => {
     const row = one<ManagedRow & { account_id: string; provider_id: string }>(
@@ -370,6 +372,8 @@ export function moveManaged(
     );
     if (!row?.event_id) return null;
     if (row.start_ms <= now()) return "started" as const;
+    const start = typeof to === "number" ? to : to(row);
+    if (start === null) return "no_time" as const;
     const end = start + (row.end_ms - row.start_ms);
     const title = row.user_edited ? row.title : withState(markers, row.title, "locked");
     // A meeting occurrence keeps the organizer's calendar edits (MEET-02 rule 22).

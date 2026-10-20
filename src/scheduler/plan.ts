@@ -753,8 +753,9 @@ function placeHabit(ctx: Ctx, h: HabitItem): void {
 /**
  * buffers-automation.md rule 18: a recovery buffer (the after side of a buffer
  * that is not travel time) gives way to a habit occurrence that has no other
- * slot on any of its days. The buffers under the chosen time are removed; the
- * occurrence then has no other room, so an adaptive habit turns busy (DEF-23).
+ * slot on any of its days and turns busy there: an adaptive habit (DEF-23) or
+ * an always-busy one. An always-free habit never turns busy, so the buffer
+ * keeps its time. The buffers under the chosen time are removed.
  */
 function takeRecovery(
   ctx: Ctx,
@@ -763,6 +764,7 @@ function takeRecovery(
   days: LocalDate[],
   windows: TimeSet[],
 ): { iv: Interval; dayIdx: number } | null {
+  if (h.defense === "always-free") return null;
   const recoveryIds = new Set(
     ctx.s.buffers.filter((b) => !b.filter.travel && !b.filter.flight).map((b) => b.id),
   );
