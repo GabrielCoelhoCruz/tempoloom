@@ -81,7 +81,7 @@ import { getSettings } from "./settings.ts";
 import { otherSignIn } from "./sso/policy.ts";
 import type { SyncService } from "./sync/service.ts";
 import { enqueueBookingEvent, type WebhookWorker } from "./webhooks.ts";
-import { weeklyShareRoutes } from "./weekly-share.ts";
+import { weeklyShareApi, weeklyShareRoutes } from "./weekly-share.ts";
 
 export interface AppDeps {
   db: Db;
@@ -497,6 +497,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   app.route("/api", eventActionRoutes(db, sync, now));
   app.route("/api", taskSearchRoutes(db, now));
   app.route("/api", focusExtraRoutes(db, sync, now));
+  app.route("/api", weeklyShareApi(db, config.BASE_URL));
   app.route("/api", bufferFilterRoutes(db, now));
   app.route("/api", meetingCheckRoutes(db, sync, now));
   app.route("/api", automationRoutes(db, sync, now));

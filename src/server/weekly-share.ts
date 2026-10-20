@@ -1,19 +1,55 @@
 // The public share page of a weekly report's top part (docs/specs/
 // analytics-weekly-reports.md rules 10-12, edge case 6). The report stores the
-// part as sent (weekly-report.ts); a share link from the email makes it public
-// and goes to the page or to a site's share dialog. The page needs no login and
-// shows the display name, the week, the three totals and the calendar facts.
-import { Hono } from "hono";
-import { type Db, one, run } from "./db.ts";
+// part as sent (weekly-report.ts). A share link of the email opens a confirm
+// page; only its form (a POST with a token) makes the page public, so a mail
+// scanner that opens every link shares nothing. The owner can stop sharing in
+// Settings. The page needs no login, is not indexed, and shows the display name
+// only when the user set one, the week, the three totals and the calendar facts.
+import { randomBytes, timingSafeEqual } from "node:crypto";
+import { getConnInfo } from "@hono/node-server/conninfo";
+import { type Context, Hono } from "hono";
+import { getCookie, setCookie } from "hono/cookie";
+import type { AppEnv } from "./app.ts";
+import { all, type Db, one, run } from "./db.ts";
+import { notFound } from "./http.ts";
 
 interface Share {
   token: string;
-  name: string;
+  name: string | null;
   week_from: string;
   week_to: string;
   totals: string;
   facts: string;
   shared_at: number | null;
+}
+
+/**
+ * Rule 12 decision: the page shows a name only when it is a display name the
+ * user set (from Google or the directory). An email address, the local part of
+ * one of the user's emails, or a CalDAV user name is a login, not a display
+ * name, so the page shows no name.
+ */
+export function publicName(db: Db, userId: string): string | null {
+  const user = one<{ name: string; email: string }>(
+    db,
+    "SELECT name, email FROM users WHERE id = ?",
+    userId,
+  );
+  if (!user) return null;
+  const name = user.name.trim();
+  const lower = name.toLowerCase();
+  const accounts = all<{ provider: string; external_id: string; email: string }>(
+    db,
+    "SELECT provider, external_id, email FROM accounts WHERE user_id = ?",
+    userId,
+  );
+  const logins = new Set([
+    ...[user.email, ...accounts.map((a) => a.email)].map((e) => e.split("@")[0]?.toLowerCase()),
+    ...accounts
+      .filter((a) => a.provider === "caldav")
+      .map((a) => a.external_id.slice(a.external_id.lastIndexOf("|") + 1).toLowerCase()),
+  ]);
+  return name && !name.includes("@") && !logins.has(lower) ? name : null;
 }
 
 const esc = (s: string) =>
@@ -25,28 +61,44 @@ const DIALOGS: Record<string, (page: string) => string> = {
   linkedin: (p) => `https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(p)}`,
   facebook: (p) => `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(p)}`,
 };
+const TARGET_NAMES: Record<string, string> = {
+  link: "a direct link",
+  x: "X",
+  linkedin: "LinkedIn",
+  facebook: "Facebook",
+};
 
-const NOT_FOUND = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Not found</title></head><body><p>Not found.</p></body></html>`;
-
-function page(s: Share): string {
-  const list = (items: string[], id: string) =>
-    `<ul data-testid="${id}">${items.map((i) => `<li>${esc(i)}</li>`).join("")}</ul>`;
-  const facts = JSON.parse(s.facts) as string[];
-  return `<!doctype html>
+/** Search engines skip the page; links from it send no referrer. */
+const HEADERS = {
+  "cache-control": "no-store",
+  "x-robots-tag": "noindex, nofollow",
+  "referrer-policy": "no-referrer",
+};
+const head = (title: string) => `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="robots" content="noindex, nofollow">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${esc(s.name)}: your week</title>
+<title>${esc(title)}</title>
 <style>
 body{font-family:system-ui,sans-serif;max-width:40rem;margin:2rem auto;padding:0 1rem;color:#1f2937}
 .facts li{display:inline-block;margin:4px;padding:8px 12px;border-radius:6px;background:#dbeafe}
 .facts ul{padding:0}
 </style>
-</head>
+</head>`;
+
+const NOT_FOUND = `${head("Not found")}<body><p>Not found.</p></body></html>`;
+
+function page(s: Share): string {
+  const list = (items: string[], id: string) =>
+    `<ul data-testid="${id}">${items.map((i) => `<li>${esc(i)}</li>`).join("")}</ul>`;
+  const facts = JSON.parse(s.facts) as string[];
+  const title = s.name ? `${s.name}'s week` : "A week in review";
+  return `${head(title)}
 <body>
 <main data-testid="shared-report">
-<h1>${esc(s.name)}: your week</h1>
+<h1>${esc(title)}</h1>
 <p>${esc(s.week_from)} to ${esc(s.week_to)}</p>
 <h2>Time</h2>
 ${list(JSON.parse(s.totals) as string[], "shared-totals")}
@@ -58,32 +110,138 @@ ${list(JSON.parse(s.totals) as string[], "shared-totals")}
 </html>`;
 }
 
+function confirmPage(s: Share, to: string, csrf: string): string {
+  return `${head("Share your week")}
+<body>
+<main data-testid="share-confirm">
+<h1>Share your week</h1>
+<p>This makes a public page with the totals and the calendar facts of ${esc(s.week_from)} to ${esc(s.week_to)}. Event titles are not on it. You can stop sharing in Settings.</p>
+<form method="post">
+<input type="hidden" name="to" value="${esc(to)}">
+<input type="hidden" name="csrf" value="${esc(csrf)}">
+<button type="submit">Share on ${esc(TARGET_NAMES[to] ?? to)}</button>
+</form>
+</main>
+</body>
+</html>`;
+}
+
+const RATE_WINDOW = 60_000;
+/** Requests per client address and minute on /r. A 192-bit token cannot be guessed; this stops floods. */
+const RATE_LIMIT = 60;
+const CSRF_COOKIE = "tl_share";
+
+function clientAddress(c: Context): string {
+  try {
+    return getConnInfo(c).remote.address ?? "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
+const same = (a: string, b: string) =>
+  a.length === b.length && a.length > 0 && timingSafeEqual(Buffer.from(a), Buffer.from(b));
+
 export function weeklyShareRoutes(db: Db, baseUrl: string, now: () => number): Hono {
   const r = new Hono();
+  const origin = new URL(baseUrl).origin;
+  const secure = baseUrl.startsWith("https://");
+  const hits = new Map<string, { start: number; count: number }>();
   const find = (token: string) =>
     one<Share>(
       db,
-      `SELECT s.token, u.name, s.week_from, s.week_to, s.totals, s.facts, s.shared_at
-       FROM weekly_shares s JOIN users u ON u.id = s.user_id WHERE s.token = ?`,
+      "SELECT token, name, week_from, week_to, totals, facts, shared_at FROM weekly_shares WHERE token = ?",
       token,
     );
+  const pageUrl = (token: string) => new URL(`/r/${token}`, baseUrl).toString();
+  const target = (token: string, to: string) =>
+    to === "link" ? pageUrl(token) : (DIALOGS[to]?.(pageUrl(token)) ?? pageUrl(token));
 
-  // Rule 11: a share action makes the page public, then goes to its target.
+  r.use("*", async (c, next) => {
+    const t = now();
+    const key = clientAddress(c);
+    const hit = hits.get(key);
+    if (!hit || t - hit.start >= RATE_WINDOW) {
+      if (hits.size > 10_000) hits.clear();
+      hits.set(key, { start: t, count: 1 });
+    } else if (++hit.count > RATE_LIMIT) {
+      return c.text("Too many requests.", 429, { ...HEADERS, "retry-after": "60" });
+    }
+    await next();
+  });
+
+  // Rule 11: a share link of the email asks before it makes the page public.
   r.get("/:token/share", (c) => {
     const share = find(c.req.param("token"));
     const to = c.req.query("to") ?? "link";
-    if (!share || (to !== "link" && !DIALOGS[to])) return c.html(NOT_FOUND, 404);
-    if (share.shared_at === null)
-      run(db, "UPDATE weekly_shares SET shared_at = ? WHERE token = ?", now(), share.token);
-    const pageUrl = new URL(`/r/${share.token}`, baseUrl).toString();
-    return c.redirect(to === "link" ? pageUrl : (DIALOGS[to]?.(pageUrl) ?? pageUrl), 302);
+    if (!share || !TARGET_NAMES[to]) return c.html(NOT_FOUND, 404, HEADERS);
+    if (share.shared_at !== null) return c.redirect(target(share.token, to), 302);
+    const csrf = randomBytes(18).toString("base64url");
+    setCookie(c, CSRF_COOKIE, csrf, {
+      httpOnly: true,
+      sameSite: "Strict",
+      secure,
+      path: `/r/${share.token}`,
+      maxAge: 3600,
+    });
+    return c.html(confirmPage(share, to, csrf), 200, HEADERS);
   });
 
-  // Rule 12: no login; only a page that a share action made public.
+  // The confirm form: the user's explicit action makes the page public.
+  r.post("/:token/share", async (c) => {
+    const share = find(c.req.param("token"));
+    const form = await c.req.parseBody();
+    const to = typeof form.to === "string" ? form.to : "";
+    if (!share || !TARGET_NAMES[to]) return c.html(NOT_FOUND, 404, HEADERS);
+    // With no-referrer the browser sends "null" as the origin; the SameSite
+    // cookie that must match the form's token keeps other sites out.
+    const sentFrom = c.req.header("origin") ?? "null";
+    const csrf = typeof form.csrf === "string" ? form.csrf : "";
+    if (![origin, "null"].includes(sentFrom) || !same(csrf, getCookie(c, CSRF_COOKIE) ?? ""))
+      return c.text("Open the share link from the email again.", 403, HEADERS);
+    if (share.shared_at === null)
+      run(db, "UPDATE weekly_shares SET shared_at = ? WHERE token = ?", now(), share.token);
+    return c.redirect(target(share.token, to), 303);
+  });
+
+  // Rule 12: no login; only a page that the user shared and did not stop sharing.
   r.get("/:token", (c) => {
     const share = find(c.req.param("token"));
-    if (!share || share.shared_at === null) return c.html(NOT_FOUND, 404);
-    return c.html(page(share), 200, { "cache-control": "no-store" });
+    if (!share || share.shared_at === null) return c.html(NOT_FOUND, 404, HEADERS);
+    return c.html(page(share), 200, HEADERS);
+  });
+  r.notFound((c) => c.html(NOT_FOUND, 404, HEADERS));
+  return r;
+}
+
+/** Open question 4 decision: the owner lists the shared weeks and stops sharing any of them. */
+export function weeklyShareApi(db: Db, baseUrl: string): Hono<AppEnv> {
+  const r = new Hono<AppEnv>();
+  r.get("/weekly-shares", (c) => {
+    const rows = all<{ token: string; week_from: string; week_to: string; shared_at: number }>(
+      db,
+      `SELECT token, week_from, week_to, shared_at FROM weekly_shares
+       WHERE user_id = ? AND shared_at IS NOT NULL ORDER BY week_from DESC, shared_at DESC`,
+      c.get("user").id,
+    );
+    return c.json({
+      shares: rows.map((s) => ({
+        id: s.token,
+        weekFrom: s.week_from,
+        weekTo: s.week_to,
+        sharedAt: s.shared_at,
+        url: new URL(`/r/${s.token}`, baseUrl).toString(),
+      })),
+    });
+  });
+  r.post("/weekly-shares/:id/stop", (c) => {
+    const changed = db
+      .prepare(
+        "UPDATE weekly_shares SET shared_at = NULL WHERE token = ? AND user_id = ? AND shared_at IS NOT NULL",
+      )
+      .run(c.req.param("id"), c.get("user").id).changes;
+    if (changed !== 1) notFound("shared week");
+    return c.json({ ok: true });
   });
   return r;
 }

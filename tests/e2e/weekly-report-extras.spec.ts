@@ -7,9 +7,10 @@
 // - the busiest or the lightest day is wrong, or a day or event has no planner link;
 // - a done task shows, the order is not by priority, or a habit with no plan next week shows;
 // - an item link does not open that item;
-// - the share page exists before a share action, needs a login, or shows event titles;
+// - the share page exists before a confirmed share (a mail scanner opens every
+//   link), needs a login, is indexed, or shows event titles or a login name;
 // - a social share link does not carry the page link;
-// - the share page outlives the account.
+// - the owner cannot stop sharing, or the page outlives the account.
 import { addDays, localToUtc } from "../../src/shared/time.ts";
 import { at, BACKEND, blockUntil, EMAIL, expect, test, ZONE } from "./fixtures.ts";
 import { addHabit, addTask, visitor, W } from "./helpers.ts";
@@ -148,7 +149,7 @@ test("the weekly report previews next week's calendar by day with the busiest an
   await expect(page.getByTestId("habit-editor").getByLabel("Title")).toHaveValue("Reading");
 });
 
-test("a share action makes a public page of the report's top part: name, week, totals and facts, no event titles; X, LinkedIn and Facebook links carry the page link (rules 10-12, edge case 6)", async ({
+test("a share link asks first; the confirmed share makes a public noindex page of the report's top part: week, totals and facts, no login name and no event titles; X, LinkedIn and Facebook get the page link; the owner can stop sharing (rules 10-12, edge case 6)", async ({
   page,
   browser,
   cal,
@@ -179,31 +180,32 @@ test("a share action makes a public page of the report's top part: name, week, t
   expect(report.text).toContain(`Direct link: ${direct}`);
   const pageUrl = direct.replace(/\/share\?to=link$/, "");
 
-  // No public page before a share action.
+  // No public page before a share action; opening a share link (as a mail
+  // scanner does) only asks.
   const v = await visitor(browser);
-  expect((await v.goto(pageUrl))?.status()).toBe(404);
-
-  // The social links answer with that site's share dialog for the page link.
-  const target = encodeURIComponent(pageUrl);
-  const expected: Record<string, string> = {
-    X: `https://twitter.com/intent/tweet?url=${target}`,
-    LinkedIn: `https://www.linkedin.com/sharing/share-offsite/?url=${target}`,
-    Facebook: `https://www.facebook.com/sharer/sharer.php?u=${target}`,
-  };
-  for (const [name, url] of Object.entries(expected)) {
-    const link = a.get(name) ?? "";
-    expect(link).toMatch(/\/share\?to=(x|linkedin|facebook)$/);
-    const res = await v.request.get(link, { maxRedirects: 0 });
-    expect(res.status()).toBe(302);
-    expect(res.headers().location).toBe(url);
+  const missing = await v.request.get(pageUrl);
+  expect(missing.status()).toBe(404);
+  expect(missing.headers()["x-robots-tag"]).toBe("noindex, nofollow");
+  for (const name of ["Direct link", "X", "LinkedIn", "Facebook"]) {
+    const res = await v.request.get(a.get(name) ?? "", { maxRedirects: 0 });
+    expect(res.status()).toBe(200);
   }
+  expect((await v.request.get(pageUrl)).status()).toBe(404);
 
-  // The direct link opens the public page, with no login.
+  // The direct link, confirmed, opens the public page with no login.
   await v.goto(direct);
+  await expect(v.getByTestId("share-confirm")).toContainText("Event titles are not on it");
+  await v.getByRole("button", { name: "Share on a direct link" }).click();
   await expect(v).toHaveURL(pageUrl);
-  const [user] = app.query<{ name: string }>("SELECT name FROM users WHERE email = ?", EMAIL);
   const shown = v.getByTestId("shared-report");
-  await expect(shown.getByRole("heading", { level: 1 })).toHaveText(`${user?.name}: your week`);
+  // The user's name is the CalDAV user name, a login, not a display name.
+  const [user] = app.query<{ name: string }>("SELECT name FROM users WHERE email = ?", EMAIL);
+  expect(user?.name).toBe("e2e");
+  await expect(shown.getByRole("heading", { level: 1 })).toHaveText("A week in review");
+  await expect(shown).not.toContainText("e2e");
+  await expect(v.locator('meta[name="robots"]')).toHaveAttribute("content", "noindex, nofollow");
+  const res = await v.request.get(pageUrl);
+  expect(res.headers()["x-robots-tag"]).toBe("noindex, nofollow");
   await expect(shown).toContainText(`${W} to ${day(4)}`);
   await expect(shown.getByTestId("shared-totals").locator("li")).toHaveText([
     "Meetings: 1 h 30 min",
@@ -217,6 +219,52 @@ test("a share action makes a public page of the report's top part: name, week, t
     await expect(shown).not.toContainText(title);
   await v.reload();
   await expect(shown.getByTestId("shared-totals").locator("li")).toHaveCount(3);
+
+  // Once shared, each social link opens that site's share dialog for the page link.
+  const target = encodeURIComponent(pageUrl);
+  const expected: Record<string, string> = {
+    X: `https://twitter.com/intent/tweet?url=${target}`,
+    LinkedIn: `https://www.linkedin.com/sharing/share-offsite/?url=${target}`,
+    Facebook: `https://www.facebook.com/sharer/sharer.php?u=${target}`,
+  };
+  for (const [name, url] of Object.entries(expected)) {
+    const res = await v.request.get(a.get(name) ?? "", { maxRedirects: 0 });
+    expect(res.status()).toBe(302);
+    expect(res.headers().location).toBe(url);
+  }
+
+  // The owner stops sharing in Settings: the page is gone, also after a reload.
+  await page.goto("/settings");
+  const week = page.getByTestId("shared-week");
+  await expect(week).toHaveText(new RegExp(`${W} to ${day(4)}`));
+  const stopped = page.waitForResponse(
+    (r) => r.request().method() === "POST" && /\/stop$/.test(new URL(r.url()).pathname),
+  );
+  await week.getByRole("button", { name: "Stop sharing" }).click();
+  expect((await stopped).ok()).toBe(true);
+  await expect(week).toHaveCount(0);
+  expect((await v.request.get(pageUrl)).status()).toBe(404);
+  await page.reload();
+  await expect(page.getByTestId("weekly-report")).toBeVisible();
+  await expect(page.getByTestId("shared-week")).toHaveCount(0);
+
+  // Shared again from a social link: its confirm form answers with that site's
+  // dialog (sent here without following it to the site).
+  const x = a.get("X") ?? "";
+  await v.goto(x);
+  const confirm = v.getByTestId("share-confirm");
+  await expect(confirm.getByRole("button", { name: "Share on X" })).toBeVisible();
+  expect((await v.request.get(pageUrl)).status()).toBe(404);
+  const res2 = await v.request.post(x.replace(/\?.*$/, ""), {
+    form: {
+      to: await confirm.locator('input[name="to"]').inputValue(),
+      csrf: await confirm.locator('input[name="csrf"]').inputValue(),
+    },
+    maxRedirects: 0,
+  });
+  expect(res2.status()).toBe(303);
+  expect(res2.headers().location).toBe(expected.X);
+  expect((await v.request.get(pageUrl)).status()).toBe(200);
 
   // Edge case 6: after the account is deleted the page is gone.
   await page.goto("/account");

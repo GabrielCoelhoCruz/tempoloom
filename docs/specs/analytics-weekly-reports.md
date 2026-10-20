@@ -77,6 +77,15 @@ gets this email.
     opens that site's share dialog with the page link.
 12. The public page needs no login. It shows the user's display name, the
     week dates, the three totals and the calendar facts.
+    Tempoloom decision: a share link of the email opens a confirm page; only
+    its button (a POST with a token) makes the page public, so a mail scanner
+    that opens every link shares nothing. The page shows a name only when it
+    is a display name the user set (from Google or the directory); an email
+    address, the local part of one of the user's emails, or a CalDAV user
+    name is a login, so the page then shows no name. The name is taken when
+    the report is sent. The page, its confirm page and "not found" are
+    `noindex, nofollow` (meta tag and `X-Robots-Tag`) with no referrer, and
+    /r answers at most 60 requests per minute per client address.
 
 ## Outputs
 
@@ -110,7 +119,9 @@ Not yet observed.
    send time? Answered for Tempoloom by the rule 5 decision: up to the send
    time.
 3. Which calendar facts does the reference choose, and how?
-4. Can a user revoke a shared page?
+4. Can a user revoke a shared page? Tempoloom decision: yes. Settings, under
+   the weekly report, lists the shared weeks, each with "Stop sharing"; the
+   page then answers "not found" until the user shares it again.
 5. Is there a team or manager version of the weekly email?
 
 ## Acceptance tests

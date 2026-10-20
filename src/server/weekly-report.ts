@@ -12,6 +12,7 @@ import { addDays, type LocalDate, localToUtc, utcToLocal, weekdayOf } from "../s
 import { personalInsights } from "./analytics/personal.ts";
 import { all, type Db, one, run } from "./db.ts";
 import type { Message } from "./mail.ts";
+import { publicName } from "./weekly-share.ts";
 
 /** Rule 7: the facts show as colored blocks under the totals. */
 const BLOCKS = ["#dbeafe", "#dcfce7", "#fef3c7", "#fce7f3"];
@@ -225,13 +226,14 @@ export function weeklyReport(
   const url = (path: string) => new URL(path, baseUrl).toString();
   const a = (href: string, text: string) => `<a href="${esc(href)}">${esc(text)}</a>`;
 
-  // Rules 10-11: the top part as sent, public once the user picks a share target.
+  // Rules 10-11: the top part as sent, public once the user confirms a share.
   const token = randomBytes(24).toString("base64url");
   run(
     db,
-    "INSERT INTO weekly_shares (token, user_id, week_from, week_to, totals, facts, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    "INSERT INTO weekly_shares (token, user_id, name, week_from, week_to, totals, facts, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
     token,
     user.id,
+    publicName(db, user.id),
     from,
     to,
     JSON.stringify(totals),

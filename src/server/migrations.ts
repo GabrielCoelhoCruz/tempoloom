@@ -1215,12 +1215,14 @@ export const MIGRATIONS: readonly string[] = [
   `,
   // 36: focus time hidden from booking links (focus-time.md offer_to_booking_links),
   // and the share pages of weekly reports (analytics-weekly-reports.md rules 10-12):
-  // the top part as sent, public once a share action set shared_at.
+  // the top part and the display name (null: none to show) as sent, public
+  // while shared_at is set: the user confirmed a share and did not stop it.
   `
   ALTER TABLE focus_goals ADD COLUMN offer_to_links INTEGER NOT NULL DEFAULT 1;
   CREATE TABLE weekly_shares (
     token TEXT PRIMARY KEY,
     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name TEXT,
     week_from TEXT NOT NULL,
     week_to TEXT NOT NULL,
     totals TEXT NOT NULL,
