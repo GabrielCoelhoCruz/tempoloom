@@ -4,7 +4,14 @@ import { MIGRATIONS } from "./migrations.ts";
 export type Db = DatabaseSync;
 export type Row = Record<string, SQLInputValue>;
 
-export function openDb(path: string): Db {
+export type BrokenHandler = (err: AggregateError) => void;
+
+/**
+ * Opens and migrates the database. onBroken runs once if tx() must close the
+ * connection after a failed ROLLBACK; it is set after the migrations, so a
+ * failed migration only throws.
+ */
+export function openDb(path: string, opts: { onBroken?: BrokenHandler } = {}): Db {
   const db = new DatabaseSync(path);
   db.exec(`
     PRAGMA journal_mode = WAL;
@@ -13,6 +20,7 @@ export function openDb(path: string): Db {
     PRAGMA busy_timeout = 5000;
   `);
   migrate(db);
+  if (opts.onBroken) brokenHandlers.set(db, opts.onBroken);
   return db;
 }
 
@@ -43,8 +51,32 @@ function migrate(db: Db): void {
   }
 }
 
+const broken = new WeakSet<Db>();
+const brokenHandlers = new WeakMap<Db, BrokenHandler>();
+
+function assertUsable(db: Db): void {
+  if (broken.has(db))
+    throw new Error("Database connection closed: an earlier ROLLBACK failed; restart the server");
+}
+
+/**
+ * The onBroken of the server's main connection: no drain. In-flight work can
+ * not write to a closed connection, so stop taking requests and exit at once;
+ * the supervisor restarts the server.
+ */
+export function exitOnBroken(stopServer: () => void): BrokenHandler {
+  return () => {
+    try {
+      stopServer();
+    } finally {
+      process.exit(1);
+    }
+  };
+}
+
 /** Runs fn in a write transaction. Nested calls join the outer transaction. */
 export function tx<T>(db: Db, fn: () => T): T {
+  assertUsable(db);
   if (db.isTransaction) return fn();
   db.exec("BEGIN IMMEDIATE");
   try {
@@ -62,7 +94,13 @@ export function tx<T>(db: Db, fn: () => T): T {
         [err, rollbackErr],
         "ROLLBACK failed after a failed transaction",
       );
-      console.error("ROLLBACK failed: the connection may be left in a transaction", both);
+      // A connection left in the transaction would make every later tx() join
+      // it and never commit. Closing discards the transaction, and every later
+      // call on the connection throws instead of losing its write.
+      broken.add(db);
+      db.close();
+      console.error("ROLLBACK failed: connection closed", both);
+      brokenHandlers.get(db)?.(both);
       throw both;
     }
     throw err;
@@ -70,13 +108,16 @@ export function tx<T>(db: Db, fn: () => T): T {
 }
 
 export function all<T>(db: Db, sql: string, ...params: SQLInputValue[]): T[] {
+  assertUsable(db);
   return db.prepare(sql).all(...params) as T[];
 }
 
 export function one<T>(db: Db, sql: string, ...params: SQLInputValue[]): T | undefined {
+  assertUsable(db);
   return db.prepare(sql).get(...params) as T | undefined;
 }
 
 export function run(db: Db, sql: string, ...params: SQLInputValue[]): void {
+  assertUsable(db);
   db.prepare(sql).run(...params);
 }
