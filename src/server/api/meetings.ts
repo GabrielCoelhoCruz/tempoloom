@@ -30,7 +30,7 @@ import { getSettings } from "../settings.ts";
 import { cacheEvent } from "../sync/pull.ts";
 import type { SyncService } from "../sync/service.ts";
 import { homeZone } from "../travel.ts";
-import { badRequest, hhmm, hoursSetId, nextRank } from "./items.ts";
+import { badRequest, hhmm, hoursSetId, insertRank } from "./items.ts";
 
 const fiveMinutes = z.number().int().min(5).max(480).multipleOf(5);
 const meetingInput = z.object({
@@ -497,7 +497,7 @@ export function meetingRoutes(
       id,
       body,
       now(),
-      nextRank(db, "meetings", user.id, body.level),
+      insertRank(db, "meetings", user.id, body.level),
     );
     row.event_settings = JSON.stringify(
       newEventSettings(db, user.id, "meeting", body.eventSettings),

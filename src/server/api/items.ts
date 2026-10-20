@@ -228,6 +228,39 @@ export function nextRank(
   );
 }
 
+const KINDS = ["meetings", "buffers", "habits"] as const;
+
+/**
+ * SCH-71: the rank of a new flexible meeting, buffer or habit. It goes after the
+ * last automation of its level whose kind comes at or before its own (meeting,
+ * buffer, habit), else to the top; the automations after it move down one.
+ */
+export function insertRank(
+  db: Db,
+  table: (typeof KINDS)[number],
+  userId: string,
+  lvl: number,
+): number {
+  const rows = KINDS.flatMap((t, kind) =>
+    all<{ id: string; rank: number; created_at: number }>(
+      db,
+      `SELECT id, rank, created_at FROM ${t} WHERE user_id = ? AND level = ?`,
+      userId,
+      lvl,
+    ).map((r) => ({ ...r, table: t, kind })),
+  ).sort(
+    (a, b) =>
+      a.rank - b.rank || a.kind - b.kind || a.created_at - b.created_at || a.id.localeCompare(b.id),
+  );
+  const kind = KINDS.indexOf(table);
+  const at = rows.findLastIndex((r) => r.kind <= kind) + 1;
+  rows.forEach((r, i) => {
+    const rank = i < at ? i : i + 1;
+    if (r.rank !== rank) run(db, `UPDATE ${r.table} SET rank = ? WHERE id = ?`, rank, r.id);
+  });
+  return at;
+}
+
 export interface TaskRow {
   id: string;
   title: string;
@@ -488,7 +521,7 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
       body.notes ?? "",
       body.enabled === false ? 0 : 1,
       lvl,
-      nextRank(db, "habits", user.id, lvl),
+      insertRank(db, "habits", user.id, lvl),
       hours,
       ideal,
       body.minMinutes,
@@ -686,7 +719,7 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
       b.title,
       b.enabled === false ? 0 : 1,
       lvl,
-      nextRank(db, "buffers", user.id, lvl),
+      insertRank(db, "buffers", user.id, lvl),
       b.side,
       b.minutesBefore ?? (b.side === "after" ? 0 : 15),
       b.minutesAfter ?? (b.side === "before" ? 0 : 15),
