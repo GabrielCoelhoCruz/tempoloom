@@ -1054,7 +1054,8 @@ E2E_NOTES.update({
     631: "On for a new user; the switch is in Settings, and off and on again survive a reload",
     632: ("Rules 3-5 and edge cases 1, 2, 3, 5: the last weekday with work hours, its first work hour, Friday 09:00 without work hours, "
           "the work hours in force at send time after a change during the week, the week counted up to the send time; only users who "
-          "signed in, are not deactivated and have a connected calendar account get it (a user who never signed in also has no account); "
+          "signed in, are not deactivated and have a connected calendar account get it (the never-signed-in user has a working account "
+          "through the team's calendar access); "
           "the operator command weekly-reports --now runs one tick of the server's email worker, and one test lets the server's own "
           "clock (TEST_CLOCK_START) reach the send hour"),
     633: ("Meetings are events with other invitees; solo work is work tasks, work habits and events without invitees; personal time is "

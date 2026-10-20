@@ -35,6 +35,7 @@ import { addHabit, addTask, book, claimPage, MIN, titled, visitor, W } from "./h
 import { outOfOffice } from "./ics.ts";
 import { setPassword } from "./radicale-users.ts";
 import { scim } from "./scim.ts";
+import { directoryRow, rowShows, setGrant } from "./team-helpers.ts";
 
 const day = (n: number) => addDays(W, n);
 const iso = (date: string, hhmm: string) => {
@@ -371,6 +372,7 @@ test("only users who signed in, are active and have a working calendar account g
 }) => {
   const five = radicale?.users[5];
   if (!radicale || !five) throw new Error("This test needs the CalDAV backend.");
+  test.setTimeout(120_000);
   await blockUntil(cal, W);
   await signIn();
   app.cli("seat-limit", "--email", EMAIL, "--seats", "5");
@@ -379,9 +381,14 @@ test("only users who signed in, are active and have a working calendar account g
   await directory.getByRole("button", { name: "Create SCIM token" }).click();
   const token = (await directory.getByTestId("scim-token").textContent()) ?? "";
   const idp = scim(token);
-  // In the directory, but never signed in.
-  const never = "never@tempoloom.test";
+  // In the directory with a working calendar account through the team's calendar
+  // access, but never signed in.
+  await setGrant(page, radicale.grant);
+  const n = await people(6);
+  const never = n.email;
   await idp.create({ userName: never, displayName: "Nemo" });
+  await rowShows(page, never, "calendar: attached");
+  await expect(directoryRow(page, never)).toContainText("signed in: no");
   const v = await people(4);
   const vId = await idp.create({ userName: v.email, displayName: "Vera" });
   await v.signIn();
@@ -390,6 +397,8 @@ test("only users who signed in, are active and have a working calendar account g
 
   // This week: the three users who signed in get it; the one who never did gets none.
   expect(app.cli("weekly-reports", "--now", iso(day(4), "09:30"))).toContain("sent 3 reports");
+  // 09:30 UTC: the send hour of the never-signed-in user, whose home time zone is UTC.
+  expect(app.cli("weekly-reports", "--now", iso(day(4), "10:30"))).toContain("sent 0 reports");
   expect((await mail.message(v.email, REPORT)).subject).toBe(`Your week: ${W} to ${day(4)}`);
   expect((await mail.message(d.email, REPORT)).subject).toBe(`Your week: ${W} to ${day(4)}`);
   expect(await mail.count(never, REPORT)).toBe(0);
@@ -420,6 +429,7 @@ test("only users who signed in, are active and have a working calendar account g
 
     // Next week only the admin gets one.
     expect(app.cli("weekly-reports", "--now", iso(day(11), "09:30"))).toContain("sent 1 report");
+    expect(app.cli("weekly-reports", "--now", iso(day(11), "10:30"))).toContain("sent 0 reports");
     await expect.poll(() => mail.count("e2e@tempoloom.test", REPORT)).toBe(2);
     expect(await mail.count(v.email, REPORT)).toBe(1);
     expect(await mail.count(d.email, REPORT)).toBe(1);
