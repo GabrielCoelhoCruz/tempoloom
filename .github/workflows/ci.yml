@@ -69,11 +69,13 @@ jobs:
           retention-days: 14
 
   self-host:
-    # Builds the Docker image and runs it with one SQLite volume against the
+    # Builds the Docker image and runs it with docker compose (compose.yaml, a
+    # .env file, the image defaults, one named SQLite volume) against the
     # loopback Radicale: sign in, add a task, restart and replace the container,
     # check that the data is kept (tests/e2e/self-host.spec.ts). The image stays
     # on the runner; it is not pushed.
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -95,4 +97,14 @@ jobs:
             .e2e/report
             .e2e/results.json
             .e2e/test-results
+          retention-days: 14
+      - name: Upload server logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: self-host-logs
+          path: |
+            .e2e/radicale.log
+            .e2e/self-host-container.log
+          if-no-files-found: warn
           retention-days: 14
