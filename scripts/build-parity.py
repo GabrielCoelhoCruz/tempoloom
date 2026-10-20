@@ -5,7 +5,8 @@ and the status map below. Run: python3 scripts/build-parity.py
 Status rules:
   done (CalDAV) = a full UI E2E test passes against a real CalDAV server (E2E map).
   done (Google) = done (CalDAV), and every test of the row also passed in the recorded
-                  Google Calendar run (GOOGLE_RUN_STATUS, read from docs/e2e-google-run.tsv).
+                  Google Calendar run (GOOGLE_RUN_STATUS, read from docs/e2e-google-run.tsv)
+                  and its test() call did not change since the run commit.
   partial       = implemented in part, or proven by unit tests only (PARTIAL, UNIT,
                   GOOGLE_ROWS); the reason says what is missing.
   blocked       = not implemented yet, or a non-goal; the reason says which.
@@ -14,7 +15,7 @@ Each row id goes into exactly one status map (E2E, PARTIAL, GOOGLE_ROWS, UNIT or
 BLOCKED). The maps record every write, and the build fails when a row was ever
 written to two of them, even if a later pop removed it from one.
 """
-import re, sys, glob, os, json
+import re, sys, glob, os, json, subprocess
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 STAGING = os.path.join(ROOT, "docs/parity-src")
@@ -1222,22 +1223,24 @@ BLOCKED[43] = ("Needs the Google Calendar add-on's developer app and a test acco
 # --- end U35 ---
 
 # Google Calendar proof. docs/e2e-google-run.tsv records a full E2E run on Google
-# (status, test id, title per line; docs/e2e-google-run.md says how it ran and how to
-# regenerate the file). Each T[key] is the exact title of one test in tests/e2e, and the
-# build stops when it is not, so a renamed test cannot drop a Google claim in silence.
-# The test of a key is the line whose title equals T[key]; the build stops when a key
-# matches more than one line. A key is proven on Google when its test passed. A key with
-# no line was added after the run; a key whose test did not pass was skipped or did not
-# pass there.
+# (a "# commit <sha>" line, then status, test id, title per line; docs/e2e-google-run.md
+# says how it ran and how to regenerate the file). Each T[key] is the exact title of one
+# test in tests/e2e, and the build stops when it is not, so a renamed test cannot drop a
+# Google claim in silence. The test of a key is the line whose title equals T[key]; the
+# build stops when a key matches more than one line. A key is proven on Google when its
+# test passed and its test() call is the same now as at the run commit (CHANGED_AFTER
+# otherwise). A key with no line was added after the run; a key whose test did not pass
+# was skipped or did not pass there.
 GOOGLE_RUN = os.path.join(ROOT, "docs/e2e-google-run.tsv")
 E2E_DIR = os.path.join(ROOT, "tests/e2e")
+TEST_CALL = re.compile(r'\btest\(\s*("(?:[^"\\\n]|\\.)*")')
 
 def e2e_titles():
     """The title of each test("...") call in tests/e2e/*.ts."""
     titles = set()
     for f in glob.glob(f"{E2E_DIR}/*.ts"):
         src = open(f, encoding="utf8").read()
-        for m in re.finditer(r'\btest\(\s*("(?:[^"\\\n]|\\.)*")', src):
+        for m in TEST_CALL.finditer(src):
             titles.add(json.loads(m.group(1)))
     return titles
 
@@ -1250,37 +1253,155 @@ def check_titles():
         sys.exit(f"{len(bad)} test keys in T are not test titles; make each T text equal its test title")
 
 def google_run():
-    run = {}
+    """(commit of the run, {key: [(status, test id)]})."""
+    run, commit = {}, None
     for line in open(GOOGLE_RUN, encoding="utf8"):
-        if line.strip():
+        if line.startswith("# commit "):
+            commit = line.split()[2]
+        elif line.strip():
             st, test_id, title = line.rstrip("\n").split("\t")
-            run.setdefault(title, []).append(st)
+            run.setdefault(title, []).append((st, test_id))
+    if not commit or not re.fullmatch(r"[0-9a-f]{40}", commit):
+        sys.exit("docs/e2e-google-run.tsv has no \"# commit <sha>\" line with the full commit of the run")
     status = {key: run.get(text, []) for key, text in T.items()}
     for key, hits in status.items():
         if len(hits) > 1:
             sys.exit(f"test key {key} matches {len(hits)} tests in docs/e2e-google-run.tsv")
-    return status
+    return commit, status
 
-GOOGLE_RUN_STATUS = google_run()
+GOOGLE_RUN_COMMIT, GOOGLE_RUN_STATUS = google_run()
+
+# The source of a test() call: from "test(" to its closing parenthesis.
+OPEN, CLOSE = "([{", ")]}"
+REGEX_AFTER = set("(,=:[!&|?{};+-*%<>~^")
+
+def call_end(src, i):
+    """Index after the parenthesis that closes the one at src[i]. Skips strings,
+    template literals, comments and regular expression literals."""
+    stack, n = [], len(src)
+    while i < n:
+        c = src[i]
+        if c == "}" and stack and stack[-1] == "${":
+            stack.pop()
+            i = template_end(src, i + 1, stack)
+            continue
+        if c in OPEN:
+            stack.append(c)
+        elif c in CLOSE:
+            if not stack or OPEN[CLOSE.index(c)] != stack[-1]:
+                raise ValueError(f"unbalanced {c!r} at offset {i}")
+            stack.pop()
+            if not stack:
+                return i + 1
+        elif c in "'\"":
+            i += 1
+            while src[i] != c:
+                i += 2 if src[i] == "\\" else 1
+        elif c == "`":
+            i = template_end(src, i + 1, stack)
+            continue
+        elif src.startswith("//", i):
+            i = src.index("\n", i)
+            continue
+        elif src.startswith("/*", i):
+            i = src.index("*/", i) + 2
+            continue
+        elif c == "/":
+            before = src[:i].rstrip()
+            if not before or before[-1] in REGEX_AFTER or re.search(r"\b(return|typeof|in|of)$", before):
+                i += 1
+                in_class = False
+                while in_class or src[i] != "/":
+                    if src[i] == "\\":
+                        i += 1
+                    elif src[i] == "[":
+                        in_class = True
+                    elif src[i] == "]":
+                        in_class = False
+                    i += 1
+        i += 1
+    raise ValueError("no closing parenthesis")
+
+def template_end(src, i, stack):
+    """Scan a template literal from src[i] (after ` or a closing }); stop after its
+    closing ` or at a ${, which goes on the stack."""
+    while True:
+        c = src[i]
+        if c == "\\":
+            i += 2
+        elif c == "`":
+            return i + 1
+        elif src.startswith("${", i):
+            stack.append("${")
+            return i + 2
+        else:
+            i += 1
+
+def test_calls(src):
+    """{title: [(line, normalized source of the test() call)]} of one file. The
+    normalized source drops leading and trailing blanks of each line and empty lines,
+    so moving a test or changing its indent does not count as a change."""
+    calls = {}
+    for m in TEST_CALL.finditer(src):
+        start = m.start()
+        end = call_end(src, src.index("(", start))
+        body = "\n".join(l.strip() for l in src[start:end].splitlines() if l.strip())
+        line = src.count("\n", 0, start) + 1
+        calls.setdefault(json.loads(m.group(1)), []).append((line, body))
+    return calls
+
+def git(*args):
+    r = subprocess.run(["git", "-C", ROOT, *args], capture_output=True, text=True)
+    if r.returncode:
+        sys.exit(f"git {' '.join(args)} failed: {r.stderr.strip()}. The Google proof check needs the "
+                 f"run commit {GOOGLE_RUN_COMMIT} in the clone (CI: actions/checkout with fetch-depth: 0)")
+    return r.stdout
+
+def changed_after_run():
+    """Keys whose test passed in the Google run but whose test() call is not the same
+    now (in the working tree) as at the run commit."""
+    head = {}
+    for f in glob.glob(f"{E2E_DIR}/*.ts"):
+        for title, calls in test_calls(open(f, encoding="utf8").read()).items():
+            head.setdefault(title, []).extend(calls)
+    then, changed = {}, set()
+    for key, hits in GOOGLE_RUN_STATUS.items():
+        if not hits or hits[0][0] != "passed":
+            continue
+        path, line = hits[0][1].rsplit(":", 1)
+        if path not in then:
+            then[path] = test_calls(git("show", f"{GOOGLE_RUN_COMMIT}:{path}"))
+        old = then[path].get(T[key], [])
+        if [l for l, _ in old] != [int(line)]:
+            sys.exit(f"test key {key}: {hits[0][1]} is not the test \u201c{T[key]}\u201d at commit {GOOGLE_RUN_COMMIT}")
+        now = head.get(T[key], [])
+        if len(now) != 1:
+            sys.exit(f"test key {key}: {len(now)} tests in tests/e2e have the title \u201c{T[key]}\u201d")
+        if now[0][1] != old[0][1]:
+            changed.add(key)
+    return changed
+
+GOOGLE_CHANGED = changed_after_run()
 
 # Why a test did not pass in the Google run: (singular, plural) phrases.
-ADDED_AFTER, SKIPPED, NOT_PASSED = "added after", "skipped", "not passed"
+ADDED_AFTER, SKIPPED, NOT_PASSED, CHANGED_AFTER = "added after", "skipped", "not passed", "changed after"
 GOOGLE_MISSING_TEXT = {
     ADDED_AFTER: ("was added after", "were added after"),
     SKIPPED: ("was skipped in", "were skipped in"),
     NOT_PASSED: ("failed in", "failed in"),
+    CHANGED_AFTER: ("changed after", "changed after"),
 }
 
 def google_missing(key):
-    """Why the test of a key is not proven on Google (ADDED_AFTER, SKIPPED or
-    NOT_PASSED), or None when it passed there. A failed, timed-out or interrupted
-    test is NOT_PASSED."""
+    """Why the test of a key is not proven on Google (ADDED_AFTER, SKIPPED,
+    NOT_PASSED or CHANGED_AFTER), or None when it passed there and its test() call
+    did not change since. A failed, timed-out or interrupted test is NOT_PASSED."""
     hits = GOOGLE_RUN_STATUS[key]
     if not hits:
         return ADDED_AFTER
-    if hits[0] == "passed":
-        return None
-    return SKIPPED if hits[0] == "skipped" else NOT_PASSED
+    if hits[0][0] == "passed":
+        return CHANGED_AFTER if key in GOOGLE_CHANGED else None
+    return SKIPPED if hits[0][0] == "skipped" else NOT_PASSED
 
 def e2e_status(row_id, keys):
     tests = "; ".join(f"\u201c{T[k]}\u201d" for k in keys)
