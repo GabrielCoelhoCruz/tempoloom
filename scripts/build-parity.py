@@ -41,6 +41,10 @@ class StatusMap(dict):
             self[row_id] = value
         return self[row_id]
 
+def quoted_titles(*keys):
+    """The test titles of keys, each in quotes, joined with "; "."""
+    return "; ".join(f"\u201c{T[k]}\u201d" for k in keys)
+
 T = {
     "split": "places a split task in work hours and keeps it after reload and restart (SPEC-PLANNING-01 AT 1)",
     "meeting": "moves a chunk away from a new meeting and never touches the meeting (SCH-1, SCH-55)",
@@ -1176,72 +1180,72 @@ BLOCKED[43] = ("Needs the Google Calendar add-on's developer app and a test acco
 # --- U49: parity text from the audit of partial rows (audit-partial.tsv) ---
 T.update({
     "u49_caldav_signin": "signs in with CalDAV, rejects a wrong password, and keeps the session (SPEC-ACCT-02)",
+    "u49_list_holiday": "a company holiday sent only to a mailing list does not block until the user answers yes; then it blocks the day (events-out-of-office rule 10)",
 })
-def q(*keys):
-    return "; ".join("“" + T[k] + "”" for k in keys)
-E2E.update({118: ["u32_unlock", "s5_decline"], 265: ["u5_holiday"]})
+E2E.update({118: ["u32_unlock", "s5_decline"], 265: ["u5_holiday", "u49_list_holiday"]})
 E2E_NOTES.update({
     118: "CED-30: a guest's decline and the user's own decline of a flexible meeting unlock it and place it again; a required guest's decline moves it",
-    265: ("Rules 9-10, with a mailing-list attendee next to the user; holiday feeds (rule 11) are row 266. Data limit: an invitation "
-          "that lists only a mailing list, not the user, blocks before the user answers, because the provider does not show the user's own answer"),
+    265: ("Rules 9-10, with a mailing-list attendee next to the user and an invitation sent only to a mailing list, which blocks only "
+          "after the user's own answer appears; holiday feeds (rule 11) are row 266")
 })
 BLOCKED[78] = ("Needs a Google account in a new Google Calendar E2E run (docs/e2e-google-run.md) that changes the time zone in the "
-               "Google Calendar settings; CalDAV has no such setting. Built: each sync takes the home time zone from the primary "
-               "Google calendar (src/server/sync/pull.ts), with full UI E2E on CalDAV: " + q("s_zone", "s3_utc"))
-BLOCKED[130] = (G2 + " for the chat panel. Built, with full UI E2E on CalDAV: the automation list in the planner (" + q("s1_list")
-                + ") and the suggested tasks (" + q("s3_suggest", "s3_focus_tasks") + ")")
+               "Google Calendar settings and checks that the home zone follows; Tempoloom reads no zone from CalDAV. Built, with no test: "
+               "each sync takes the home time zone from the primary Google calendar (src/server/sync/pull.ts). Built, with full UI E2E "
+               "on CalDAV: a zone set in Tempoloom moves the work day, and the hours page shows the home zone and an active trip ("
+               + quoted_titles("s_zone", "s3_utc") + ")")
+BLOCKED[130] = (G2 + " for the chat panel. Built, with full UI E2E on CalDAV: the automation list, on its own Automations page by decision "
+                "(automations-overview.md rule 6) (" + quoted_titles("s1_list") + "), and the suggested tasks in the planner (" + quoted_titles("s3_suggest", "s3_focus_tasks") + ")")
 BLOCKED[208] = ("Needs a Google Workspace account: Google Calendar has focus-time events only on Workspace primary calendars, and the "
                 "E2E must create one there. Built: the event type focusTime counts as focus time in code (src/scheduler/plan.ts, "
                 "src/server/api/stats.ts); the focus tag gives the same result on CalDAV and Google (row 209, full UI E2E: "
-                + q("u4_focus_tag") + ")")
+                + quoted_titles("u4_focus_tag") + ")")
 BLOCKED[261] = ("Needs a Google Workspace account: Google Calendar has the outOfOffice event type only on Workspace primary calendars, "
                 "and the E2E must create one there. Built: Google outOfOffice events and CalDAV X-MICROSOFT-CDO-BUSYSTATUS:OOF are read "
                 "as out of office (unit tests tests/unit/categories.test.ts, tests/unit/plan.test.ts); full UI E2E on CalDAV (Radicale): "
-                + q("u5_away", "u5_away_conflict"))
+                + quoted_titles("u5_away", "u5_away_conflict"))
 BLOCKED[284] = ("Needs a Google account with a birthday event or an event that Gmail made from an email, in a new Google Calendar "
                 "E2E run (docs/e2e-google-run.md): only Google refuses a color change on one event, and a CalDAV server lets the owner "
-                "change every event. Built: painting skips an event that the calendar refuses (status 400 or 403) and goes on "
-                "(src/server/planner/repaint.ts); color rules have full UI E2E on CalDAV: " + q("c_paint", "u5_repaint"))
+                "change every event. Built: painting skips an event that the calendar refuses (status 400, 401, 403, 404 or 410, or an auth "
+                "error) and goes on (src/server/planner/repaint.ts); no unit test sends a refused color write yet. Color rules have full UI E2E on CalDAV: " + quoted_titles("c_paint", "u5_repaint"))
 BLOCKED[301] = (G2 + " for the assistant chat. Built, with full UI E2E on CalDAV: create from the library and from the top-bar "
-                "create menu (" + q("s1_added", "s1_list") + ")")
+                "create menu (" + quoted_titles("s1_added", "s1_list") + ")")
 BLOCKED[317] = ("Needs a Slack app and a Slack test workspace for the chat-app channel. Built: the daily digest by email at the time "
-                "the user sets, with full UI E2E on CalDAV: " + q("s5_digest"))
+                "the user sets, with full UI E2E on CalDAV: " + quoted_titles("s5_digest"))
 BLOCKED[345] = ("Needs Google Meet (a Google account and the Calendar conference API), a Zoom developer app with a Zoom test account, "
                 "and Google Workspace room resources. Built: an address or a custom text or link is the location of every occurrence, "
-                "with full UI E2E on CalDAV: " + q("mr_settings"))
+                "with full UI E2E on CalDAV: " + quoted_titles("mr_settings"))
 BLOCKED[392] = ("Meet needs a Google account and the Calendar conference API; Zoom needs a Zoom developer app and a Zoom test account; "
                 "Gong needs a Gong app and a Gong test organization. Built: address, phone and other (text or URL), with a default and "
-                "the booker's choice, full UI E2E on CalDAV: " + q("u7_locations"))
+                "the booker's choice, full UI E2E on CalDAV: " + quoted_titles("u7_locations"))
 BLOCKED[398] = ("A conference link needs Google Meet (a Google account and the Calendar conference API) or a Zoom developer app and a "
                 "Zoom test account. Built: a busy event with the booker and CC guests invited, the chosen location and the manage links, "
-                "full UI E2E on CalDAV: " + q("u7_locations", "b_book"))
+                "full UI E2E on CalDAV: " + quoted_titles("u7_locations", "b_book"))
 BLOCKED[451] = ("Needs a Microsoft 365 account and a Microsoft app registration to build and test a Microsoft Graph provider, and a "
                 "Google account for the Google side. Built: mirroring between calendars of two CalDAV accounts, full UI E2E on CalDAV: "
-                + q("s4_tabs", "s4_mesh"))
+                + quoted_titles("s4_tabs", "s4_mesh"))
 BLOCKED[469] = ("Needs a Google account with Gmail that makes an event from an email (Google event type fromGmail); the Google "
                 "Calendar API cannot create such an event and CalDAV has none. Built: copies of fromGmail events are busy (unit test "
-                "tests/unit/mirror-google.test.ts); the other free/busy lines of rule 21 have full UI E2E on CalDAV: " + q("u8_answers"))
+                "tests/unit/mirror-google.test.ts); the other free/busy lines of rule 21 have full UI E2E on CalDAV: " + quoted_titles("u8_answers"))
 BLOCKED[484] = ("The add-on part needs a Google Workspace Marketplace add-on (Calendar and Gmail) and a Google Workspace test account. "
-                "Built: the planner part, full UI E2E on CalDAV: " + q("u16_one_item"))
-BLOCKED[510] = ("Needs a Google account for an E2E of “Sign in with Google” on the sign-in page (the Google Calendar run "
-                "connects its user with the operator command connect-google-oauth), and a Microsoft 365 account with a Microsoft app "
+                "Built: the planner part, full UI E2E on CalDAV: " + quoted_titles("u16_one_item"))
+BLOCKED[510] = ("Needs the owner to complete Google's sign-in and consent page for the test account during a new Google Calendar E2E run (docs/e2e-google-run.md), for an E2E of \u201cSign in with Google\u201d on the sign-in page (the last run "
+                "connected its user with the operator command connect-google-oauth), and a Microsoft 365 account with a Microsoft app "
                 "registration to build and test a Microsoft Graph provider. Built: Google sign-in (OAuth with PKCE) and Google Calendar "
-                "sync; CalDAV sign-up and sign-in have full UI E2E: " + q("u49_caldav_signin", "s4_secondary"))
-BLOCKED[513] = ("Needs a Google account for an E2E that adds a Google account in the UI, and a Microsoft 365 account with a Microsoft "
+                "sync; CalDAV sign-up and sign-in have full UI E2E: " + quoted_titles("u49_caldav_signin", "s4_secondary"))
+BLOCKED[513] = ("Needs the owner to complete Google's sign-in and consent page for the test account during a new Google Calendar E2E run (docs/e2e-google-run.md), for an E2E that adds a Google account in the UI, and a Microsoft 365 account with a Microsoft "
                 "app registration to build and test a Microsoft Graph provider. Built: Google accounts connect through Google sign-in; "
-                "a second CalDAV account has full UI E2E: " + q("acct_add"))
-BLOCKED[638] = ("Needs a Google account for an E2E of “Sign in with Google” on the sign-in page, and a Microsoft 365 account "
+                "a second CalDAV account has full UI E2E: " + quoted_titles("acct_add"))
+BLOCKED[638] = ("Needs the owner to complete Google's sign-in and consent page for the test account during a new Google Calendar E2E run (docs/e2e-google-run.md), for an E2E of \u201cSign in with Google\u201d on the sign-in page, and a Microsoft 365 account "
                 "with a Microsoft app registration to build and test Microsoft sign-in. Built: Google sign-in follows the team's SSO "
-                "rules; SSO through an OIDC identity provider has full UI E2E: " + q("sso_only"))
-BLOCKED[769] = (G2 + " for the chat. Built, with full UI E2E on CalDAV: preview mode (" + q("s7_auto") + "), automations ("
-                + q("s1_list") + "), suggested tasks (" + q("s3_focus_tasks") + "), issues and recommendations ("
-                + q("s5_checks", "s5_agenda") + "), insights (" + q("u9_balance", "an_org") + ") and the MCP server ("
-                + q("s7_mcp_read") + ")")
+                "rules; SSO through an OIDC identity provider has full UI E2E: " + quoted_titles("sso_only"))
+BLOCKED[769] = (G2 + " for the chat. Built, with full UI E2E on CalDAV: preview mode (" + quoted_titles("s7_auto") + "), automations ("
+                + quoted_titles("s1_list") + "), suggested tasks (" + quoted_titles("s3_focus_tasks") + "), issues and recommendations ("
+                + quoted_titles("s5_checks", "s5_agenda") + "), insights (" + quoted_titles("u9_balance", "an_org") + ") and the MCP server ("
+                + quoted_titles("s7_mcp_read") + ")")
 BLOCKED[951] = ("Needs a Claude account (Claude Desktop or the Claude web app) to show the per-tool settings, which are a Claude "
                 "feature. Built: each tool has a name, a description, readOnlyHint and destructiveHint (unit tests tests/unit/mcp.test.ts); "
-                "full UI E2E on CalDAV lists the tools: " + q("s7_mcp_read", "s7_readonly"))
+                "full UI E2E on CalDAV lists the tools: " + quoted_titles("s7_mcp_read", "s7_readonly"))
 # --- end U49 ---
-
 
 # Google Calendar proof. docs/e2e-google-run.tsv records a full E2E run on Google
 # (a "# commit <sha>" line, then status, test id, title per line; docs/e2e-google-run.md
@@ -1425,7 +1429,7 @@ def google_missing(key):
     return SKIPPED if hits[0][0] == "skipped" else NOT_PASSED
 
 def e2e_status(row_id, keys):
-    tests = "; ".join(f"\u201c{T[k]}\u201d" for k in keys)
+    tests = quoted_titles(*keys)
     note = f" {E2E_NOTES[row_id]}." if row_id in E2E_NOTES else ""
     missing = {k: why for k in keys if (why := google_missing(k))}
     if not missing:
