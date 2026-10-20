@@ -48,6 +48,7 @@ import { scimRoutes } from "./api/scim.ts";
 import { settingsRoutes } from "./api/settings.ts";
 import { ssoAdminRoutes, ssoAuthRoutes } from "./api/sso.ts";
 import { statsRoutes } from "./api/stats.ts";
+import { taskProgressRoutes } from "./api/task-progress.ts";
 import { taskSearchRoutes } from "./api/task-searches.ts";
 import { taskTimeRoutes } from "./api/task-time.ts";
 import { publicInviteRoutes, teamRoutes } from "./api/team.ts";
@@ -508,6 +509,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   // r3 s3: planner now line, task time, travel time zones, hours deletion.
   app.route("/api", nowRoutes(db, now));
   app.route("/api", taskTimeRoutes(db, sync, config.BASE_URL, now));
+  app.route("/api", taskProgressRoutes(db, sync, config.BASE_URL, now));
   app.route("/api", travelRoutes(db, sync, now));
   app.route("/api", hoursExtraRoutes(db, sync, now));
 

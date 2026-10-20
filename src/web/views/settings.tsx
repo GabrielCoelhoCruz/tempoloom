@@ -18,6 +18,7 @@ import {
   FocusNotes,
   HoursZoneNote,
   PlacementSetting,
+  StartModeSetting,
   TravelSettings,
 } from "./settings-extra.tsx";
 import { WeeklyReportSetting } from "./weekly-report-setting.tsx";
@@ -376,6 +377,7 @@ export function Settings() {
             </select>
           </label>
           <PlacementSetting settings={settings} act={act} />
+          <StartModeSetting settings={settings} act={act} />
         </div>
       </section>
 

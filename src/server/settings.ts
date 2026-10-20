@@ -72,6 +72,10 @@ export const settingsSchema = z.object({
   // r3 s3: task placement (planning-tasks.md TSK-70), in-app alerts
   // (planning-notifications.md), first-run hours review (HRS-15), profile fields.
   taskPlacement: z.enum(["chunks", "suggestions"]).default("chunks"),
+  // planning-task-progress.md PRG-1 to PRG-5: count a chunk when its time passes,
+  // or only after Start. manualSince: when manual mode began; older chunks keep counting.
+  startMode: z.enum(["auto", "manual"]).default("auto"),
+  manualSince: z.number().int().nullable().default(null),
   // sync-calendar-mirroring.md account-level setting: copies of events with no reply.
   noReplyCopies: z.enum(["free", "busy"]).default("free"),
   tabAlert: z.boolean().default(true),

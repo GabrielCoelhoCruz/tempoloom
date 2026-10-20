@@ -67,6 +67,9 @@ const EventActions = lazyComponent<{
 const CurrentTasks = lazyComponent(() =>
   import("./planner-extras.tsx").then((m) => m.CurrentTasks),
 );
+const LogWork = lazyComponent<{ start: number; onClose: (saved: boolean) => void }>(() =>
+  import("./planner-extras.tsx").then((m) => m.LogWork),
+);
 const FocusProgress = lazyComponent<{ week: string }>(() =>
   import("./planner-extras.tsx").then((m) => m.FocusProgress),
 );
@@ -88,6 +91,8 @@ export function Planner() {
   const [events, setEvents] = useState<PlannerEvent[]>([]);
   const [report, setReport] = useState<ReportEntry[]>([]);
   const [selected, setSelected] = useState<PlannerEvent | null>(null);
+  // PRG-20, PRG-21: the log work form, opened on a past time or from the toolbar.
+  const [logStart, setLogStart] = useState<number | null>(null);
   // The drawer names calendars as the calendar list does; that list loads on the first open.
   const external = selected?.kind === "external";
   useEffect(() => {
@@ -234,6 +239,12 @@ export function Planner() {
         </span>
         <button
           type="button"
+          onClick={() => setLogStart(Math.floor((Date.now() - 3_600_000) / 900_000) * 900_000)}
+        >
+          Log work
+        </button>
+        <button
+          type="button"
           class="primary"
           disabled={busy}
           onClick={() => void run(async () => {})}
@@ -241,6 +252,16 @@ export function Planner() {
           Plan now
         </button>
       </div>
+      {logStart !== null && (
+        <LogWork
+          key={logStart}
+          start={logStart}
+          onClose={(saved) => {
+            setLogStart(null);
+            if (saved) void run(async () => {});
+          }}
+        />
+      )}
       <div class="now-bar" data-testid="now-bar">
         {settled.value && (
           <NowBar from={localToUtc(z, weekStart, 0)} to={localToUtc(z, addDays(weekStart, 7), 0)} />
@@ -264,6 +285,10 @@ export function Planner() {
         onSelect={(id) => setSelected(events.find((e) => e.id === id) ?? null)}
         flagged={conflictIds.value}
         extraZone={extraZone.value}
+        onPickPast={(t) => {
+          setSelected(null);
+          setLogStart(t);
+        }}
       />
       {settled.value && <IssuesPanel />}
       {report.length > 0 && (

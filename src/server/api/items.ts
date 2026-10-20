@@ -294,6 +294,8 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
                 : "time-used";
         return {
           ...task,
+          // PRG-10, PRG-11: a chunk is running now, so Stop applies.
+          inProgress: chunks.some((ch) => ch.start_ms <= t && ch.end_ms > t),
           scheduledMinutes: scheduled,
           remainingMinutes: remaining,
           state,

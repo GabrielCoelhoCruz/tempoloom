@@ -93,7 +93,11 @@ export function settingsRoutes(db: Db, sync: SyncService, now: () => number): Ho
     }
     const parsed = (() => {
       try {
-        return updateSettings(db, user.id, body);
+        const since =
+          body.startMode === "manual" && getSettings(db, user.id).startMode !== "manual"
+            ? { manualSince: now() }
+            : {};
+        return updateSettings(db, user.id, { ...body, ...since });
       } catch (err) {
         return err as Error;
       }

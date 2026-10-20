@@ -358,7 +358,7 @@ function placeTask(ctx: Ctx, t: TaskItem): void {
     .filter((c) => !ctx.fixedKeys.has(c.key) && !keptKeys.has(c.key))
     .map((c) => c.key)
     .sort((a, b) => index(a) - index(b));
-  let next = mine.reduce((m, c) => Math.max(m, index(c.key) + 1), 0);
+  let next = mine.reduce((m, c) => Math.max(m, index(c.key) + 1), t.nextIndex ?? 0);
   const freshKeys = result.fresh.map(() => dropped.shift() ?? `${prefix}${next++}`);
 
   const chunks = [

@@ -27,6 +27,8 @@ interface Props {
   flagged?: ReadonlySet<string>;
   /** A second time column in this zone (timezones-home-and-travel.md rule 10). */
   extraZone?: string | null;
+  /** A click on a past time, rounded down to 15 minutes (planning-task-progress.md PRG-21). */
+  onPickPast?: (t: number) => void;
 }
 
 const city = (z: string) => (z.split("/").at(-1) ?? z).replace(/_/g, " ");
@@ -89,7 +91,17 @@ export function layout(days: LocalDate[], zone: string, events: WeekEvent[]): Bo
 
 const drag = signal<{ id: string; dx: number; dyMin: number } | null>(null);
 
-export function WeekView({ days, zone, events, now, onMove, onSelect, flagged, extraZone }: Props) {
+export function WeekView({
+  days,
+  zone,
+  events,
+  now,
+  onMove,
+  onSelect,
+  flagged,
+  extraZone,
+  onPickPast,
+}: Props) {
   const boxes = useMemo(() => layout(days, zone, events), [days, zone, events]);
   const gridRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -207,7 +219,18 @@ export function WeekView({ days, zone, events, now, onMove, onSelect, flagged, e
             style={{ gridTemplateColumns: `repeat(${days.length}, 1fr)` }}
           >
             {days.map((d) => (
-              <div class="day-col" key={d} />
+              <div
+                class="day-col"
+                key={d}
+                data-date={d}
+                // The toolbar's "Log work" button is the keyboard path.
+                onPointerUp={(e) => {
+                  if (e.button !== 0) return;
+                  const minute = Math.floor((e.offsetY / HOUR_PX) * (60 / SNAP_MIN)) * SNAP_MIN;
+                  const t = localToUtc(zone, d, minute);
+                  if (t < Date.now()) onPickPast?.(t);
+                }}
+              />
             ))}
             {todayIdx >= 0 && (
               <div

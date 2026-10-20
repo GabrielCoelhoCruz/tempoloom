@@ -126,6 +126,8 @@ export function loadSnapshot(
   titles: Map<string, string>;
   /** Event settings of each automation, by `kind:id` (src/shared/event-settings.ts). */
   eventSettings: Map<string, EventSettings>;
+  /** Manual start mode: ended chunks and habit events nobody started, to place again. */
+  reopen: ManagedRow[];
 } {
   const windowEnd = schedulingWindowEnd(zone, now, settings.schedulingWindowWeeks);
   const hoursRows = all<{ id: string; kind: string; weekly: string }>(
@@ -156,6 +158,33 @@ export function loadSnapshot(
   ];
 
   const rows = all<ManagedRow>(db, "SELECT * FROM managed_events WHERE user_id = ?", userId);
+  // PRG-3, PRG-5: in manual start mode an ended chunk or habit event counts only
+  // after Start (Start locks it); else it goes back to the plan. Events from before
+  // the switch to manual mode keep counting.
+  const openItems = new Set([
+    ...all<{ id: string }>(
+      db,
+      "SELECT id FROM tasks WHERE user_id = ? AND status = 'open'",
+      userId,
+    ).map((t) => `task:${t.id}`),
+    ...all<{ id: string }>(
+      db,
+      "SELECT id FROM habits WHERE user_id = ? AND enabled = 1",
+      userId,
+    ).map((h) => `habit:${h.id}`),
+  ]);
+  const reopen =
+    settings.startMode === "manual"
+      ? rows.filter(
+          (r) =>
+            r.end_ms <= now &&
+            r.locked === 0 &&
+            r.event_id !== null &&
+            r.start_ms >= (settings.manualSince ?? Number.POSITIVE_INFINITY) &&
+            openItems.has(`${r.kind}:${r.source_id}`),
+        )
+      : [];
+  const reopened = new Set(reopen.map((r) => r.id));
   const toPlacement = (r: ManagedRow): CurrentPlacement => ({
     key: r.key,
     itemId: r.source_id,
@@ -167,7 +196,10 @@ export function loadSnapshot(
   const weekStart = weekStartOf(zone, now, settings.weekStart);
   // An ended habit occurrence is done for its date, also when the user moved it to an earlier week.
   const past = rows
-    .filter((r) => r.end_ms <= now && (r.start_ms >= weekStart || r.kind === "habit"))
+    .filter(
+      (r) =>
+        r.end_ms <= now && (r.start_ms >= weekStart || r.kind === "habit") && !reopened.has(r.id),
+    )
     .map(toPlacement);
 
   const exclusions = new Map<string, { start: number; end: number }[]>();
@@ -200,9 +232,15 @@ export function loadSnapshot(
   const eventSettings = new Map<string, EventSettings>();
   const hoursKind = new Map(hoursRows.map((h) => [h.id, h.kind]));
 
+  // PRG-1: ended chunks are done work. A new chunk never takes the key of an ended one.
   const consumed = new Map<string, number>();
+  const nextIndex = new Map<string, number>();
   for (const r of rows) {
-    if (r.kind === "task" && r.end_ms <= now) {
+    if (r.kind !== "task") continue;
+    const n = Number(r.key.slice(`task:${r.source_id}:`.length));
+    if (Number.isInteger(n))
+      nextIndex.set(r.source_id, Math.max(nextIndex.get(r.source_id) ?? 0, n + 1));
+    if (r.end_ms <= now && !reopened.has(r.id)) {
       consumed.set(
         r.source_id,
         (consumed.get(r.source_id) ?? 0) + (r.end_ms - r.start_ms) / 60_000,
@@ -245,6 +283,7 @@ export function loadSnapshot(
       createdAt: t.created_at,
       exclusions: exclusions.get(`task:${t.id}`) ?? [],
       changed: t.rules_changed_at > lastPlannedAt,
+      nextIndex: nextIndex.get(t.id) ?? 0,
     };
   });
 
@@ -441,7 +480,7 @@ export function loadSnapshot(
     ...(buffers.length > 0 ? { mirrorCopies: copyAnchors(db, userId, now) } : {}),
     ...(fragmentation ? { fragmentation } : {}),
   };
-  return { snapshot, rows, notes, titles, eventSettings };
+  return { snapshot, rows, notes, titles, eventSettings, reopen };
 }
 
 /**
@@ -567,7 +606,7 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
   const last =
     one<{ planned_at: number }>(db, "SELECT planned_at FROM plan_reports WHERE user_id = ?", userId)
       ?.planned_at ?? 0;
-  const { snapshot, rows, notes, titles, eventSettings } = loadSnapshot(
+  const { snapshot, rows, notes, titles, eventSettings, reopen } = loadSnapshot(
     db,
     userId,
     planningZone(db, userId, user.time_zone),
@@ -779,6 +818,7 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
       userId,
       now,
       fullCheck: ctx.fullMirror ?? false,
+      reopen,
       target: (calendarId) => {
         const c = calendars.get(calendarId);
         if (!c) throw new Error(`Unknown calendar ${calendarId}`);

@@ -1059,6 +1059,28 @@ BLOCKED[322] = ("Not built: the scheduler reads the availability of attendees wh
 BLOCKED[345] = "Needs Google Meet (a Google account), the Zoom vendor app and Google Workspace room resources; an address or a custom text or link is written as the location of every occurrence (E2E: \u201c" + T["mr_settings"] + "\u201d)"
 # --- end U06 ---
 
+# --- U31: task progress, part A (tests/e2e/task-progress.spec.ts) ---
+T.update({
+    "pg_start": "Start moves the first chunk to now and Stop ends it now; the rest is placed later (PRG-10, PRG-11)",
+    "pg_past": "a chunk whose time passed counts as done work, and shortening it in the calendar returns the cut minutes (PRG-1, PRG-2)",
+    "pg_manual": "manual start mode moves an unstarted chunk or habit event later that day, and Start moves a running one to now (PRG-1, PRG-3 to PRG-5)",
+    "pg_log": "logging past work in the planner writes a past event for a task or a habit and reduces the remaining work (PRG-20 to PRG-22; habits rule 32)",
+    "pg_edge": "Start with no chunk makes one from now up to the next busy event, Start on a running chunk changes nothing, and an early Stop removes it (edge cases 1 to 4)",
+})
+E2E.update({
+    31: ["pg_past", "pg_manual"], 32: ["pg_past"], 33: ["pg_manual"], 37: ["pg_log"], 184: ["pg_log"],
+})
+E2E_NOTES.update({
+    31: "Start in manual mode locks the event; a locked event counts as started. Events from before the switch to manual mode keep counting",
+    37: "Log work opens on a click on a past time in the planner, or from its toolbar; the event goes to the task's calendar (PRG-22 proposed default)",
+    184: "Log work opens on a click on a past time in the planner, or from its toolbar",
+})
+PARTIAL.update({
+    34: "Start works in the task list, with full UI E2E on CalDAV (E2E: \u201c" + T["pg_start"] + "\u201d; \u201c" + T["pg_edge"] + "\u201d); Start from the Google Calendar add-on, the chat app and the launcher (PRG-13) needs those vendor apps",
+    35: "Stop works in the task list, with full UI E2E on CalDAV (E2E: \u201c" + T["pg_start"] + "\u201d; \u201c" + T["pg_edge"] + "\u201d); Stop from the Google Calendar add-on, the chat app and the launcher (PRG-13) needs those vendor apps",
+})
+# --- end U31 ---
+
 # Google Calendar proof. docs/e2e-google-run.tsv records a full E2E run on Google
 # (status, test id, title per line; docs/e2e-google-run.md says how it ran and how to
 # regenerate the file). Each T[key] is the exact title of one test in tests/e2e, and the
