@@ -12,6 +12,8 @@ export interface Me {
   user: { id: string; email: string; name: string; time_zone: string };
   /** The delegate behind an acting session; `user` is then the owner (delegated access). */
   actor: Person | null;
+  /** The account's change mark when this was read (lib/live.ts). */
+  live: string;
   /** Owners who gave the signed-in person delegated access. */
   owners: Person[];
   settings: Settings;
