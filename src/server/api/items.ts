@@ -11,7 +11,7 @@ import {
   ITEM_COLORS,
   readEventSettings,
 } from "../../shared/event-settings.ts";
-import { utcToLocal } from "../../shared/time.ts";
+import { addLocalDays, utcToLocal } from "../../shared/time.ts";
 import type { AppEnv } from "../app.ts";
 import { all, type Db, one, run, tx } from "../db.ts";
 import { editedEventSettings, eventSettingsInput, newEventSettings } from "../event-settings.ts";
@@ -320,7 +320,7 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
       body.dueAt === undefined
         ? d.dueInDays === null
           ? null
-          : t + d.dueInDays * 86_400_000
+          : addLocalDays(t, d.dueInDays, user.time_zone)
         : body.dueAt;
     if (dueAt !== null && dueAt <= startAfter)
       badRequest("dueAt", "Due date must be after the start date");

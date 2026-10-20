@@ -1,5 +1,6 @@
 import type { ComponentChildren } from "preact";
 import { useCallback, useEffect, useState } from "preact/hooks";
+import { addLocalDays } from "../../shared/time.ts";
 import { api } from "../lib/api.ts";
 import { COLORS } from "../lib/categories.ts";
 import { duration, formatWhen, fromLocalInput, toLocalInput } from "../lib/format.ts";
@@ -131,7 +132,7 @@ export function TaskForm({
             name="due"
             type="datetime-local"
             defaultValue={
-              d?.dueInDays == null ? "" : toLocalInput(z, Date.now() + d.dueInDays * 86_400_000)
+              d?.dueInDays == null ? "" : toLocalInput(z, addLocalDays(Date.now(), d.dueInDays, z))
             }
           />
         </label>

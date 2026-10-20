@@ -7,12 +7,12 @@
 import { randomUUID } from "node:crypto";
 import type { MeetingFrequency } from "../../scheduler/model.ts";
 import { meetingAnchor, meetingPeriodStart } from "../../scheduler/plan.ts";
-import { addDays, DAY, type LocalDate, localToUtc, utcToLocal } from "../../shared/time.ts";
+import { addLocalDays, type LocalDate, schedulingWindowEnd } from "../../shared/time.ts";
 import { all, type Db, one, run, tx } from "../db.ts";
 import { getPrefs } from "../meeting-prefs.ts";
 import { seriesInstanceDate } from "../meeting-series.ts";
 import { getSettings } from "../settings.ts";
-import { planningZone } from "../travel.ts";
+import { homeZone, planningZone } from "../travel.ts";
 import type { MeetingRow } from "./meetings.ts";
 import type { ManagedRow } from "./push.ts";
 
@@ -38,14 +38,19 @@ interface Change {
   written: boolean;
 }
 
-/** NTF-20 to NTF-22: an email is due when emails are on and the occurrence is near enough. */
+/**
+ * NTF-20 to NTF-22: an email is due when emails are on and the occurrence is
+ * near enough. The days ahead are local days in the home zone, as for every
+ * N-day rule outside the scheduler (src/shared/time.ts addLocalDays).
+ */
 function notifyFor(db: Db, userId: string, c: Change, now: number): number {
   if (!c.written) return 0;
   const prefs = getPrefs(db, userId);
   if (!prefs.meetingChangeEmails || prefs.meetingChangeDaysAhead === 0) return 0;
   const starts = [c.oldStart, c.newStart].filter((t): t is number => t !== null);
   if (starts.length === 0) return 0;
-  return Math.min(...starts) - now <= prefs.meetingChangeDaysAhead * DAY ? 1 : 0;
+  const limit = addLocalDays(now, prefs.meetingChangeDaysAhead, homeZone(db, userId));
+  return Math.min(...starts) <= limit ? 1 : 0;
 }
 
 export function logChange(db: Db, userId: string, c: Change, now: number): void {
@@ -94,11 +99,7 @@ function adoptInstances(db: Db, userId: string, now: number): void {
   const zone = planningZone(db, userId);
   // Rule 20: instances beyond the planning window keep the series time; they are
   // adopted once the window reaches them, so the plan never drops them.
-  const windowEnd = localToUtc(
-    zone,
-    addDays(utcToLocal(zone, now).date, settings.schedulingWindowWeeks * 7 + 1),
-    0,
-  );
+  const windowEnd = schedulingWindowEnd(zone, now, settings.schedulingWindowWeeks);
   for (const m of all<MeetingRow>(
     db,
     "SELECT * FROM meetings WHERE user_id = ? AND enabled = 1 AND series_event_id IS NOT NULL",

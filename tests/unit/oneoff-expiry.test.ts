@@ -38,6 +38,13 @@ describe("one-off link expiry", () => {
     expect(localOf(at)).toBe("2027-03-31 23:30");
   });
 
+  it("is 30 local days later from the second pass of the repeated hour (fall back)", () => {
+    // 2026-10-25 02:30 CET, the second 02:30 of that day; 30 days later is 2026-11-24 02:30 CET.
+    const at = oneOffExpiry(link("2026-10-25T01:30:00.000Z"), 30, ZONE);
+    expect(at).toBe(Date.parse("2026-11-24T01:30:00.000Z"));
+    expect(localOf(at)).toBe("2026-11-24 02:30");
+  });
+
   it("keeps the seconds of the creation time", () => {
     const at = oneOffExpiry(link("2026-06-01T10:00:42.500Z"), 30, ZONE);
     expect(at).toBe(Date.parse("2026-07-01T10:00:42.500Z"));

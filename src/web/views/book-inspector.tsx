@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "preact/hooks";
 import { localToUtc, utcToLocal } from "../../shared/time.ts";
 import { api } from "../lib/api.ts";
-import { dayOf, dayText, timeText, type View } from "../lib/zoned.ts";
+import { addPages, dayOf, dayText, timeText, type View } from "../lib/zoned.ts";
 
 type Reason =
   | "past"
@@ -43,8 +43,6 @@ const COLOR: Record<Reason, string> = {
   conflict: "red",
   higherPriority: "blue",
 };
-
-const SPAN = 14 * 86_400_000;
 
 function explain(f: Failure): string {
   const who = f.person?.name || f.person?.email || "";
@@ -95,12 +93,12 @@ export function Inspector({
       link,
       duration: String(duration),
       from: String(from),
-      to: String(from + SPAN),
+      to: String(addPages(view, from, 1)),
     });
     void api<{ until: number; times: Inspected[] }>("GET", `/api/booking/inspect?${q}`).then(
       setData,
     );
-  }, [page, link, duration, from]);
+  }, [page, link, duration, from, view.zone]);
   const days = useMemo(() => {
     const m = new Map<string, Inspected[]>();
     for (const t of data?.times ?? []) {
@@ -166,12 +164,12 @@ export function Inspector({
       })}
       <div class="actions">
         {from > first && (
-          <button type="button" onClick={() => setFrom(Math.max(first, from - SPAN))}>
+          <button type="button" onClick={() => setFrom(Math.max(first, addPages(view, from, -1)))}>
             Earlier
           </button>
         )}
-        {from + SPAN < data.until && (
-          <button type="button" onClick={() => setFrom(from + SPAN)}>
+        {addPages(view, from, 1) < data.until && (
+          <button type="button" onClick={() => setFrom(addPages(view, from, 1))}>
             Later
           </button>
         )}
