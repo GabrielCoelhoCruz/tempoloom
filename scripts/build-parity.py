@@ -1100,21 +1100,6 @@ E2E_NOTES.update({
           "has no personal keyword)"),
     505: "Habits and flexible meetings write to the calendar chosen at creation; the edit form shows it disabled",
 })
-PARTIAL.update({
-    944: ("One MCP URL per instance (/mcp), shown on the Account page, with full UI E2E on CalDAV (\u201c" + T["s7_mcp_read"] + "\u201d). "
-          "Any MCP client that can send a bearer token connects with a personal API key. Not built: OAuth 2.1 with PKCE and a consent page "
-          "(Fields: Authorization), which clients that sign in only with OAuth need; it is buildable on the server"),
-    945: ("Read tools answer at once and change nothing, and write tools stage the change in preview mode with a link to it, with full UI E2E on CalDAV "
-          "(\u201c" + T["s7_mcp_read"] + "\u201d; \u201c" + T["s7_mcp_stage"] + "\u201d). Limits: apply_staged_changes called by the client has unit "
-          "tests only (tests/unit/mcp.test.ts), and no test proves that write tools respect hours sets (rule 4)"),
-    946: ("Built with full UI E2E on CalDAV: view schedule, find meeting times, analyze the week, create, move and delete events as staged changes, "
-          "and review and apply them (\u201c" + T["s7_mcp_read"] + "\u201d; \u201c" + T["s7_mcp_stage"] + "\u201d). Not built: tools to respond "
-          "to invitations, protect focus time and record work sessions; they are buildable"),
-    947: ("A client is disconnected by deleting its personal API key: the key gets 401 at once (\u201c" + T["acct_keys"] + "\u201d). "
-          "No test checks that deleting a key keeps the calendar connections and events (rules 6, 7). Not built: per-client OAuth grants with a Revoke action (rule 8), which come with MCP OAuth (row 944)"),
-    953: ("Any client that sends the personal API key as a bearer token uses the same URL, with full UI E2E on CalDAV (\u201c" + T["s7_mcp_read"] + "\u201d). "
-          "Not built: OAuth sign-in for clients that support only OAuth; it is buildable on the server (row 944)"),
-})
 
 # Chat rows: the assistant chat needs a language model, which the owner must supply.
 G2 = "Needs an LLM provider and key from the owner (gate G2)"
@@ -1176,18 +1161,10 @@ BLOCKED[147] = BLOCKED[518] = (
     "Needs a Google account and the Google Tasks and Gmail APIs: only the Google Tasks and Gmail features (rows 847 to 858) ask for more Google access. "
     "Google sign-in asks for the calendar scopes up front (with include_granted_scopes); CalDAV has no permission scopes")
 BLOCKED[446] = BLOCKED[447] = WORKSPACE_ADDON + "; the same actions exist on the Booking links page (rows 440 to 443)"
-BLOCKED[948] = ("Needs a paid ChatGPT plan and a listing in the ChatGPT app directory, or a ChatGPT plan with custom connectors; it also needs MCP OAuth "
-                "on the server, which is not built and is buildable (row 944)")
-BLOCKED[949] = ("Needs a Claude account (Claude Desktop or the Claude web app) to add a custom connector; the connector signs in with MCP OAuth, "
-                "which is not built on the server and is buildable (row 944). The MCP server with API keys is built (rows 697 to 699)")
-BLOCKED[950] = ("Needs Claude Code and an Anthropic account; claude mcp add with an HTTP URL signs in with MCP OAuth, which is not built on the server "
-                "and is buildable (row 944). The MCP server with API keys is built (rows 697 to 699)")
 BLOCKED[951] = ("Needs a Claude account to show the per-tool settings, which are a Claude feature. Tempoloom's part is built: each tool has a name, a "
                 "description, readOnlyHint and destructiveHint (unit tests in tests/unit/mcp.test.ts; E2E lists the tools: \u201c" + T["s7_mcp_read"] + "\u201d)")
 BLOCKED[836] = (TASK_APPS + " for imported tasks. A saved search over Tempoloom tasks on a habit and on focus time has full UI E2E "
                 "on CalDAV (\u201c" + T["s2_habit_tasks"] + "\u201d; \u201c" + T["s2_focus_tasks"] + "\u201d)")
-BLOCKED[952] = ("Needs the Cursor app; its HTTP MCP entry signs in with MCP OAuth, which is not built on the server and is buildable (row 944). "
-                "The MCP server with API keys is built (rows 697 to 699)")
 
 # Rows that are not software, or have no evidence to build from.
 BLOCKED[595] = "Not software: a guided pilot and rollout is a human service of the vendor company"
@@ -1257,6 +1234,35 @@ BLOCKED[43] = ("Needs the Google Calendar add-on's developer app and a test acco
                "page, done leaving the queue, and an up arrow that moves no other task (\u201c" + T["u35_arrows"] + "\u201d; \u201c"
                + T["u35_panel"] + "\u201d; \u201c" + T["u35_page"] + "\u201d; \u201c" + T["u35_sticky"] + "\u201d)")
 # --- end U35 ---
+
+# --- U34: AI tool integrations (MCP OAuth, grants, RSVP, focus time, work sessions) ---
+T.update({
+    "u34_flow": "an MCP client signs in with OAuth on the consent page, reads at once, and its writes wait in preview mode until the user applies them (integrations-ai-tools rules 1-3, 21)",
+    "u34_caps": "an AI tool answers an invitation, protects focus time and records a work session, each staged until the user applies it (integrations-ai-tools capability groups)",
+    "u34_revoke": "revoking one AI tool on the Account page stops only that tool; calendar access, its events and its staged changes stay (integrations-ai-tools rules 6-8, edge case 1)",
+    "u34_signin": "a signed-out user signs in on the consent page and comes back to it; a bad request stays on the page with a link back (integrations-ai-tools Authorization, edge case 2)",
+    "u34_owner": "only the owner can connect or revoke an AI tool: a delegate gets 403 on the consent page and on Revoke, and an API key cannot approve (integrations-ai-tools rules 6-8, delegated access)",
+})
+E2E.update({
+    944: ["u34_flow"],
+    945: ["u34_flow", "u34_caps"],
+    946: ["u34_flow", "u34_caps", "s7_mcp_read", "s7_final"],
+    947: ["u34_revoke", "u34_owner"],
+    953: ["u34_flow", "u34_signin", "u34_owner"],
+})
+E2E_NOTES.update({
+    944: "One URL, <BASE_URL>/mcp, shown on the Account page; two OAuth clients and an API-key client read the same data",
+    945: "Read tools answer at once; propose_* tools stage changes that the user applies in the planner, or that the client lists with list_staged_changes and applies with apply_staged_changes after the user confirms",
+    946: "Tools: list_events, find_free_time (also with attendees: a colleague on this server and an unknown guest), propose_create_event, propose_update_event, propose_delete_event, propose_rsvp, propose_focus_time, get_week_summary, get_stats, propose_log_task_time, list_staged_changes, apply_staged_changes. A focus block is a busy event with the #tl_focus tag",
+    947: "The Account page lists each OAuth client with its redirect host, last use and a Revoke action; revoke deletes the grant and its tokens. Calendar accounts stay connected. Only the owner in a session of their own can allow or revoke: a delegate and an API key get 403",
+    953: "A standard MCP client (the official MCP TypeScript SDK) registers itself, gets the user's consent and uses OAuth 2.1 with PKCE. The consent page names the redirect host, the registration date and \u201cUnverified\u201d, may not be framed, keeps a bad request on the page with a link back, and comes back after a CalDAV sign-in",
+})
+_SERVER = "the server side it uses (OAuth 2.1 with dynamic client registration and PKCE, the consent page, the MCP URL) passes E2E with the MCP SDK client (\u201c" + T["u34_flow"] + "\u201d)"
+BLOCKED[948] = "Needs a paid ChatGPT plan and a listing in the ChatGPT app directory, or a ChatGPT plan with custom connectors; " + _SERVER
+BLOCKED[949] = "Needs a Claude account (Claude Desktop or the Claude web app) to add a custom connector; " + _SERVER + ". The troubleshooting text of rule 15 is not built"
+BLOCKED[950] = "Needs Claude Code and an Anthropic account to run claude mcp add with an HTTP URL and the browser sign-in; " + _SERVER
+BLOCKED[952] = "Needs the Cursor app and a Cursor account to add the mcp.json entry and connect; " + _SERVER
+# --- end U34 ---
 
 # Google Calendar proof. docs/e2e-google-run.tsv records a full E2E run on Google
 # (a "# commit <sha>" line, then status, test id, title per line; docs/e2e-google-run.md
