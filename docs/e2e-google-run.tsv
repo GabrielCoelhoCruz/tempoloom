@@ -1,3 +1,4 @@
+# commit 113bc6a969e121aa214dd2091f55bef214256023
 skipped	tests/e2e/account.spec.ts:45	a user adds a second CalDAV account and removes it after a confirmation; the main account stays (rules 6-8)
 skipped	tests/e2e/account.spec.ts:93	a personal API key creates a planned task; regenerate replaces the secret; delete revokes it (API keys rules 1-5; AT-1, AT-2)
 skipped	tests/e2e/account.spec.ts:157	deleting the own account needs the email typed, is refused for a sole admin with members, and removes data and future managed events
