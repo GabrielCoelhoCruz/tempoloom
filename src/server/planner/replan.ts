@@ -407,6 +407,10 @@ export function loadSnapshot(
   for (const m of meetings.rows) {
     notes.set(`meeting:${m.id}`, m.description);
     titles.set(`meeting:${m.id}`, m.title);
+    eventSettings.set(
+      `meeting:${m.id}`,
+      readEventSettings(m.event_settings, defaultEventSettings("meeting")),
+    );
   }
 
   const snapshot: Snapshot = {
@@ -536,6 +540,21 @@ export function eventDescription(
   return [notes, link, FOOTER].filter(Boolean).join("\n\n");
 }
 
+/** The organizer, guests and location of a meeting occurrence (rules 35, 41). */
+export function meetingGuests(
+  m: { location: string; people: { email: string; required: boolean }[] } | undefined,
+  organizer: string,
+  userEmail: string,
+) {
+  const people = (m?.people ?? []).filter((a) => a.email !== organizer && a.email !== userEmail);
+  return {
+    organizer,
+    attendees: people.filter((a) => a.required).map((a) => a.email),
+    optionalAttendees: people.filter((a) => !a.required).map((a) => a.email),
+    ...(m?.location ? { location: m.location } : {}),
+  };
+}
+
 export async function replanUser(ctx: ReplanContext, userId: string): Promise<ReplanResult | null> {
   const { db, now } = ctx;
   const user = one<{ time_zone: string; email: string }>(
@@ -571,23 +590,20 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
   );
   const taskHours = new Map(snapshot.tasks.map((t) => [t.id, t.hours]));
   // Guests and location of each flexible meeting (meetings-flexible.md rules 35, 41).
-  const guests = new Map(
+  const meetingRows = new Map(
     all<{ id: string; location: string }>(
       db,
       "SELECT id, location FROM meetings WHERE user_id = ?",
       userId,
-    ).map((m) => {
-      const people = attendeesOf(db, m.id).filter((a) => a.email !== user.email);
-      return [
-        m.id,
-        {
-          organizer: user.email,
-          attendees: people.filter((a) => a.required).map((a) => a.email),
-          optionalAttendees: people.filter((a) => !a.required).map((a) => a.email),
-          ...(m.location ? { location: m.location } : {}),
-        },
-      ];
-    }),
+    ).map((m) => [m.id, { location: m.location, people: attendeesOf(db, m.id) }]),
+  );
+  // The organizer of an occurrence is the account that owns its calendar.
+  const accountEmail = new Map(
+    all<{ id: string; email: string }>(
+      db,
+      "SELECT id, email FROM accounts WHERE user_id = ?",
+      userId,
+    ).map((a) => [a.id, a.email.toLowerCase()]),
   );
   const calendars = new Map(
     all<CalendarInfo & { ok: number }>(
@@ -646,7 +662,13 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
       colorId: null,
       ...(p.kind === "habit" && es?.location ? { location: es.location } : {}),
       ...reminderFields(p.kind, es),
-      ...(p.kind === "meeting" ? guests.get(p.itemId) : {}),
+      ...(p.kind === "meeting"
+        ? meetingGuests(
+            meetingRows.get(p.itemId),
+            accountEmail.get(calendars.get(calendarId)?.account_id ?? "") ?? user.email,
+            user.email,
+          )
+        : {}),
     };
   });
 

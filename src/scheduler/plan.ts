@@ -22,6 +22,7 @@ import type {
   HabitFrequency,
   HabitItem,
   Level,
+  MeetingFrequency,
   MeetingItem,
   OverloadItem,
   Placement,
@@ -433,8 +434,10 @@ function weekStartDate(ctx: Ctx, date: LocalDate): LocalDate {
   return addDays(date, -back);
 }
 
+const mod = (a: number, n: number) => ((a % n) + n) % n;
+
 /** Index `i` of a period counted from the anchor period is on an every-`every` cadence. */
-const onCadence = (i: number, every: number) => ((i % every) + every) % every === 0;
+const onCadence = (i: number, every: number) => mod(i, every) === 0;
 
 const monthIndex = (d: LocalDate) => Number(d.slice(0, 4)) * 12 + Number(d.slice(5, 7));
 
@@ -754,35 +757,89 @@ interface Period {
   ideal: LocalDate[];
 }
 
+/** The day N periods count from: `starting`, or else the day the meeting was created. */
+export const meetingAnchor = (zone: string, m: { starting: LocalDate | null; createdAt: number }) =>
+  m.starting ?? utcToLocal(zone, m.createdAt).date;
+
+/**
+ * Rule 10 and the period terms: the start of the period that holds `date`, or
+ * null when `date` is in a week or month that the meeting skips (every N weeks
+ * or months). Periods count from `anchor` (meetingAnchor), so they stay the same
+ * from one run to the next. The scheduler and the adopted-series log both use it.
+ */
+export function meetingPeriodStart(
+  f: MeetingFrequency,
+  date: LocalDate,
+  weekStart: 1 | 7,
+  anchor: LocalDate,
+): LocalDate | null {
+  if (f.period === "daily") return addDays(date, -mod(dayDiff(date, anchor), f.everyDays ?? 1));
+  if (f.period === "monthly") {
+    const month = `${date.slice(0, 8)}01`;
+    return onCadence(monthIndex(month) - monthIndex(anchor), f.everyMonths ?? 1) ? month : null;
+  }
+  const week = (d: LocalDate) => addDays(d, -((weekdayOf(d) - weekStart + 7) % 7));
+  const ws = week(date);
+  return onCadence(dayDiff(ws, week(anchor)) / 7, f.everyWeeks) ? ws : null;
+}
+
 function meetingPeriods(ctx: Ctx, m: MeetingItem): Period[] {
   const { s } = ctx;
   const first = utcToLocal(s.zone, ctx.earliest).date;
   const last = utcToLocal(s.zone, ctx.end - 1).date;
   const from = m.starting && m.starting > first ? m.starting : first;
-  const out: Period[] = [];
-  if (m.frequency.period === "daily") {
-    for (let d = from; d <= last; d = addDays(d, 1)) out.push({ start: d, days: [d], ideal: [d] });
-    return out;
-  }
-  const { everyWeeks, idealDays } = m.frequency;
-  const anchor = weekStartDate(ctx, m.starting ?? first);
-  for (let ws = weekStartDate(ctx, from); ws <= last; ws = addDays(ws, 7)) {
-    if (!onCadence(dayDiff(ws, anchor) / 7, everyWeeks)) continue;
+  const anchor = meetingAnchor(s.zone, m);
+  const startOf = (d: LocalDate) => meetingPeriodStart(m.frequency, d, s.weekStart, anchor);
+  const inRange = (start: LocalDate, n: number) => {
     const days: LocalDate[] = [];
-    for (let i = 0; i < 7; i++) {
-      const d = addDays(ws, i);
+    for (let i = 0; i < n; i++) {
+      const d = addDays(start, i);
       if (d >= from && d <= last) days.push(d);
     }
-    out.push({ start: ws, days, ideal: days.filter((d) => idealDays.includes(weekdayOf(d))) });
+    return days;
+  };
+  const out: Period[] = [];
+  const f = m.frequency;
+  if (f.period === "daily") {
+    const every = f.everyDays ?? 1;
+    for (let ps = startOf(from) as LocalDate; ps <= last; ps = addDays(ps, every)) {
+      const days = inRange(ps, every);
+      if (days.length > 0) out.push({ start: ps, days, ideal: days.filter((d) => d === ps) });
+    }
+    return out;
+  }
+  if (f.period === "monthly") {
+    for (let month = `${from.slice(0, 8)}01`; month <= last; ) {
+      const next = `${addDays(month, 32).slice(0, 8)}01`;
+      const ideal = monthlyDate(
+        month,
+        "nth" in f
+          ? { period: "monthly", nth: f.nth, weekday: f.weekday }
+          : { period: "monthly", dayOfMonth: f.dayOfMonth },
+      );
+      const days = inRange(month, dayDiff(next, month));
+      // Tempoloom decision (meetings-flexible.md, monthly ideal day): a month without
+      // its ideal day has no occurrence, as for habits; a month whose ideal day is
+      // before today or `starting` gets no new one, and keeps one already placed.
+      // Rule 20: a month whose ideal day is past the planning window waits for it.
+      const keep =
+        ideal !== null &&
+        ideal <= last &&
+        (ideal >= from || ctx.current.has(`meeting:${m.id}:${month}`));
+      if (startOf(month) && days.length > 0 && keep)
+        out.push({ start: month, days, ideal: days.filter((d) => d === ideal) });
+      month = next;
+    }
+    return out;
+  }
+  for (let ws = weekStartDate(ctx, from); ws <= last; ws = addDays(ws, 7)) {
+    if (!startOf(ws)) continue;
+    const days = inRange(ws, 7);
+    out.push({ start: ws, days, ideal: days.filter((d) => f.idealDays.includes(weekdayOf(d))) });
   }
   return out;
 }
 
-/**
- * Rules 16-17: the full length first, then an ideal day, then nearest the ideal
- * time. A fragmentation policy ranks the added fragmented time before the
- * distance, within the member's flexibility.
- */
 /** MEET-03 rule 2: a start whose local minute of the hour is in the set. */
 function startAllowed(ctx: Ctx, m: MeetingItem, date: LocalDate): (t: number) => boolean {
   if (!m.startMinutes || m.startMinutes.length === 4) return () => true;
@@ -791,16 +848,34 @@ function startAllowed(ctx: Ctx, m: MeetingItem, date: LocalDate): (t: number) =>
   return (t) => allowed.has(Math.floor((t - dayStart) / MINUTE) % 60);
 }
 
+/**
+ * The distance of a day from the ideal: in days from the nearest ideal day of
+ * the period (0 on an ideal day). So a monthly meeting whose ideal day is full
+ * goes to the nearest day with room; the time distance only ranks starts of one day.
+ */
+function dayDistanceOf(frees: { date: LocalDate; ideal: boolean }[]): (date: LocalDate) => number {
+  const ideal = frees.filter((f) => f.ideal).map((f) => f.date);
+  return (date) => (ideal.length ? Math.min(...ideal.map((d) => Math.abs(dayDiff(d, date)))) : 0);
+}
+
+/**
+ * Rules 16-17: the full length first, then an ideal day, then the nearest day,
+ * then nearest the ideal time. A fragmentation policy ranks the added
+ * fragmented time before the time distance, within the member's flexibility.
+ */
 function searchMeeting(
   ctx: Ctx,
   m: MeetingItem,
   frees: { date: LocalDate; free: TimeSet; ideal: boolean; window: TimeSet }[],
 ): Interval | null {
+  const dayDistance = dayDistanceOf(frees);
   const frag = ctx.s.fragmentation;
   const shift = (frag?.maxShiftMinutes ?? 0) * MINUTE;
   for (let l = m.durationMinutes; l >= m.shortestMinutes; l -= 5) {
-    let best: { t: number; ideal: boolean; dist: number; cost: number } | null = null;
+    let best: { t: number; ideal: boolean; days: number; dist: number; cost: number } | null = null;
     for (const { date, free, ideal, window } of frees) {
+      const days = dayDistance(date);
+      if (best && (best.ideal ? !ideal || days > best.days : !ideal && days > best.days)) continue;
       const target = localToUtc(ctx.s.zone, date, m.idealMinute);
       const allowed = startAllowed(ctx, m, date);
       for (const iv of free.intervals()) {
@@ -813,10 +888,13 @@ function searchMeeting(
             !best ||
             (ideal && !best.ideal) ||
             (ideal === best.ideal &&
-              (cost < best.cost ||
-                (cost === best.cost && (dist < best.dist || (dist === best.dist && t < best.t)))))
+              (days < best.days ||
+                (days === best.days &&
+                  (cost < best.cost ||
+                    (cost === best.cost &&
+                      (dist < best.dist || (dist === best.dist && t < best.t)))))))
           )
-            best = { t, ideal, dist, cost };
+            best = { t, ideal, days, dist, cost };
         }
       }
     }
@@ -831,17 +909,22 @@ function suggestMeeting(
   m: MeetingItem,
   frees: { date: LocalDate; free: TimeSet; ideal: boolean }[],
 ): Interval[] {
+  const dayDistance = dayDistanceOf(frees);
   for (let l = m.durationMinutes; l >= m.shortestMinutes; l -= 5) {
-    const found: { t: number; ideal: boolean; dist: number }[] = [];
+    const found: { t: number; ideal: boolean; days: number; dist: number }[] = [];
     for (const { date, free, ideal } of frees) {
       const target = localToUtc(ctx.s.zone, date, m.idealMinute);
+      const days = dayDistance(date);
       const allowed = startAllowed(ctx, m, date);
       for (const iv of free.intervals())
         for (let t = ceilTo(iv.start, ctx.step); t + l * MINUTE <= iv.end; t += ctx.step)
-          if (allowed(t)) found.push({ t, ideal, dist: Math.abs(t - target) });
+          if (allowed(t)) found.push({ t, ideal, days, dist: Math.abs(t - target) });
     }
     if (found.length === 0) continue;
-    found.sort((a, b) => Number(b.ideal) - Number(a.ideal) || a.dist - b.dist || a.t - b.t);
+    found.sort(
+      (a, b) =>
+        Number(b.ideal) - Number(a.ideal) || a.days - b.days || a.dist - b.dist || a.t - b.t,
+    );
     return found.slice(0, 3).map((f) => ({ start: f.t, end: f.t + l * MINUTE }));
   }
   return [];

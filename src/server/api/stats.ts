@@ -91,6 +91,15 @@ export function computeStats(db: Db, userId: string, from: string, to: string, n
       ).category,
     ]),
   );
+  // A flexible meeting is a one-to-one or a group meeting by its people (organizer included).
+  const meetingPeople = new Map(
+    all<{ id: string; n: number }>(
+      db,
+      `SELECT m.id, count(a.email) + 1 AS n FROM meetings m
+         LEFT JOIN meeting_attendees a ON a.meeting_id = m.id WHERE m.user_id = ? GROUP BY m.id`,
+      userId,
+    ).map((m) => [m.id, m.n]),
+  );
   const habitTitle = new Map(habitRows.map((h) => [h.id, h.title]));
   // Habit progress: occurrences in the range, the ended ones, and the time with
   // logged work. A logged block is not an occurrence; a deleted habit keeps its past.
@@ -126,15 +135,19 @@ export function computeStats(db: Db, userId: string, from: string, to: string, n
       }
     }
     const cat: Category =
-      m.kind === "task"
-        ? "tasks"
-        : m.kind === "habit"
-          ? habitKind.get(m.source_id) === "personal"
-            ? "personalHabits"
-            : "workHabits"
-          : m.kind === "focus"
-            ? "focus"
-            : "buffers";
+      m.kind === "meeting"
+        ? (meetingPeople.get(m.source_id) ?? 2) >= 3
+          ? "groupMeetings"
+          : "oneOnOne"
+        : m.kind === "task"
+          ? "tasks"
+          : m.kind === "habit"
+            ? habitKind.get(m.source_id) === "personal"
+              ? "personalHabits"
+              : "workHabits"
+            : m.kind === "focus"
+              ? "focus"
+              : "buffers";
     spans.push({ cat, start: m.start_ms, end: m.end_ms });
   }
 

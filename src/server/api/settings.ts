@@ -6,6 +6,7 @@ import type { AppEnv } from "../app.ts";
 import { all, type Db, one, run, tx } from "../db.ts";
 import { jsonBody, notFound } from "../http.ts";
 import { instanceLimit, limitMessage } from "../limits.ts";
+import { wakeOrganizers } from "../planner/meetings.ts";
 import { requestRepaint } from "../planner/repaint.ts";
 import { writeCalendar } from "../planner/replan.ts";
 import { writableCalendar, writableCalendars } from "../planner/write.ts";
@@ -136,6 +137,7 @@ export function settingsRoutes(db: Db, sync: SyncService, now: () => number): Ho
       JSON.stringify(body.weekly),
       now(),
     );
+    wakeOrganizers(db, sync, user.id);
     return c.json({ id }, 201);
   });
 
@@ -178,7 +180,7 @@ export function settingsRoutes(db: Db, sync: SyncService, now: () => number): Ho
       // that uses the set. A new name or task calendar places nothing again.
       if (!body.weekly || sameWeek(body.weekly, JSON.parse(set.weekly))) return;
       const t = now();
-      for (const table of ["tasks", "habits", "focus_goals"]) {
+      for (const table of ["tasks", "habits", "focus_goals", "meetings"]) {
         run(
           db,
           `UPDATE ${table} SET rules_changed_at = ? WHERE user_id = ? AND hours_set_id = ?`,
@@ -188,6 +190,7 @@ export function settingsRoutes(db: Db, sync: SyncService, now: () => number): Ho
         );
       }
     });
+    wakeOrganizers(db, sync, user.id);
     sync.request(user.id);
     return c.json({ ok: true });
   });

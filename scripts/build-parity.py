@@ -268,23 +268,6 @@ E2E_NOTES = {
 # Row id -> reason, for rows implemented in part (some behavior has E2E, some does not).
 PARTIAL = StatusMap("PARTIAL", {
     320: "A meeting is created from a form, with E2E on CalDAV; each occurrence is its own event, not an instance of one recurring series",
-    322: "Availability of attendees who are users here is E2E-proven on CalDAV; the Google free/busy query for other emails is not implemented",
-    324: "Optional guests are written with the optional role and never limit the time (E2E); the E2E optional guest is not a user here",
-    328: "Every day, every week and every N weeks; no monthly or custom day counts. E2E covers weekly",
-    331: "Everyone's meeting hours (E2E) and the organizer's hours only (not under E2E); no item-specific hours",
-    332: "A start date delays the first occurrence; unit tests only",
-    333: "P1 to P4 with P2 by default; displacement by level has unit tests only",
-    334: "A rank is stored per level and orders placement; no reorder in the UI",
-    336: "Meetings are placed before focus time by the engine order; unit tests only",
-    339: "The common time of the organizer's and a colleague's meeting hours is E2E-proven; both use one time zone in the test",
-    341: "Adaptive (default), busy and free; a far occurrence is written free in E2E; the switch to busy has unit tests only",
-    342: "Busy or free only; no visibility or reminder settings",
-    343: "The description is written to every occurrence; not under E2E",
-    345: "A text location only; no conference link or room",
-    346: "Occurrences go to the organizer's main calendar only",
-    349: "The list is grouped by priority; no drag to reorder",
-    350: "No limit in code; not under test",
-    356: "Changed rules or hours place future occurrences again (engine change flag); unit tests only",
 })
 
 # Row id -> reason, for rows that cannot work yet because a feature they build on is missing.
@@ -313,7 +296,6 @@ for n in [5, 6, 12, 14, 15, 16, 17, 18, 20, 21, 22, 24, 31]:
 
 # Row id -> limits, for rows implemented with unit or property tests only.
 UNIT = StatusMap("UNIT", {
-    353: "one-to-one, group and booked meeting hours",
 })
 
 GOOGLE_ROWS = StatusMap("GOOGLE_ROWS", {
@@ -1003,6 +985,42 @@ PARTIAL[265] = (
 BLOCKED[284] = "Needs a Google Calendar account: the events that cannot change color (made from mail, birthdays) exist only in Google Calendar; a CalDAV server lets the owner change every event. Painting skips refused events and never stops a run (code)"
 BLOCKED[317] = "The chat app channel needs the Slack app (a vendor developer app and a test workspace); the daily digest by email, at a time the user sets, has full UI E2E on CalDAV (\u201clibrary entry 'Flag meeting problems' turns on the checks and an email digest of open, not ignored, issues at the chosen time, once a day\u201d)"
 # --- end U05 ---
+
+# --- U06: flexible meeting rules (tests/e2e/meeting-rules.spec.ts) ---
+T.update({
+    "mr_hours": "a colleague's hours count in the colleague's time zone, an optional user does not count, my hours only and item-specific hours replace everyone's hours",
+    "mr_freq": "frequency: every day, every 3 days, every month on a day or an Nth weekday, every 2 months, and every 2 weeks from a start date",
+    "mr_prio": "priority: a P1 meeting moves a P3 habit, a P4 meeting goes before focus time, and adaptive defense turns busy when the day is tight or the occurrence is locked",
+    "mr_rank": "rank and priority come from the automation list: a drag swaps two meetings that want one slot and another drag changes the priority; an hours change and an edit of the rules place them again",
+    "mr_settings": "event settings, description and start date reach every occurrence, on the main calendar of another account",
+    "mr_defense": "adaptive defense writes busy within 12 hours and free later; always busy and always free keep their value",
+    "mr_many": "no limit on meetings per organizer, and stats count flexible meetings as one-to-one or group time next to booked meetings",
+    "mr_series": "a series every 3 weeks fills the form as custom every 3 weeks, keeps its instances when saved, and cannot take a monthly frequency",
+})
+E2E.update({
+    324: ["mr_hours"], 328: ["mr_freq", "mr_series"], 331: ["mr_hours"], 332: ["mr_settings", "mr_rank"],
+    333: ["mr_prio"], 334: ["mr_rank"], 336: ["mr_prio"], 339: ["mr_hours"],
+    341: ["mr_prio", "mr_defense"], 342: ["mr_settings", "mr_defense"], 343: ["mr_settings"],
+    346: ["mr_settings"], 349: ["mr_rank"], 350: ["mr_many"], 353: ["mr_many", "x_stats"],
+    356: ["mr_rank", "mr_hours"],
+})
+E2E_NOTES.update({
+    324: "The optional guest is a user here who is busy and outside the time zone of the meeting hours",
+    328: "Custom is every N days, weeks or months (N 1 to 52), counted from the start date or the creation day; monthly is a day of the month or an Nth weekday; a month without its ideal day, or whose ideal day has passed, gets no new occurrence (unit test); a month whose ideal day is past the planning window waits for it; an adopted series repeats daily or every N weeks from its first instance",
+    331: "Item-specific hours are a private hours set of the meeting, used alone",
+    332: "A start date on a new meeting delays it; an edit that sets a later start date pauses it until then",
+    339: "The colleague works in America/New_York; the organizer in Europe/Berlin",
+    341: "Busy within 12 hours (DEF-30), when the occurrence has the last free slot of its day, or when it is locked",
+    342: "Visibility and reminders use the shared event settings (CLASS, VALARM on CalDAV)",
+    343: "The markdown is written as plain text to every occurrence (CNT-13); the planner details panel renders it (CNT-12)",
+    346: "The calendar is the main calendar of any connected account, set at creation; that account is the organizer of each occurrence",
+    349: "The rules list is the Automations page, grouped by priority; a drag changes rank or priority and places the meetings again",
+    353: "Flexible meetings count as one-to-one or group time by their number of people",
+    356: "An edit of the rules, a rank or priority change, and an hours change of the organizer or of an attendee who is a user here place future occurrences again, outside the move limit; an edit of the title, notes or location keeps the times, and an attendee's time zone change or new meeting hours set also places again (unit tests)",
+})
+BLOCKED[322] = "Needs a Google account: the free/busy query for emails that are not users here is a Google Calendar API call; availability of attendees who are users here is E2E-proven (rows 321, 339)"
+BLOCKED[345] = "Needs Google Meet (a Google account), the Zoom vendor app and Google Workspace room resources; an address or a custom text or link is written as the location of every occurrence (E2E: \u201c" + T["mr_settings"] + "\u201d)"
+# --- end U06 ---
 
 # Google Calendar proof. docs/e2e-google-run.tsv records a full E2E run on Google
 # (status, test id, title per line; docs/e2e-google-run.md says how it ran). A test key

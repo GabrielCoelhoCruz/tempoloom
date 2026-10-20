@@ -323,6 +323,12 @@ Attendee class, computed each time the meeting is placed:
    local time for the organizer.
 6. Monthly on day 29, 30 or 31: in a shorter month, the ideal day is the last
    day of the month (Proposed).
+   Tempoloom decision: a month without its ideal day (an Nth weekday the month
+   does not have, such as a 5th Thursday) has no occurrence, as for monthly
+   habits (`habits-automation.md`). A month whose ideal day is before today or
+   before `startDate` gets no new occurrence; an occurrence already placed in
+   that month stays. When the ideal day has no room, the occurrence goes to
+   the day with room nearest to the ideal day, then nearest `idealTime`.
 7. The adopted series already has moved or cancelled instances: Tempoloom
    keeps them as they are. A moved instance counts as locked (Proposed,
    consistent with manual moves in SPEC-MEET-02).

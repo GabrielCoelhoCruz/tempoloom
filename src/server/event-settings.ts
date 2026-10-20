@@ -78,12 +78,19 @@ export function newEventSettings(
     !one(
       db,
       `SELECT 1 FROM calendars c JOIN accounts a ON a.id = c.account_id
-       WHERE c.id = ? AND a.user_id = ? AND a.status = 'ok' AND c.writable = 1`,
+       WHERE c.id = ? AND a.user_id = ? AND a.status = 'ok' AND c.writable = 1
+         AND (? = 0 OR c.is_primary = 1)`,
       s.calendarId,
       userId,
+      kind === "meeting" ? 1 : 0,
     )
   ) {
-    fail("calendarId", "Choose one of your calendars that Tempoloom can write to");
+    fail(
+      "calendarId",
+      kind === "meeting"
+        ? "Choose the main calendar of one of your accounts"
+        : "Choose one of your calendars that Tempoloom can write to",
+    );
   }
   return s;
 }

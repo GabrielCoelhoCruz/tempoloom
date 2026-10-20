@@ -5,10 +5,14 @@
 // 31-32) with the guest update emails it asks for (planning-notifications.md
 // NTF-20 to NTF-22).
 import { randomUUID } from "node:crypto";
-import { addDays, DAY, type LocalDate, weekdayOf } from "../../shared/time.ts";
+import type { MeetingFrequency } from "../../scheduler/model.ts";
+import { meetingAnchor, meetingPeriodStart } from "../../scheduler/plan.ts";
+import { addDays, DAY, type LocalDate, localToUtc, utcToLocal } from "../../shared/time.ts";
 import { all, type Db, one, run, tx } from "../db.ts";
 import { getPrefs } from "../meeting-prefs.ts";
+import { seriesInstanceDate } from "../meeting-series.ts";
 import { getSettings } from "../settings.ts";
+import { planningZone } from "../travel.ts";
 import type { MeetingRow } from "./meetings.ts";
 import type { ManagedRow } from "./push.ts";
 
@@ -67,26 +71,34 @@ export function logChange(db: Db, userId: string, c: Change, now: number): void 
 const meetingOf = (db: Db, id: string) =>
   one<MeetingRow>(db, "SELECT * FROM meetings WHERE id = ?", id);
 
-/** Period start date of an instance id: the date in its recurrence id (CalDAV or Google). */
-function instanceDate(eventId: string): LocalDate | null {
-  const caldav = /#(\d{4})-?(\d{2})-?(\d{2})/.exec(eventId);
-  const google = /_(\d{4})(\d{2})(\d{2})(?:T\d{6}Z?)?$/.exec(eventId);
-  const m = caldav ?? google;
-  return m ? (`${m[1]}-${m[2]}-${m[3]}` as LocalDate) : null;
-}
-
-function periodOf(m: MeetingRow, date: LocalDate, weekStart: 1 | 7): LocalDate {
-  const f = JSON.parse(m.frequency) as { period: string };
-  if (f.period === "daily") return date;
-  return addDays(date, -((weekdayOf(date) - weekStart + 7) % 7));
+/** The period of an instance date, as the scheduler counts it; null in a skipped week. */
+function periodOf(
+  m: MeetingRow,
+  date: LocalDate,
+  weekStart: 1 | 7,
+  zone: string,
+): LocalDate | null {
+  const anchor = meetingAnchor(zone, { starting: m.starting, createdAt: m.created_at });
+  return meetingPeriodStart(JSON.parse(m.frequency) as MeetingFrequency, date, weekStart, anchor);
 }
 
 /**
  * Managed rows for the instances of each adopted series in the cache, so the
- * plan moves those instances instead of writing new events.
+ * plan moves those instances instead of writing new events. An instance counts
+ * in the period of its local date in the planning zone, as the adopt list
+ * reads the series' frequency (`seriesInstanceDate`).
  */
 function adoptInstances(db: Db, userId: string, now: number): void {
-  const weekStart = getSettings(db, userId).weekStart;
+  const settings = getSettings(db, userId);
+  const weekStart = settings.weekStart;
+  const zone = planningZone(db, userId);
+  // Rule 20: instances beyond the planning window keep the series time; they are
+  // adopted once the window reaches them, so the plan never drops them.
+  const windowEnd = localToUtc(
+    zone,
+    addDays(utcToLocal(zone, now).date, settings.schedulingWindowWeeks * 7 + 1),
+    0,
+  );
   for (const m of all<MeetingRow>(
     db,
     "SELECT * FROM meetings WHERE user_id = ? AND enabled = 1 AND series_event_id IS NOT NULL",
@@ -103,15 +115,16 @@ function adoptInstances(db: Db, userId: string, now: number): void {
     }>(
       db,
       `SELECT event_id, summary, description, start_ms, end_ms, busy, etag FROM events
-       WHERE calendar_id = ? AND recurring_id = ? AND end_ms > ?`,
+       WHERE calendar_id = ? AND recurring_id = ? AND end_ms > ? AND start_ms < ?`,
       m.series_calendar_id,
       m.series_event_id,
       now,
+      windowEnd,
     );
     for (const e of instances) {
-      const date = instanceDate(e.event_id);
-      if (!date) continue;
-      const key = `meeting:${m.id}:${periodOf(m, date, weekStart)}`;
+      const period = periodOf(m, seriesInstanceDate(zone, e.event_id, e.start_ms), weekStart, zone);
+      if (!period) continue;
+      const key = `meeting:${m.id}:${period}`;
       if (one(db, "SELECT 1 FROM managed_events WHERE user_id = ? AND key = ?", userId, key))
         continue;
       if (one(db, "SELECT 1 FROM dismissed_keys WHERE user_id = ? AND key = ?", userId, key))
