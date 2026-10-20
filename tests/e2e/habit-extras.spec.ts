@@ -10,11 +10,15 @@
 // - an edit of the guests does not reach the events        -> guests after the edit
 // - auto-decline answers while off, or over a free occurrence -> answers stay unanswered
 // - the decline has no note                                -> COMMENT line
+// - a habit without a message sends no note or the focus note -> default COMMENT line
 // - a dependency is ignored, or moves the other item       -> event times of both
 // - "before" places the habit on days without the other item -> only its days
 // - "not after" limits days without the other item         -> ideal time on those days
 // - "not on the same day" still uses the other item's days -> event days
+// - a rule that makes a loop is accepted                    -> refusal in the form
 // - a snooze acts as a reschedule (nearest time) or moves the day -> 14:00, not 12:30
+// - a typed time is ignored, or an earlier time moves it back -> 15:45; refusal at 11:30
+// - a snooze of an occurrence that has started does nothing -> 12:15, not 12:00
 // - snooze until a date leaves earlier events, or drops later ones -> event days
 // - the search shows other titles, or hides matches        -> names in the list
 import type { Page } from "@playwright/test";
@@ -186,6 +190,50 @@ test("habit auto-decline declines invitations over a busy occurrence with the me
   await expect(form.getByLabel("Decline message")).toHaveValue("Deep work time");
 });
 
+test("habit auto-decline without a message of its own declines with the default note (rule 37)", async ({
+  page,
+  cal,
+  radicale,
+  signIn,
+}) => {
+  if (!radicale) throw new Error("CalDAV only");
+  await blockUntil(cal, W);
+  await signIn();
+  await addHabit(page, {
+    title: "Stretch",
+    ideal: "16:00",
+    min: 30,
+    max: 30,
+    defense: "Always busy",
+  });
+  await eventually(
+    () => week(cal),
+    (l) => expect(titled(l, "Stretch").map(span)).toEqual(fiveAt("16:00", "16:30")),
+  );
+  const form = await edit(page, "Stretch");
+  await form.getByLabel("Decline invitations that overlap this habit while it is busy").check();
+  await expect(form.getByLabel("Decline message")).toHaveValue("");
+  await expect(form.getByLabel("Decline message")).toHaveAttribute(
+    "placeholder",
+    "Declined automatically: this time is reserved for a routine.",
+  );
+  await save(form);
+  const id = await invite(cal, "Sales demo", day(2), "16:00", "16:30");
+  await eventually(
+    () => answers(cal, [id]),
+    (a) => expect(a).toEqual(["declined"]),
+  );
+  const raw = await rawEvent(radicale, id);
+  expect(raw).toMatch(/ATTENDEE;[^\n]*PARTSTAT=DECLINED[^\n]*mailto:e2e@tempoloom\.test/i);
+  expect(raw).toContain("COMMENT:Declined automatically: this time is reserved for a routine.");
+  await page.reload();
+  const again = await edit(page, "Stretch");
+  await expect(
+    again.getByLabel("Decline invitations that overlap this habit while it is busy"),
+  ).toBeChecked();
+  await expect(again.getByLabel("Decline message")).toHaveValue("");
+});
+
 /** Replaces the dependencies of a habit in its form with one rule and saves it. */
 async function depend(page: Page, habit: string, rule: string, target: string) {
   const form = await edit(page, habit);
@@ -262,6 +310,16 @@ test("habit dependencies: before keeps a habit to the other habit's days and ahe
   expect(titled(after, "Review").map(span)).toEqual(expected);
   expect(days(titled(after, "Gym"))).toEqual([day(1), day(3), day(4)]);
   expect(titled(after, "Standup").map(span)).toEqual(standup);
+
+  // A rule back to Review makes a loop: the form refuses it.
+  const loop = (await edit(page, "Standup")).getByTestId("habit-dependencies");
+  await loop.getByLabel("Rule", { exact: true }).selectOption({ label: "Not after" });
+  await loop.getByLabel("Habit or meeting").selectOption({ label: "Habit: Review" });
+  await loop.getByRole("button", { name: "Add dependency" }).click();
+  await expect(loop.getByRole("alert")).toHaveText(
+    "This rule makes a loop: Review already depends on Standup, directly or through other habits",
+  );
+  await expect(loop.getByTestId("dependency")).toHaveCount(0);
 });
 
 test("the meeting form adds a habit dependency: the habit goes before the meeting or not after it on its day, and removing it frees the habit (meetings rule 22)", async ({
@@ -387,6 +445,90 @@ test("snooze moves one habit occurrence to the first free time at or after the c
   );
   await page.waitForTimeout(11_000);
   expect(titled(await week(cal), "Lunch").map(span)).toEqual(expected);
+  await page.reload();
+  await expect(page.locator(".ev-habit", { hasText: "Lunch" })).toHaveCount(5);
+  expect(titled(await week(cal), "Lunch").map(span)).toEqual(expected);
+});
+
+test("snooze offers +15 min to +2 h from the occurrence's start, takes a typed time, and refuses a time at or before the start (rule 31)", async ({
+  page,
+  app,
+  cal,
+  signIn,
+}) => {
+  await blockUntil(cal, W);
+  await signIn();
+  await addHabit(page, { title: "Lunch", ideal: "12:00", min: 30, max: 30 });
+  const evs = await eventually(
+    () => week(cal),
+    (l) => expect(titled(l, "Lunch").map(span)).toEqual(fiveAt("12:00", "12:30")),
+  );
+  const thursday = titled(evs, "Lunch")[3];
+  if (!thursday) throw new Error("no Thursday lunch");
+  await openWeek(page);
+  await (await boxOf(page, app, thursday.id)).click();
+  const snooze = page.getByTestId("snooze-form");
+  const field = snooze.getByLabel("Not before");
+  for (const [button, time] of [
+    ["+15 min", "12:15"],
+    ["+30 min", "12:30"],
+    ["+1 h", "13:00"],
+    ["+2 h", "14:00"],
+  ] as const) {
+    await snooze.getByRole("button", { name: button }).click();
+    await expect(field).toHaveValue(time);
+  }
+  // A time at or before the start is not a snooze: refused, nothing moves.
+  await field.fill("11:30");
+  await snooze.getByRole("button", { name: "Snooze" }).click();
+  await expect(snooze.getByRole("alert")).toHaveText("Pick a time after 12:00");
+  await field.fill("15:45");
+  await snooze.getByRole("button", { name: "Snooze" }).click();
+  await expect(page.getByTestId("event-drawer")).toHaveCount(0);
+  const expected = fiveAt("12:00", "12:30");
+  expected[3] = `${day(3)} 15:45-16:15`;
+  await eventually(
+    () => week(cal),
+    (l) => expect(titled(l, "Lunch").map(span)).toEqual(expected),
+  );
+  await page.reload();
+  await expect(page.locator(".ev-habit", { hasText: "Lunch" })).toHaveCount(5);
+  expect(titled(await week(cal), "Lunch").map(span)).toEqual(expected);
+});
+
+test("snooze moves an occurrence that has started to the chosen time (rule 31)", async ({
+  page,
+  app,
+  cal,
+  signIn,
+}) => {
+  await blockUntil(cal, W);
+  await signIn();
+  await addHabit(page, { title: "Lunch", ideal: "12:00", min: 30, max: 30 });
+  await eventually(
+    () => week(cal),
+    (l) => expect(titled(l, "Lunch").map(span)).toEqual(fiveAt("12:00", "12:30")),
+  );
+  // Tuesday 12:05: the Tuesday lunch has started. Without a snooze it stays (SCH-60a).
+  app.env.TEST_CLOCK_START = new Date(at(day(1), "12:05")).toISOString();
+  await app.restart();
+  await page.waitForTimeout(11_000);
+  const evs = await week(cal);
+  expect(titled(evs, "Lunch").map(span)).toEqual(fiveAt("12:00", "12:30"));
+  const tuesday = titled(evs, "Lunch")[1];
+  if (!tuesday) throw new Error("no Tuesday lunch");
+  await openWeek(page);
+  await (await boxOf(page, app, tuesday.id)).click();
+  const snooze = page.getByTestId("snooze-form");
+  await snooze.getByLabel("Not before").fill("12:15");
+  await snooze.getByRole("button", { name: "Snooze" }).click();
+  await expect(page.getByTestId("event-drawer")).toHaveCount(0);
+  const expected = fiveAt("12:00", "12:30");
+  expected[1] = `${day(1)} 12:15-12:45`;
+  await eventually(
+    () => week(cal),
+    (l) => expect(titled(l, "Lunch").map(span)).toEqual(expected),
+  );
   await page.reload();
   await expect(page.locator(".ev-habit", { hasText: "Lunch" })).toHaveCount(5);
   expect(titled(await week(cal), "Lunch").map(span)).toEqual(expected);

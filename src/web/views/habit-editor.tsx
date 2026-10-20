@@ -15,9 +15,6 @@ export const guestsFrom = (text: string) =>
     .map((g) => g.trim())
     .filter(Boolean);
 
-/** Habits rule 37: the note of a decline when the habit has no message of its own. */
-export const HABIT_DECLINE_MESSAGE = "Declined automatically: this time is reserved for a routine.";
-
 const DEFENSE: Record<string, string> = {
   adaptive: "Free until time gets short",
   "always-free": "Always free",

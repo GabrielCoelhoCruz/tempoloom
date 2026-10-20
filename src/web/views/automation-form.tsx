@@ -4,6 +4,7 @@
 // /automations/edit/<type>/<id> changes one.
 import { useEffect, useState } from "preact/hooks";
 import type { HabitFrequency } from "../../scheduler/model.ts";
+import { HABIT_DECLINE_MESSAGE } from "../../shared/decline.ts";
 import {
   defaultEventSettings,
   type EventSettings,
@@ -19,7 +20,7 @@ import { navigate, path } from "../lib/router.ts";
 import { LEVEL_NAMES, planNow } from "../lib/state.ts";
 import { EventSettingsFields, eventSettingsFrom, Select } from "./event-settings.tsx";
 import { HabitDependencyFields } from "./habit-dependencies.tsx";
-import { FrequencyFields, guestsFrom, HABIT_DECLINE_MESSAGE } from "./habit-editor.tsx";
+import { FrequencyFields, guestsFrom } from "./habit-editor.tsx";
 import { HoursField, ITEM, itemHoursFrom } from "./hours-field.tsx";
 
 interface HoursSet {

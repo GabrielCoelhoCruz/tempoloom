@@ -4,6 +4,7 @@
 // removes the rules of habits on that meeting. The rules are stored on the habit.
 import { useCallback, useEffect, useState } from "preact/hooks";
 import type { HabitDependency } from "../../scheduler/model.ts";
+import { loopRefusal } from "../../shared/habit-loops.ts";
 import { api } from "../lib/api.ts";
 import { planNow } from "../lib/state.ts";
 
@@ -46,6 +47,7 @@ export function HabitDependencyFields({ habitId, initial }: { habitId: string; i
   const [list, setList] = useState(() => parse(initial));
   const [rule, setRule] = useState<HabitDependency["rule"]>("before");
   const [target, setTarget] = useState("");
+  const [error, setError] = useState<string | null>(null);
   const name = (d: HabitDependency) =>
     (d.kind === "habit" ? habits : meetings).find((x) => x.id === d.id)?.title ?? "(deleted)";
   const options = [
@@ -109,12 +111,19 @@ export function HabitDependencyFields({ habitId, initial }: { habitId: string; i
           disabled={!chosen}
           onClick={() => {
             const [kind, id] = chosen.split(":") as [HabitDependency["kind"], string];
-            setList([...list, { rule, kind, id }]);
+            const loop = kind === "habit" ? loopRefusal(habits, habitId, id) : null;
+            setError(loop);
+            if (!loop) setList([...list, { rule, kind, id }]);
           }}
         >
           Add dependency
         </button>
       </div>
+      {error && (
+        <p class="error" role="alert">
+          {error}
+        </p>
+      )}
       <p class="meta">
         Before: the habit goes only on days with the other item, and ends before it starts. Not
         after: on those days it ends before the other item starts. The other item is placed first

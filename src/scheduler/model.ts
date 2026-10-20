@@ -102,7 +102,9 @@ export interface HabitItem {
  * target, and ends at or before the target's start; `not-after`: on a day that
  * holds the target, the habit ends at or before the target's start, other days
  * are free; `not-same-day`: the habit never takes place on a day that holds
- * the target. The target is placed first; the rule never moves the target.
+ * the target. The target is placed first, at the level of its highest-priority
+ * dependent (rule 43); the rule never moves the target. A rule that closes a
+ * loop is refused at save time and dropped by the scheduler.
  */
 export interface HabitDependency {
   rule: "before" | "not-after" | "not-same-day";

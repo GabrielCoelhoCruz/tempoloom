@@ -256,7 +256,7 @@ export function meetingChange(
 
 /**
  * Makes the user's future managed events equal to `desired`. Events that
- * have started are never changed. Locked events are never moved or deleted.
+ * have started are never changed, except a move to a later start (a snooze). Locked events are never moved or deleted.
  * Writes run in the order deletes, updates, creates.
  */
 export async function pushSchedule(
@@ -309,9 +309,10 @@ export async function pushSchedule(
       creates.push(d);
       continue;
     }
-    // Never change a started event; a locked event may get a new title or
-    // status but never a new time.
-    if (row.start_ms <= now) continue;
+    // Never change a started event (SCH-60a), unless the plan moves it to a
+    // later start: only a snooze does that (plan.ts snoozedLater). A locked
+    // event may get a new title or status but never a new time.
+    if (row.start_ms <= now && d.start <= now) continue;
     if (row.locked && (row.start_ms !== d.start || row.end_ms !== d.end)) continue;
     const cached = one<Cached>(
       db,

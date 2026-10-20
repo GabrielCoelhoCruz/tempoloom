@@ -7,6 +7,7 @@ import type {
   MeetingItem,
   Placement,
   Snapshot,
+  TaskItem,
 } from "../../src/scheduler/model.ts";
 import { plan } from "../../src/scheduler/plan.ts";
 import { addDays, localToUtc } from "../../src/shared/time.ts";
@@ -226,5 +227,138 @@ describe("snooze one occurrence (rule 31)", () => {
     );
     expect(spans(p, "lunch").filter((s) => s.startsWith(day(1)))).toEqual([]);
     expect(p.report.find((r) => r.demandKey === `habit:lunch:${day(1)}`)?.status).toBe("unplaced");
+  });
+});
+
+const task = (over: Partial<TaskItem> & { id: string }): TaskItem => ({
+  title: over.id,
+  level: 2,
+  remainingMinutes: 25 * 60,
+  minChunkMinutes: 30,
+  maxChunkMinutes: 120,
+  startAfter: 0,
+  dueAt: null,
+  hours: "work",
+  nextUpRank: null,
+  createdAt: 0,
+  exclusions: [],
+  changed: false,
+  ...over,
+});
+const days = (p: { placements: Placement[] }, id: string) => [
+  ...new Set(spans(p, id).map((s) => s.slice(0, 10))),
+];
+const ALL = [day(0), day(1), day(2), day(3), day(4)];
+
+describe("dependency cycles (rule 18)", () => {
+  it("a before b and b before a: both habits are placed every day", () => {
+    const a = habit({ id: "a", dependencies: [{ rule: "before", kind: "habit", id: "b" }] });
+    const b = habit({ id: "b", dependencies: [{ rule: "before", kind: "habit", id: "a" }] });
+    const p = plan(snapshot({ habits: [a, b] }));
+    expect(days(p, "a")).toEqual(ALL);
+    expect(days(p, "b")).toEqual(ALL);
+  });
+
+  it("a three-habit cycle places all three, and keeps the rules that close no cycle", () => {
+    const a = habit({ id: "a", dependencies: [{ rule: "before", kind: "habit", id: "b" }] });
+    const b = habit({ id: "b", dependencies: [{ rule: "before", kind: "habit", id: "c" }] });
+    const c = habit({ id: "c", dependencies: [{ rule: "not-after", kind: "habit", id: "a" }] });
+    const p = plan(snapshot({ habits: [a, b, c] }));
+    for (const id of ["a", "b", "c"]) expect(days(p, id)).toEqual(ALL);
+    // The kept rules: a before b, b before c.
+    for (let i = 0; i < 5; i++) {
+      const [pa, pb, pc] = ["a", "b", "c"].map(
+        (id) =>
+          p.placements.find((x) => x.itemId === id && hm(x.start).startsWith(day(i))) as Placement,
+      ) as [Placement, Placement, Placement];
+      expect(pa.end).toBeLessThanOrEqual(pb.start);
+      expect(pb.end).toBeLessThanOrEqual(pc.start);
+    }
+  });
+});
+
+describe("dependencies keep the dependent's priority (rule 18, rule 43)", () => {
+  it("a P1 habit not after a P3 habit loses no day to a P2 task", () => {
+    const t = habit({ id: "t", level: 3, idealMinute: 660 });
+    const d = habit({
+      id: "d",
+      level: 1,
+      idealMinute: 600,
+      dependencies: [{ rule: "not-after", kind: "habit", id: "t" }],
+    });
+    const p = plan(snapshot({ habits: [d, t], tasks: [task({ id: "big", level: 2 })] }));
+    expect(days(p, "d")).toEqual(ALL);
+    expect(days(p, "t")).toEqual(ALL);
+  });
+
+  it("without the rule the P3 habit loses days to the P2 task, and the P1 habit keeps all", () => {
+    const t = habit({ id: "t", level: 3, idealMinute: 660 });
+    const d = habit({ id: "d", level: 1, idealMinute: 600 });
+    const p = plan(snapshot({ habits: [d, t], tasks: [task({ id: "big", level: 2 })] }));
+    expect(days(p, "d")).toEqual(ALL);
+    expect(days(p, "t").length).toBeLessThan(5);
+  });
+
+  it("a P1 habit before a P3 flexible meeting loses no day to a P2 task", () => {
+    const prep = habit({
+      id: "prep",
+      level: 1,
+      frequency: { period: "weekly", days: [2] },
+      dependencies: [{ rule: "before", kind: "meeting", id: "sync" }],
+    });
+    const p = plan(
+      snapshot({
+        habits: [prep],
+        meetings: [meeting({ id: "sync", level: 3 })],
+        tasks: [task({ id: "big", level: 2 })],
+      }),
+    );
+    expect(spans(p, "sync")).toHaveLength(1);
+    expect(spans(p, "prep")).toHaveLength(1);
+  });
+
+  it("P1 habits in a cycle lose nothing to P4 tasks", () => {
+    const a = habit({
+      id: "a",
+      level: 1,
+      dependencies: [{ rule: "not-after", kind: "habit", id: "b" }],
+    });
+    const b = habit({
+      id: "b",
+      level: 1,
+      dependencies: [{ rule: "not-after", kind: "habit", id: "a" }],
+    });
+    const p = plan(snapshot({ habits: [a, b], tasks: [task({ id: "big", level: 4 })] }));
+    expect(days(p, "a")).toEqual(ALL);
+    expect(days(p, "b")).toEqual(ALL);
+  });
+});
+
+describe("snooze of an occurrence that has started (rule 31)", () => {
+  const lunch = (notBefore?: number) =>
+    habit({ id: "lunch", ...(notBefore ? { notBefore: { [day(0)]: notBefore } } : {}) });
+  const current = [
+    {
+      key: `habit:lunch:${day(0)}`,
+      itemId: "lunch",
+      start: at(day(0), "12:00"),
+      end: at(day(0), "12:30"),
+      locked: false,
+    },
+  ];
+
+  it("moves the started occurrence to the snooze time", () => {
+    const p = plan(snapshot({ now: at(day(0), "12:05"), current, habits: [lunch(735)] }));
+    expect(spans(p, "lunch")[0]).toBe(`${day(0)}T12:15/12:45`);
+  });
+
+  it("without a snooze the started occurrence stays", () => {
+    const p = plan(snapshot({ now: at(day(0), "12:05"), current, habits: [lunch()] }));
+    expect(spans(p, "lunch")[0]).toBe(`${day(0)}T12:00/12:30`);
+  });
+
+  it("a snooze time at or before the start keeps the started occurrence", () => {
+    const p = plan(snapshot({ now: at(day(0), "12:05"), current, habits: [lunch(720)] }));
+    expect(spans(p, "lunch")[0]).toBe(`${day(0)}T12:00/12:30`);
   });
 });

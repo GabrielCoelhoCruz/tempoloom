@@ -19,6 +19,7 @@ import type {
   CurrentPlacement,
   ExternalEvent,
   FocusItem,
+  HabitDependency,
   HabitFrequency,
   HabitItem,
   Level,
@@ -71,8 +72,8 @@ interface Ctx {
   taskSeen: Map<string, TimeSet>;
   /** Free time in an occurrence's window, without the occurrence itself (for DEF-23). */
   habitSeen: Map<string, TimeSet>;
-  /** "habit:<id>" and "meeting:<id>" of every habit and meeting in this plan (rule 18 targets). */
-  targets: Set<string>;
+  /** Habit id -> the order rules this plan keeps (rule 18; see keptDependencies). */
+  deps: Map<string, HabitDependency[]>;
 }
 
 const ceilTo = (t: number, step: number) => Math.ceil(t / step) * step;
@@ -108,6 +109,18 @@ function occupy(ctx: Ctx, iv: Interval, kind: PlacementKind): void {
   ctx.freeTH.subtract({ start: iv.start - pad, end: iv.end + pad });
 }
 
+/**
+ * Rule 31: a snooze is a user action, so it moves an occurrence that has
+ * started (an exception to SCH-60a, as Start and Restart are) when its time is
+ * after the occurrence's start.
+ */
+function snoozedLater(s: Snapshot, c: CurrentPlacement): boolean {
+  if (kindOf(c.key) !== "habit") return false;
+  const date = c.key.split(":")[2] as LocalDate;
+  const minute = s.habits.find((h) => h.id === c.itemId)?.notBefore?.[date];
+  return minute !== undefined && localToUtc(s.zone, date, minute) > c.start;
+}
+
 function init(s: Snapshot): Ctx {
   const step = s.stepMinutes * MINUTE;
   const earliest = ceilTo(s.now, step);
@@ -124,7 +137,9 @@ function init(s: Snapshot): Ctx {
   const external = blockingIntervals(s.events);
   const fixedManaged = s.current.filter(
     (c) =>
-      c.end > s.now && (c.locked || c.start <= s.now) && items.has(`${kindOf(c.key)}:${c.itemId}`),
+      c.end > s.now &&
+      (c.locked || (c.start <= s.now && !snoozedLater(s, c))) &&
+      items.has(`${kindOf(c.key)}:${c.itemId}`),
   );
   const window = TimeSet.from(end > earliest ? [{ start: earliest, end }] : []);
   const fixed = TimeSet.from([...external, ...fixedManaged]);
@@ -152,10 +167,7 @@ function init(s: Snapshot): Ctx {
     current: new Map(s.current.map((c) => [c.key, c])),
     taskSeen: new Map(),
     habitSeen: new Map(),
-    targets: new Set([
-      ...s.habits.map((h) => `habit:${h.id}`),
-      ...s.meetings.map((m) => `meeting:${m.id}`),
-    ]),
+    deps: new Map(),
   };
   for (const c of fixedManaged) {
     const kind = kindOf(c.key);
@@ -652,8 +664,7 @@ function dependencyLimit(ctx: Ctx, h: HabitItem, date: LocalDate): number | null
   let limit = Number.POSITIVE_INFINITY;
   const from = localToUtc(ctx.s.zone, date, 0);
   const to = localToUtc(ctx.s.zone, addDays(date, 1), 0);
-  for (const d of h.dependencies ?? []) {
-    if (!ctx.targets.has(`${d.kind}:${d.id}`)) continue;
+  for (const d of ctx.deps.get(h.id) ?? []) {
     let first = Number.POSITIVE_INFINITY;
     for (const p of ctx.placements) {
       if (p.kind === d.kind && p.itemId === d.id && p.start >= from && p.start < to)
@@ -782,7 +793,7 @@ function placeHabit(ctx: Ctx, h: HabitItem): void {
     // managed item on away time and the habit has no other time that day.
     if (h.whenUnplaceable === "keep_as_conflict" && reason !== "away") {
       // A dependency or a snooze is a hard rule: a kept conflict stays inside it too.
-      const bounded = (h.dependencies?.length ?? 0) > 0 || notBefore !== undefined;
+      const bounded = (ctx.deps.get(h.id)?.length ?? 0) > 0 || notBefore !== undefined;
       const iv =
         cur && !h.changed && (!bounded || fullWindow.contains(cur))
           ? { start: cur.start, end: cur.end }
@@ -1602,42 +1613,105 @@ type Automation =
 // Inside one level and rank, meetings go first (meetings-flexible.md rule 23).
 const KIND_ORDER = { meeting: 0, buffer: 1, habit: 2 } as const;
 
+const automationOrder = (a: { rank: number; createdAt: number; id: string }, b: typeof a) =>
+  a.rank - b.rank || a.createdAt - b.createdAt || a.id.localeCompare(b.id);
+
+/**
+ * Rule 18: the order rules this plan keeps, per habit. A rule on a target that
+ * is not in this plan (off, deleted) adds nothing. A rule that closes a cycle of
+ * habit rules (the API refuses them, but older data can hold one) is dropped,
+ * so every habit of the cycle is placed: the walk goes in habit order (level,
+ * rank), and the rule that leads back to a habit on the current path is the
+ * one dropped. The kept rules form no cycle.
+ */
+function keptDependencies(s: Snapshot): Map<string, HabitDependency[]> {
+  const habits = new Map(s.habits.map((h) => [h.id, h]));
+  const meetings = new Set(s.meetings.map((m) => m.id));
+  const kept = new Map<string, HabitDependency[]>();
+  const onPath = new Set<string>();
+  const visit = (h: HabitItem) => {
+    if (kept.has(h.id) || onPath.has(h.id)) return;
+    onPath.add(h.id);
+    const rules: HabitDependency[] = [];
+    for (const d of h.dependencies ?? []) {
+      if (d.kind === "meeting") {
+        if (meetings.has(d.id)) rules.push(d);
+        continue;
+      }
+      const target = habits.get(d.id);
+      if (!target || onPath.has(d.id)) continue;
+      visit(target);
+      rules.push(d);
+    }
+    onPath.delete(h.id);
+    kept.set(h.id, rules);
+  };
+  for (const h of [...s.habits].sort((a, b) => a.level - b.level || automationOrder(a, b)))
+    visit(h);
+  return kept;
+}
+
+/**
+ * Rule 18 with rule 43: the level each habit and meeting is placed at
+ * ("habit:<id>" or "meeting:<id>"): its own, or the level of its highest-
+ * priority dependent, also through a chain of rules. The kept rules form no
+ * cycle, so the passes end.
+ */
+function liftedLevels(s: Snapshot, deps: Map<string, HabitDependency[]>): Map<string, Level> {
+  const level = new Map<string, Level>([
+    ...s.habits.map((h) => [`habit:${h.id}`, h.level] as const),
+    ...s.meetings.map((m) => [`meeting:${m.id}`, m.level] as const),
+  ]);
+  for (let changed = true; changed; ) {
+    changed = false;
+    for (const h of s.habits) {
+      const from = level.get(`habit:${h.id}`) as Level;
+      for (const d of deps.get(h.id) ?? []) {
+        const key = `${d.kind}:${d.id}`;
+        if (from < (level.get(key) as Level)) {
+          level.set(key, from);
+          changed = true;
+        }
+      }
+    }
+  }
+  return level;
+}
+
 export function plan(s: Snapshot): Plan {
   const ctx = init(s);
   const effective = new Map(s.tasks.map((t) => [t.id, effectiveLevel(ctx, t)]));
-  // Rule 18: a habit with dependencies waits until its targets are placed, then
-  // goes at once, before items of lower priority than its own. Targets that are
-  // not in this plan (off, deleted) add no rule; habits in a cycle go last.
+  ctx.deps = keptDependencies(s);
+  // Rule 18: a target is placed before the habits that depend on it, at the
+  // level of its highest-priority dependent, so a dependent never waits for
+  // items of a lower priority than its own (rule 43).
+  const lifted = liftedLevels(s, ctx.deps);
+  const habitById = new Map(s.habits.map((h) => [h.id, h]));
+  const meetingById = new Map(s.meetings.map((m) => [m.id, m]));
   const placed = new Set<string>();
-  const waiting: HabitItem[] = [];
-  const blocked = (h: HabitItem) =>
-    (h.dependencies ?? []).some(
-      (d) => ctx.targets.has(`${d.kind}:${d.id}`) && !placed.has(`${d.kind}:${d.id}`),
-    );
-  const done = (key: string) => {
+  const placeAutomation = (a: Automation) => {
+    const key = `${a.kind}:${a.item.id}`;
+    if (placed.has(key)) return;
     placed.add(key);
-    for (let i = 0; i < waiting.length; ) {
-      const h = waiting[i] as HabitItem;
-      if (blocked(h)) {
-        i++;
-        continue;
-      }
-      waiting.splice(i, 1);
-      placeHabit(ctx, h);
-      done(`habit:${h.id}`);
-      i = 0;
+    if (a.kind === "meeting") return placeMeeting(ctx, a.item);
+    if (a.kind === "buffer") return placeBuffer(ctx, a.item);
+    for (const d of ctx.deps.get(a.item.id) ?? []) {
+      if (d.kind === "habit")
+        placeAutomation({ kind: "habit", item: habitById.get(d.id) as HabitItem });
+      else placeAutomation({ kind: "meeting", item: meetingById.get(d.id) as MeetingItem });
     }
+    placeHabit(ctx, a.item);
   };
   for (const level of LEVELS) {
     const autos: Automation[] = [
       ...s.meetings
-        .filter((m) => m.level === level)
+        .filter((m) => lifted.get(`meeting:${m.id}`) === level)
         .map((item) => ({ kind: "meeting" as const, item })),
       ...s.buffers
         .filter((b) => b.level === level)
         .map((item) => ({ kind: "buffer" as const, item })),
       ...s.habits
-        .filter((h) => h.level === level)
+        .filter((h) => lifted.get(`habit:${h.id}`) === level)
         .map((item) => ({ kind: "habit" as const, item })),
     ].sort(
       (a, b) =>
@@ -1646,17 +1720,7 @@ export function plan(s: Snapshot): Plan {
         a.item.createdAt - b.item.createdAt ||
         a.item.id.localeCompare(b.item.id),
     );
-    for (const a of autos) {
-      if (a.kind === "meeting") {
-        placeMeeting(ctx, a.item);
-        done(`meeting:${a.item.id}`);
-      } else if (a.kind === "buffer") placeBuffer(ctx, a.item);
-      else if (blocked(a.item)) waiting.push(a.item);
-      else {
-        placeHabit(ctx, a.item);
-        done(`habit:${a.item.id}`);
-      }
-    }
+    for (const a of autos) placeAutomation(a);
     if (level === 1) {
       const queue = s.tasks
         .filter((t) => t.nextUpRank !== null)
@@ -1668,7 +1732,6 @@ export function plan(s: Snapshot): Plan {
       .sort(taskKey);
     for (const t of band) placeTask(ctx, t);
   }
-  for (const h of waiting) placeHabit(ctx, h);
   // Both focus automations come after every other item, in their P4 rank order;
   // at one rank the meeting overload goes first (focus edge case 5).
   const overloads = s.overloads ?? [];

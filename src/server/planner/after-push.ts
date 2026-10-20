@@ -3,14 +3,11 @@
 // block (events-tags.md rule 14). The done marker on
 // ended occurrences is markEnded in markers.ts.
 import { TAG_BUSY } from "../../scheduler/blocking.ts";
+import { DEFAULT_DECLINE_MESSAGE, HABIT_DECLINE_MESSAGE } from "../../shared/decline.ts";
 import { all, type Db, run } from "../db.ts";
 import { type CalendarProvider, ProviderError } from "../providers/types.ts";
 import { cacheEvent } from "../sync/pull.ts";
 import { MANAGED_PROP } from "./push.ts";
-
-export const DEFAULT_DECLINE_MESSAGE = "Declined automatically: this time is protected for focus.";
-/** Habits rule 37: the default decline note of a habit. */
-export const HABIT_DECLINE_MESSAGE = "Declined automatically: this time is reserved for a routine.";
 
 type Provider = (accountId: string) => CalendarProvider;
 
