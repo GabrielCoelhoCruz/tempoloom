@@ -379,6 +379,15 @@ export function Tasks() {
         </div>
         <div class="meta">
           <span data-testid="task-level">{LEVEL_NAMES[t.level]}</span> · {duration(t.total_minutes)}
+          {t.start_after > Date.now() && (
+            <>
+              {" "}
+              · starts{" "}
+              <span data-testid="task-start" data-at={t.start_after}>
+                {formatWhen(z, t.start_after)}
+              </span>
+            </>
+          )}
           {t.due_at ? (
             <>
               {" "}
