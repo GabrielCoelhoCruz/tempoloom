@@ -379,10 +379,20 @@ test("task defaults in Settings fill new tasks: priority, duration, chunks, hour
   await expect(row(page, "AT-Old").getByTestId("task-level")).toHaveText("P2 high");
 });
 
-/** Viewport point of a local time in the planner column of a date. */
+/**
+ * Viewport point of a local time in the planner column of a date. Parts of the
+ * planner load after the week (hints, notes, preview mode) and push it down, so
+ * this waits until the column has kept its place for a second.
+ */
 async function point(page: Page, date: string, minute: number) {
   const col = page.locator(`.day-col[data-date="${date}"]`);
-  const box = await col.boundingBox();
+  let box = await col.boundingBox();
+  for (let still = 0; still < 4; ) {
+    await page.waitForTimeout(250);
+    const next = await col.boundingBox();
+    still = next && box && next.x === box.x && next.y === box.y ? still + 1 : 0;
+    box = next;
+  }
   if (!box) throw new Error(`no column for ${date}`);
   return { x: box.x + box.width / 2, y: box.y + (minute / 60) * 48 };
 }
@@ -408,6 +418,7 @@ test("a drag on the planner makes a locked task of that length there; a click ma
   await blockUntil(cal, W);
   await signIn();
   await openWeek(page);
+  await expect(page.getByRole("checkbox", { name: "Preview mode" })).toBeVisible();
   await page.locator(".week-scroll").evaluate((el) => {
     el.scrollTop = 8 * 48;
   });
