@@ -568,6 +568,49 @@ describe("task chunks", () => {
     ]);
   });
 
+  it("keeps the cooldown between chunks across a busy event, and a replan keeps both (TSK-14, SCH-88)", () => {
+    // A busy event 09:15-09:30 cuts the free time in two. The second chunk
+    // must start 30 minutes after the first ends, not at the start of the
+    // next free interval.
+    const events = [ext(at(MON, "09:15"), at(MON, "09:30"))];
+    const t = task({ id: "t", remainingMinutes: 30, minChunkMinutes: 15, maxChunkMinutes: 15 });
+    const first = plan(snapshot({ chunkCooldown: "30m", events, tasks: [t] }));
+    expect(spans(of(first, "t"))).toEqual([`${MON}T09:00/09:15`, `${MON}T09:45/10:00`]);
+    const current = first.placements.map((p) => ({
+      key: p.key,
+      itemId: p.itemId,
+      start: p.start,
+      end: p.end,
+      locked: false,
+    }));
+    const again = plan(snapshot({ chunkCooldown: "30m", events, tasks: [t], current }));
+    expect(again.placements).toEqual(first.placements);
+  });
+
+  it("keeps the cooldown after a chunk that ends at midnight with once-per-day, and a replan keeps both (TSK-14, SCH-88)", () => {
+    // The first chunk ends at 24:00. The next day is free, but the second
+    // chunk still starts one cooldown (15 minutes) after the first ends.
+    const t = task({
+      id: "t",
+      hours: "always",
+      remainingMinutes: 120,
+      minChunkMinutes: 60,
+      maxChunkMinutes: 60,
+      startAfter: at(MON, "23:00"),
+    });
+    const first = plan(snapshot({ chunkCooldown: "once-per-day", tasks: [t] }));
+    expect(spans(of(first, "t"))).toEqual([`${MON}T23:00/00:00`, `${day(1)}T00:15/01:15`]);
+    const current = first.placements.map((p) => ({
+      key: p.key,
+      itemId: p.itemId,
+      start: p.start,
+      end: p.end,
+      locked: false,
+    }));
+    const again = plan(snapshot({ chunkCooldown: "once-per-day", tasks: [t], current }));
+    expect(again.placements).toEqual(first.placements);
+  });
+
   it("never spans two hours ranges (HRS-2)", () => {
     const result = plan(
       snapshot({
@@ -1339,6 +1382,42 @@ describe("free and busy status", () => {
     expect(of(tight, "t")[0]?.busy).toBe(true);
     const noDue = plan(snapshot({ tasks: [task({ id: "t" })] }));
     expect(of(noDue, "t")[0]?.busy).toBe(false);
+  });
+
+  it("marks a chunk busy when the only other room is on the day of a locked chunk with once-per-day (DEF-*, TSK-14)", () => {
+    // A locked chunk takes Monday. Tuesday has room only for the placed
+    // chunk, so the task cannot move: the chunk is busy. Monday afternoon
+    // is free, but once-per-day does not allow a second chunk there.
+    const t = task({
+      id: "t",
+      remainingMinutes: 120,
+      minChunkMinutes: 60,
+      maxChunkMinutes: 60,
+      dueAt: at(day(1), "17:00"),
+    });
+    const locked = {
+      key: "task:t:0",
+      itemId: "t",
+      start: at(MON, "09:00"),
+      end: at(MON, "10:00"),
+      locked: true,
+    };
+    const run = (chunkCooldown: Snapshot["chunkCooldown"]) =>
+      plan(
+        snapshot({
+          chunkCooldown,
+          events: fill(day(1), ["09:00", "10:00"]),
+          tasks: [t],
+          current: [locked],
+        }),
+      );
+    const once = of(run("once-per-day"), "t").filter((p) => !p.locked);
+    expect(spans(once)).toEqual([`${day(1)}T09:00/10:00`]);
+    expect(once[0]?.busy).toBe(true);
+    // Without once-per-day the chunk can move to Monday: it is free.
+    const none = of(run("none"), "t").filter((p) => !p.locked);
+    expect(spans(none)).toEqual([`${MON}T10:15/11:15`]);
+    expect(none[0]?.busy).toBe(false);
   });
 
   it("marks an adaptive habit busy within 12 hours or when it is the last slot of its day", () => {
