@@ -426,19 +426,6 @@ export function Planner() {
                   Skip this day
                 </button>
               )}
-              {selected.kind === "meeting" && selected.sourceId && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    const id = selected.sourceId;
-                    const eventId = selected.id;
-                    setSelected(null);
-                    void run(() => api("POST", `/api/meetings/${id}/skip`, { eventId }));
-                  }}
-                >
-                  Skip this time
-                </button>
-              )}
             </div>
           )}
           {selected.kind === "meeting" && (

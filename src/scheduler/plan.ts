@@ -71,6 +71,8 @@ interface Ctx {
   taskSeen: Map<string, TimeSet>;
   /** Free time in an occurrence's window, without the occurrence itself (for DEF-23). */
   habitSeen: Map<string, TimeSet>;
+  /** MEET-02 rules 9-11: the automatic moves each meeting has left in this run. */
+  meetingMoves: Map<string, number>;
 }
 
 const ceilTo = (t: number, step: number) => Math.ceil(t / step) * step;
@@ -150,6 +152,7 @@ function init(s: Snapshot): Ctx {
     current: new Map(s.current.map((c) => [c.key, c])),
     taskSeen: new Map(),
     habitSeen: new Map(),
+    meetingMoves: new Map(),
   };
   for (const c of fixedManaged) {
     const kind = kindOf(c.key);
@@ -939,9 +942,27 @@ function halfPeriod(f: MeetingFrequency, start: LocalDate): number {
   return (dayDiff(end, start) * DAY) / 2;
 }
 
+/** True when `date` is an ideal day of its period (the period start for a daily meeting). */
+function onIdealDay(ctx: Ctx, m: MeetingItem, date: LocalDate): boolean {
+  const f = m.frequency;
+  if (f.period === "weekly") return f.idealDays.includes(weekdayOf(date));
+  if (f.period === "daily")
+    return meetingPeriodStart(f, date, ctx.s.weekStart, meetingAnchor(ctx.s.zone, m)) === date;
+  const month = `${date.slice(0, 8)}01`;
+  return (
+    monthlyDate(
+      month,
+      "nth" in f
+        ? { period: "monthly", nth: f.nth, weekday: f.weekday }
+        : { period: "monthly", dayOfMonth: f.dayOfMonth },
+    ) === date
+  );
+}
+
 /**
  * Rule 18 (Tempoloom decision on the Proposed rule): the latest start of an
- * occurrence before the period, from an earlier plan or this one; null if none.
+ * occurrence before the period, from an earlier plan or this one, when it
+ * moved away from its ideal day; null otherwise.
  */
 function previousStart(ctx: Ctx, m: MeetingItem, key: string, periodStart: number): number | null {
   let prev =
@@ -949,7 +970,7 @@ function previousStart(ctx: Ctx, m: MeetingItem, key: string, periodStart: numbe
   for (const p of ctx.placements)
     if (p.kind === "meeting" && p.itemId === m.id && p.key !== key && p.start < periodStart)
       prev = Math.max(prev ?? p.start, p.start);
-  return prev;
+  return prev === null || onIdealDay(ctx, m, utcToLocal(ctx.s.zone, prev).date) ? null : prev;
 }
 
 /** `boosted`: place only the boosted period (MEET-02 rule 16); else every other period. */
@@ -959,7 +980,8 @@ function placeMeeting(ctx: Ctx, m: MeetingItem, boosted = false): void {
   const attendeeWindow = m.attendeeWindow ? TimeSet.from(m.attendeeWindow) : null;
   const required = m.durationMinutes;
   const periods = m.periods ? new Set(m.periods) : null;
-  let movesLeft = m.movesLeft ?? Number.POSITIVE_INFINITY;
+  // One budget for the boosted pass and the other periods of the run.
+  const movesLeft = () => ctx.meetingMoves.get(m.id) ?? m.movesLeft ?? Number.POSITIVE_INFINITY;
   for (const period of meetingPeriods(ctx, m)) {
     const key = `meeting:${m.id}:${period.start}`;
     if (done.has(key) || ctx.fixedKeys.has(key) || ctx.dismissed.has(key)) continue;
@@ -1005,7 +1027,7 @@ function placeMeeting(ctx: Ctx, m: MeetingItem, boosted = false): void {
         chosen = { start: cur.start, end: cur.end };
     }
     const found = chosen ? null : (spacedSlot() ?? searchMeeting(ctx, m, open));
-    if (found && cur && !m.changed && movesLeft <= 0) {
+    if (found && cur && !m.changed && movesLeft() <= 0) {
       // MEET-02 rules 9-11: a move is possible but none is left; keep the time, flag it, suggest others.
       occupy(ctx, cur, "meeting");
       ctx.placements.push({
@@ -1033,7 +1055,7 @@ function placeMeeting(ctx: Ctx, m: MeetingItem, boosted = false): void {
     }
     if (!chosen) chosen = found;
     if (chosen && cur && !m.changed && (chosen.start !== cur.start || chosen.end !== cur.end))
-      movesLeft--;
+      ctx.meetingMoves.set(m.id, movesLeft() - 1);
     if (chosen) {
       const day = frees.find((f) => f.free.contains(chosen))?.free ?? TimeSet.empty();
       ctx.habitSeen.set(key, minus(day, [chosen]));

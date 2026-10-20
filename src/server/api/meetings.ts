@@ -774,10 +774,14 @@ export function meetingRoutes(
     return c.json({ ok: true });
   });
 
-  /** MEET-02 rules 20 and 26: the guest of a 1:1 skips one period, as the organizer can. */
+  /**
+   * MEET-02 rules 20 and 26: the organizer, or the guest of a 1:1, skips one
+   * period; nothing else is placed in it. An occurrence that started stays.
+   */
   r.post("/meetings/occurrences/:eventId/skip", (c) => {
     const user = c.get("user");
     const { row, m, guest } = occurrence(c.req.param("eventId"), user);
+    if (row.start_ms <= now()) return c.json({ error: "started" }, 409);
     tx(db, () => {
       run(
         db,
@@ -805,24 +809,6 @@ export function meetingRoutes(
         );
     });
     changed(m.user_id);
-    return c.json({ ok: true });
-  });
-
-  /** MEET-02 rule 20: skip one period; nothing else is placed in it. */
-  r.post("/meetings/:id/skip", async (c) => {
-    const user = c.get("user");
-    const m = own(c.req.param("id"), user.id);
-    const { eventId } = await jsonBody(c, z.object({ eventId: z.string() }));
-    const key = one<{ key: string }>(
-      db,
-      "SELECT key FROM managed_events WHERE id = ? AND user_id = ? AND kind = 'meeting' AND source_id = ?",
-      eventId,
-      user.id,
-      m.id,
-    )?.key;
-    if (!key) notFound("occurrence");
-    run(db, "INSERT OR IGNORE INTO dismissed_keys (user_id, key) VALUES (?, ?)", user.id, key);
-    changed(user.id);
     return c.json({ ok: true });
   });
 

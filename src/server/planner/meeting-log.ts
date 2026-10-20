@@ -13,6 +13,7 @@ import {
   type LocalDate,
   localToUtc,
   schedulingWindowEnd,
+  utcToLocal,
 } from "../../shared/time.ts";
 import { all, type Db, one, run, tx } from "../db.ts";
 import { getPrefs } from "../meeting-prefs.ts";
@@ -431,7 +432,30 @@ export function recordMissedPeriods(db: Db, userId: string, result: Plan, now: n
       userId,
       userId,
     );
+    const today = utcToLocal(planningZone(db, userId), now).date;
+    for (const m of all<{ id: string; frequency: string }>(
+      db,
+      "SELECT id, frequency FROM meetings WHERE user_id = ?",
+      userId,
+    ))
+      run(
+        db,
+        "DELETE FROM meeting_missed WHERE meeting_id = ? AND period < ?",
+        m.id,
+        missedSince(JSON.parse(m.frequency) as MeetingFrequency, today),
+      );
   });
+}
+
+/**
+ * The history of missed periods that is kept and listed: 90 days, or the
+ * last three periods when they are longer, so the boost can count two.
+ */
+function missedSince(f: MeetingFrequency, today: LocalDate): LocalDate {
+  let p = today;
+  for (let i = 0; i < 3; i++) p = stepPeriod(f, p, -1);
+  const days90 = addDays(today, -90);
+  return p < days90 ? p : days90;
 }
 
 /** The periods of a meeting removed for lack of time (MEET-02 rule 34), oldest first. */
@@ -481,13 +505,16 @@ export function meetingBoost(
   const ended = (p: LocalDate) => localToUtc(zone, stepPeriod(f, p, 1), 0) <= now;
   const last = [...missed].filter(ended).sort().at(-1);
   if (!last) return undefined;
+  // A period kept in conflict has a managed row but no time: it is missed, not held.
   const held = new Set(
     all<{ key: string }>(
       db,
       "SELECT key FROM managed_events WHERE user_id = ? AND kind = 'meeting' AND source_id = ?",
       userId,
       m.id,
-    ).map((r) => r.key.slice(r.key.lastIndexOf(":") + 1)),
+    )
+      .map((r) => r.key.slice(r.key.lastIndexOf(":") + 1))
+      .filter((p) => !missed.has(p)),
   );
   let period = stepPeriod(f, last, 1);
   for (let i = 0; i < 400 && ended(period); i++) {

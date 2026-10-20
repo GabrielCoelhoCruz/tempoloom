@@ -1,8 +1,8 @@
 // Planner actions on a flexible meeting occurrence
 // (docs/specs/meetings-flexible-rescheduling.md rules 19, 20 and 26): the
 // organizer reschedules to another time the same day or to another day of the
-// period; the guest of a 1:1 can do the same and skip; a group meeting's guest
-// only answers the invitation.
+// period, or skips it; the guest of a 1:1 can do the same; a group meeting's
+// guest only answers the invitation.
 import type { PlannerEvent } from "../../server/api/planner.ts";
 import { ApiError, api } from "../lib/api.ts";
 
@@ -38,11 +38,9 @@ export function MeetingActions({
       <button type="button" onClick={() => act("reschedule", { option: "otherDay" })}>
         Reschedule: another day
       </button>
-      {event.guest && (
-        <button type="button" onClick={() => act("skip")}>
-          Skip this time
-        </button>
-      )}
+      <button type="button" onClick={() => act("skip")}>
+        Skip this time
+      </button>
     </div>
   );
 }

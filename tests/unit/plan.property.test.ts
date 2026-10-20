@@ -8,12 +8,13 @@ import type {
   CurrentPlacement,
   ExternalEvent,
   HabitItem,
+  MeetingItem,
   Placement,
   Snapshot,
   TaskItem,
 } from "../../src/scheduler/model.ts";
 import { plan } from "../../src/scheduler/plan.ts";
-import { localToUtc } from "../../src/shared/time.ts";
+import { addDays, localToUtc } from "../../src/shared/time.ts";
 
 const ZONE = "America/New_York";
 const MIN = 60_000;
@@ -141,10 +142,86 @@ const toHabit = (h: ValueOf<typeof habitArb>, i: number): HabitItem => ({
   changed: false,
 });
 
+// Flexible meetings in the lunch hours: daily or weekly, with a previous
+// occurrence for the cadence (rule 18), a boosted period (MEET-02 rule 16),
+// a move budget (rules 9-11) and occurrences of an earlier plan.
+const MON = "2026-11-02";
+const meetingArb = fc.record({
+  level: fc.constantFrom(1, 2, 3, 4),
+  daily: fc.boolean(),
+  idealDays: fc.subarray([1, 2, 3, 4, 5], { minLength: 1 }),
+  idealQ: fc.integer({ min: 44, max: 55 }),
+  durQ: fc.integer({ min: 1, max: 4 }),
+  shortQ: fc.integer({ min: 0, max: 3 }),
+  keep: fc.boolean(),
+  prevDay: fc.option(fc.integer({ min: 1, max: 7 })),
+  prevQ: fc.integer({ min: 36, max: 68 }),
+  boostDay: fc.option(fc.integer({ min: 0, max: 6 })),
+  boostLevel: fc.constantFrom(1, 2, 3),
+  movesLeft: fc.option(fc.integer({ min: 0, max: 2 })),
+  sticky: fc.array(
+    fc.record({ day: fc.integer({ min: 0, max: 6 }), startQ: fc.integer({ min: 44, max: 54 }) }),
+    { maxLength: 3 },
+  ),
+});
+const periodOf = (m: ValueOf<typeof meetingArb>, day: number) =>
+  m.daily ? addDays(MON, day) : MON;
+const toMeetingCurrent = (m: ValueOf<typeof meetingArb>, i: number): CurrentPlacement[] => {
+  const byKey = new Map<string, CurrentPlacement>();
+  for (const c of m.sticky) {
+    const key = `meeting:m${i}:${periodOf(m, c.day)}`;
+    const start = t0 + c.day * 1440 * MIN + c.startQ * 15 * MIN;
+    if (!byKey.has(key))
+      byKey.set(key, {
+        key,
+        itemId: `m${i}`,
+        start,
+        end: start + m.durQ * 15 * MIN,
+        locked: false,
+      });
+  }
+  return [...byKey.values()];
+};
+const toMeeting = (m: ValueOf<typeof meetingArb>, i: number): MeetingItem => ({
+  id: `m${i}`,
+  title: `m${i}`,
+  level: m.level as MeetingItem["level"],
+  rank: i,
+  createdAt: i,
+  hours: "lunch",
+  attendeeWindow: null,
+  attendeeBusy: [],
+  idealMinute: m.idealQ * 15,
+  frequency: m.daily
+    ? { period: "daily" }
+    : { period: "weekly", everyWeeks: 1, idealDays: m.idealDays },
+  durationMinutes: m.durQ * 15,
+  shortestMinutes: Math.max(1, m.durQ - m.shortQ) * 15,
+  starting: null,
+  defense: "busy",
+  whenUnplaceable: m.keep ? "keep_as_conflict" : "remove",
+  leadMinutes: 0,
+  exclusions: [],
+  changed: false,
+  ...(m.movesLeft === null ? {} : { movesLeft: m.movesLeft }),
+  ...(m.prevDay === null
+    ? {}
+    : { previousStart: t0 - m.prevDay * 1440 * MIN + m.prevQ * 15 * MIN }),
+  ...(m.boostDay === null || m.boostLevel >= m.level
+    ? {}
+    : {
+        boost: {
+          period: periodOf(m, m.boostDay),
+          level: m.boostLevel as MeetingItem["level"],
+        },
+      }),
+});
+
 const inputArb = fc.record({
   events: fc.array(event, { maxLength: 30 }),
   tasks: fc.array(taskArb, { maxLength: 8 }),
   habits: fc.array(habitArb, { maxLength: 3 }),
+  meetings: fc.array(meetingArb, { maxLength: 3 }),
   breakMinutes: fc.constantFrom(0, 15),
   taskHours: fc.constantFrom<(keyof typeof TASK_HOURS)[]>("day", "day", "night", "always"),
   chunkCooldown: fc.constantFrom<Snapshot["chunkCooldown"][]>(
@@ -169,10 +246,10 @@ const snapshotArb = inputArb.map(
     hours: { work: TASK_HOURS[r.taskHours], lunch },
     workHours: ["work"],
     events: r.events.map(toEvent),
-    current: r.tasks.flatMap(toCurrent),
+    current: [...r.tasks.flatMap(toCurrent), ...r.meetings.flatMap(toMeetingCurrent)],
     tasks: r.tasks.map(toTask),
     habits: r.habits.map(toHabit),
-    meetings: [],
+    meetings: r.meetings.map(toMeeting),
     buffers: [],
     focus: [],
   }),
@@ -250,7 +327,9 @@ describe("plan() invariants", { timeout: process.env.PLAN_RUNS ? 300_000 : 15_00
             const b = ps[j] as Placement;
             if (a.locked && b.locked) continue;
             expect(overlaps(a, b)).toBe(false);
-            if (s.breakMinutes > 0 && a.itemId !== b.itemId) {
+            // Breaks pad task and habit neighbours only (SCH-89).
+            const padded = (p: Placement) => p.kind === "task" || p.kind === "habit";
+            if (s.breakMinutes > 0 && a.itemId !== b.itemId && padded(a) && padded(b)) {
               const gap = Math.max(b.start - a.end, a.start - b.end);
               expect(gap).toBeGreaterThanOrEqual(s.breakMinutes * MIN);
             }
@@ -296,14 +375,44 @@ describe("plan() invariants", { timeout: process.env.PLAN_RUNS ? 300_000 : 15_00
     );
   });
 
+  it("places each meeting period once and keeps each meeting's move budget", () => {
+    fc.assert(
+      fc.property(snapshotArb, (s) => {
+        const { placements } = plan(s);
+        const current = new Map(s.current.map((c) => [c.key, c]));
+        for (const m of s.meetings) {
+          const mine = placements.filter((p) => p.itemId === m.id);
+          expect(new Set(mine.map((p) => p.key)).size).toBe(mine.length);
+          const moved = live(mine).filter((p) => {
+            const c = current.get(p.key);
+            return c && (c.start !== p.start || c.end !== p.end);
+          });
+          expect(moved.length).toBeLessThanOrEqual(m.movesLeft ?? Number.POSITIVE_INFINITY);
+        }
+      }),
+      runs(1000),
+    );
+  });
+
   it("is idempotent and independent of input order", () => {
     fc.assert(
       fc.property(snapshotArb, (s) => {
         const first = plan(s);
+        // The server counts the moves of the first run against the budget (recentMoves).
+        const before = new Map(s.current.map((c) => [c.key, c]));
+        const movedBy = (id: string) =>
+          live(first.placements).filter((p) => {
+            const c = p.itemId === id && before.get(p.key);
+            return c && (c.start !== p.start || c.end !== p.end);
+          }).length;
         const again = plan({
           ...s,
+          meetings: s.meetings.map((m) =>
+            m.movesLeft === undefined ? m : { ...m, movesLeft: m.movesLeft - movedBy(m.id) },
+          ),
+          // A meeting kept in conflict stays on the calendar (MEET-02 rules 11, 13).
           current: first.placements
-            .filter((p) => !p.conflict)
+            .filter((p) => !p.conflict || p.kind === "meeting")
             .map((p) => ({
               key: p.key,
               itemId: p.itemId,
@@ -318,6 +427,7 @@ describe("plan() invariants", { timeout: process.env.PLAN_RUNS ? 300_000 : 15_00
           events: [...s.events].reverse(),
           tasks: [...s.tasks].reverse(),
           habits: [...s.habits].reverse(),
+          meetings: [...s.meetings].reverse(),
         });
         expect(shuffled).toEqual(first);
       }),

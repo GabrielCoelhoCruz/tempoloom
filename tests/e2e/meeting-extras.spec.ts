@@ -311,7 +311,7 @@ test("in a 1:1 the guest reschedules or skips an occurrence from the guest's pla
   ]);
 });
 
-test("a daily meeting lists the days skipped for lack of time; after one missed day it uses one level higher, after two P1, and the boost ends once a day is held (MEET-02 rules 16, 34)", async ({
+test("a daily meeting lists the days skipped for lack of time; after a missed day the next day uses one level higher and takes the time of a habit at that level, and the boost ends once a day is held (MEET-02 rules 16, 34)", async ({
   page,
   cal,
   app,
@@ -322,10 +322,9 @@ test("a daily meeting lists the days skipped for lack of time; after one missed 
   await app.restart();
   await blockUntil(cal, W);
   await signIn();
-  // Monday and Wednesday leave only 16:00 to 17:00, where a P2 habit sits; Tuesday is full.
-  for (const d of [0, 2])
+  // Monday to Wednesday leave only 16:00 to 17:00, where a P2 habit sits.
+  for (const d of [0, 1, 2])
     await cal.addEvent({ title: "Busy", start: at(day(d), "08:00"), end: at(day(d), "16:00") });
-  await cal.addEvent({ title: "Busy", start: at(day(1), "08:00"), end: at(day(1), "18:00") });
   await addHabit(page, {
     title: "Deep work",
     ideal: "16:00",
@@ -334,9 +333,15 @@ test("a daily meeting lists the days skipped for lack of time; after one missed 
     level: 2,
     noRoom: "Remove that day",
   });
+  const habitDays = (l: Evs) => starts(l, "Deep work").filter((x) => x < `${day(3)}`);
   await eventually(
     () => cal.events(at(W, "00:00"), at(day(3), "00:00")),
-    (l) => expect(starts(l, "Deep work")).toEqual([`${W} 16:00-17:00`, `${day(2)} 16:00-17:00`]),
+    (l) =>
+      expect(habitDays(l)).toEqual([
+        `${W} 16:00-17:00`,
+        `${day(1)} 16:00-17:00`,
+        `${day(2)} 16:00-17:00`,
+      ]),
   );
   await addMeeting(page, {
     title: "Daily",
@@ -345,21 +350,100 @@ test("a daily meeting lists the days skipped for lack of time; after one missed 
     level: 3,
     remove: true,
   });
-  const days = (l: Evs) => starts(l, "Daily").filter((s) => s < `${day(5)}`);
+  const days = (l: Evs) => starts(l, "Daily").filter((x) => x < `${day(5)}`);
   const week = () => cal.events(at(W, "00:00"), at(day(5), "00:00"));
   await eventually(week, (l) =>
     expect(days(l)).toEqual([`${day(3)} 10:00-10:30`, `${day(4)} 10:00-10:30`]),
   );
   const r = row(page, "Daily");
   const skipped = r.getByTestId("skipped-periods");
+  const noTime = "higher-priority items take all free time";
   await expect(skipped.locator("li")).toHaveText([
-    `${W}: higher-priority items take all free time`,
-    `${day(1)}: no free time in the period`,
-    `${day(2)}: higher-priority items take all free time`,
+    `${W}: ${noTime}`,
+    `${day(1)}: ${noTime}`,
+    `${day(2)}: ${noTime}`,
   ]);
   await expect(r.getByTestId("meeting-boost")).toHaveCount(0);
 
-  // Tuesday 06:00: Monday ended with no time, so Tuesday uses P2 (still full).
+  // Tuesday 06:00: Monday ended with no time, so Tuesday uses P2. A P2 meeting goes
+  // before a P2 habit (meetings-flexible.md rule 23), so it takes the habit's time;
+  // at its stored P3 it would not.
+  app.env.TEST_CLOCK_START = iso(day(1), "06:00");
+  await app.restart();
+  await eventually(week, (l) => {
+    expect(days(l)).toEqual([
+      `${day(1)} 16:00-16:30`,
+      `${day(3)} 10:00-10:30`,
+      `${day(4)} 10:00-10:30`,
+    ]);
+    expect(habitDays(l)).toEqual([`${W} 16:00-17:00`, `${day(2)} 16:00-17:00`]);
+  });
+  await page.reload();
+  await page.getByRole("link", { name: "Meetings" }).click();
+  await expect(r.getByTestId("meeting-boost")).toHaveText(
+    `Priority boost: ${day(1)} uses P2 after 1 missed period`,
+  );
+  // The stored priority stays P3; Tuesday got a time, so it leaves the skipped list.
+  await expect(page.locator("section", { hasText: "P3 medium" }).locator(r)).toBeVisible();
+  await expect(skipped.locator("li")).toHaveText([`${W}: ${noTime}`, `${day(2)}: ${noTime}`]);
+
+  // Wednesday 06:00: Tuesday was held, so the boost ends and Wednesday stays without time.
+  app.env.TEST_CLOCK_START = iso(day(2), "06:00");
+  await app.restart();
+  await page.reload();
+  await page.getByRole("link", { name: "Meetings" }).click();
+  await expect(r).toBeVisible();
+  await expect(r.getByTestId("meeting-boost")).toHaveCount(0);
+  await expect(skipped.locator("li")).toHaveText([`${W}: ${noTime}`, `${day(2)}: ${noTime}`]);
+  expect(days(await week())).toEqual([
+    `${day(1)} 16:00-16:30`,
+    `${day(3)} 10:00-10:30`,
+    `${day(4)} 10:00-10:30`,
+  ]);
+});
+
+test("a daily meeting kept in conflict counts each day it stayed in conflict as missed: after two such days it uses P1 and takes a P1 habit's time, and the boost ends once a day is held (MEET-02 rule 16)", async ({
+  page,
+  cal,
+  app,
+  signIn,
+}) => {
+  // Monday W, 06:00.
+  app.env.TEST_CLOCK_START = iso(W, "06:00");
+  await app.restart();
+  await blockUntil(cal, W);
+  await signIn();
+  // Monday and Tuesday are full; Wednesday leaves only 16:00 to 17:00, where a P1 habit sits.
+  for (const d of [0, 1])
+    await cal.addEvent({ title: "Busy", start: at(day(d), "08:00"), end: at(day(d), "18:00") });
+  await cal.addEvent({ title: "Busy", start: at(day(2), "08:00"), end: at(day(2), "16:00") });
+  await addHabit(page, {
+    title: "Deep work",
+    ideal: "16:00",
+    min: 60,
+    max: 60,
+    level: 1,
+    noRoom: "Remove that day",
+  });
+  const wed = () => cal.events(at(day(2), "00:00"), at(day(3), "00:00"));
+  await eventually(wed, (l) => expect(starts(l, "Deep work")).toEqual([`${day(2)} 16:00-17:00`]));
+  // The default rule keeps an occurrence with no time at its ideal time, in conflict.
+  await addMeeting(page, {
+    title: "Standup",
+    guests: "dana@example.com",
+    every: "Every day",
+    level: 3,
+  });
+  const days = (l: Evs) => starts(l, "Standup").filter((x) => x < `${day(5)}`);
+  const week = () => cal.events(at(W, "00:00"), at(day(5), "00:00"));
+  const kept = [0, 1, 2, 3, 4].map((d) => `${day(d)} 10:00-10:30`);
+  await eventually(week, (l) => expect(days(l)).toEqual(kept));
+  const r = row(page, "Standup");
+  await expect(r.getByTestId("meeting-boost")).toHaveCount(0);
+  // Kept in conflict is not removed: the skipped list is for removed periods only.
+  await expect(r.getByTestId("skipped-periods")).toHaveCount(0);
+
+  // Tuesday 06:00: Monday ended in conflict, so Tuesday uses P2 (still full).
   app.env.TEST_CLOCK_START = iso(day(1), "06:00");
   await app.restart();
   await page.reload();
@@ -367,28 +451,28 @@ test("a daily meeting lists the days skipped for lack of time; after one missed 
   await expect(r.getByTestId("meeting-boost")).toHaveText(
     `Priority boost: ${day(1)} uses P2 after 1 missed period`,
   );
+  expect(days(await week())).toEqual(kept);
 
-  // Wednesday 06:00: two missed days in a row, so Wednesday uses P1 and takes the habit's time.
+  // Wednesday 06:00: two days in conflict in a row, so Wednesday uses P1. A P1 meeting
+  // goes before a P1 habit (rule 23); at P2 it would not get the habit's time.
   app.env.TEST_CLOCK_START = iso(day(2), "06:00");
   await app.restart();
-  await eventually(week, (l) =>
+  await eventually(week, (l) => {
     expect(days(l)).toEqual([
+      `${W} 10:00-10:30`,
+      `${day(1)} 10:00-10:30`,
       `${day(2)} 16:00-16:30`,
       `${day(3)} 10:00-10:30`,
       `${day(4)} 10:00-10:30`,
-    ]),
-  );
+    ]);
+    expect(starts(l, "Deep work").filter((x) => x.startsWith(day(2)))).toEqual([]);
+  });
   await page.reload();
   await page.getByRole("link", { name: "Meetings" }).click();
   await expect(r.getByTestId("meeting-boost")).toHaveText(
     `Priority boost: ${day(2)} uses P1 after 2 missed periods`,
   );
-  // The stored priority stays P3; the ended days stay in the skipped list.
   await expect(page.locator("section", { hasText: "P3 medium" }).locator(r)).toBeVisible();
-  await expect(skipped.locator("li")).toHaveText([
-    `${W}: higher-priority items take all free time`,
-    `${day(1)}: no free time in the period`,
-  ]);
 
   // Thursday 06:00: Wednesday was held, so the boost ends.
   app.env.TEST_CLOCK_START = iso(day(3), "06:00");
@@ -397,9 +481,5 @@ test("a daily meeting lists the days skipped for lack of time; after one missed 
   await page.getByRole("link", { name: "Meetings" }).click();
   await expect(r).toBeVisible();
   await expect(r.getByTestId("meeting-boost")).toHaveCount(0);
-  expect(days(await week())).toEqual([
-    `${day(2)} 16:00-16:30`,
-    `${day(3)} 10:00-10:30`,
-    `${day(4)} 10:00-10:30`,
-  ]);
+  expect(starts(await wed(), "Standup")).toEqual([`${day(2)} 16:00-16:30`]);
 });
