@@ -37,7 +37,7 @@ test, so a key matches the line with that title. The build stops and names the
 key when a key is not the title of a test in `tests/e2e`, or when it matches
 more than one line. A key with no line was added after the run. A row is
 "done (Google)" only when each of its keys matches a passed test whose
-source did not change after the run.
+`test(...)` call did not change after the run.
 
 The build compares the `test(...)` call of each passed test at the run commit
 (`git show <commit>:<file>`, found at the test id) with the call that has the
@@ -46,6 +46,23 @@ differs, the test "changed after the Google run" and its rows fall back to
 "done (CalDAV)" with that reason, until a new Google run passes it. The check
 needs the run commit in the clone, so the CI checkout fetches the full history
 (`fetch-depth: 0`).
+
+Limit: the check compares the `test(...)` call only. It does not compare the
+helpers the test calls (for example `addTask` in `tests/e2e/helpers.ts`), hooks
+and file-level calls (`test.beforeEach`, `test.use`, `test.skip`), fixtures, or
+the product code. When one of these changes after the run and the call does not,
+the test keeps its Google claim. Only a new Google run proves those changes on
+Google.
+
+The build reads each `test("...")` call with a small JavaScript tokenizer
+(`scan()` in `scripts/build-parity.py`): it skips strings, template literals,
+comments and regular expressions, so a `test("...")` in a comment is not a test.
+When it cannot read a file (for example an unclosed bracket), the build stops
+with the file and line. Its tests are in `scripts/test_build_parity.py`:
+
+```bash
+python3 -B -m unittest discover -s scripts -p "test_*.py"
+```
 
 ## Passed tests
 

@@ -15,7 +15,7 @@ Each row id goes into exactly one status map (E2E, PARTIAL, GOOGLE_ROWS, UNIT or
 BLOCKED). The maps record every write, and the build fails when a row was ever
 written to two of them, even if a later pop removed it from one.
 """
-import re, sys, glob, os, json, subprocess
+import re, sys, glob, os, json, subprocess, bisect
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 STAGING = os.path.join(ROOT, "docs/parity-src")
@@ -1272,22 +1272,24 @@ BLOCKED[952] = "Needs the Cursor app and a Cursor account to add the mcp.json en
 # build stops when a key matches more than one line. A key is proven on Google when its
 # test passed and its test() call is the same now as at the run commit (CHANGED_AFTER
 # otherwise). A key with no line was added after the run; a key whose test did not pass
-# was skipped or did not pass there.
+# was skipped or did not pass there. Limit: the check compares the test() call only. A
+# change in a helper, hook (test.beforeEach, test.use, test.skip), fixture or the product
+# keeps the Google claim of a test whose call did not change; only a new Google run
+# proves those changes on Google.
 GOOGLE_RUN = os.path.join(ROOT, "docs/e2e-google-run.tsv")
 E2E_DIR = os.path.join(ROOT, "tests/e2e")
-TEST_CALL = re.compile(r'\btest\(\s*("(?:[^"\\\n]|\\.)*")')
 
-def e2e_titles():
-    """The title of each test("...") call in tests/e2e/*.ts."""
-    titles = set()
-    for f in glob.glob(f"{E2E_DIR}/*.ts"):
-        src = open(f, encoding="utf8").read()
-        for m in TEST_CALL.finditer(src):
-            titles.add(json.loads(m.group(1)))
-    return titles
+def e2e_calls():
+    """{title: [(line, normalized source)]} of every test("...") call in tests/e2e/*.ts."""
+    head = {}
+    for f in sorted(glob.glob(f"{E2E_DIR}/*.ts")):
+        name = os.path.relpath(f, ROOT)
+        for title, calls in file_test_calls(name, open(f, encoding="utf8").read()).items():
+            head.setdefault(title, []).extend(calls)
+    return head
 
 def check_titles():
-    titles = e2e_titles()
+    titles = E2E_CALLS.keys()
     bad = [k for k, text in T.items() if text not in titles]
     for k in bad:
         print(f"test key {k}: no test in tests/e2e has the title \u201c{T[k]}\u201d", file=sys.stderr)
@@ -1313,84 +1315,179 @@ def google_run():
 
 GOOGLE_RUN_COMMIT, GOOGLE_RUN_STATUS = google_run()
 
-# The source of a test() call: from "test(" to its closing parenthesis.
-OPEN, CLOSE = "([{", ")]}"
-REGEX_AFTER = set("(,=:[!&|?{};+-*%<>~^")
+# The source of a test() call: from "test(" to its closing parenthesis. scan() reads a
+# whole file once, like a JavaScript tokenizer: it skips strings, template literals,
+# comments and regular expression literals, and pairs each bracket in code with its
+# closing bracket. test("...") inside a comment or string is not a call.
+class ParseError(ValueError):
+    def __init__(self, src, i, msg):
+        self.line = src.count("\n", 0, min(i, len(src))) + 1
+        super().__init__(msg)
 
-def call_end(src, i):
-    """Index after the parenthesis that closes the one at src[i]. Skips strings,
-    template literals, comments and regular expression literals."""
-    stack, n = [], len(src)
+OPEN, CLOSE = "([{", ")]}"
+# A "/" after one of these words starts a regular expression, not a division.
+REGEX_WORDS = {"return", "typeof", "instanceof", "in", "of", "new", "delete", "void",
+               "throw", "case", "do", "else", "yield", "await"}
+# A "/" after the ")" of one of these heads starts a regular expression: if (a) /x/.test(s).
+HEAD_WORDS = {"if", "while", "for", "with"}
+WORD = re.compile(r"[\w$]+")
+
+def scan(src):
+    """(code, pairs): code is the offsets of src that are code (not in a string,
+    template text, comment or regular expression); pairs maps the offset of each
+    opening bracket to the offset of its closing bracket. Raises ParseError."""
+    n, i = len(src), 0
+    stack = []            # (offset, bracket) of open brackets; "${" for a template hole
+    skipped = []          # (start, end) spans that are not code
+    pairs = {}
+    last = None           # last code token: ("word", w), ("close", is_head) or ("punct", c)
+    prev = ""             # the punctuation before last, to see "++" and "--"
+
+    def skip_to(end_text, start, what):
+        j = src.find(end_text, start)
+        if j < 0:
+            raise ParseError(src, start, f"{what} has no end")
+        return j
+
+    def template(j):
+        """Scan template text from j; return the offset after ` or after ${."""
+        start = j
+        while j < n:
+            if src[j] == "\\":
+                j += 2
+            elif src[j] == "`":
+                skipped.append((start, j + 1))
+                return j + 1
+            elif src.startswith("${", j):
+                skipped.append((start, j))
+                stack.append((j, "${"))
+                return j + 2
+            else:
+                j += 1
+        raise ParseError(src, start, "template literal has no end")
+
     while i < n:
         c = src[i]
-        if c == "}" and stack and stack[-1] == "${":
-            stack.pop()
-            i = template_end(src, i + 1, stack)
+        if c.isspace():
+            i += 1
+            continue
+        if src.startswith("//", i):
+            j = src.find("\n", i)
+            j = n if j < 0 else j
+            skipped.append((i, j))
+            i = j
+            continue
+        if src.startswith("/*", i):
+            j = skip_to("*/", i + 2, "comment") + 2
+            skipped.append((i, j))
+            i = j
+            continue
+        if c in "'\"":
+            j = i + 1
+            while j < n and src[j] != c and src[j] != "\n":
+                j += 2 if src[j] == "\\" else 1
+            if j >= n or src[j] != c:
+                raise ParseError(src, i, "string has no end")
+            skipped.append((i + 1, j))
+            i, last = j + 1, ("punct", c)
+            continue
+        if c == "`":
+            i, last = template(i + 1), ("punct", "`")
+            continue
+        if c == "}" and stack and stack[-1][1] == "${":
+            pairs[stack.pop()[0]] = i
+            i, last = template(i + 1), ("punct", "`")
+            continue
+        if c == "/" and is_regex(last, prev):
+            j, in_class = i + 1, False
+            while j < n and (in_class or src[j] != "/"):
+                if src[j] == "\n":
+                    break
+                if src[j] == "\\":
+                    j += 1
+                elif src[j] == "[":
+                    in_class = True
+                elif src[j] == "]":
+                    in_class = False
+                j += 1
+            if j >= n or src[j] != "/":
+                raise ParseError(src, i, "regular expression has no end")
+            skipped.append((i, j + 1))
+            i = j + 1
+            while i < n and (src[i].isalnum() or src[i] in "_$"):
+                i += 1
+            last = ("punct", "/")
+            continue
+        m = WORD.match(src, i)
+        if m:
+            last, prev = ("word", m.group()), ""
+            i = m.end()
             continue
         if c in OPEN:
-            stack.append(c)
+            head = c == "(" and last is not None and last[0] == "word" and last[1] in HEAD_WORDS
+            stack.append((i, c + ("h" if head else "")))
+            last, prev = ("punct", c), ""
         elif c in CLOSE:
-            if not stack or OPEN[CLOSE.index(c)] != stack[-1]:
-                raise ValueError(f"unbalanced {c!r} at offset {i}")
-            stack.pop()
-            if not stack:
-                return i + 1
-        elif c in "'\"":
-            i += 1
-            while src[i] != c:
-                i += 2 if src[i] == "\\" else 1
-        elif c == "`":
-            i = template_end(src, i + 1, stack)
-            continue
-        elif src.startswith("//", i):
-            i = src.index("\n", i)
-            continue
-        elif src.startswith("/*", i):
-            i = src.index("*/", i) + 2
-            continue
-        elif c == "/":
-            before = src[:i].rstrip()
-            if not before or before[-1] in REGEX_AFTER or re.search(r"\b(return|typeof|in|of)$", before):
-                i += 1
-                in_class = False
-                while in_class or src[i] != "/":
-                    if src[i] == "\\":
-                        i += 1
-                    elif src[i] == "[":
-                        in_class = True
-                    elif src[i] == "]":
-                        in_class = False
-                    i += 1
-        i += 1
-    raise ValueError("no closing parenthesis")
-
-def template_end(src, i, stack):
-    """Scan a template literal from src[i] (after ` or a closing }); stop after its
-    closing ` or at a ${, which goes on the stack."""
-    while True:
-        c = src[i]
-        if c == "\\":
-            i += 2
-        elif c == "`":
-            return i + 1
-        elif src.startswith("${", i):
-            stack.append("${")
-            return i + 2
+            if not stack or stack[-1][1][0] != OPEN[CLOSE.index(c)]:
+                raise ParseError(src, i, f"{c!r} closes no open bracket")
+            start, kind = stack.pop()
+            pairs[start] = i
+            last, prev = ("close", kind == "(h"), ""
         else:
-            i += 1
+            prev = last[1] if last and last[0] == "punct" else ""
+            last = ("punct", c)
+        i += 1
+    if stack:
+        start, kind = stack[-1]
+        raise ParseError(src, start, f"{'${' if kind == '${' else kind[0]!r} is not closed")
+    return skipped, pairs
+
+def is_regex(last, prev):
+    """True when a "/" after the code token last (and the punctuation prev before it)
+    starts a regular expression literal, False when it is a division."""
+    if last is None:
+        return True
+    kind, value = last
+    if kind == "word":
+        return value in REGEX_WORDS
+    if kind == "close":
+        return value                      # the ")" of if (...), while (...), for (...)
+    if value in "+-" and prev == value:
+        return False                      # i++ / 2
+    return value not in "])'\"`"
+
+def in_spans(spans, i):
+    k = bisect.bisect_right(spans, (i, float("inf"))) - 1
+    return k >= 0 and spans[k][0] <= i < spans[k][1]
+
+# test("title", ...): not x.test("..."), and only in code (scan() drops comments and strings).
+TEST_CALL = re.compile(r'(?<![\w$.])test\(\s*("(?:[^"\\\n]|\\.)*")')
 
 def test_calls(src):
     """{title: [(line, normalized source of the test() call)]} of one file. The
     normalized source drops leading and trailing blanks of each line and empty lines,
-    so moving a test or changing its indent does not count as a change."""
+    so moving a test or changing its indent does not count as a change. Raises
+    ParseError when the file is not valid code for scan()."""
+    skipped, pairs = scan(src)
     calls = {}
     for m in TEST_CALL.finditer(src):
         start = m.start()
-        end = call_end(src, src.index("(", start))
+        if in_spans(skipped, start):
+            continue
+        end = pairs[src.index("(", start)] + 1
         body = "\n".join(l.strip() for l in src[start:end].splitlines() if l.strip())
         line = src.count("\n", 0, start) + 1
         calls.setdefault(json.loads(m.group(1)), []).append((line, body))
     return calls
+
+def file_test_calls(name, src):
+    """test_calls(src); stops the build with the file and line when src does not parse."""
+    try:
+        return test_calls(src)
+    except ParseError as e:
+        sys.exit(f"{name}:{e.line}: cannot read the test() calls: {e}. "
+                 "Fix the code, or fix scan() in scripts/build-parity.py and add the case to "
+                 "scripts/test_build_parity.py")
 
 def git(*args):
     r = subprocess.run(["git", "-C", ROOT, *args], capture_output=True, text=True)
@@ -1402,17 +1499,15 @@ def git(*args):
 def changed_after_run():
     """Keys whose test passed in the Google run but whose test() call is not the same
     now (in the working tree) as at the run commit."""
-    head = {}
-    for f in glob.glob(f"{E2E_DIR}/*.ts"):
-        for title, calls in test_calls(open(f, encoding="utf8").read()).items():
-            head.setdefault(title, []).extend(calls)
+    head = E2E_CALLS
     then, changed = {}, set()
     for key, hits in GOOGLE_RUN_STATUS.items():
         if not hits or hits[0][0] != "passed":
             continue
         path, line = hits[0][1].rsplit(":", 1)
         if path not in then:
-            then[path] = test_calls(git("show", f"{GOOGLE_RUN_COMMIT}:{path}"))
+            then[path] = file_test_calls(f"{path} at commit {GOOGLE_RUN_COMMIT}",
+                                         git("show", f"{GOOGLE_RUN_COMMIT}:{path}"))
         old = then[path].get(T[key], [])
         if [l for l, _ in old] != [int(line)]:
             sys.exit(f"test key {key}: {hits[0][1]} is not the test \u201c{T[key]}\u201d at commit {GOOGLE_RUN_COMMIT}")
@@ -1423,6 +1518,7 @@ def changed_after_run():
             changed.add(key)
     return changed
 
+E2E_CALLS = e2e_calls()
 GOOGLE_CHANGED = changed_after_run()
 
 # Why a test did not pass in the Google run: (singular, plural) phrases.
