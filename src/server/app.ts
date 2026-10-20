@@ -43,6 +43,7 @@ import { oooRoutes } from "./api/ooo.ts";
 import { plannerRoutes } from "./api/planner.ts";
 import { policyRoutes } from "./api/policies.ts";
 import { previewRoutes } from "./api/preview.ts";
+import { priorityRoutes } from "./api/priorities.ts";
 import { provisioningRoutes } from "./api/provisioning.ts";
 import { scimRoutes } from "./api/scim.ts";
 import { settingsRoutes } from "./api/settings.ts";
@@ -496,6 +497,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   app.route("/api", bufferFilterRoutes(db, now));
   app.route("/api", meetingCheckRoutes(db, sync, now));
   app.route("/api", automationRoutes(db, sync, now));
+  app.route("/api", priorityRoutes(db, sync, now));
 
   // Round 3 s4: connected calendars, holiday feeds and mirroring policies.
   app.route(

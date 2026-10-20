@@ -1063,6 +1063,31 @@ BLOCKED[322] = ("Not built: the scheduler reads the availability of attendees wh
 BLOCKED[345] = "Needs Google Meet (a Google account), the Zoom vendor app and Google Workspace room resources; an address or a custom text or link is written as the location of every occurrence (E2E: \u201c" + T["mr_settings"] + "\u201d)"
 # --- end U06 ---
 
+# --- U35: next-up queue and priorities views (next-up-queue.spec.ts, priorities.spec.ts) ---
+T.update({
+    "u35_rank": "dragging a task inside the next-up queue changes its rank, and the scheduler places the queue in the new order (NXT-2, NXT-3, NXT-9)",
+    "u35_arrows": "the up and down arrows and drag and drop add a task to the next-up queue and take it out (NXT-5, NXT-10, NXT-11)",
+    "u35_panel": "the planner tasks panel adds a task to the next-up queue with its up arrow (NXT-6)",
+    "u35_page": "the priorities page shows P1 to P4 columns; a drag or the level menu changes the level, with kind and hours filters and a column width (PRI-51, PRI-52, NXT-6)",
+    "u35_view": "the planner priorities view groups items by level and kind, with a level menu, drag and drop, search and edit (PRI-53)",
+})
+E2E.update({
+    42: ["u35_rank"],
+    63: ["u35_page"],
+    64: ["u35_view"],
+})
+E2E_NOTES.update({
+    63: "The priorities page is its own page in the main navigation; it lists tasks, habits, flexible meetings, buffers, booking links and focus time (fixed at P4). The column width is kept in the browser",
+    64: "The view opens from the Priorities button on the planner's now line",
+})
+PARTIAL.update({
+    43: ("The up and down arrows and drag and drop into and out of the dashed queue area on the tasks page, the up arrow in the planner tasks panel "
+         "and on the priorities page, and done leaving the queue have E2E on CalDAV (\u201c" + T["u35_arrows"] + "\u201d; \u201c" + T["u35_panel"]
+         + "\u201d; \u201c" + T["u35_page"] + "\u201d); the add action in the Google Calendar add-on and the chat-app integration (NXT-6) needs those "
+         "vendor apps (the add-on's developer app and a test account, rows 954 to 963; the Slack app and a test workspace)"),
+})
+# --- end U35 ---
+
 # Google Calendar proof. docs/e2e-google-run.tsv records a full E2E run on Google
 # (status, test id, title per line; docs/e2e-google-run.md says how it ran and how to
 # regenerate the file). Each T[key] is the exact title of one test in tests/e2e, and the

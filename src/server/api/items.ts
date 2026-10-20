@@ -404,9 +404,55 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
     const user = c.get("user");
     const id = c.req.param("id");
     if (!one(db, "SELECT 1 FROM tasks WHERE id = ? AND user_id = ?", id, user.id)) notFound("task");
-    run(db, "UPDATE tasks SET status = 'done', rules_changed_at = ? WHERE id = ?", now(), id);
+    // NXT-11: a done task leaves the next-up queue.
+    run(
+      db,
+      "UPDATE tasks SET status = 'done', next_up_rank = NULL, rules_changed_at = ? WHERE id = ?",
+      now(),
+      id,
+    );
     changed(user.id);
     return c.json({ ok: true });
+  });
+
+  /**
+   * NXT-2, NXT-5, NXT-9, NXT-10: puts an open task into the next-up queue at
+   * `position` (last when omitted), or takes it out with `position: null`. The
+   * queue keeps ranks 0..n-1. Every open task is placed again in the new order,
+   * so the first entry gets the earliest time (NXT-3) and a task taken out goes
+   * back to its priority order.
+   */
+  r.post("/tasks/:id/queue", async (c) => {
+    const user = c.get("user");
+    const id = c.req.param("id");
+    const body = await jsonBody(
+      c,
+      z.object({ position: z.number().int().min(0).nullable().optional() }),
+    );
+    if (
+      !one(db, "SELECT 1 FROM tasks WHERE id = ? AND user_id = ? AND status = 'open'", id, user.id)
+    )
+      notFound("task");
+    const order = all<{ id: string }>(
+      db,
+      `SELECT id FROM tasks WHERE user_id = ? AND status = 'open' AND next_up_rank IS NOT NULL AND id <> ?
+       ORDER BY next_up_rank, created_at, id`,
+      user.id,
+      id,
+    ).map((q) => q.id);
+    if (body.position !== null) order.splice(body.position ?? order.length, 0, id);
+    tx(db, () => {
+      run(
+        db,
+        "UPDATE tasks SET next_up_rank = NULL, rules_changed_at = ? WHERE user_id = ? AND status = 'open'",
+        now(),
+        user.id,
+      );
+      for (const [rank, taskId] of order.entries())
+        run(db, "UPDATE tasks SET next_up_rank = ? WHERE id = ?", rank, taskId);
+    });
+    changed(user.id);
+    return c.json({ queue: order });
   });
 
   r.post("/tasks/:id/add-time", async (c) => {
