@@ -6,8 +6,7 @@
 // Settings. The page needs no login, is not indexed, and shows the display name
 // only when the user set one, the week, the three totals and the calendar facts.
 import { randomBytes, timingSafeEqual } from "node:crypto";
-import { getConnInfo } from "@hono/node-server/conninfo";
-import { type Context, Hono } from "hono";
+import { Hono } from "hono";
 import { getCookie, setCookie } from "hono/cookie";
 import type { AppEnv } from "./app.ts";
 import { all, type Db, one, run } from "./db.ts";
@@ -26,8 +25,8 @@ interface Share {
 /**
  * Rule 12 decision: the page shows a name only when it is a display name the
  * user set (from Google or the directory). An email address, the local part of
- * one of the user's emails, or a CalDAV user name is a login, not a display
- * name, so the page shows no name.
+ * one of the user's emails, a CalDAV user name or a directory (SCIM) user name
+ * is a login, not a display name, so the page shows no name.
  */
 export function publicName(db: Db, userId: string): string | null {
   const user = one<{ name: string; email: string }>(
@@ -43,7 +42,16 @@ export function publicName(db: Db, userId: string): string | null {
     "SELECT provider, external_id, email FROM accounts WHERE user_id = ?",
     userId,
   );
+  const directory = one<{ resource: string }>(
+    db,
+    "SELECT resource FROM directory_profiles WHERE user_id = ?",
+    userId,
+  );
+  const scimUser = directory
+    ? (JSON.parse(directory.resource) as { userName?: unknown }).userName
+    : undefined;
   const logins = new Set([
+    ...(typeof scimUser === "string" ? [scimUser.toLowerCase()] : []),
     ...[user.email, ...accounts.map((a) => a.email)].map((e) => e.split("@")[0]?.toLowerCase()),
     ...accounts
       .filter((a) => a.provider === "caldav")
@@ -127,17 +135,13 @@ function confirmPage(s: Share, to: string, csrf: string): string {
 }
 
 const RATE_WINDOW = 60_000;
-/** Requests per client address and minute on /r. A 192-bit token cannot be guessed; this stops floods. */
-const RATE_LIMIT = 60;
+/**
+ * Publish POSTs per share and minute. The limit is per share token, so a flood
+ * on one share does not block another user's; the pages themselves are cheap
+ * reads of one row by a 192-bit token and have no limit.
+ */
+const POST_LIMIT = 10;
 const CSRF_COOKIE = "tl_share";
-
-function clientAddress(c: Context): string {
-  try {
-    return getConnInfo(c).remote.address ?? "unknown";
-  } catch {
-    return "unknown";
-  }
-}
 
 const same = (a: string, b: string) =>
   a.length === b.length && a.length > 0 && timingSafeEqual(Buffer.from(a), Buffer.from(b));
@@ -157,18 +161,17 @@ export function weeklyShareRoutes(db: Db, baseUrl: string, now: () => number): H
   const target = (token: string, to: string) =>
     to === "link" ? pageUrl(token) : (DIALOGS[to]?.(pageUrl(token)) ?? pageUrl(token));
 
-  r.use("*", async (c, next) => {
+  /** Counts one publish POST of `token`; false when the share is over its limit. */
+  const allowPost = (token: string) => {
     const t = now();
-    const key = clientAddress(c);
-    const hit = hits.get(key);
+    const hit = hits.get(token);
     if (!hit || t - hit.start >= RATE_WINDOW) {
       if (hits.size > 10_000) hits.clear();
-      hits.set(key, { start: t, count: 1 });
-    } else if (++hit.count > RATE_LIMIT) {
-      return c.text("Too many requests.", 429, { ...HEADERS, "retry-after": "60" });
+      hits.set(token, { start: t, count: 1 });
+      return true;
     }
-    await next();
-  });
+    return ++hit.count <= POST_LIMIT;
+  };
 
   // Rule 11: a share link of the email asks before it makes the page public.
   r.get("/:token/share", (c) => {
@@ -193,6 +196,8 @@ export function weeklyShareRoutes(db: Db, baseUrl: string, now: () => number): H
     const form = await c.req.parseBody();
     const to = typeof form.to === "string" ? form.to : "";
     if (!share || !TARGET_NAMES[to]) return c.html(NOT_FOUND, 404, HEADERS);
+    if (!allowPost(share.token))
+      return c.text("Too many requests.", 429, { ...HEADERS, "retry-after": "60" });
     // With no-referrer the browser sends "null" as the origin; the SameSite
     // cookie that must match the form's token keeps other sites out.
     const sentFrom = c.req.header("origin") ?? "null";

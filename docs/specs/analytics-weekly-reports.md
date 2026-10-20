@@ -81,11 +81,13 @@ gets this email.
     its button (a POST with a token) makes the page public, so a mail scanner
     that opens every link shares nothing. The page shows a name only when it
     is a display name the user set (from Google or the directory); an email
-    address, the local part of one of the user's emails, or a CalDAV user
-    name is a login, so the page then shows no name. The name is taken when
-    the report is sent. The page, its confirm page and "not found" are
-    `noindex, nofollow` (meta tag and `X-Robots-Tag`) with no referrer, and
-    /r answers at most 60 requests per minute per client address.
+    address, the local part of one of the user's emails, a CalDAV user name
+    or a directory (SCIM) user name is a login, so the page then shows no
+    name. The name is taken when the report is sent. The page, its confirm
+    page and "not found" are `noindex, nofollow` (meta tag and
+    `X-Robots-Tag`) with no referrer. The page views have no rate limit; the
+    confirm POST of one share answers at most 10 requests per minute (429
+    after that), counted per share, so one client cannot block other shares.
 
 ## Outputs
 

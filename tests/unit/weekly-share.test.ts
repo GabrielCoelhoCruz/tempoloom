@@ -9,7 +9,10 @@
 //    POST from another site does.
 // 3. Search engines may index the page or the not-found answer.
 // 4. The owner cannot stop sharing, or another user can.
-// 5. Many requests to /r get answers without a limit.
+// 5. One client (or a proxy that all visitors share) makes share pages answer
+//    429 for everyone, or the publish POST of one share has no limit.
+// 6. A directory login name (SCIM userName, when the directory sends no
+//    display name) shows.
 import { randomBytes, randomUUID } from "node:crypto";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -28,7 +31,7 @@ import { weeklyReport } from "../../src/server/weekly-report.ts";
 const T0 = Date.parse("2026-11-13T08:30:00Z");
 const BASE = "http://localhost:8787";
 
-function setup(user: { email: string; name: string; caldavUser?: string }) {
+function setup(user: { email: string; name: string; caldavUser?: string; scimUser?: string }) {
   const key = randomBytes(32).toString("base64");
   const db = openDb(":memory:");
   const box = new SecretBox(key);
@@ -44,6 +47,21 @@ function setup(user: { email: string; name: string; caldavUser?: string }) {
       "https://dav.example.com/",
       T0,
     );
+  if (user.scimUser) {
+    run(
+      db,
+      "INSERT INTO teams (id, name, domain, created_at) VALUES ('t1', 'Corp', 'corp.example', ?)",
+      T0,
+    );
+    run(
+      db,
+      "INSERT INTO directory_profiles (user_id, team_id, resource, created_at, updated_at) VALUES (?, 't1', ?, ?, ?)",
+      u.id,
+      JSON.stringify({ userName: user.scimUser, emails: [{ value: user.email, primary: true }] }),
+      T0,
+      T0,
+    );
+  }
   const config = loadConfig({
     SECRET_KEY: key,
     DATA_DIR: mkdtempSync(join(tmpdir(), "tl-share-")),
@@ -90,7 +108,18 @@ function setup(user: { email: string; name: string; caldavUser?: string }) {
     });
     return res;
   };
-  return { db, app, u, direct, pagePath, cookie, share, link };
+  /** Another week's report of the same user: its direct share link. */
+  const another = () => {
+    const r = weeklyReport(
+      db,
+      { id: u.id, email: user.email, time_zone: "Europe/Berlin" },
+      { from: "2026-11-16", to: "2026-11-20" },
+      BASE,
+      T0,
+    );
+    return `${new URL(r.text.match(/^Direct link: (\S+)$/m)?.[1] ?? "").pathname}?to=link`;
+  };
+  return { db, app, u, direct, pagePath, cookie, share, link, another };
 }
 
 describe("weekly report share page (rules 10-12)", () => {
@@ -193,11 +222,42 @@ describe("weekly report share page (rules 10-12)", () => {
     expect(((await after.json()) as { shares: unknown[] }).shares).toEqual([]);
   });
 
-  it("limits the requests to /r", async () => {
+  it("shows no directory login name when the directory sends no display name", async () => {
+    const s = setup({ email: "ana.lima@corp.example", name: "alima", scimUser: "alima" });
+    await s.share();
+    const html = await (await s.app.request(s.pagePath)).text();
+    expect(html).not.toContain("alima");
+    expect(html).toContain("<h1>A week in review</h1>");
+  });
+
+  it("serves many page views from one address: no shared limit on the public pages", async () => {
     const s = setup({ email: "ana@example.com", name: "Ana Lima" });
+    await s.share();
     const codes: number[] = [];
-    for (let i = 0; i < 61; i++) codes.push((await s.app.request("/r/nothing")).status);
-    expect(codes.slice(0, 60).every((c) => c === 404)).toBe(true);
-    expect(codes[60]).toBe(429);
+    for (let i = 0; i < 150; i++) codes.push((await s.app.request(s.pagePath)).status);
+    for (let i = 0; i < 150; i++) codes.push((await s.app.request("/r/nothing")).status);
+    expect(codes.slice(0, 150).every((c) => c === 200)).toBe(true);
+    expect(codes.slice(150).every((c) => c === 404)).toBe(true);
+    expect((await s.app.request(s.direct)).status).toBe(302);
+  });
+
+  it("limits the publish POSTs per share, so a flood on one share does not block another", async () => {
+    const s = setup({ email: "ana@example.com", name: "Ana Lima" });
+    const post = () =>
+      s.app.request(new URL(s.direct, BASE).pathname, {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ to: "link", csrf: "wrong" }),
+      });
+    const codes: number[] = [];
+    for (let i = 0; i < 11; i++) codes.push((await post()).status);
+    expect(codes.slice(0, 10).every((c) => c === 403)).toBe(true);
+    expect(codes[10]).toBe(429);
+    // The flooded share's page view still answers; another share publishes.
+    expect((await s.app.request(s.pagePath)).status).toBe(404);
+    const other = s.another();
+    const res = await s.share(other);
+    expect(res.status).toBe(303);
+    expect((await s.app.request(other.replace(/\/share\?to=link$/, ""))).status).toBe(200);
   });
 });
