@@ -47,7 +47,9 @@ function tagPattern(tag: string): RegExp {
  * sent only to a mailing list) is unanswered until the user's own answer
  * appears (events-out-of-office rule 10).
  */
-export function attends(e: ExternalEvent): boolean {
+export function attends(
+  e: Pick<ExternalEvent, "selfResponse" | "organizerSelf" | "attendeeCount">,
+): boolean {
   if (e.selfResponse === "declined") return false;
   if (e.organizerSelf) return true;
   if (e.selfResponse === "needsAction") return false;
