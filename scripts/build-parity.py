@@ -1064,6 +1064,29 @@ BLOCKED[322] = ("Not built: the scheduler reads the availability of attendees wh
 BLOCKED[345] = "Needs Google Meet (a Google account), the Zoom vendor app and Google Workspace room resources; an address or a custom text or link is written as the location of every occurrence (E2E: \u201c" + T["mr_settings"] + "\u201d)"
 # --- end U06 ---
 
+# --- U32: calendar edits and locks, part A (tests/e2e/chunk-edits.spec.ts, auto-lock.spec.ts) ---
+T.update({
+    "u32_autolock": "auto-lock per kind: from 01:00 a Sunday-start week locks habits, each day locks meetings by default and focus time, off locks nothing; later events wait until the setting is turned off and on (LCK-30 to LCK-33)",
+    "u32_unlock": "a delete, a reschedule, a guest's decline and the user's own decline end a lock: the item is placed again away from the locked time (LCK-40, CED-27, CED-30)",
+    "u32_first": "moving the first chunk later moves the task's start, so no chunk goes before it; moving it earlier sets an earlier start (CED-11)",
+    "u32_drag": "a planner drag of the first chunk sets the task's start, so no chunk goes before it (CED-11, CED-50)",
+    "u32_due": "a chunk moved past the due date makes every chunk of its task busy (CED-12, DEF-12)",
+    "u32_resize": "a shorter chunk gives its minutes back to the task and a longer chunk takes them from the rest (CED-13, CED-14)",
+    "u32_past": "past chunks: a delete brings the work back and reopens a done task; a shorter past chunk gives its minutes back (CED-13, CED-21, CED-22)",
+})
+E2E.update({
+    99: ["mr_prio", "mr_defense"], 106: ["u32_autolock"], 107: ["u32_unlock"], 110: ["u32_first", "u32_drag"],
+    111: ["u32_due"], 112: ["u32_resize", "u32_past"], 114: ["u32_past"],
+})
+E2E_NOTES.update({
+    99: "The same rule as row 341: busy within 12 hours (DEF-30) or when the occurrence has the last free slot of its day",
+    106: ("The lock run has the hour from 01:00 in the planning zone of the date (LCK-31, proposed default; a trip uses its zone); "
+          "a week runs only on its first day, from the calendar week start (LCK-33; CalDAV has no such setting, so the E2E sets it through the settings API); "
+          "only off to on locks at once (LCK-32); the first run of a kind without a record only records the period, and a missed hour is not run later"),
+    107: "A deleted task chunk is placed again from the next day; a habit reschedule, a required guest's decline and the user's own decline move the locked occurrence",
+})
+# --- end U32 ---
+
 # --- U35: next-up queue and priorities views (next-up-queue.spec.ts, priorities.spec.ts) ---
 T.update({
     "u35_rank": "dragging a task inside the next-up queue changes its rank, and the scheduler places the queue in the new order (NXT-2, NXT-3, NXT-9)",

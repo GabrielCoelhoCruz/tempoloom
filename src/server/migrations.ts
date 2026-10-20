@@ -1203,4 +1203,14 @@ export const MIGRATIONS: readonly string[] = [
   ALTER TABLE events ADD COLUMN own_visibility TEXT
     CHECK (own_visibility IN ('default', 'public', 'private', 'confidential'));
   `,
+  // 35: the last auto-lock run per item kind (planning-locks.md LCK-30, LCK-32):
+  // the day or week it locked, so it runs once per period.
+  `
+  CREATE TABLE auto_lock_runs (
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,
+    period TEXT NOT NULL,
+    PRIMARY KEY (user_id, kind)
+  ) STRICT;
+  `,
 ];
