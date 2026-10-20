@@ -1259,7 +1259,7 @@ E2E.update({
     102: ["u56_secondary", "u56_locked"],
 })
 E2E_NOTES.update({
-    102: "Booking links and other people's flexible meetings read main-calendar availability: an unlocked task chunk on another calendar does not block them; a locked one blocks them, as every locked event does (LCK-1), because it never moves (Tempoloom decision); the user's own plan keeps the chunk's time",
+    102: "Booking links and other people's flexible meetings read main-calendar availability: an unlocked task chunk on another calendar does not block them; a locked one blocks booking links, as every locked event does (LCK-1), because it never moves (Tempoloom decision); the user's own plan keeps the chunk's time",
 })
 PARTIAL[90] = ("E2E on CalDAV covers: an external event before demands, levels and kinds (\u201c" + T["u03_order"] + "\u201d), rank drag, "
                "the due date, urgency, a next-up task before other tasks of any level and the queue order (\u201c" + T["t_next"] + "\u201d; \u201c"
@@ -1278,7 +1278,7 @@ PARTIAL[145] = ("Not built: PRF-6, the planner, hours page and date displays do 
                 "format are read from the Google Calendar settings (scope calendar.settings.readonly) at each calendar list sync, a new "
                 "week start from the next week on (edge case 3); each sync takes the time zone from the primary Google calendar. E2E on "
                 "CalDAV: initials without a picture (\u201c" + T["u56_initials"] + "\u201d) and the editable profile fields (row 146). "
-                "The Google reads also need " + GOOGLE_CONSENT[0].lower() + GOOGLE_CONSENT[1:])
+                "The Google reads also wait for a Google E2E run" + GOOGLE_CONSENT[len("Needs a Google E2E run"):])
 BLOCKED[322] = (GOOGLE_CONSENT + " and a second Google account that is not a Tempoloom user, as a guest. Built, with unit tests against a "
                 "fake Google API (tests/unit/guest-free-busy.test.ts): the organizer's Google account asks Google free/busy for required "
                 "guests who are not users here (at most 50 per request, a 5-second limit, the answer kept for 5 minutes), the meeting "

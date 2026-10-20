@@ -9,6 +9,11 @@
 //    week.
 // 3. At the switch the placed weekly occurrences keep their old keys, so the
 //    push deletes and recreates them then.
+// 4. A skipped week (a dismissed key of the old week) or a decline waiting for
+//    its move keeps the old key: the skipped week comes back with a new
+//    invitation, or the decline is never completed.
+// 5. A Sunday-to-Monday switch on a Sunday leaves the occurrence already held
+//    this week under its old key, so the plan makes a second one that week.
 import { randomBytes } from "node:crypto";
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -32,7 +37,10 @@ const MON = Date.parse("2026-10-19T08:00:00Z"); // a Monday
 const NEXT_MON = MON + 7 * DAY;
 const API = "https://www.googleapis.com/calendar/v3";
 
+let googleWeekStart = "0";
+
 beforeEach(() => {
+  googleWeekStart = "0";
   vi.stubGlobal("fetch", async (input: string | URL) => {
     const url = new URL(String(input));
     if (url.href.startsWith(`${API}/users/me/calendarList`))
@@ -41,14 +49,14 @@ beforeEach(() => {
       });
     // Google's default for a US locale: the week starts on Sunday.
     if (url.href.startsWith(`${API}/users/me/settings`))
-      return Response.json({ items: [{ id: "weekStart", value: "0" }] });
+      return Response.json({ items: [{ id: "weekStart", value: googleWeekStart }] });
     return Response.json({ error: { message: "unexpected" } }, { status: 404 });
   });
 });
 
 afterEach(() => vi.unstubAllGlobals());
 
-async function setup() {
+async function setup(stored: 1 | 7 = 1) {
   const db = openDb(":memory:");
   const box = new SecretBox(randomBytes(32).toString("base64"));
   const { user, accountId } = upsertGoogleLogin(
@@ -73,7 +81,12 @@ async function setup() {
   );
   await syncCalendarList(db, provider, accountId, user.id, MON);
   // Only the calendar list: the settings read waits for a placed meeting below.
-  run(db, "UPDATE users SET settings = '{}' WHERE id = ?", user.id);
+  run(
+    db,
+    "UPDATE users SET settings = ? WHERE id = ?",
+    JSON.stringify({ weekStart: stored }),
+    user.id,
+  );
   const app = new Hono<AppEnv>();
   app.use("*", async (c, next) => {
     c.set("user", user);
@@ -192,5 +205,71 @@ describe("a week start read from Google", () => {
         NEXT_MON,
       ),
     ).toEqual(before);
+  });
+
+  it("moves a skipped week and a waiting decline to the new keys, so the skipped week stays empty", async () => {
+    const s = await setup();
+    place(s.db, s.user.id, desired(s.db, s.user.id, MON));
+    const meeting = (one<{ id: string }>(s.db, "SELECT id FROM meetings") as { id: string }).id;
+    // Skip the week of 2 November: the key is dismissed and the event deleted (MEET-02 rule 20).
+    run(s.db, "DELETE FROM managed_events WHERE key = ?", `meeting:${meeting}:2026-11-02`);
+    run(
+      s.db,
+      "INSERT INTO dismissed_keys (user_id, key) VALUES (?, ?)",
+      s.user.id,
+      `meeting:${meeting}:2026-11-02`,
+    );
+    // A guest declined the occurrence of 27 October; its move is pending.
+    run(
+      s.db,
+      `INSERT INTO meeting_changes (user_id, meeting_id, occurrence_key, at, old_start, old_end, actor, reason)
+       VALUES (?, ?, ?, ?, ?, ?, 'guest@example.com', 'declined')`,
+      s.user.id,
+      meeting,
+      `meeting:${meeting}:2026-10-26`,
+      MON,
+      Date.parse("2026-10-27T10:00:00Z"),
+      Date.parse("2026-10-27T10:30:00Z"),
+    );
+    const inSkipped = (now: number) =>
+      desired(s.db, s.user.id, now).filter(
+        (p) =>
+          p.start >= Date.parse("2026-11-01T00:00:00Z") &&
+          p.start < Date.parse("2026-11-08T00:00:00Z"),
+      );
+    expect(inSkipped(NEXT_MON)).toEqual([]);
+
+    await syncCalendarList(s.db, s.provider, s.accountId, s.user.id, MON);
+    applyPendingWeekStart(s.db, s.user.id, "UTC", NEXT_MON);
+    expect(getSettings(s.db, s.user.id).weekStart).toBe(7);
+    expect(inSkipped(NEXT_MON)).toEqual([]);
+    expect(all(s.db, "SELECT key FROM dismissed_keys")).toEqual([
+      { key: `meeting:${meeting}:2026-11-01` },
+    ]);
+    expect(all(s.db, "SELECT occurrence_key FROM meeting_changes")).toEqual([
+      { occurrence_key: `meeting:${meeting}:2026-10-25` },
+    ]);
+  });
+
+  it("a Sunday-to-Monday switch on a Sunday keeps this week's held occurrence as done: no second one that week", async () => {
+    googleWeekStart = "1";
+    const s = await setup(7);
+    place(s.db, s.user.id, desired(s.db, s.user.id, MON));
+    const meeting = (one<{ id: string }>(s.db, "SELECT id FROM meetings") as { id: string }).id;
+    await syncCalendarList(s.db, s.provider, s.accountId, s.user.id, MON);
+    const sunday = Date.parse("2026-10-25T12:00:00Z");
+    applyPendingWeekStart(s.db, s.user.id, "UTC", sunday);
+    expect(getSettings(s.db, s.user.id).weekStart).toBe(1);
+    // The occurrence of Tuesday 20 October is past and is in the Monday week of 19 October.
+    expect(
+      one<{ key: string }>(
+        s.db,
+        "SELECT key FROM managed_events WHERE start_ms = ?",
+        Date.parse("2026-10-20T10:00:00Z"),
+      )?.key,
+    ).toBe(`meeting:${meeting}:2026-10-19`);
+    const after = diff(s.db, s.user.id, sunday);
+    expect(after.deleted).toEqual([]);
+    expect(after.created.filter((c) => c.key.endsWith(":2026-10-19"))).toEqual([]);
   });
 });

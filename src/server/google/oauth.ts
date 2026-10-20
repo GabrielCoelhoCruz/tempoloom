@@ -162,11 +162,6 @@ export async function revokeToken(token: string): Promise<void> {
   if (!res.ok) throw new OAuthError(`http_${res.status}`, "Token revocation failed");
 }
 
-/**
- * Reads the identity claims from an ID token that came straight from Google's
- * token endpoint over TLS. Per Google's guidance, the signature check is not
- * needed for a token received directly from that endpoint.
- */
 /** The name and picture claims of an ID token, each only when present (both are optional). */
 export function profileClaims(idToken: string): { name?: string; picture?: string } {
   const claims = JSON.parse(
@@ -180,6 +175,11 @@ export function profileClaims(idToken: string): { name?: string; picture?: strin
   };
 }
 
+/**
+ * Reads the identity claims from an ID token that came straight from Google's
+ * token endpoint over TLS. Per Google's guidance, the signature check is not
+ * needed for a token received directly from that endpoint.
+ */
 export function identityFromIdToken(idToken: string): GoogleIdentity {
   const payload = idToken.split(".")[1];
   if (!payload) throw new OAuthError("invalid_id_token", "Malformed ID token");
