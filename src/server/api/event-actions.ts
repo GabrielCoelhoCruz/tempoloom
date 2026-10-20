@@ -1,7 +1,7 @@
 // Actions on one event from the planner (planning-planner.md PLN-11): make a
 // habit from a recurring event, reschedule a habit occurrence, and what the
 // details panel needs to offer them (habits-automation.md rules 6, 8, 30).
-import { Hono } from "hono";
+import { type Context, Hono } from "hono";
 import { z } from "zod";
 import { utcToLocal, weekdayOf } from "../../shared/time.ts";
 import type { AppEnv } from "../app.ts";
@@ -96,22 +96,26 @@ export function eventActionRoutes(db: Db, sync: SyncService, now: () => number):
     return c.json({ series: info });
   });
 
-  /** Rule 30: the occurrence goes to the legal slot nearest the chosen time on its day. */
-  r.post("/habits/:id/reschedule", async (c) => {
+  /**
+   * Rule 30: the occurrence goes to the legal slot nearest the chosen time on
+   * its day. Rule 31 (snooze): to the first legal slot at or after it.
+   */
+  const moveOccurrence = (notBefore: boolean) => async (c: Context<AppEnv>) => {
     const user = c.get("user");
-    const id = c.req.param("id");
+    const id = c.req.param("id") ?? "";
     const body = await jsonBody(c, z.object({ date: z.iso.date(), time: hhmm }));
     if (!one(db, "SELECT 1 FROM habits WHERE id = ? AND user_id = ?", id, user.id))
       notFound("habit");
     const [h, m] = body.time.split(":").map(Number) as [number, number];
     run(
       db,
-      `INSERT INTO habit_reschedules (user_id, habit_id, date, minute) VALUES (?, ?, ?, ?)
-       ON CONFLICT (habit_id, date) DO UPDATE SET minute = excluded.minute`,
+      `INSERT INTO habit_reschedules (user_id, habit_id, date, minute, not_before) VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT (habit_id, date) DO UPDATE SET minute = excluded.minute, not_before = excluded.not_before`,
       user.id,
       id,
       body.date,
       h * 60 + m,
+      notBefore ? 1 : 0,
     );
     // A locked occurrence follows the new choice (Tempoloom decision: reschedule unlocks it).
     run(
@@ -123,7 +127,9 @@ export function eventActionRoutes(db: Db, sync: SyncService, now: () => number):
     );
     sync.request(user.id, 0);
     return c.json({ ok: true });
-  });
+  };
+  r.post("/habits/:id/reschedule", moveOccurrence(false));
+  r.post("/habits/:id/snooze", moveOccurrence(true));
 
   /** What the planner's details panel offers for one event. */
   r.get("/event-actions/:id", (c) => {

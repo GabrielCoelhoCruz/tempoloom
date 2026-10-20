@@ -18,7 +18,8 @@ import { type BufferPreset, entry, freeName, type LibraryEntry } from "../lib/li
 import { navigate, path } from "../lib/router.ts";
 import { LEVEL_NAMES, planNow } from "../lib/state.ts";
 import { EventSettingsFields, eventSettingsFrom, Select } from "./event-settings.tsx";
-import { FrequencyFields } from "./habit-editor.tsx";
+import { HabitDependencyFields } from "./habit-dependencies.tsx";
+import { FrequencyFields, guestsFrom, HABIT_DECLINE_MESSAGE } from "./habit-editor.tsx";
 import { HoursField, ITEM, itemHoursFrom } from "./hours-field.tsx";
 
 interface HoursSet {
@@ -403,6 +404,48 @@ function HabitRules({ row, hours }: { row: Row; hours: HoursSet[] }) {
         Notes
         <textarea name="notes" rows={2} defaultValue={String(row.notes ?? "")} />
       </label>
+      <HabitExtras row={row} />
+    </>
+  );
+}
+
+/** Habit guests, auto-decline (rules 37-39) and dependencies (rule 18). */
+function HabitExtras({ row }: { row: Row }) {
+  const [decline, setDecline] = useState(Number(row.decline_enabled) === 1);
+  const guests = JSON.parse(String(row.guests ?? "[]")) as string[];
+  return (
+    <>
+      <label class="wide">
+        Guests (comma list)
+        <input name="guests" defaultValue={guests.join(", ")} />
+        <span class="meta">
+          Added to each event. Tempoloom does not check their availability and sends them no notice.
+        </span>
+      </label>
+      <label class="inline wide">
+        <input
+          type="checkbox"
+          name="declineEnabled"
+          checked={decline}
+          onChange={(e) => setDecline(e.currentTarget.checked)}
+        />
+        Decline invitations that overlap this habit while it is busy
+      </label>
+      {decline && (
+        <>
+          <label class="wide">
+            Decline message
+            <input
+              name="declineMessage"
+              maxLength={500}
+              placeholder={HABIT_DECLINE_MESSAGE}
+              defaultValue={String(row.decline_message ?? "")}
+            />
+          </label>
+          <p class="meta warning wide">Tempoloom sends these declines to other people.</p>
+        </>
+      )}
+      <HabitDependencyFields habitId={row.id} initial={String(row.dependencies ?? "[]")} />
     </>
   );
 }
@@ -475,6 +518,9 @@ function rulesBody(
       .map((w) => w.trim())
       .filter(Boolean),
     notes: String(f.get("notes") ?? ""),
+    guests: guestsFrom(text("guests")),
+    autoDecline: { enabled: f.has("declineEnabled"), message: text("declineMessage") },
+    dependencies: JSON.parse(text("dependencies") || "[]"),
   };
 }
 

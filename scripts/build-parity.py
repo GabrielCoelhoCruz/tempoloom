@@ -1090,6 +1090,36 @@ BLOCKED[43] = ("Needs the Google Calendar add-on's developer app and a test acco
                + T["u35_panel"] + "\u201d; \u201c" + T["u35_page"] + "\u201d; \u201c" + T["u35_sticky"] + "\u201d)")
 # --- end U35 ---
 
+# --- U40: habits part B (habit-extras.spec.ts) ---
+T.update({
+    "u40_guests": "habit guests are written to each event without notices, and a busy guest does not move the habit (habits concepts guests)",
+    "u40_decline": "habit auto-decline declines invitations over a busy occurrence with the message, never over a free one (rules 37-39)",
+    "u40_deps": "habit dependencies: before keeps a habit to the other habit's days and ahead of it, not after limits those days only, not on the same day keeps it off them (rule 18)",
+    "u40_meet": "the meeting form adds a habit dependency: the habit goes before the meeting or not after it on its day, and removing it frees the habit (meetings rule 22)",
+    "u40_snooze": "snooze moves one habit occurrence to the first free time at or after the chosen time that day (rule 31)",
+    "u40_until": "snooze until a date removes the habit's events before that date and keeps the later ones (rule 35)",
+    "u40_search": "the automation list search box filters habits by title (rule 7)",
+})
+E2E.update({
+    167: ["u40_guests"],
+    169: ["u40_decline"],
+    170: ["u40_deps"],
+    183: ["u40_snooze"],
+    187: ["u40_until"],
+    189: ["u40_search"],
+    347: ["u40_meet"],
+})
+E2E_NOTES.update({
+    167: "On CalDAV each guest gets SCHEDULE-AGENT=CLIENT, so a server with scheduling sends nothing; Google events are written without updates",
+    169: "Without a message of its own, the note says the time is reserved for a routine",
+    170: "Before: only on days that hold the other habit, ending before it starts; not after: on those days only. The other habit is placed first and never moves",
+    183: "The details panel offers +15 min, +30 min, +1 h and +2 h from the occurrence's start, or any time of day",
+    187: "Snooze until a date on the habits page sets the start date; clearing it brings the earlier days back",
+    189: "The search box of the automation list filters every automation by title",
+    347: "The meeting form edits the rules of habits on that meeting; the habit form shows them too",
+})
+# --- end U40 ---
+
 # Google Calendar proof. docs/e2e-google-run.tsv records a full E2E run on Google
 # (status, test id, title per line; docs/e2e-google-run.md says how it ran and how to
 # regenerate the file). Each T[key] is the exact title of one test in tests/e2e, and the

@@ -137,6 +137,18 @@ export function EventActions({
           <button type="submit">Reschedule</button>
         </form>
       )}
+      {info.kind === "habit" && !info.ended && info.sourceId && info.date && (
+        <SnoozeForm
+          start={event.start}
+          zone={zone}
+          snooze={(time) => {
+            const id = info.sourceId;
+            const date = info.date;
+            close();
+            run(() => api("POST", `/api/habits/${id}/snooze`, { date, time }));
+          }}
+        />
+      )}
       {info.search && (
         <div data-testid="event-task-search">
           <TaskSearchPicker value={searchId} onChange={(id) => void assign(id)} />
@@ -144,6 +156,54 @@ export function EventActions({
         </div>
       )}
     </div>
+  );
+}
+
+const SNOOZES = [15, 30, 60, 120];
+
+/**
+ * Habits rule 31: the occurrence goes to the first legal start at or after
+ * the "not before" time, on the same day. The quick choices count from its
+ * current start.
+ */
+function SnoozeForm({
+  start,
+  zone,
+  snooze,
+}: {
+  start: number;
+  zone: string;
+  snooze: (time: string) => void;
+}) {
+  const after = (minutes: number) =>
+    hhmm(Math.min(utcToLocal(zone, start).minuteOfDay + minutes, 23 * 60 + 45));
+  const [time, setTime] = useState(() => after(30));
+  return (
+    <form
+      class="inline"
+      data-testid="snooze-form"
+      onSubmit={(e) => {
+        e.preventDefault();
+        snooze(time);
+      }}
+    >
+      {SNOOZES.map((m) => (
+        <button type="button" key={m} onClick={() => setTime(after(m))}>
+          +{m < 60 ? `${m} min` : `${m / 60} h`}
+        </button>
+      ))}
+      <label>
+        Not before
+        <input
+          type="time"
+          step={900}
+          required
+          value={time}
+          onInput={(e) => setTime(e.currentTarget.value)}
+        />
+      </label>
+      <button type="submit">Snooze</button>
+    </form>
   );
 }
 

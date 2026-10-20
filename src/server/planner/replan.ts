@@ -7,6 +7,7 @@ import type {
   BufferFilter,
   CurrentPlacement,
   ExternalEvent,
+  HabitDependency,
   HabitItem,
   Level,
   OverloadItem,
@@ -189,13 +190,15 @@ export function loadSnapshot(
   const titles = new Map<string, string>();
   const today = utcToLocal(zone, now).date;
   const rescheduled = new Map<string, Partial<Record<LocalDate, number>>>();
-  for (const r of all<{ habit_id: string; date: string; minute: number }>(
+  const snoozed = new Map<string, Partial<Record<LocalDate, number>>>();
+  for (const r of all<{ habit_id: string; date: string; minute: number; not_before: number }>(
     db,
-    "SELECT habit_id, date, minute FROM habit_reschedules WHERE user_id = ? AND date >= ?",
+    "SELECT habit_id, date, minute, not_before FROM habit_reschedules WHERE user_id = ? AND date >= ?",
     userId,
     today,
   )) {
-    rescheduled.set(r.habit_id, { ...rescheduled.get(r.habit_id), [r.date]: r.minute });
+    const into = r.not_before ? snoozed : rescheduled;
+    into.set(r.habit_id, { ...into.get(r.habit_id), [r.date]: r.minute });
   }
   const eventSettings = new Map<string, EventSettings>();
   const hoursKind = new Map(hoursRows.map((h) => [h.id, h.kind]));
@@ -266,6 +269,7 @@ export function loadSnapshot(
     event_settings: string;
     created_at: number;
     rules_changed_at: number;
+    dependencies: string;
   }>(db, "SELECT * FROM habits WHERE user_id = ? AND enabled = 1", userId).map((h): HabitItem => {
     notes.set(`habit:${h.id}`, h.notes);
     titles.set(`habit:${h.id}`, h.title);
@@ -298,6 +302,10 @@ export function loadSnapshot(
       exclusions: exclusions.get(`habit:${h.id}`) ?? [],
       changed: h.rules_changed_at > lastPlannedAt,
       ...(rescheduled.has(h.id) ? { rescheduled: rescheduled.get(h.id) ?? {} } : {}),
+      ...(snoozed.has(h.id) ? { notBefore: snoozed.get(h.id) ?? {} } : {}),
+      ...(h.dependencies !== "[]"
+        ? { dependencies: JSON.parse(h.dependencies) as HabitDependency[] }
+        : {}),
       ...(chosen ? { work: es.category === "work" } : {}),
     };
   });
@@ -552,6 +560,13 @@ export function meetingGuests(
   };
 }
 
+/** The guests of a habit occurrence: never the user, and written without notices. */
+function habitGuestFields(guests: string[], organizer: string, userEmail: string) {
+  const self = new Set([organizer, userEmail.toLowerCase()]);
+  const attendees = guests.filter((g) => !self.has(g));
+  return attendees.length > 0 ? { organizer, attendees, quietGuests: true } : {};
+}
+
 export async function replanUser(ctx: ReplanContext, userId: string): Promise<ReplanResult | null> {
   const { db, now } = ctx;
   const user = one<{ time_zone: string; email: string }>(
@@ -620,6 +635,14 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
   const travelBuffers = new Set(
     snapshot.buffers.filter((b) => b.filter.travel || b.filter.flight).map((b) => b.id),
   );
+  // Habit guests (habits concepts): attendees, with no availability check and no notices.
+  const habitGuests = new Map(
+    all<{ id: string; guests: string }>(
+      db,
+      "SELECT id, guests FROM habits WHERE user_id = ? AND guests <> '[]'",
+      userId,
+    ).map((h) => [h.id, JSON.parse(h.guests) as string[]]),
+  );
   const desired: DesiredEvent[] = result.placements.map((p) => {
     const row = rowByKey.get(p.key);
     const itemKey = `${p.kind}:${p.itemId}`;
@@ -661,6 +684,13 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
       colorId: null,
       ...(p.kind === "habit" && es?.location ? { location: es.location } : {}),
       ...reminderFields(p.kind, es),
+      ...(p.kind === "habit" && habitGuests.has(p.itemId)
+        ? habitGuestFields(
+            habitGuests.get(p.itemId) ?? [],
+            accountEmail.get(calendars.get(calendarId)?.account_id ?? "") ?? user.email,
+            user.email,
+          )
+        : {}),
       ...(p.kind === "meeting"
         ? meetingGuests(
             meetingRows.get(p.itemId),

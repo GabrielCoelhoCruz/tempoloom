@@ -116,6 +116,21 @@ const habitInput = z.object({
   templateId: z.string().max(100).optional(),
   /** Item-specific hours instead of a named set (planning-hours.md). */
   itemHours: itemHoursSchema.optional(),
+  /** Attendees of each event; no availability check, no notices (habits concepts). */
+  guests: z.array(z.email().max(254)).max(50).optional(),
+  /** Habits rules 37-39. */
+  autoDecline: z.object({ enabled: z.boolean(), message: z.string().trim().max(500) }).optional(),
+  /** Habits rule 18, meetings-flexible.md rule 22. */
+  dependencies: z
+    .array(
+      z.object({
+        rule: z.enum(["before", "not-after", "not-same-day"]),
+        kind: z.enum(["habit", "meeting"]),
+        id: z.string().min(1),
+      }),
+    )
+    .max(20)
+    .optional(),
 });
 
 export const bufferInput = z.object({
@@ -501,6 +516,39 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
     return ideal;
   }
 
+  /** Guests in lower case, once each. */
+  const guestList = (guests: string[]) => [...new Set(guests.map((g) => g.toLowerCase()))];
+
+  /**
+   * Rule 18: targets are the user's other habits and flexible meetings; one
+   * rule per target. A rule on a target that was deleted since is dropped.
+   */
+  function checkDependencies(
+    userId: string,
+    habitId: string | null,
+    deps: NonNullable<z.infer<typeof habitInput>["dependencies"]>,
+  ): string {
+    const seen = new Set<string>();
+    const kept = deps.filter((d) =>
+      one(
+        db,
+        `SELECT 1 FROM ${d.kind === "habit" ? "habits" : "meetings"} WHERE id = ? AND user_id = ?`,
+        d.id,
+        userId,
+      ),
+    );
+    for (const d of kept) {
+      const target = `${d.kind}:${d.id}`;
+      if (seen.has(target)) badRequest("dependencies", "Give each habit or meeting one rule only");
+      seen.add(target);
+      if (d.kind === "habit" && d.id === habitId)
+        badRequest("dependencies", "A habit cannot depend on itself");
+      if (d.kind === "meeting" && d.rule === "not-same-day")
+        badRequest("dependencies", "A meeting rule is before or not after the meeting");
+    }
+    return JSON.stringify(kept);
+  }
+
   r.get("/habits", (c) =>
     c.json({
       habits: all(
@@ -518,6 +566,8 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
     const full = limitRefusal(db, "max_automations_per_user", automationCount(db, user.id));
     if (full) return c.json(full, 409);
     const body = await jsonBody(c, habitInput);
+    const id = randomUUID();
+    const deps = checkDependencies(user.id, id, body.dependencies ?? []);
     const hours = body.itemHours
       ? createItemHours(db, user.id, body.title, body.itemHours)
       : hoursSetId(db, user.id, body.hoursSetId, "work");
@@ -529,7 +579,6 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
       throw err;
     }
     const lvl = body.level ?? 3;
-    const id = randomUUID();
     const t = now();
     const es = newEventSettings(db, user.id, "habit", body.eventSettings, {
       personal: personalHours(user.id, hours),
@@ -538,8 +587,8 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
       db,
       `INSERT INTO habits (id, user_id, title, notes, enabled, level, rank, hours_set_id, ideal_minute, min_minutes,
          max_minutes, frequency, starting, defense, when_unplaceable, reserved_words, created_at, rules_changed_at,
-         event_settings, template_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         event_settings, template_id, guests, decline_enabled, decline_message, dependencies)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       id,
       user.id,
       body.title,
@@ -569,6 +618,10 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
       t,
       JSON.stringify(es),
       body.templateId ?? null,
+      JSON.stringify(guestList(body.guests ?? [])),
+      body.autoDecline?.enabled ? 1 : 0,
+      body.autoDecline?.message ?? "",
+      deps,
     );
     changed(user.id);
     return c.json({ habit: habitRow(id) }, 201);
@@ -593,9 +646,16 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
       when_unplaceable: string;
       reserved_words: string;
       event_settings: string;
+      guests: string;
+      decline_enabled: number;
+      decline_message: string;
+      dependencies: string;
     }>(db, "SELECT * FROM habits WHERE id = ? AND user_id = ?", id, user.id);
     if (!cur) notFound("habit");
     const body = await jsonBody(c, habitInput.partial());
+    const deps = body.dependencies
+      ? checkDependencies(user.id, id, body.dependencies)
+      : cur.dependencies;
     const hours = body.itemHours
       ? saveItemHours(db, user.id, cur.hours_set_id, body.title ?? cur.title, body.itemHours)
       : body.hoursSetId
@@ -624,7 +684,8 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
       db,
       `UPDATE habits SET title = ?, notes = ?, enabled = ?, level = ?, hours_set_id = ?, ideal_minute = ?, min_minutes = ?,
          max_minutes = ?, frequency = ?, starting = ?, defense = ?, when_unplaceable = ?, reserved_words = ?,
-         rules_changed_at = ?, event_settings = ?, rank = ? WHERE id = ?`,
+         rules_changed_at = ?, event_settings = ?, rank = ?, guests = ?, decline_enabled = ?,
+         decline_message = ?, dependencies = ? WHERE id = ?`,
       body.title ?? cur.title,
       body.notes ?? cur.notes,
       body.enabled === undefined ? cur.enabled : body.enabled ? 1 : 0,
@@ -653,6 +714,10 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
       body.level !== undefined && body.level !== cur.level
         ? nextRank(db, "habits", user.id, body.level)
         : cur.rank,
+      body.guests ? JSON.stringify(guestList(body.guests)) : cur.guests,
+      body.autoDecline ? (body.autoDecline.enabled ? 1 : 0) : cur.decline_enabled,
+      body.autoDecline ? body.autoDecline.message : cur.decline_message,
+      deps,
       id,
     );
     if (hours !== cur.hours_set_id) dropItemHours(db, cur.hours_set_id);

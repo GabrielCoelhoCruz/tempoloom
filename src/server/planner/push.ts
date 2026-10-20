@@ -27,6 +27,8 @@ export interface DesiredEvent {
   attendees?: string[];
   optionalAttendees?: string[];
   organizer?: string;
+  /** The guests get no notices from the calendar server (habit guests). */
+  quietGuests?: boolean;
   reminders?: EventWrite["reminders"];
   visibility?: EventWrite["visibility"];
   allDayDates?: EventWrite["allDayDates"];
@@ -62,6 +64,7 @@ const extraOf = (d: DesiredEvent) =>
         attendees: d.attendees ?? [],
         optional: d.optionalAttendees ?? [],
         ...(d.organizer ? { organizer: d.organizer } : {}),
+        ...(d.quietGuests ? { quietGuests: true } : {}),
         ...(d.reminders ? { reminders: d.reminders } : {}),
         ...(d.visibility ? { visibility: d.visibility } : {}),
         ...(d.allDayDates ? { allDayDates: d.allDayDates } : {}),
@@ -73,6 +76,7 @@ interface Extra {
   attendees?: string[];
   optional?: string[];
   organizer?: string;
+  quietGuests?: boolean;
   reminders?: DesiredEvent["reminders"];
   visibility?: DesiredEvent["visibility"];
   allDayDates?: DesiredEvent["allDayDates"];
@@ -102,6 +106,7 @@ export function rowWrite(
     ...(x.attendees?.length ? { attendees: x.attendees } : {}),
     ...(x.optional?.length ? { optionalAttendees: x.optional } : {}),
     ...(x.organizer ? { organizer: x.organizer } : {}),
+    ...(x.quietGuests ? { quietGuests: true } : {}),
     ...(x.reminders ? { reminders: x.reminders } : {}),
     ...(x.visibility ? { visibility: x.visibility } : {}),
     ...(x.allDayDates ? { allDayDates: x.allDayDates } : {}),
@@ -142,6 +147,7 @@ function write(userId: string, d: DesiredEvent): EventWrite {
     ...(d.attendees ? { attendees: d.attendees } : {}),
     ...(d.optionalAttendees ? { optionalAttendees: d.optionalAttendees } : {}),
     ...(d.organizer ? { organizer: d.organizer } : {}),
+    ...(d.quietGuests ? { quietGuests: true } : {}),
     ...(d.reminders ? { reminders: d.reminders } : {}),
     ...(d.visibility ? { visibility: d.visibility } : {}),
     ...(d.allDayDates ? { allDayDates: d.allDayDates } : {}),

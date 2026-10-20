@@ -343,7 +343,10 @@ export function objectFromWrite(uid: string, w: EventWrite, now: number): string
   }
   addAlarms(ev, w.reminders, w.summary);
   if (w.organizer) ev.addPropertyWithValue("organizer", `mailto:${w.organizer}`);
-  for (const email of w.attendees ?? []) ev.addPropertyWithValue("attendee", `mailto:${email}`);
+  for (const email of w.attendees ?? []) {
+    const p = ev.addPropertyWithValue("attendee", `mailto:${email}`);
+    if (w.quietGuests) p.setParameter("schedule-agent", "CLIENT");
+  }
   for (const email of w.optionalAttendees ?? []) {
     const p = ev.addPropertyWithValue("attendee", `mailto:${email}`);
     p.setParameter("role", "OPT-PARTICIPANT");

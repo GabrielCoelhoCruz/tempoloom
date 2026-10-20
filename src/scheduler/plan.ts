@@ -71,6 +71,8 @@ interface Ctx {
   taskSeen: Map<string, TimeSet>;
   /** Free time in an occurrence's window, without the occurrence itself (for DEF-23). */
   habitSeen: Map<string, TimeSet>;
+  /** "habit:<id>" and "meeting:<id>" of every habit and meeting in this plan (rule 18 targets). */
+  targets: Set<string>;
 }
 
 const ceilTo = (t: number, step: number) => Math.ceil(t / step) * step;
@@ -150,6 +152,10 @@ function init(s: Snapshot): Ctx {
     current: new Map(s.current.map((c) => [c.key, c])),
     taskSeen: new Map(),
     habitSeen: new Map(),
+    targets: new Set([
+      ...s.habits.map((h) => `habit:${h.id}`),
+      ...s.meetings.map((m) => `meeting:${m.id}`),
+    ]),
   };
   for (const c of fixedManaged) {
     const kind = kindOf(c.key);
@@ -581,7 +587,11 @@ function searchHabit(
   date: LocalDate,
   window?: TimeSet,
 ): Interval | null {
-  const ideal = localToUtc(ctx.s.zone, date, h.rescheduled?.[date] ?? h.idealMinute);
+  const ideal = localToUtc(
+    ctx.s.zone,
+    date,
+    h.rescheduled?.[date] ?? h.notBefore?.[date] ?? h.idealMinute,
+  );
   const lengths: number[] = [];
   for (let m = h.maxMinutes; m >= h.minMinutes; m -= 15) lengths.push(m * MINUTE);
   if (lengths.at(-1) !== h.minMinutes * MINUTE) lengths.push(h.minMinutes * MINUTE);
@@ -633,6 +643,48 @@ function reservedWordHit(ctx: Ctx, h: HabitItem, window: TimeSet): boolean {
   );
 }
 
+/**
+ * Rule 18: the latest end that the habit's dependencies allow on `date`
+ * (Infinity: no limit), or null when they keep the habit off that day. The
+ * targets are placed before the habit (see plan), so their placements are known.
+ */
+function dependencyLimit(ctx: Ctx, h: HabitItem, date: LocalDate): number | null {
+  let limit = Number.POSITIVE_INFINITY;
+  const from = localToUtc(ctx.s.zone, date, 0);
+  const to = localToUtc(ctx.s.zone, addDays(date, 1), 0);
+  for (const d of h.dependencies ?? []) {
+    if (!ctx.targets.has(`${d.kind}:${d.id}`)) continue;
+    let first = Number.POSITIVE_INFINITY;
+    for (const p of ctx.placements) {
+      if (p.kind === d.kind && p.itemId === d.id && p.start >= from && p.start < to)
+        first = Math.min(first, p.start);
+    }
+    if (first === Number.POSITIVE_INFINITY) {
+      if (d.rule === "before") return null;
+      continue;
+    }
+    if (d.rule === "not-same-day") return null;
+    limit = Math.min(limit, first);
+  }
+  return limit;
+}
+
+/**
+ * The time an occurrence may use on `date`: its hours that day, before the
+ * dependency limit, and from the snooze time on (rule 31).
+ */
+function habitWindow(
+  ctx: Ctx,
+  day: TimeSet,
+  date: LocalDate,
+  limit: number,
+  notBefore: number | undefined,
+): TimeSet {
+  if (limit === Number.POSITIVE_INFINITY && notBefore === undefined) return day;
+  const from = notBefore === undefined ? 0 : localToUtc(ctx.s.zone, date, notBefore);
+  return day.clip(from, Math.min(limit, ctx.end));
+}
+
 function placeHabit(ctx: Ctx, h: HabitItem): void {
   const { s } = ctx;
   const done = new Set((s.past ?? []).map((p) => p.key));
@@ -646,16 +698,36 @@ function placeHabit(ctx: Ctx, h: HabitItem): void {
     ) {
       continue;
     }
-    const fullWindow = dayWindow(ctx, h.hours, occ.date);
-    // Rule 30: a rescheduled occurrence stays on its day, nearest the chosen time.
-    const moved = h.rescheduled?.[occ.date] !== undefined;
-    const days = moved ? [occ.date] : [occ.date, ...occ.alternatives];
-    const windows = days.map((d) => dayWindow(ctx, h.hours, d));
-    if (windows.every((w) => w.total() === 0)) continue;
+    // Rules 30, 31: a rescheduled or snoozed occurrence stays on its day.
+    const notBefore = h.notBefore?.[occ.date];
+    const moved = h.rescheduled?.[occ.date] !== undefined || notBefore !== undefined;
+    const limits = new Map<LocalDate, number>();
+    const days = (moved ? [occ.date] : [occ.date, ...occ.alternatives]).filter((d) => {
+      const limit = dependencyLimit(ctx, h, d);
+      if (limit !== null) limits.set(d, limit);
+      return limit !== null;
+    });
+    if (days.length === 0) continue;
+    const dayWindows = days.map((d) => dayWindow(ctx, h.hours, d));
+    if (dayWindows.every((w) => w.total() === 0)) continue;
+    const windows = days.map((d, i) =>
+      habitWindow(
+        ctx,
+        dayWindows[i] as TimeSet,
+        d,
+        limits.get(d) ?? Number.POSITIVE_INFINITY,
+        d === occ.date ? notBefore : undefined,
+      ),
+    );
+    const own = days[0] === occ.date;
+    const fullWindow = own ? (windows[0] as TimeSet) : TimeSet.empty();
     const required = h.maxMinutes;
     const periodLower = Math.max(ctx.earliest, localToUtc(s.zone, occ.periodStart, 0));
     const periodUpper = localToUtc(s.zone, addDays(occ.periodEnd, 1), 0);
-    if (reservedWordHit(ctx, h, fullWindow)) {
+    if (
+      h.reservedWords.length > 0 &&
+      reservedWordHit(ctx, h, own ? (dayWindows[0] as TimeSet) : dayWindow(ctx, h.hours, occ.date))
+    ) {
       report(ctx, {
         itemKind: "habit",
         itemId: h.id,
@@ -709,8 +781,10 @@ function placeHabit(ctx: Ctx, h: HabitItem): void {
     // habit's hours that day but not the whole day, because rule 12 forbids any
     // managed item on away time and the habit has no other time that day.
     if (h.whenUnplaceable === "keep_as_conflict" && reason !== "away") {
+      // A dependency or a snooze is a hard rule: a kept conflict stays inside it too.
+      const bounded = (h.dependencies?.length ?? 0) > 0 || notBefore !== undefined;
       const iv =
-        cur && !h.changed
+        cur && !h.changed && (!bounded || fullWindow.contains(cur))
           ? { start: cur.start, end: cur.end }
           : searchHabit(ctx, { ...h, defense: "always-busy" }, fullWindow, occ.date);
       if (iv) {
@@ -1531,6 +1605,29 @@ const KIND_ORDER = { meeting: 0, buffer: 1, habit: 2 } as const;
 export function plan(s: Snapshot): Plan {
   const ctx = init(s);
   const effective = new Map(s.tasks.map((t) => [t.id, effectiveLevel(ctx, t)]));
+  // Rule 18: a habit with dependencies waits until its targets are placed, then
+  // goes at once, before items of lower priority than its own. Targets that are
+  // not in this plan (off, deleted) add no rule; habits in a cycle go last.
+  const placed = new Set<string>();
+  const waiting: HabitItem[] = [];
+  const blocked = (h: HabitItem) =>
+    (h.dependencies ?? []).some(
+      (d) => ctx.targets.has(`${d.kind}:${d.id}`) && !placed.has(`${d.kind}:${d.id}`),
+    );
+  const done = (key: string) => {
+    placed.add(key);
+    for (let i = 0; i < waiting.length; ) {
+      const h = waiting[i] as HabitItem;
+      if (blocked(h)) {
+        i++;
+        continue;
+      }
+      waiting.splice(i, 1);
+      placeHabit(ctx, h);
+      done(`habit:${h.id}`);
+      i = 0;
+    }
+  };
   for (const level of LEVELS) {
     const autos: Automation[] = [
       ...s.meetings
@@ -1550,9 +1647,15 @@ export function plan(s: Snapshot): Plan {
         a.item.id.localeCompare(b.item.id),
     );
     for (const a of autos) {
-      if (a.kind === "meeting") placeMeeting(ctx, a.item);
-      else if (a.kind === "buffer") placeBuffer(ctx, a.item);
-      else placeHabit(ctx, a.item);
+      if (a.kind === "meeting") {
+        placeMeeting(ctx, a.item);
+        done(`meeting:${a.item.id}`);
+      } else if (a.kind === "buffer") placeBuffer(ctx, a.item);
+      else if (blocked(a.item)) waiting.push(a.item);
+      else {
+        placeHabit(ctx, a.item);
+        done(`habit:${a.item.id}`);
+      }
     }
     if (level === 1) {
       const queue = s.tasks
@@ -1565,6 +1668,7 @@ export function plan(s: Snapshot): Plan {
       .sort(taskKey);
     for (const t of band) placeTask(ctx, t);
   }
+  for (const h of waiting) placeHabit(ctx, h);
   // Both focus automations come after every other item, in their P4 rank order;
   // at one rank the meeting overload goes first (focus edge case 5).
   const overloads = s.overloads ?? [];

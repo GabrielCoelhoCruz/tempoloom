@@ -8,6 +8,16 @@ import { DAY_NAMES, MAX_INTERVAL, ORDINALS, readFrequency, WEEKDAYS } from "../l
 import { LEVEL_NAMES, planNow } from "../lib/state.ts";
 import { TaskSearchPicker } from "./task-search-picker.tsx";
 
+/** Guests from a comma list (habits concepts `guests`). */
+export const guestsFrom = (text: string) =>
+  text
+    .split(",")
+    .map((g) => g.trim())
+    .filter(Boolean);
+
+/** Habits rule 37: the note of a decline when the habit has no message of its own. */
+export const HABIT_DECLINE_MESSAGE = "Declined automatically: this time is reserved for a routine.";
+
 const DEFENSE: Record<string, string> = {
   adaptive: "Free until time gets short",
   "always-free": "Always free",
