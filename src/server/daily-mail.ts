@@ -6,7 +6,7 @@
 // daily email goes out at its local time; a new time takes effect at its next
 // occurrence.
 import type { ReportEntry } from "../scheduler/model.ts";
-import { addDays, DAY, localToUtc, utcToLocal } from "../shared/time.ts";
+import { addDays, localToUtc, utcToLocal } from "../shared/time.ts";
 import { all, type Db, one, run } from "./db.ts";
 import type { Mailer, Message } from "./mail.ts";
 import { openIssues } from "./meeting-checks.ts";
@@ -187,7 +187,7 @@ export class DailyMailWorker {
       one<{ report: string }>(db, "SELECT report FROM plan_reports WHERE user_id = ?", u.id)
         ?.report ?? "[]",
     ) as ReportEntry[];
-    const limit = utcToLocal(u.time_zone, now + 14 * DAY).date;
+    const limit = addDays(utcToLocal(u.time_zone, now).date, 14);
     const lines: string[] = [];
     for (const e of report) {
       if (e.itemKind !== "meeting" || (e.status !== "conflict" && e.status !== "unplaced"))

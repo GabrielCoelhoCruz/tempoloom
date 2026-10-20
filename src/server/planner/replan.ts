@@ -24,6 +24,7 @@ import {
   DAY,
   type LocalDate,
   localToUtc,
+  schedulingWindowEnd,
   utcToLocal,
   weekdayOf,
 } from "../../shared/time.ts";
@@ -126,11 +127,7 @@ export function loadSnapshot(
   /** Event settings of each automation, by `kind:id` (src/shared/event-settings.ts). */
   eventSettings: Map<string, EventSettings>;
 } {
-  const windowEnd = localToUtc(
-    zone,
-    addDays(utcToLocal(zone, now).date, settings.schedulingWindowWeeks * 7 + 1),
-    0,
-  );
+  const windowEnd = schedulingWindowEnd(zone, now, settings.schedulingWindowWeeks);
   const hoursRows = all<{ id: string; kind: string; weekly: string }>(
     db,
     "SELECT id, kind, weekly FROM hours_sets WHERE user_id = ?",
@@ -654,8 +651,10 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
               ...(es?.emoji ? { emoji: es.emoji } : {}),
               title: titles.get(itemKey) ?? p.kind,
             }),
+      // A meeting gets each new form description (rule 23); push writes it only
+      // when it changes, so the organizer's calendar edit stays until then.
       description:
-        keepUserTitle && row
+        keepUserTitle && row && p.kind !== "meeting"
           ? row.description
           : eventDescription(itemNotes, ctx.baseUrl, p.kind, p.itemId),
       busy: p.busy || p.locked,

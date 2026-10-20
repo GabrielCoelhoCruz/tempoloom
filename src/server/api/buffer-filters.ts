@@ -4,13 +4,14 @@ import { Hono } from "hono";
 import { z } from "zod";
 import type { BufferFilter } from "../../scheduler/model.ts";
 import { bufferAnchors } from "../../scheduler/plan.ts";
-import { DAY } from "../../shared/time.ts";
+import { schedulingWindowEnd } from "../../shared/time.ts";
 import type { AppEnv } from "../app.ts";
 import { all, type Db } from "../db.ts";
 import { jsonBody } from "../http.ts";
 import { externalEvents } from "../planner/events.ts";
 import { copyAnchors } from "../planner/replan.ts";
 import { getSettings } from "../settings.ts";
+import { planningZone } from "../travel.ts";
 import { bufferInput } from "./items.ts";
 
 /** At most this many events are listed. */
@@ -30,7 +31,12 @@ export function bufferFilterRoutes(db: Db, now: () => number): Hono<AppEnv> {
       }),
     );
     const t = now();
-    const to = t + getSettings(db, user.id).schedulingWindowWeeks * 7 * DAY;
+    // The planner's window: the same zone and end as replan.ts.
+    const to = schedulingWindowEnd(
+      planningZone(db, user.id, user.time_zone),
+      t,
+      getSettings(db, user.id).schedulingWindowWeeks,
+    );
     const names = new Map(
       all<{ id: string; name: string }>(
         db,

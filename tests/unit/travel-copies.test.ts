@@ -47,6 +47,7 @@ function fakeCalendar() {
     colorId: w.colorId,
     updated: null,
     privateProps: w.privateProps,
+    visibility: w.visibility ?? "default",
   });
   const provider = {
     insertEvent: async (calendar: string, w: EventWrite) => {

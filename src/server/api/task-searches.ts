@@ -4,7 +4,7 @@
 import { randomUUID } from "node:crypto";
 import { Hono } from "hono";
 import { z } from "zod";
-import { DAY } from "../../shared/time.ts";
+import { addLocalDays } from "../../shared/time.ts";
 import type { AppEnv } from "../app.ts";
 import { all, type Db, one, run } from "../db.ts";
 import { jsonBody, notFound } from "../http.ts";
@@ -27,7 +27,7 @@ const TABLES = { habit: "habits", focus: "focus_goals", overload: "meeting_overl
 type AssignKind = keyof typeof TABLES;
 
 /** Open tasks that match a search, in the tasks page order (due date, then creation). */
-export function matchingTasks(db: Db, userId: string, s: TaskSearch, now: number) {
+export function matchingTasks(db: Db, userId: string, s: TaskSearch, now: number, zone: string) {
   return all<{ id: string; title: string; due_at: number | null }>(
     db,
     `SELECT id, title, due_at FROM tasks WHERE user_id = ? AND status = 'open'
@@ -37,7 +37,7 @@ export function matchingTasks(db: Db, userId: string, s: TaskSearch, now: number
     userId,
     s.keyword,
     s.due_within_days,
-    now + (s.due_within_days ?? 0) * DAY,
+    addLocalDays(now, s.due_within_days ?? 0, zone),
   );
 }
 
@@ -109,7 +109,7 @@ export function taskSearchRoutes(db: Db, now: () => number): Hono<AppEnv> {
     const user = c.get("user");
     const s = searchOf(user.id, c.req.param("id"));
     if (!s) notFound("task search");
-    return c.json({ tasks: matchingTasks(db, user.id, s, now()) });
+    return c.json({ tasks: matchingTasks(db, user.id, s, now(), user.time_zone) });
   });
 
   /** NXT-40: one search per habit, one per focus time automation, one for meeting overload. */
@@ -164,7 +164,7 @@ export function taskSearchRoutes(db: Db, now: () => number): Hono<AppEnv> {
           start: ev.start_ms,
           end: ev.end_ms,
           search: { id: s.id, name: s.name },
-          tasks: matchingTasks(db, user.id, s, t),
+          tasks: matchingTasks(db, user.id, s, t, user.time_zone),
         },
       });
     }
