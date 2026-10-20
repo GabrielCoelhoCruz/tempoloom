@@ -20,6 +20,7 @@ import { createItemHours, dropItemHours, itemHoursSchema, saveItemHours } from "
 import { automationCount, limitRefusal } from "../limits.ts";
 import { getSettings } from "../settings.ts";
 import type { SyncService } from "../sync/service.ts";
+import { lastQueueRank, markTaskDone, taskOrderChanged } from "../task-order.ts";
 
 const level = z.number().int().min(1).max(4);
 const minutes = z
@@ -326,13 +327,7 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
       badRequest("dueAt", "Due date must be after the start date");
     const id = randomUUID();
     const hours = hoursSetId(db, user.id, body.hoursSetId, "work");
-    const rank = body.nextUp
-      ? (one<{ r: number | null }>(
-          db,
-          "SELECT MAX(next_up_rank) AS r FROM tasks WHERE user_id = ?",
-          user.id,
-        )?.r ?? -1) + 1
-      : null;
+    const rank = body.nextUp ? lastQueueRank(db, user.id) + 1 : null;
     run(
       db,
       `INSERT INTO tasks (id, user_id, title, notes, level, total_minutes, min_chunk_minutes, max_chunk_minutes,
@@ -379,6 +374,7 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
     const dueAt = body.dueAt === undefined ? task.due_at : body.dueAt;
     if (dueAt !== null && dueAt <= startAfter)
       badRequest("dueAt", "Due date must be after the start date");
+    taskOrderChanged(db, user.id, task.id, (body.level ?? task.level) > task.level, now());
     run(
       db,
       `UPDATE tasks SET title = ?, notes = ?, level = ?, total_minutes = ?, min_chunk_minutes = ?, max_chunk_minutes = ?,
@@ -404,7 +400,7 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
     const user = c.get("user");
     const id = c.req.param("id");
     if (!one(db, "SELECT 1 FROM tasks WHERE id = ? AND user_id = ?", id, user.id)) notFound("task");
-    run(db, "UPDATE tasks SET status = 'done', rules_changed_at = ? WHERE id = ?", now(), id);
+    markTaskDone(db, id, now());
     changed(user.id);
     return c.json({ ok: true });
   });

@@ -22,6 +22,8 @@ import { COMPANY_SIZES, USE_CASES } from "../shared/profile.ts";
 import { type Db, one, run } from "./db.ts";
 import { instanceLimit } from "./limits.ts";
 
+const autoLockMode = z.enum(["off", "day", "week"]);
+
 export const settingsSchema = z.object({
   schedulingWindowWeeks: z.number().int().min(1).max(12).default(3),
   weekStart: z.union([z.literal(1), z.literal(7)]).default(1),
@@ -33,6 +35,15 @@ export const settingsSchema = z.object({
     .union([z.literal(0), z.literal(5), z.literal(10), z.literal(15), z.literal(20), z.literal(30)])
     .default(0),
   paused: z.boolean().default(false),
+  // planning-locks.md LCK-30: lock each kind's events of the current day or week.
+  autoLock: z
+    .object({
+      meeting: autoLockMode.default("day"),
+      habit: autoLockMode.default("off"),
+      task: autoLockMode.default("off"),
+      focus: autoLockMode.default("off"),
+    })
+    .prefault({}),
   taskDefaults: z
     .object({
       level: z.number().int().min(1).max(4).default(2),
@@ -127,6 +138,7 @@ export function updateSettings(db: Db, userId: string, patch: unknown): Settings
       ...((patch as { taskDefaults?: object }).taskDefaults ?? {}),
     },
     markers: { ...current.markers, ...((patch as { markers?: object }).markers ?? {}) },
+    autoLock: { ...current.autoLock, ...((patch as { autoLock?: object }).autoLock ?? {}) },
     categoryColors: {
       ...current.categoryColors,
       ...((patch as { categoryColors?: object }).categoryColors ?? {}),

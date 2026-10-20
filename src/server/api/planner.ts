@@ -10,6 +10,7 @@ import { stripMarker, withState } from "../planner/markers.ts";
 import { mirrorKey, mirrorSource } from "../planner/mirror.ts";
 import { MANAGED_PROP, type ManagedRow, rowWrite } from "../planner/push.ts";
 import { getSettings } from "../settings.ts";
+import { moveTaskStart } from "../sync/edits.ts";
 import { cacheEvent } from "../sync/pull.ts";
 import type { SyncService } from "../sync/service.ts";
 
@@ -390,6 +391,7 @@ export function plannerRoutes(db: Db, sync: SyncService, now: () => number): Hon
           row.start_ms,
           row.end_ms,
         );
+        moveTaskStart(db, user.id, row, start);
       }
       run(
         db,

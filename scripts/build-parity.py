@@ -1161,7 +1161,7 @@ BLOCKED[770] = "Not needed: no legacy users (platform-current-version rule 11)"
 
 # Buildable rows that no unit has built yet. Rows that units U31 to U33 and PR #23 build now keep their text.
 PLANNED = "Buildable; not built yet (planned)"
-for n in [36, 38, 40, 42, 43, 63, 64, 102, 118, 121, 122, 123, 128, 129, 140, 144, 167, 169, 170, 183, 185, 187, 189,
+for n in [36, 38, 40, 102, 118, 121, 122, 123, 128, 129, 140, 144, 167, 169, 170, 183, 185, 187, 189,
           201, 205, 232, 326, 327, 340, 347, 361, 362, 365, 370, 375, 542, 543, 635, 636, 637, 775, 776, 783, 784]:
     BLOCKED[n] = PLANNED
 BLOCKED[92] = PLANNED + ": the reason for each move and skip, and a view per item; the change log of every calendar write is built (src/server/change-log.ts)"
@@ -1170,6 +1170,56 @@ BLOCKED[540] = PLANNED + ": the Repair action; looking up one event with its cha
 BLOCKED[322] = (PLANNED + ": the Google free/busy query for attendees who are not users here (the Google client has a freeBusy method that no code calls); "
                 "its proof needs a Google account. The availability of attendees who are users here is E2E-proven (rows 321, 339)")
 # --- end U30 ---
+
+# --- U32: calendar edits and locks, part A (tests/e2e/chunk-edits.spec.ts, auto-lock.spec.ts) ---
+T.update({
+    "u32_autolock": "auto-lock per kind: from 01:00 a Sunday-start week locks habits, each day locks meetings by default and focus time, off locks nothing; later events wait until the setting is turned off and on (LCK-30 to LCK-33)",
+    "u32_unlock": "a delete, a reschedule, a guest's decline and the user's own decline end a lock: the item is placed again away from the locked time (LCK-40, CED-27, CED-30)",
+    "u32_first": "moving the first chunk later moves the task's start, so no chunk goes before it; moving it earlier sets an earlier start (CED-11)",
+    "u32_drag": "a planner drag of the first chunk sets the task's start, so no chunk goes before it (CED-11, CED-50)",
+    "u32_due": "a chunk moved past the due date makes every chunk of its task busy (CED-12, DEF-12)",
+    "u32_resize": "a shorter chunk gives its minutes back to the task and a longer chunk takes them from the rest (CED-13, CED-14)",
+    "u32_past": "past chunks: a delete brings the work back and reopens a done task; a shorter past chunk gives its minutes back (CED-13, CED-21, CED-22)",
+})
+E2E.update({
+    99: ["mr_prio", "mr_defense"], 106: ["u32_autolock"], 107: ["u32_unlock"], 110: ["u32_first", "u32_drag"],
+    111: ["u32_due"], 112: ["u32_resize", "u32_past"], 114: ["u32_past"],
+})
+E2E_NOTES.update({
+    99: "The same rule as row 341: busy within 12 hours (DEF-30) or when the occurrence has the last free slot of its day",
+    106: ("The lock run has the hour from 01:00 in the planning zone of the date (LCK-31, proposed default; a trip uses its zone); "
+          "a week runs only on its first day, from the calendar week start (LCK-33; CalDAV has no such setting, so the E2E sets it through the settings API); "
+          "only off to on locks at once (LCK-32); the first run of a kind without a record only records the period, and a missed hour is not run later"),
+    107: "A deleted task chunk is placed again from the next day; a habit reschedule, a required guest's decline and the user's own decline move the locked occurrence",
+})
+# --- end U32 ---
+
+# --- U35: next-up queue and priorities views (next-up-queue.spec.ts, priorities.spec.ts) ---
+T.update({
+    "u35_rank": "dragging a task inside the next-up queue changes its rank, and the scheduler places the queue in the new order (NXT-2, NXT-3, NXT-9)",
+    "u35_arrows": "the up and down arrows and drag and drop add a task to the next-up queue and take it out (NXT-5, NXT-10, NXT-11)",
+    "u35_panel": "the planner tasks panel adds a task to the next-up queue with its up arrow (NXT-6)",
+    "u35_page": "the priorities page shows P1 to P4 columns; a drag or the level menu changes the level, with kind and hours filters and a column width (PRI-51, PRI-52, NXT-6)",
+    "u35_view": "the planner priorities view groups items by level and kind, with a level menu, drag and drop, search and edit (PRI-53)",
+    "u35_sticky": "an up arrow click moves only the task it adds to the next-up queue; other tasks keep their events (SCH-88, NXT-5)",
+    "u35_lock": "a level change on the priorities page leaves a locked task chunk in place (NXT-4, PRI-13)",
+    "u35_edit": "the task edit form edits every field and saves a total that is not a multiple of 15 minutes (PRI-50, PRI-53)",
+})
+E2E.update({
+    42: ["u35_rank"],
+    63: ["u35_page", "u35_lock"],
+    64: ["u35_view", "u35_edit"],
+})
+E2E_NOTES.update({
+    63: "The priorities page is its own page in the main navigation; it lists tasks, habits, flexible meetings, buffers, booking links and focus time (fixed at P4). The column width is kept in the browser",
+    64: "The view opens from the Priorities button on the planner's now line",
+})
+BLOCKED[43] = ("Needs the Google Calendar add-on's developer app and a test account (rows 954 to 963) and the Slack app and a test "
+               "workspace for the add action there (NXT-6); the built part has E2E on CalDAV: the up and down arrows and drag and drop "
+               "into and out of the dashed queue area on the tasks page, the up arrow in the planner tasks panel and on the priorities "
+               "page, done leaving the queue, and an up arrow that moves no other task (\u201c" + T["u35_arrows"] + "\u201d; \u201c"
+               + T["u35_panel"] + "\u201d; \u201c" + T["u35_page"] + "\u201d; \u201c" + T["u35_sticky"] + "\u201d)")
+# --- end U35 ---
 
 # Google Calendar proof. docs/e2e-google-run.tsv records a full E2E run on Google
 # (status, test id, title per line; docs/e2e-google-run.md says how it ran and how to
