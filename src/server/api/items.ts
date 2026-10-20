@@ -21,6 +21,7 @@ import { automationCount, limitRefusal } from "../limits.ts";
 import type { SyncService } from "../sync/service.ts";
 import { markTaskDone, taskOrderChanged } from "../task-order.ts";
 import { createTask, deleteTask } from "../tasks.ts";
+import { endRank, insertRank } from "./automations.ts";
 
 const level = z.number().int().min(1).max(4);
 const minutes = z
@@ -210,55 +211,6 @@ export function hoursSetId(
     badRequest("hoursSetId", "Unknown hours set");
   }
   return id;
-}
-
-export function nextRank(
-  db: Db,
-  table: "habits" | "buffers" | "meetings",
-  userId: string,
-  lvl: number,
-): number {
-  return (
-    (one<{ r: number | null }>(
-      db,
-      `SELECT MAX(rank) AS r FROM ${table} WHERE user_id = ? AND level = ?`,
-      userId,
-      lvl,
-    )?.r ?? -1) + 1
-  );
-}
-
-const KINDS = ["meetings", "buffers", "habits"] as const;
-
-/**
- * SCH-71: the rank of a new flexible meeting, buffer or habit. It goes after the
- * last automation of its level whose kind comes at or before its own (meeting,
- * buffer, habit), else to the top; the automations after it move down one.
- */
-export function insertRank(
-  db: Db,
-  table: (typeof KINDS)[number],
-  userId: string,
-  lvl: number,
-): number {
-  const rows = KINDS.flatMap((t, kind) =>
-    all<{ id: string; rank: number; created_at: number }>(
-      db,
-      `SELECT id, rank, created_at FROM ${t} WHERE user_id = ? AND level = ?`,
-      userId,
-      lvl,
-    ).map((r) => ({ ...r, table: t, kind })),
-  ).sort(
-    (a, b) =>
-      a.rank - b.rank || a.kind - b.kind || a.created_at - b.created_at || a.id.localeCompare(b.id),
-  );
-  const kind = KINDS.indexOf(table);
-  const at = rows.findLastIndex((r) => r.kind <= kind) + 1;
-  rows.forEach((r, i) => {
-    const rank = i < at ? i : i + 1;
-    if (r.rank !== rank) run(db, `UPDATE ${r.table} SET rank = ? WHERE id = ?`, rank, r.id);
-  });
-  return at;
 }
 
 export interface TaskRow {
@@ -509,41 +461,44 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
     const es = newEventSettings(db, user.id, "habit", body.eventSettings, {
       personal: personalHours(user.id, hours),
     });
-    run(
-      db,
-      `INSERT INTO habits (id, user_id, title, notes, enabled, level, rank, hours_set_id, ideal_minute, min_minutes,
+    // The rank shift and the insert are one change (SCH-71).
+    tx(db, () =>
+      run(
+        db,
+        `INSERT INTO habits (id, user_id, title, notes, enabled, level, rank, hours_set_id, ideal_minute, min_minutes,
          max_minutes, frequency, starting, defense, when_unplaceable, reserved_words, created_at, rules_changed_at,
          event_settings, template_id)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      id,
-      user.id,
-      body.title,
-      body.notes ?? "",
-      body.enabled === false ? 0 : 1,
-      lvl,
-      insertRank(db, "habits", user.id, lvl),
-      hours,
-      ideal,
-      body.minMinutes,
-      body.maxMinutes,
-      JSON.stringify(
-        body.frequency
-          ? withAnchor(
-              body.frequency,
-              null,
-              body.starting ?? null,
-              utcToLocal(user.time_zone, t).date,
-            )
-          : { period: "daily" },
+        id,
+        user.id,
+        body.title,
+        body.notes ?? "",
+        body.enabled === false ? 0 : 1,
+        lvl,
+        insertRank(db, "habit", user.id, lvl),
+        hours,
+        ideal,
+        body.minMinutes,
+        body.maxMinutes,
+        JSON.stringify(
+          body.frequency
+            ? withAnchor(
+                body.frequency,
+                null,
+                body.starting ?? null,
+                utcToLocal(user.time_zone, t).date,
+              )
+            : { period: "daily" },
+        ),
+        body.starting ?? null,
+        body.defense ?? "adaptive",
+        body.whenUnplaceable ?? "keep_as_conflict",
+        JSON.stringify(body.reservedWords ?? []),
+        t,
+        t,
+        JSON.stringify(es),
+        body.templateId ?? null,
       ),
-      body.starting ?? null,
-      body.defense ?? "adaptive",
-      body.whenUnplaceable ?? "keep_as_conflict",
-      JSON.stringify(body.reservedWords ?? []),
-      t,
-      t,
-      JSON.stringify(es),
-      body.templateId ?? null,
     );
     changed(user.id);
     return c.json({ habit: habitRow(id) }, 201);
@@ -626,7 +581,7 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
       JSON.stringify(es),
       // A new priority puts the habit at the end of its new group (automations-overview rule 7).
       body.level !== undefined && body.level !== cur.level
-        ? nextRank(db, "habits", user.id, body.level)
+        ? endRank(db, user.id, body.level)
         : cur.rank,
       id,
     );
@@ -709,27 +664,29 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
     const es = newEventSettings(db, user.id, "buffer", b.eventSettings, {
       travel: Boolean(b.filter?.travel || b.filter?.flight),
     });
-    run(
-      db,
-      `INSERT INTO buffers (id, user_id, title, enabled, level, rank, side, minutes_before, minutes_after, busy, filter,
+    tx(db, () =>
+      run(
+        db,
+        `INSERT INTO buffers (id, user_id, title, enabled, level, rank, side, minutes_before, minutes_after, busy, filter,
          on_conflict, created_at, rules_changed_at, event_settings, template_id)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      id,
-      user.id,
-      b.title,
-      b.enabled === false ? 0 : 1,
-      lvl,
-      insertRank(db, "buffers", user.id, lvl),
-      b.side,
-      b.minutesBefore ?? (b.side === "after" ? 0 : 15),
-      b.minutesAfter ?? (b.side === "before" ? 0 : 15),
-      b.busy === false ? 0 : 1,
-      JSON.stringify(b.filter ?? {}),
-      b.onConflict ?? "remove",
-      t,
-      t,
-      JSON.stringify(es),
-      b.templateId ?? null,
+        id,
+        user.id,
+        b.title,
+        b.enabled === false ? 0 : 1,
+        lvl,
+        insertRank(db, "buffer", user.id, lvl),
+        b.side,
+        b.minutesBefore ?? (b.side === "after" ? 0 : 15),
+        b.minutesAfter ?? (b.side === "before" ? 0 : 15),
+        b.busy === false ? 0 : 1,
+        JSON.stringify(b.filter ?? {}),
+        b.onConflict ?? "remove",
+        t,
+        t,
+        JSON.stringify(es),
+        b.templateId ?? null,
+      ),
     );
     if (b.calendarScope) {
       run(db, "UPDATE buffers SET calendar_scope = ? WHERE id = ?", b.calendarScope, id);
@@ -764,9 +721,7 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
       b.title ?? cur.title,
       b.enabled === undefined ? cur.enabled : b.enabled ? 1 : 0,
       b.level ?? cur.level,
-      b.level !== undefined && b.level !== cur.level
-        ? nextRank(db, "buffers", user.id, b.level)
-        : cur.rank,
+      b.level !== undefined && b.level !== cur.level ? endRank(db, user.id, b.level) : cur.rank,
       side,
       side === "after" ? 0 : (b.minutesBefore ?? (cur.minutes_before || 15)),
       side === "before" ? 0 : (b.minutesAfter ?? (cur.minutes_after || 15)),

@@ -14,11 +14,13 @@
 //   automation of the same or an earlier kind (kind order test)
 // - tasks of one level go in creation order instead of by due date, then
 //   more remaining minutes, then the older task (task key test)
+// - a buffer moved to another level lands before the habits there instead of
+//   at the end of the level (level change test)
 // - the occurrences of one habit are placed in another order than their
 //   dates (one item test)
 import type { Page } from "@playwright/test";
 import { day, span, week } from "./automation-helpers.ts";
-import { create, group, names, openAutomations, save } from "./automation-list-helpers.ts";
+import { create, edit, group, names, openAutomations, save } from "./automation-list-helpers.ts";
 import {
   at,
   BACKEND,
@@ -26,6 +28,7 @@ import {
   type CalendarDriver,
   eventually,
   expect,
+  planNow,
   test,
 } from "./fixtures.ts";
 import {
@@ -75,13 +78,21 @@ async function addMeeting(
   await expect(page.locator(`[data-meeting-title="${m.title}"]`)).toBeVisible();
 }
 
-/** A 60-minute recovery buffer after meetings with other people. */
-async function addBuffer(page: Page, title: string, level: 1 | 2 | 3 | 4) {
+/** A recovery buffer after (or before) meetings with other people, 60 minutes by default. */
+async function addBuffer(
+  page: Page,
+  title: string,
+  level: 1 | 2 | 3 | 4,
+  side: "After" | "Before" = "After",
+  minutes = 60,
+) {
   const form = await create(page, "Buffer");
   await form.getByLabel("Title").fill(title);
   await form.getByLabel("Priority").selectOption({ label: LEVEL[level] });
-  await form.getByLabel("Side").selectOption({ label: "After" });
-  await form.getByLabel("After the event (minutes)").fill("60");
+  await form.getByLabel("Side").selectOption({ label: side });
+  await form
+    .getByLabel(side === "After" ? "After the event (minutes)" : "Before the event (minutes)")
+    .fill(String(minutes));
   await form.getByLabel("Which events").selectOption({ label: "Meetings with other people" });
   await save(form);
 }
@@ -459,5 +470,62 @@ test("the occurrences of one habit are placed in date order: Monday's takes the 
   await eventually(() => week(cal), check);
   await page.reload();
   await expect(page.locator('[data-habit-title="AT-Weekly"]')).toBeVisible();
+  check(await week(cal));
+});
+
+test("a buffer moved to another level goes to the end of that level, after its habits (automations-overview rule 7)", async ({
+  page,
+  cal,
+  signIn,
+}) => {
+  await blockUntil(cal, W);
+  const wed = day(2);
+  // Only Wednesday 13:00 to 14:00 is free, after a meeting with a guest.
+  for (const d of [W, day(1), day(3), day(4)])
+    await cal.addEvent({ title: "E2E busy", start: at(d, "09:00"), end: at(d, "17:00") });
+  await cal.addEvent({ title: "E2E busy", start: at(wed, "09:00"), end: at(wed, "12:00") });
+  await cal.addEvent({
+    title: "AT-Call",
+    start: at(wed, "12:00"),
+    end: at(wed, "13:00"),
+    attendees: ["ana@example.com"],
+  });
+  await cal.addEvent({ title: "E2E busy", start: at(wed, "14:00"), end: at(wed, "17:00") });
+  await signIn();
+
+  // P2 holds a buffer, then a habit; a P3 buffer wants the habit's hour.
+  await addBuffer(page, "AT-Prep", 2, "Before", 15);
+  await addHabit(page, {
+    title: "AT-Habit",
+    ideal: "13:00",
+    min: 60,
+    max: 60,
+    level: 2,
+    days: ["Wed"],
+    noRoom: "Remove that day",
+  });
+  await addBuffer(page, "AT-Moved", 3);
+  await eventually(
+    () => week(cal),
+    (l) => {
+      expect(inWeek(l, "AT-Habit")).toEqual([`${wed} 13:00-14:00`]);
+      expect(inWeek(l, "AT-Moved")).toEqual([]);
+    },
+  );
+
+  const moved = await edit(page, "AT-Moved");
+  await moved.getByLabel("Priority").selectOption({ label: LEVEL[2] });
+  await save(moved);
+  await expect.poll(() => names(group(page, 2))).toEqual(["AT-Prep", "AT-Habit", "AT-Moved"]);
+  await planNow(page);
+  const check = (l: Evs) => {
+    expect(inWeek(l, "AT-Habit")).toEqual([`${wed} 13:00-14:00`]);
+    expect(inWeek(l, "AT-Moved")).toEqual([]);
+  };
+  await eventually(() => week(cal), check);
+  await page.reload();
+  await openAutomations(page);
+  await expect.poll(() => names(group(page, 2))).toEqual(["AT-Prep", "AT-Habit", "AT-Moved"]);
+  await planNow(page);
   check(await week(cal));
 });

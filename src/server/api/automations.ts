@@ -200,6 +200,38 @@ export function listAutomations(db: Db, userId: string): ListedAutomation[] {
   );
 }
 
+/** One priority group in list order: the scheduler's order (rules 7, 8, 14); focus time is in P4. */
+const levelGroup = (db: Db, userId: string, level: number) =>
+  listAutomations(db, userId).filter((a) => a.level === level && a.type !== "meeting_check");
+
+/**
+ * SCH-71: the rank of a new flexible meeting, buffer or habit. Ranks are one
+ * list per level. It goes after the last automation of its level whose type
+ * comes at or before its own in AUTOMATION_TYPES, else to the top; the
+ * automations after it move down one, so a dragged order stays. The caller
+ * runs this and the insert in one transaction.
+ */
+export function insertRank(
+  db: Db,
+  type: "flexible_meeting" | "buffer" | "habit",
+  userId: string,
+  level: number,
+): number {
+  const group = levelGroup(db, userId, level);
+  const kind = AUTOMATION_TYPES.indexOf(type);
+  const at = group.findLastIndex((a) => AUTOMATION_TYPES.indexOf(a.type) <= kind) + 1;
+  group.forEach((a, i) => {
+    const rank = i < at ? i : i + 1;
+    const table = LISTED_TYPES.find((t) => t.type === a.type)?.table;
+    if (table && a.rank !== rank) run(db, `UPDATE ${table} SET rank = ? WHERE id = ?`, rank, a.id);
+  });
+  return at;
+}
+
+/** Rule 7: an automation that changes priority goes to the end of its new group. */
+export const endRank = (db: Db, userId: string, level: number): number =>
+  Math.max(-1, ...levelGroup(db, userId, level).map((a) => a.rank)) + 1;
+
 const orderInput = z.object({
   level: z.number().int().min(1).max(4),
   /** The whole group after the change, top first. */

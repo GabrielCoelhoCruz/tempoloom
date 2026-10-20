@@ -4,7 +4,7 @@
 // policy_automations. Each sync run of a member brings them in line with the
 // policies that apply now, so directory changes need no admin action (rule 3).
 import { randomUUID } from "node:crypto";
-import { insertRank } from "../api/items.ts";
+import { insertRank } from "../api/automations.ts";
 import { all, type Db, one, run, tx } from "../db.ts";
 import type { MeetingCategory, Policy } from "./model.ts";
 import { winningPolicies } from "./model.ts";
@@ -107,7 +107,7 @@ function insertItem(db: Db, userId: string, d: Desired, now: number): string | n
       id,
       userId,
       d.title,
-      insertRank(db, "buffers", userId, 3),
+      insertRank(db, "buffer", userId, 3),
       d.side,
       d.side === "before" ? d.minutes : 0,
       d.side === "after" ? d.minutes : 0,
@@ -124,7 +124,7 @@ function insertItem(db: Db, userId: string, d: Desired, now: number): string | n
       id,
       userId,
       d.title,
-      insertRank(db, "habits", userId, 3),
+      insertRank(db, "habit", userId, 3),
       hours,
       d.minutes,
       d.minutes,

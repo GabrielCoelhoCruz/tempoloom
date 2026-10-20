@@ -829,10 +829,11 @@ T.update({
     "u58_kinds": "a new automation goes after the last one of its level whose kind comes first: flexible meetings, then buffers, then habits (SCH-71)",
     "u58_task_key": "tasks of one level go by due date with no due date last, then more remaining minutes, then the older task (SCH-72, SCH-74)",
     "u58_occurrences": "the occurrences of one habit are placed in date order: Monday's takes the free day nearest to it first (SCH-73)",
+    "u58_level_move": "a buffer moved to another level goes to the end of that level, after its habits (automations-overview rule 7)",
 })
 E2E.update({
     90: ["u58_fixed", "u03_order", "s1_drag", "t_prio", "u03_urgency", "t_next", "u35_rank", "u58_nextup",
-         "u03_focus", "u58_focus", "u4_buffer_prio", "u58_kinds", "u58_task_key", "u58_occurrences", "s3_suggest"],
+         "u03_focus", "u58_focus", "u4_buffer_prio", "u58_kinds", "u58_level_move", "u58_task_key", "u58_occurrences", "s3_suggest"],
 })
 E2E_NOTES.update({
     90: ("The tests follow SCH-61 to SCH-75 in order: fixed things, levels and kinds, stack rank, due date, urgency, the "
