@@ -7,7 +7,7 @@ import { useCallback, useEffect, useState } from "preact/hooks";
 import { ApiError, api } from "../lib/api.ts";
 import { toLocalInput } from "../lib/format.ts";
 import { zone } from "../lib/state.ts";
-import { McpGuides } from "./mcp-guides.tsx";
+import { Copyable, McpGuides } from "./mcp-guides.tsx";
 
 interface Grant {
   id: string;
@@ -39,11 +39,9 @@ export function McpSection() {
       <h2>AI tools (MCP)</h2>
       <p>
         Connect an AI tool that speaks the Model Context Protocol (ChatGPT, Claude, Cursor or
-        another MCP client) with this server URL: <code>{info.url}</code>{" "}
-        <button type="button" onClick={() => void navigator.clipboard.writeText(info.url)}>
-          Copy
-        </button>
+        another MCP client) with this MCP URL:
       </p>
+      <Copyable text={info.url} testId="mcp-url" />
       <p class="status">
         The AI tool opens a Tempoloom page where you allow access. A tool without that sign-in can
         use an API key from the list above as the bearer token; delete the key to disconnect it.

@@ -10,6 +10,7 @@
 // - the Claude Code command or the Cursor mcp.json entry has the wrong form;
 // - the URL in a guide does not lead an OAuth client to this server's sign-in;
 // - the guides tell the user to click a button that the consent page does not have;
+// - Copy fails without a word where the Clipboard API is missing (plain http);
 // - a client connected with the guide's URL does not show in "Connected AI tools".
 import { addDays } from "../../src/shared/time.ts";
 import { at, BASE_URL, expect, test } from "./fixtures.ts";
@@ -48,7 +49,7 @@ test("the Account page has a setup guide for ChatGPT, Claude, Claude Code and Cu
     await expect(panel).toHaveAttribute("data-client", client);
     return panel;
   };
-  const copy = async (panel: ReturnType<typeof page.getByRole>, testId: string) => {
+  const copy = async (panel: ReturnType<typeof page.getByTestId>, testId: string) => {
     await page.evaluate(() => navigator.clipboard.writeText(""));
     const box = panel.getByTestId(testId);
     await box.getByRole("button", { name: "Copy" }).click();
@@ -59,19 +60,24 @@ test("the Account page has a setup guide for ChatGPT, Claude, Claude Code and Cu
     };
   };
 
+  // Rule 10: the page shows this server's MCP URL once, with Copy.
+  const section = page.getByTestId("mcp-section");
+  await expect(section.getByTestId("mcp-url")).toHaveCount(1);
+  expect(await copy(section, "mcp-url")).toEqual({ shown: MCP_URL, copied: MCP_URL });
+
   // ChatGPT (rules 10, 11): a custom connector with this URL, OAuth, then Disconnect.
   const chatgpt = await open("ChatGPT");
-  const url = await copy(chatgpt, "guide-url");
-  expect(url).toEqual({ shown: MCP_URL, copied: MCP_URL });
+  await expect(chatgpt.getByTestId("guide-steps")).toContainText("MCP URL above");
   await expect(chatgpt).toContainText("custom connector");
   await expect(chatgpt).toContainText("ChatGPT plan");
   await expect(chatgpt).toContainText("Allow access");
   await expect(chatgpt).toContainText("connected apps");
   await expect(chatgpt).toContainText("Disconnect");
+  for (const line of TROUBLE)
+    await expect(chatgpt.getByTestId("guide-trouble")).toContainText(line);
 
   // Claude Desktop and the Claude web app (rules 12, 15, 16).
   const claude = await open("Claude");
-  expect(await copy(claude, "guide-url")).toEqual({ shown: MCP_URL, copied: MCP_URL });
   const steps = claude.getByTestId("guide-steps").locator("li");
   await expect(steps.nth(0)).toContainText("Settings");
   await expect(steps.nth(0)).toContainText("connectors");
@@ -90,6 +96,7 @@ test("the Account page has a setup guide for ChatGPT, Claude, Claude Code and Cu
     shown: `claude mcp add tempoloom -t http ${MCP_URL}`,
     copied: `claude mcp add tempoloom -t http ${MCP_URL}`,
   });
+  await expect(code.getByTestId("guide-steps")).toContainText("Restart Claude Code");
   await expect(code).toContainText("claude mcp list");
   await expect(code).toContainText("claude mcp remove tempoloom");
   await expect(code).toContainText("Allow access");
@@ -113,6 +120,12 @@ test("the Account page has a setup guide for ChatGPT, Claude, Claude Code and Cu
   await expect(cursorTrouble).toContainText("Authenticate again");
   await expect(cursor).toContainText("delete the tempoloom entry");
 
+  // Other MCP clients (rule 21): the same URL, with OAuth or an API key.
+  const other = await open("Other MCP clients");
+  await expect(other).toContainText(`MCP URL above: ${MCP_URL}`);
+  await expect(other).toContainText("Allow access");
+  await expect(other).toContainText("API key");
+
   // The guide's URL is this server's MCP endpoint: without a token it answers 401
   // and names its OAuth metadata, which leads to this server's consent page.
   const guideUrl = entry.mcpServers.tempoloom.url;
@@ -133,8 +146,8 @@ test("the Account page has a setup guide for ChatGPT, Claude, Claude Code and Cu
   expect(server.authorization_endpoint).toBe(`${BASE_URL}/oauth/authorize`);
   expect(server.code_challenge_methods_supported).toEqual(["S256"]);
 
-  // The steps' "Allow access" is the consent page's button: a client that follows
-  // them connects and reads the calendar.
+  // The steps' "Allow access" is the consent page's button: an OAuth client at
+  // that URL (equal to the guide's, checked above) connects and reads the calendar.
   const client = await oauthConnect(page, "Cursor");
   const read = await client.tool<{ events: { title: string }[] }>("list_events", {
     start: new Date(at(tue, "00:00")).toISOString(),
@@ -144,11 +157,17 @@ test("the Account page has a setup guide for ChatGPT, Claude, Claude Code and Cu
 
   // After a reload the guides still give the same URL, and the client shows as connected.
   await page.goto("/account");
-  await page.reload();
   await expect(page.getByTestId("oauth-grants").locator('[data-grant="Cursor"]')).toBeVisible();
   const again = await open("Cursor");
   expect(
     JSON.parse((await again.getByTestId("guide-json").locator("pre").innerText()).trim()),
   ).toEqual(entry);
-  await expect(page.getByTestId("mcp-guides")).toContainText("Connected AI tools");
+  await expect(again).toContainText("Connected AI tools");
+
+  // Without the Clipboard API (plain http on a LAN host), Copy selects the text and says so.
+  await page.evaluate(() => Object.defineProperty(navigator, "clipboard", { value: undefined }));
+  const urlBox = page.getByTestId("mcp-url");
+  await urlBox.getByRole("button", { name: "Copy" }).click();
+  await expect(urlBox.getByRole("alert")).toContainText("Copy failed");
+  expect(await page.evaluate(() => window.getSelection()?.toString())).toBe(MCP_URL);
 });

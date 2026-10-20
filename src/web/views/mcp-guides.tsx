@@ -1,23 +1,53 @@
 // Setup guides per AI tool on the Account page (docs/specs/integrations-ai-tools.md
-// rules 10-13, 15-21): the MCP URL of this server with Copy, the client's steps,
-// the OAuth sign-in, troubleshooting and how to disconnect.
+// rules 10-13, 15-21): the client's steps with the MCP URL of this server, the
+// OAuth sign-in, troubleshooting and how to disconnect. Steps that the spec does
+// not give for a client are not invented; Tempoloom's own text is the sign-in on
+// the consent page and the troubleshooting list.
 import type { ComponentChildren } from "preact";
-import { useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 
-function Copyable(props: { text: string; testId: string; block?: boolean }) {
-  const [copied, setCopied] = useState(false);
-  const copy = () =>
-    void navigator.clipboard.writeText(props.text).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    });
+/**
+ * A text with a Copy button. Where the Clipboard API is missing (plain http on a
+ * host other than localhost) or refused, the text is selected and a message asks
+ * the user to copy it by hand.
+ */
+export function Copyable(props: { text: string; testId: string; block?: boolean }) {
+  const [state, setState] = useState<"copied" | "failed" | null>(null);
+  const textRef = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    if (state !== "copied") return;
+    const t = setTimeout(() => setState(null), 2000);
+    return () => clearTimeout(t);
+  }, [state]);
+  const failed = () => {
+    const el = textRef.current;
+    const sel = window.getSelection();
+    if (el && sel) {
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      sel.removeAllRanges();
+      sel.addRange(range);
+    }
+    setState("failed");
+  };
+  const copy = () => {
+    const done = navigator.clipboard?.writeText(props.text);
+    if (!done) return failed();
+    void done.then(() => setState("copied"), failed);
+  };
   return (
     <div class="copyable" data-testid={props.testId}>
-      {props.block ? <pre>{props.text}</pre> : <code>{props.text}</code>}{" "}
+      <span ref={textRef}>{props.block ? <pre>{props.text}</pre> : <code>{props.text}</code>}</span>{" "}
       <button type="button" onClick={copy}>
         Copy
       </button>
-      {copied && <span class="meta"> Copied</span>}
+      {state === "copied" && <span class="meta"> Copied</span>}
+      {state === "failed" && (
+        <span class="error" role="alert">
+          {" "}
+          Copy failed: the text is selected, copy it with your keyboard.
+        </span>
+      )}
     </div>
   );
 }
@@ -55,14 +85,10 @@ function Guide(props: { client: Client; url: string }) {
         <>
           <ol data-testid="guide-steps">
             <li>
-              In ChatGPT, open Settings, then the apps or connectors section. A custom connector
-              needs a ChatGPT plan that allows it.
+              In ChatGPT, add a custom connector with the MCP URL above. Your ChatGPT plan must
+              allow custom connectors.
             </li>
-            <li>Add a custom connector and name it, for example "Tempoloom".</li>
-            <li>
-              Enter this MCP URL: <Copyable text={url} testId="guide-url" />
-            </li>
-            <li>Connect. {SIGN_IN}</li>
+            <li>Complete the OAuth sign-in in the browser. {SIGN_IN}</li>
             <li>{LISTED}</li>
           </ol>
           <Trouble app="ChatGPT" url={url} />
@@ -78,9 +104,7 @@ function Guide(props: { client: Client; url: string }) {
           <ol data-testid="guide-steps">
             <li>Open Settings, then the connectors section.</li>
             <li>Add a custom connector and name it, for example "Tempoloom".</li>
-            <li>
-              Enter the MCP URL: <Copyable text={url} testId="guide-url" />
-            </li>
+            <li>Enter the MCP URL above.</li>
             <li>Complete the OAuth sign-in in the browser. {SIGN_IN}</li>
             <li>
               Grant the tool permissions in Claude. Set tools that create or change events to "needs
@@ -103,8 +127,7 @@ function Guide(props: { client: Client; url: string }) {
             </li>
             <li>Restart Claude Code.</li>
             <li>
-              Open the MCP server list (<code>/mcp</code>), select tempoloom and authenticate in the
-              browser. {SIGN_IN}
+              Open the MCP server list, select tempoloom and authenticate in the browser. {SIGN_IN}
             </li>
             <li>
               <code>claude mcp list</code> shows the server as connected. {LISTED}
@@ -162,8 +185,8 @@ function Guide(props: { client: Client; url: string }) {
       return (
         <>
           <p>
-            Any client that supports remote MCP servers over HTTP with OAuth can use this URL:{" "}
-            <Copyable text={url} testId="guide-url" />
+            Any client that supports remote MCP servers with OAuth can use the MCP URL above:{" "}
+            <code>{url}</code>.
           </p>
           <p>
             The setup steps depend on the client. {SIGN_IN} A client without OAuth can use a
@@ -173,6 +196,9 @@ function Guide(props: { client: Client; url: string }) {
       );
   }
 }
+
+const PANEL = "mcp-guide-panel";
+const tabId = (c: Client) => `mcp-guide-${c.toLowerCase().replace(/ /g, "-")}`;
 
 export function McpGuides(props: { url: string }) {
   const [client, setClient] = useState<Client>("ChatGPT");
@@ -185,6 +211,8 @@ export function McpGuides(props: { url: string }) {
             type="button"
             role="tab"
             key={c}
+            id={tabId(c)}
+            aria-controls={PANEL}
             aria-selected={client === c}
             class={client === c ? "primary" : ""}
             onClick={() => setClient(c)}
@@ -193,7 +221,7 @@ export function McpGuides(props: { url: string }) {
           </button>
         ))}
       </div>
-      <div role="tabpanel" aria-label={client} data-client={client}>
+      <div role="tabpanel" id={PANEL} aria-labelledby={tabId(client)} data-client={client}>
         <Guide client={client} url={props.url} />
       </div>
     </div>

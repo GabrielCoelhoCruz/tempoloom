@@ -1263,8 +1263,9 @@ BLOCKED[952] = "Needs the Cursor app and a Cursor account to add the mcp.json en
 # --- U57: setup guides per AI tool on the Account page ---
 T["u57_guides"] = "the Account page has a setup guide for ChatGPT, Claude, Claude Code and Cursor with this server's MCP URL, the sign-in steps and troubleshooting, and the URL connects (integrations-ai-tools rules 10-13, 15-20)"
 E2E[700] = ["u57_guides"]
-E2E_NOTES[700] = ("A tab per client (ChatGPT, Claude, Claude Code, Cursor, other MCP clients) with the MCP URL and Copy, the claude mcp add "
-                  "command, the Cursor mcp.json entry, the OAuth steps, troubleshooting and disconnect. The E2E checks the clipboard, "
+E2E_NOTES[700] = ("The MCP URL with Copy (a visible fallback when the browser gives no clipboard), and a tab per client (ChatGPT, Claude, "
+                  "Claude Code, Cursor, other MCP clients) with the claude mcp add command, the Cursor mcp.json entry, the OAuth steps, "
+                  "troubleshooting and disconnect. The E2E opens every tab, checks the clipboard, "
                   "that the URL leads to this server's OAuth metadata and consent page, and connects a client with it. The vendor apps "
                   "themselves are rows 948 to 952")
 BLOCKED[949] = ("Needs a Claude account (Claude Desktop or the Claude web app) to add a custom connector; " + _SERVER
