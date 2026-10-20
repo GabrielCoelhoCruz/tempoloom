@@ -1,15 +1,16 @@
 // The priorities page and the planner priorities view
 // (docs/specs/planning-priorities.md PRI-51 to PRI-53): every item with a
-// priority, and one action that moves an item to another level.
+// priority, and one action that moves an item to another level; and the
+// next-up queue (planning-next-up.md NXT-2 to NXT-10).
 import { Hono } from "hono";
 import { z } from "zod";
 import type { AppEnv } from "../app.ts";
 import { all, type Db, one, run, tx } from "../db.ts";
-import { jsonBody } from "../http.ts";
-import { meetingPeers } from "../planner/meetings.ts";
+import { jsonBody, notFound } from "../http.ts";
 import type { SyncService } from "../sync/service.ts";
-import { listAutomations } from "./automations.ts";
-import { badRequest, nextRank } from "./items.ts";
+import { taskOrderChanged } from "../task-order.ts";
+import { listAutomations, orderAutomations } from "./automations.ts";
+import { badRequest } from "./items.ts";
 
 /** The item kinds, in the order the board shows them inside one level (PRI-3). */
 export const PRIORITY_KINDS = [
@@ -134,8 +135,8 @@ export function priorityRoutes(db: Db, sync: SyncService, now: () => number): Ho
 
   /**
    * PRI-51, PRI-53: moves one item to another level. An automation goes last in
-   * its new level (PRI-2). The scheduler places the items again in the new
-   * order; for a task, every open task, so a lowered task gives its time back.
+   * its new level (PRI-2), as in the automation list (PRI-54). For a task, the
+   * scheduler places the tasks again by the rule of taskOrderChanged.
    */
   r.post("/priorities", async (c) => {
     const user = c.get("user");
@@ -150,35 +151,69 @@ export function priorityRoutes(db: Db, sync: SyncService, now: () => number): Ho
       user.id,
     );
     if (!cur) badRequest("id", "Unknown item");
-    const t = now();
     if (cur.level !== body.level) {
-      tx(db, () => {
-        if (kind === "task") {
+      if (kind === "task")
+        tx(db, () => {
+          taskOrderChanged(db, user.id, body.id, body.level > cur.level, now());
           run(db, "UPDATE tasks SET level = ? WHERE id = ?", body.level, body.id);
-          run(
-            db,
-            "UPDATE tasks SET rules_changed_at = ? WHERE user_id = ? AND status = 'open'",
-            t,
-            user.id,
-          );
-        } else if (kind === "booking_link") {
-          run(db, "UPDATE booking_links SET level = ? WHERE id = ?", body.level, body.id);
-        } else {
-          run(
-            db,
-            `UPDATE ${table} SET level = ?, rank = ?, rules_changed_at = ? WHERE id = ?`,
-            body.level,
-            nextRank(db, table as "habits" | "buffers" | "meetings", user.id, body.level),
-            t,
-            body.id,
-          );
-        }
-      });
+        });
+      else if (kind === "booking_link")
+        run(db, "UPDATE booking_links SET level = ? WHERE id = ?", body.level, body.id);
+      else {
+        const group = listAutomations(db, user.id)
+          .filter((a) => a.level === body.level && a.id !== body.id)
+          .map((a) => ({ type: a.type, id: a.id }));
+        orderAutomations(
+          db,
+          sync,
+          user.id,
+          body.level,
+          [...group, { type: kind, id: body.id }],
+          now(),
+        );
+      }
     }
     sync.request(user.id);
-    if (kind === "flexible_meeting")
-      for (const id of meetingPeers(db, user.id).attendees) sync.request(id);
     return c.json({ items: priorityItems(db, user.id) });
+  });
+
+  /**
+   * NXT-2, NXT-5, NXT-9, NXT-10: puts an open task into the next-up queue at
+   * `position` (last when omitted), or takes it out with `position: null`. The
+   * queue keeps ranks 0..n-1. The scheduler places the tasks again by the rule
+   * of taskOrderChanged, so the first entry gets the earliest time (NXT-3) and
+   * a task taken out goes back to its priority order.
+   */
+  r.post("/tasks/:id/queue", async (c) => {
+    const user = c.get("user");
+    const id = c.req.param("id");
+    const body = await jsonBody(
+      c,
+      z.object({ position: z.number().int().min(0).nullable().optional() }),
+    );
+    if (
+      !one(db, "SELECT 1 FROM tasks WHERE id = ? AND user_id = ? AND status = 'open'", id, user.id)
+    )
+      notFound("task");
+    const queued = all<{ id: string }>(
+      db,
+      `SELECT id FROM tasks WHERE user_id = ? AND status = 'open' AND next_up_rank IS NOT NULL
+       ORDER BY next_up_rank, created_at, id`,
+      user.id,
+    ).map((q) => q.id);
+    const order = queued.filter((q) => q !== id);
+    if (body.position !== null)
+      order.splice(Math.min(body.position ?? order.length, order.length), 0, id);
+    // Out of the queue is after every queue entry.
+    const place = (list: string[]) => (list.includes(id) ? list.indexOf(id) : Infinity);
+    tx(db, () => {
+      taskOrderChanged(db, user.id, id, place(order) > place(queued), now());
+      run(db, "UPDATE tasks SET next_up_rank = NULL WHERE user_id = ?", user.id);
+      for (const [rank, taskId] of order.entries())
+        run(db, "UPDATE tasks SET next_up_rank = ? WHERE id = ?", rank, taskId);
+    });
+    sync.request(user.id);
+    return c.json({ queue: order });
   });
 
   return r;

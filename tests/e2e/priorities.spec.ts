@@ -12,9 +12,14 @@
 //   must go before the P1 task).
 // - The planner view does not group by level and then by kind, the search
 //   shows other items, or Edit opens nothing that saves (planner view test).
+// - A level change moves a locked chunk (lock test).
+// - The edit form edits only some fields, or cannot save a total that is not
+//   a multiple of 15 minutes; an unknown id shows the create form with no
+//   message (edit form test).
 import type { Locator, Page } from "@playwright/test";
-import { blockUntil, eventually, expect, local, test } from "./fixtures.ts";
-import { addHabit, addTask, allEvents, titled, W } from "./helpers.ts";
+import { addDays } from "../../src/shared/time.ts";
+import { at, blockUntil, eventually, expect, local, test } from "./fixtures.ts";
+import { addHabit, addTask, allEvents, openWeek, titled, W } from "./helpers.ts";
 
 const titles = (area: Locator) =>
   area
@@ -184,4 +189,141 @@ test("the planner priorities view groups items by level and kind, with a level m
       expect((ev?.end ?? 0) - (ev?.start ?? 0)).toBe(90 * 60_000);
     },
   );
+});
+
+test("a level change on the priorities page leaves a locked task chunk in place (NXT-4, PRI-13)", async ({
+  page,
+  cal,
+  signIn,
+}) => {
+  await blockUntil(cal, W);
+  await signIn();
+  const task = { minutes: 60, split: false, due: "" } as const;
+  await addTask(page, { ...task, title: "PL-Other", level: 2 });
+  await addTask(page, { ...task, title: "PL-Locked", level: 3 });
+  expect(await calendarOrder(cal, "PL-", ["PL-Other", "PL-Locked"])).toBe(`${W} 09:00`);
+  // A move in the calendar locks the chunk there (CED-1).
+  const tue = addDays(W, 1);
+  const [chunk] = titled(await allEvents(cal), "PL-Locked");
+  if (!chunk) throw new Error("no chunk");
+  await cal.update(chunk.id, { start: at(tue, "15:00"), end: at(tue, "16:00") });
+  await eventually(
+    () => allEvents(cal),
+    (l) => expect(titled(l, "PL-Locked")[0]?.summary).toBe("🔒 PL-Locked"),
+  );
+
+  await page.getByRole("link", { name: "Priorities" }).click();
+  // Down: every open task is placed again. Up: the locked task would want 09:00.
+  await saved(page, /^\/api\/priorities$/, () =>
+    item(page, "PL-Other").getByLabel("Priority").selectOption({ label: "P4 low" }),
+  );
+  await saved(page, /^\/api\/priorities$/, () =>
+    item(page, "PL-Locked").getByLabel("Priority").selectOption({ label: "P1 critical" }),
+  );
+  const evs = titled(await allEvents(cal), "PL-");
+  expect(evs.map((e) => `${e.summary} ${local(e.start)}`)).toEqual([
+    `○ PL-Other ${W} 09:00`,
+    `🔒 PL-Locked ${tue} 15:00`,
+  ]);
+  await openWeek(page);
+  await expect(page.locator(".ev-task.ev-locked", { hasText: "PL-Locked" })).toBeVisible();
+});
+
+test("the task edit form edits every field and saves a total that is not a multiple of 15 minutes (PRI-50, PRI-53)", async ({
+  page,
+  app,
+  cal,
+  signIn,
+}) => {
+  await blockUntil(cal, W);
+  await signIn();
+  // A default of 50 minutes gives a task whose total is not a multiple of 15.
+  await page.evaluate(async () => {
+    const json = { "content-type": "application/json" };
+    const s = await fetch("/api/settings", {
+      method: "PATCH",
+      headers: json,
+      body: JSON.stringify({ taskDefaults: { minutes: 50, splitUp: false } }),
+    });
+    if (!s.ok) throw new Error(await s.text());
+    const t = await fetch("/api/tasks", {
+      method: "POST",
+      headers: json,
+      body: JSON.stringify({ title: "PF-Odd", dueAt: null }),
+    });
+    if (!t.ok) throw new Error(await t.text());
+    await fetch("/api/planner/sync", { method: "POST" });
+  });
+  const [{ id }] = app.query<{ id: string }>("SELECT id FROM tasks WHERE title = 'PF-Odd'") as [
+    { id: string },
+  ];
+  await eventually(
+    () => allEvents(cal),
+    (l) => {
+      const [ev] = titled(l, "PF-Odd");
+      expect((ev?.end ?? 0) - (ev?.start ?? 0)).toBe(50 * 60_000);
+    },
+  );
+
+  await page.goto(`/tasks?edit=${id}`);
+  const form = page.getByTestId("task-edit");
+  await expect(form.getByLabel("Title")).toHaveValue("PF-Odd");
+  await expect(form.getByLabel("Duration (minutes)")).toHaveValue("50");
+  await expect(form.getByLabel("Split into chunks")).toHaveValue("no");
+  await form.getByLabel("Title").fill("PF-Renamed");
+  await form.getByLabel("Notes").fill("PF notes");
+  await form.getByLabel("Priority").selectOption("3");
+  await form.getByLabel("Due").fill(`${addDays(W, 4)}T17:00`);
+  await form.getByLabel("Hours").selectOption({ label: "Personal hours" });
+  await form.getByLabel("Color").selectOption({ label: "Calendar color" });
+  await form.getByLabel(/Next up/).check();
+  const patched = page.waitForResponse(
+    (r) => r.request().method() === "PATCH" && new URL(r.url()).pathname === `/api/tasks/${id}`,
+  );
+  const queued = page.waitForResponse(
+    (r) =>
+      r.request().method() === "POST" && new URL(r.url()).pathname === `/api/tasks/${id}/queue`,
+  );
+  await form.getByRole("button", { name: "Save" }).click();
+  expect((await patched).ok()).toBe(true);
+  expect((await queued).ok()).toBe(true);
+  await expect(form).toBeHidden();
+  await expect
+    .poll(() =>
+      app.query(
+        `SELECT t.title, t.notes, t.level, t.total_minutes, t.color, t.next_up_rank, h.kind
+         FROM tasks t JOIN hours_sets h ON h.id = t.hours_set_id WHERE t.id = ?`,
+        id,
+      ),
+    )
+    .toEqual([
+      {
+        title: "PF-Renamed",
+        notes: "PF notes",
+        level: 3,
+        total_minutes: 50,
+        color: "calendar_default",
+        next_up_rank: 0,
+        kind: "personal",
+      },
+    ]);
+  await eventually(
+    () => allEvents(cal),
+    (l) => {
+      const [ev] = titled(l, "PF-Renamed");
+      expect((ev?.end ?? 0) - (ev?.start ?? 0)).toBe(50 * 60_000);
+    },
+  );
+
+  // Reload: the edit form shows the saved values.
+  await page.goto(`/tasks?edit=${id}`);
+  await expect(form.getByLabel("Title")).toHaveValue("PF-Renamed");
+  await expect(form.getByLabel("Notes")).toHaveValue("PF notes");
+  await expect(form.getByLabel("Due")).toHaveValue(`${addDays(W, 4)}T17:00`);
+  await expect(form.getByLabel("Hours")).toHaveValue(/.+/);
+  await expect(form.getByLabel(/Next up/)).toBeChecked();
+
+  // An id that is not an open task shows a message, not a silent create form.
+  await page.goto("/tasks?edit=no-such-task");
+  await expect(page.getByTestId("edit-missing")).toBeVisible();
 });

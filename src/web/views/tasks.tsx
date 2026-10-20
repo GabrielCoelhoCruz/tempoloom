@@ -14,13 +14,7 @@ const TimerDialog = lazyComponent<{ onClose: () => void }>(() =>
   import("./timer-dialog.tsx").then((m) => m.TimerDialog),
 );
 
-interface Task {
-  id: string;
-  title: string;
-  level: number;
-  total_minutes: number;
-  due_at: number | null;
-  next_up_rank: number | null;
+interface Task extends TaskFields {
   state: string;
   scheduledMinutes: number;
   remainingMinutes: number;
@@ -49,78 +43,152 @@ const errorText = (err: unknown) => {
   );
 };
 
+/** The stored fields of one task, as GET /api/tasks returns them. */
+interface TaskFields {
+  id: string;
+  title: string;
+  notes: string;
+  level: number;
+  total_minutes: number;
+  min_chunk_minutes: number;
+  max_chunk_minutes: number;
+  start_after: number;
+  due_at: number | null;
+  hours_set_id: string;
+  next_up_rank: number | null;
+  color: string;
+}
+
 /**
- * The task creation form, on the tasks page and in the New task dialog
- * (planning-tasks.md TSK-1 to TSK-6). `onSaved` gets the new task's title.
+ * The task form, on the tasks page and in the New task dialog
+ * (planning-tasks.md TSK-1 to TSK-6). With `task` it is the edit form of that
+ * task (PRI-50, PRI-53): it starts with the task's values and saves only the
+ * fields the user changed. `onSaved` gets the task's title.
  */
 export function TaskForm({
+  task,
   onSaved,
+  onCancel,
   children,
 }: {
+  task?: TaskFields;
   onSaved: (title: string) => unknown;
+  onCancel?: () => unknown;
   children?: ComponentChildren;
 }) {
   const z = zone();
   const d = me.value?.settings.taskDefaults;
   const [hours, setHours] = useState<HoursChoice[]>([]);
-  const [split, setSplit] = useState(d?.splitUp ?? true);
+  const [split, setSplit] = useState(
+    task ? task.min_chunk_minutes !== task.max_chunk_minutes : (d?.splitUp ?? true),
+  );
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     void api<{ hours: HoursChoice[] }>("GET", "/api/hours").then((h) => setHours(h.hours));
   }, []);
+  const work = hours.find((h) => h.kind === "work");
+  // The hours menu shows work hours as "".
+  const hoursSet = task && task.hours_set_id !== work?.id ? task.hours_set_id : "";
+  // The first value of each field; an edit sends only the fields that differ.
+  const initial: Record<string, string> = task
+    ? {
+        title: task.title,
+        notes: task.notes,
+        minutes: String(task.total_minutes),
+        level: String(task.level),
+        due: task.due_at === null ? "" : toLocalInput(z, task.due_at),
+        startAfter: toLocalInput(z, task.start_after),
+        hoursSetId: hoursSet,
+        splitUp: task.min_chunk_minutes !== task.max_chunk_minutes ? "yes" : "no",
+        minChunk: String(task.min_chunk_minutes),
+        maxChunk: String(task.max_chunk_minutes),
+        nextUp: task.next_up_rank === null ? "" : "on",
+        taskColor: task.color,
+      }
+    : {
+        minutes: String(d?.minutes ?? 60),
+        level: String(d?.level ?? 2),
+        due: d?.dueInDays == null ? "" : toLocalInput(z, addLocalDays(Date.now(), d.dueInDays, z)),
+        minChunk: String(d?.minChunkMinutes ?? 30),
+        maxChunk: String(d?.maxChunkMinutes ?? 120),
+        taskColor: "category",
+      };
 
-  const create = (e: Event) => {
+  const submit = (e: Event) => {
     e.preventDefault();
     const formEl = e.currentTarget as HTMLFormElement;
     const f = new FormData(formEl);
     const text = (k: string) => String(f.get(k) ?? "");
     const num = (k: string) => Number(f.get(k));
+    const edited = (k: string) => text(k) !== (initial[k] ?? "");
     setError(null);
     void (async () => {
-      await api("POST", "/api/tasks", {
-        title: text("title"),
-        ...(text("notes") ? { notes: text("notes") } : {}),
-        minutes: num("minutes"),
-        level: num("level"),
-        splitUp: split,
-        ...(split ? { minChunkMinutes: num("minChunk"), maxChunkMinutes: num("maxChunk") } : {}),
-        dueAt: text("due") ? fromLocalInput(z, text("due")) : null,
-        ...(text("startAfter") ? { startAfter: fromLocalInput(z, text("startAfter")) } : {}),
-        ...(text("hoursSetId") ? { hoursSetId: text("hoursSetId") } : {}),
-        nextUp: f.get("nextUp") === "on",
-        color: text("taskColor"),
-      });
-      // Clear the title before the plan runs, and only if it still holds this
-      // task: the user may have typed the next title already.
-      const title = formEl.elements.namedItem("title") as HTMLInputElement | null;
-      if (title && title.value === text("title")) title.value = "";
+      if (task) {
+        const chunks = split && (edited("splitUp") || edited("minChunk") || edited("maxChunk"));
+        await api("PATCH", `/api/tasks/${task.id}`, {
+          ...(edited("title") ? { title: text("title") } : {}),
+          ...(edited("notes") ? { notes: text("notes") } : {}),
+          ...(edited("minutes") ? { minutes: num("minutes") } : {}),
+          ...(edited("level") ? { level: num("level") } : {}),
+          ...(edited("splitUp") ? { splitUp: split } : {}),
+          ...(chunks ? { minChunkMinutes: num("minChunk"), maxChunkMinutes: num("maxChunk") } : {}),
+          ...(edited("due") ? { dueAt: text("due") ? fromLocalInput(z, text("due")) : null } : {}),
+          ...(edited("startAfter") && text("startAfter")
+            ? { startAfter: fromLocalInput(z, text("startAfter")) }
+            : {}),
+          ...(edited("hoursSetId") ? { hoursSetId: text("hoursSetId") || work?.id } : {}),
+          ...(edited("taskColor") ? { color: text("taskColor") } : {}),
+        });
+        if (edited("nextUp"))
+          await api(
+            "POST",
+            `/api/tasks/${task.id}/queue`,
+            text("nextUp") === "on" ? {} : { position: null },
+          );
+      } else {
+        await api("POST", "/api/tasks", {
+          title: text("title"),
+          ...(text("notes") ? { notes: text("notes") } : {}),
+          minutes: num("minutes"),
+          level: num("level"),
+          splitUp: split,
+          ...(split ? { minChunkMinutes: num("minChunk"), maxChunkMinutes: num("maxChunk") } : {}),
+          dueAt: text("due") ? fromLocalInput(z, text("due")) : null,
+          ...(text("startAfter") ? { startAfter: fromLocalInput(z, text("startAfter")) } : {}),
+          ...(text("hoursSetId") ? { hoursSetId: text("hoursSetId") } : {}),
+          nextUp: f.get("nextUp") === "on",
+          color: text("taskColor"),
+        });
+        // Clear the title before the plan runs, and only if it still holds this
+        // task: the user may have typed the next title already.
+        const title = formEl.elements.namedItem("title") as HTMLInputElement | null;
+        if (title && title.value === text("title")) title.value = "";
+      }
       await planNow();
       await onSaved(text("title"));
     })().catch((err) => setError(errorText(err)));
   };
 
+  // A new task takes whole quarters of an hour; an edit keeps a stored total
+  // that is not one (a default of 50 minutes) unless the user changes it.
+  const step = task ? 1 : 15;
   return (
     <>
-      <form class="form" onSubmit={create} data-testid="task-form">
+      <form class="form" onSubmit={submit} data-testid={task ? "task-edit" : "task-form"}>
+        {task && <h2 class="wide">Edit task</h2>}
         <label class="wide">
           Title
-          <input name="title" required maxLength={255} />
+          <input name="title" required maxLength={255} defaultValue={initial.title ?? ""} />
         </label>
         <label>
           Duration (minutes)
-          <input
-            name="minutes"
-            type="number"
-            min={15}
-            step={15}
-            defaultValue={String(d?.minutes ?? 60)}
-          />
+          <input name="minutes" type="number" min={15} step={step} defaultValue={initial.minutes} />
         </label>
         <label>
           Priority
           <select name="level">
             {[1, 2, 3, 4].map((l) => (
-              <option value={l} key={l} selected={l === (d?.level ?? 2)}>
+              <option value={l} key={l} selected={String(l) === initial.level}>
                 {LEVEL_NAMES[l]}
               </option>
             ))}
@@ -128,19 +196,14 @@ export function TaskForm({
         </label>
         <label>
           Due
-          <input
-            name="due"
-            type="datetime-local"
-            defaultValue={
-              d?.dueInDays == null ? "" : toLocalInput(z, addLocalDays(Date.now(), d.dueInDays, z))
-            }
-          />
+          <input name="due" type="datetime-local" defaultValue={initial.due} />
         </label>
         <label>
           Start after
-          <input name="startAfter" type="datetime-local" />
+          <input name="startAfter" type="datetime-local" defaultValue={initial.startAfter ?? ""} />
         </label>
-        <HoursField sets={hours} allowItem={false} />
+        {/* Remount when the sets load: the menu needs them to show the task's set. */}
+        <HoursField key={hours.length} sets={hours} initial={hoursSet} allowItem={false} />
         <label>
           Split into chunks
           <select
@@ -160,8 +223,8 @@ export function TaskForm({
                 name="minChunk"
                 type="number"
                 min={15}
-                step={15}
-                defaultValue={String(d?.minChunkMinutes ?? 30)}
+                step={step}
+                defaultValue={initial.minChunk}
               />
             </label>
             <label>
@@ -170,24 +233,24 @@ export function TaskForm({
                 name="maxChunk"
                 type="number"
                 min={15}
-                step={15}
-                defaultValue={String(d?.maxChunkMinutes ?? 120)}
+                step={step}
+                defaultValue={initial.maxChunk}
               />
             </label>
           </>
         )}
         <label class="inline">
-          <input name="nextUp" type="checkbox" />
+          <input name="nextUp" type="checkbox" defaultChecked={initial.nextUp === "on"} />
           Next up (work on it first)
         </label>
         <label class="wide">
           Notes
-          <textarea name="notes" rows={2} />
+          <textarea name="notes" rows={2} defaultValue={initial.notes ?? ""} />
         </label>
         <Select
           id="taskColor"
           label="Color"
-          initial="category"
+          initial={initial.taskColor ?? "category"}
           options={[
             ["category", "Category color"],
             ["calendar_default", "Calendar color"],
@@ -195,8 +258,13 @@ export function TaskForm({
           ]}
         />
         <button type="submit" class="primary">
-          Add task
+          {task ? "Save" : "Add task"}
         </button>
+        {onCancel && (
+          <button type="button" onClick={() => void onCancel()}>
+            Cancel
+          </button>
+        )}
         {children}
       </form>
       {error && (
@@ -205,65 +273,6 @@ export function TaskForm({
         </p>
       )}
     </>
-  );
-}
-
-/** ?edit=<task id>: the edit form of one task, from the priorities views (PRI-53). */
-function TaskEdit({ task, onDone }: { task: Task; onDone: () => Promise<unknown> }) {
-  const [error, setError] = useState<string | null>(null);
-  const save = (e: Event) => {
-    e.preventDefault();
-    const f = new FormData(e.currentTarget as HTMLFormElement);
-    setError(null);
-    void (async () => {
-      await api("PATCH", `/api/tasks/${task.id}`, {
-        title: String(f.get("title") ?? ""),
-        minutes: Number(f.get("minutes")),
-        level: Number(f.get("level")),
-      });
-      await planNow();
-      await onDone();
-    })().catch((err) => setError(errorText(err)));
-  };
-  return (
-    <form class="form" onSubmit={save} data-testid="task-edit">
-      <h2 class="wide">Edit task</h2>
-      <label class="wide">
-        Title
-        <input name="title" required maxLength={255} defaultValue={task.title} />
-      </label>
-      <label>
-        Duration (minutes)
-        <input
-          name="minutes"
-          type="number"
-          min={15}
-          step={15}
-          defaultValue={String(task.total_minutes)}
-        />
-      </label>
-      <label>
-        Priority
-        <select name="level" defaultValue={String(task.level)}>
-          {[1, 2, 3, 4].map((l) => (
-            <option value={l} key={l}>
-              {LEVEL_NAMES[l]}
-            </option>
-          ))}
-        </select>
-      </label>
-      <button type="submit" class="primary">
-        Save
-      </button>
-      <button type="button" onClick={() => void onDone()}>
-        Cancel
-      </button>
-      {error && (
-        <p class="error wide" role="alert">
-          {error}
-        </p>
-      )}
-    </form>
   );
 }
 
@@ -283,6 +292,7 @@ export function Tasks() {
   const dragged = useRef<Task | null>(null);
   const [editId, setEditId] = useState(() => new URLSearchParams(location.search).get("edit"));
   const editing = editId ? tasks.find((t) => t.id === editId) : undefined;
+  const [loaded, setLoaded] = useState(false);
 
   const load = useCallback(async () => {
     const [t, tm] = await Promise.all([
@@ -291,9 +301,15 @@ export function Tasks() {
     ]);
     setTasks(t.tasks);
     setTimer(tm.timer);
+    setLoaded(true);
   }, [filter]);
   useEffect(() => void load(), [load]);
   useLive(load);
+  const closeEdit = async () => {
+    history.replaceState(null, "", "/tasks");
+    setEditId(null);
+    await load();
+  };
 
   const act = async (fn: () => Promise<unknown>) => {
     setError(null);
@@ -454,17 +470,16 @@ export function Tasks() {
     <div class="page" data-testid="tasks-page">
       <h1>Tasks</h1>
       {editing ? (
-        <TaskEdit
-          key={editing.id}
-          task={editing}
-          onDone={async () => {
-            history.replaceState(null, "", "/tasks");
-            setEditId(null);
-            await load();
-          }}
-        />
+        <TaskForm key={editing.id} task={editing} onSaved={closeEdit} onCancel={closeEdit} />
       ) : (
-        <TaskForm onSaved={load} />
+        <>
+          {editId && filter === "open" && loaded && (
+            <p class="error" role="alert" data-testid="edit-missing">
+              No open task with this id; it may be done or deleted.
+            </p>
+          )}
+          <TaskForm onSaved={load} />
+        </>
       )}
       {error && (
         <p class="error" role="alert">

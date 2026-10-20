@@ -14,8 +14,10 @@
 // - Done keeps the task in the queue, so add time brings it back queued
 //   (add and remove test).
 // - The planner tasks panel has no add action (panel test).
+// - An up arrow places every open task again, so a task that the user did not
+//   touch leaves the slot it kept (SCH-88) for an earlier one (sticky test).
 import type { Page } from "@playwright/test";
-import { blockUntil, eventually, expect, local, test } from "./fixtures.ts";
+import { at, blockUntil, eventually, expect, local, test } from "./fixtures.ts";
 import { addTask, allEvents, titled, W } from "./helpers.ts";
 
 const queue = (page: Page) => page.getByTestId("next-up-queue");
@@ -174,4 +176,43 @@ test("the planner tasks panel adds a task to the next-up queue with its up arrow
 
   await page.getByRole("link", { name: "Tasks" }).click();
   await expect.poll(() => names(queue(page))).toEqual(["QP-Low"]);
+});
+
+test("an up arrow click moves only the task it adds to the next-up queue; other tasks keep their events (SCH-88, NXT-5)", async ({
+  page,
+  cal,
+  signIn,
+}) => {
+  await blockUntil(cal, W);
+  // Monday 09:00 to 12:00 is busy while QS-Kept is placed, so it gets 12:00.
+  const busy = await cal.addEvent({ title: "QS-Busy", start: at(W, "09:00"), end: at(W, "12:00") });
+  await signIn();
+  const task = { minutes: 60, split: false, due: "" } as const;
+  await addTask(page, { ...task, title: "QS-Kept", level: 2 });
+  expect(await calendarOrder(cal, "QS-Kept", ["QS-Kept"])).toBe(`${W} 12:00`);
+  // The morning is free again; QS-Kept keeps its slot (no rule change), and a
+  // new task takes the free 09:00. A fresh placement of QS-Kept would take 09:00.
+  await cal.remove(busy);
+  await addTask(page, { ...task, title: "QS-Up", level: 4 });
+  const before = await eventually(
+    () => allEvents(cal),
+    (l) =>
+      expect(
+        titled(l, "QS-").map((e) => `${e.summary.replace(/^\S+ /, "")} ${local(e.start)}`),
+      ).toEqual([`QS-Up ${W} 09:00`, `QS-Kept ${W} 12:00`]),
+  );
+  const kept = titled(before, "QS-Kept")[0];
+
+  await saveQueue(page, () =>
+    row(page, "QS-Up").getByRole("button", { name: "Add to next up" }).click(),
+  );
+  await expect.poll(() => names(queue(page))).toEqual(["QS-Up"]);
+  const after = titled(await allEvents(cal), "QS-");
+  expect(after.map((e) => `${e.summary.replace(/^\S+ /, "")} ${local(e.start)}`)).toEqual([
+    `QS-Up ${W} 09:00`,
+    `QS-Kept ${W} 12:00`,
+  ]);
+  expect(titled(after, "QS-Kept")[0]?.id).toBe(kept?.id);
+  await page.reload();
+  await expect.poll(() => names(queue(page))).toEqual(["QS-Up"]);
 });
