@@ -6,7 +6,9 @@
 //   node scripts/google-run-tsv.ts <report.json> > docs/e2e-google-run.tsv
 //
 // The status is the status of the test's last result (passed, skipped, failed,
-// timedOut or interrupted). The report itself is a local file; it is not committed.
+// timedOut or interrupted). A test with no result did not run (the run stopped
+// early, for example at maxFailures or Ctrl-C), so the converter stops and names
+// it. The report itself is a local file; it is not committed.
 import { readFileSync } from "node:fs";
 
 type Result = { status: string };
@@ -25,7 +27,9 @@ function collect(suite: Suite, describe: string[]): void {
   for (const spec of suite.specs ?? []) {
     const title = [...describe, spec.title].join(" › ");
     for (const test of spec.tests) {
-      const status = test.results.at(-1)?.status ?? "skipped";
+      const status = test.results.at(-1)?.status;
+      if (!status)
+        throw new Error(`${suite.file}:${spec.line} has no result: use the report of a full run`);
       rows.push({ file: suite.file, line: spec.line, status, title });
     }
   }
@@ -33,7 +37,7 @@ function collect(suite: Suite, describe: string[]): void {
 }
 for (const suite of report.suites) collect(suite, []);
 
-// Files in English collation order with punctuation ignored, as GNU sort orders them.
+// Files in English collation order with punctuation ignored (the format of the file).
 const files = new Intl.Collator("en", { ignorePunctuation: true });
 rows.sort((a, b) => files.compare(a.file, b.file) || a.line - b.line);
 for (const row of rows) {

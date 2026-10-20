@@ -14,7 +14,7 @@ Each row id goes into exactly one status map (E2E, PARTIAL, GOOGLE_ROWS, UNIT or
 BLOCKED). The maps record every write, and the build fails when a row was ever
 written to two of them, even if a later pop removed it from one.
 """
-import re, sys, glob, os
+import re, sys, glob, os, json
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 STAGING = os.path.join(ROOT, "docs/parity-src")
@@ -504,7 +504,8 @@ E2E_NOTES.update({
     660: "The operator sets max_automations_per_user with the CLI (off by default); habits, focus time and buffers count",
 })
 PARTIAL.update({
-    469: "Copies of events that Gmail made from an email (Google event type fromGmail) are busy, proven by a unit test; CalDAV has no such events, and the Google E2E needs a Google account",
+    469: ("Copies of events that Gmail made from an email (Google event type fromGmail) are busy, proven by a unit test; CalDAV "
+          "has no such events, and an E2E cannot make one: Gmail makes them, and the Google Calendar API cannot create them"),
 })
 # --- end s4 ---
 
@@ -707,8 +708,9 @@ E2E_NOTES.update({
     607: "Focus time held is the time of focus events; work habits and tasks that count toward the goal are not added",
 })
 BLOCKED[638] = (
-    "Google sign-in is built and follows the team's SSO rules; its E2E needs a Google OAuth client "
-    "and a Google test account. Microsoft sign-in is not built: it needs a Microsoft app "
+    "Google sign-in is built and follows the team's SSO rules; it has no E2E: the Google Calendar run "
+    "(docs/e2e-google-run.md) connects its user with the operator command connect-google-oauth, so "
+    "\u201cSign in with Google\u201d on the sign-in page is not tested. Microsoft sign-in is not built: it needs a Microsoft app "
     "registration and a Microsoft 365 account to build and test a Microsoft Graph provider"
 )
 # Rows whose entry covers only part of its preset (review of PR 10).
@@ -736,7 +738,10 @@ MICROSOFT = "Needs a Microsoft 365 account and a Microsoft Graph calendar provid
 for n in [520, 521, 526, 527, 528, 529, 530, 531, 532, 533, 534, 535, 536, 669, 670]:
     BLOCKED[n] = MICROSOFT
 BLOCKED[451] = "Needs Google and Microsoft calendar accounts; mirroring between calendars of two CalDAV accounts is built (rows 453, 460)"
-BLOCKED[145] = "Needs a Google account: these fields come from the Google profile; the editable profile fields are built (row 146)"
+PARTIAL[145] = ("Google sign-in takes the name when it makes the user, and each sync takes the time zone from the primary Google "
+                "calendar. Not built: the picture is read but not kept or shown, the name does not follow later changes, and week "
+                "start, time format and date format are not read from Google. Google sign-in has no E2E (row 510). The editable "
+                "profile fields are built (row 146)")
 BLOCKED[491] = "Needs a Google Workspace account: the trigger is Google calendar sharing"
 BLOCKED[492] = "Needs a Google Workspace account: the help covers Workspace sharing and Gmail-made events"
 BLOCKED[493] = "Needs Google or Microsoft accounts that subscribe to the iCloud calendar; a CalDAV server connects directly"
@@ -793,8 +798,8 @@ PARTIAL[517] = ("Disconnect, paused policies and reconnect have full UI E2E on C
                 "with the account's email as the hint and refuses another identity (unit tests). Items that write to a calendar of the "
                 "disconnected account show no error state yet (rule 16): their events stay as they are")
 # Same status as row 147 (incremental consent): both need a Google account to prove.
-BLOCKED[518] = ("Needs a Google OAuth client and a Google test account to prove it: incremental consent shows only on "
-                "Google's consent screen. Today Google sign-in asks for calendar scopes up front, with include_granted_scopes")
+BLOCKED[518] = ("Not built: Google sign-in asks for the calendar scopes up front (with include_granted_scopes), and no feature asks "
+                "for more, because the features that need more Google access (Google Tasks, Gmail) are not built")
 # --- end U08 ---
 
 # --- U03: core planning ---
@@ -832,8 +837,11 @@ E2E_NOTES.update({
     27: "A new choice moves placed unlocked chunks to that calendar at the same times (HRS-7) and applies to new chunks",
     73: "Copy to all takes Monday's ranges and saves at once",
 })
-BLOCKED[78] = "Needs a Google account: the zone comes from the Google Calendar setting. The hours page shows the zone that hours apply in and an active trip (E2E on CalDAV: \u201ca browser that reports UTC gets a warning\u2026\u201d)"
-BLOCKED[147] = "Needs a Google OAuth client and a Google test account to prove it: incremental consent happens only in Google sign-in. Today Google sign-in asks for calendar scopes up front"
+PARTIAL[78] = ("Each sync takes the home time zone from the primary Google calendar (src/server/sync/pull.ts), and the hours page "
+               "shows the zone that hours apply in and an active trip (E2E on CalDAV and Google: \u201ca browser that reports UTC gets a "
+               "warning\u2026\u201d). No E2E or unit test sets a Google Calendar time zone and checks that the home zone follows it")
+BLOCKED[147] = ("Not built: Google sign-in asks for the calendar scopes up front (with include_granted_scopes), and no feature asks "
+                "for more, because the features that need more Google access (Google Tasks, Gmail) are not built")
 # Row 90 stays partial: E2E does not cover buffers inside a level.
 PARTIAL[90] = "E2E on CalDAV covers flexible meetings, habits, tasks, next-up tasks and focus time in the order (\u201cinside one level meetings go first, then habits, then tasks\u2026\u201d, \u201ca next-up task goes before other tasks of any level\u201d, \u201cfocus time goes after a P4 task\u2026\u201d); buffers inside a level have unit tests only"
 # Row 76 stays partial: planning-hours.md says focus time, flexible meetings and
@@ -1008,7 +1016,9 @@ PARTIAL[265] = (
     "because Tempoloom cannot see the user's own answer; holiday feeds are row 266. No Google E2E: the test skips on Google, "
     "because it writes the invitations as raw CalDAV objects, and it came after the Google Calendar run (docs/e2e-google-run.md)"
 )
-BLOCKED[284] = "Needs a Google Calendar account: the events that cannot change color (made from mail, birthdays) exist only in Google Calendar; a CalDAV server lets the owner change every event. Painting skips refused events and never stops a run (code)"
+PARTIAL[284] = ("Painting skips an event that the calendar refuses (status 400 or 403) and goes on (src/server/planner/repaint.ts). "
+                "No test proves it: a CalDAV server lets the owner change every event, no unit test sends a refused color write, and "
+                "no Google E2E paints a mail-made or birthday event")
 BLOCKED[317] = "The chat app channel needs the Slack app (a vendor developer app and a test workspace); the daily digest by email, at a time the user sets, has full UI E2E on CalDAV (\u201clibrary entry 'Flag meeting problems' turns on the checks and an email digest of open, not ignored, issues at the chosen time, once a day\u201d)"
 # --- end U05 ---
 
@@ -1044,18 +1054,38 @@ E2E_NOTES.update({
     353: "Flexible meetings count as one-to-one or group time by their number of people",
     356: "An edit of the rules, a rank or priority change, and an hours change of the organizer or of an attendee who is a user here place future occurrences again, outside the move limit; an edit of the title, notes or location keeps the times, and an attendee's time zone change or new meeting hours set also places again (unit tests)",
 })
-BLOCKED[322] = "Needs a Google account: the free/busy query for emails that are not users here is a Google Calendar API call; availability of attendees who are users here is E2E-proven (rows 321, 339)"
+BLOCKED[322] = ("Not built: the scheduler reads the availability of attendees who are users here (E2E-proven, rows 321, 339), but "
+                "it does not query Google free/busy for other emails; the Google API client has a freeBusy method that no code calls")
 BLOCKED[345] = "Needs Google Meet (a Google account), the Zoom vendor app and Google Workspace room resources; an address or a custom text or link is written as the location of every occurrence (E2E: \u201c" + T["mr_settings"] + "\u201d)"
 # --- end U06 ---
 
 # Google Calendar proof. docs/e2e-google-run.tsv records a full E2E run on Google
 # (status, test id, title per line; docs/e2e-google-run.md says how it ran and how to
-# regenerate the file). Each T[key] is the exact title of one test, so the test of a key
-# is the line whose title equals T[key]. A key is proven on Google when that test passed.
-# A key with no line was added after the run; a key whose test did not pass was skipped
-# (or failed) there. A row is "done (Google)" only when each of its keys matches exactly
-# one test of the run; else the build stops and names the key.
+# regenerate the file). Each T[key] is the exact title of one test in tests/e2e, and the
+# build stops when it is not, so a renamed test cannot drop a Google claim in silence.
+# The test of a key is the line whose title equals T[key]; the build stops when a key
+# matches more than one line. A key is proven on Google when its test passed. A key with
+# no line was added after the run; a key whose test did not pass was skipped or did not
+# pass there.
 GOOGLE_RUN = os.path.join(ROOT, "docs/e2e-google-run.tsv")
+E2E_DIR = os.path.join(ROOT, "tests/e2e")
+
+def e2e_titles():
+    """The title of each test("...") call in tests/e2e/*.ts."""
+    titles = set()
+    for f in glob.glob(f"{E2E_DIR}/*.ts"):
+        src = open(f, encoding="utf8").read()
+        for m in re.finditer(r'\btest\(\s*("(?:[^"\\\n]|\\.)*")', src):
+            titles.add(json.loads(m.group(1)))
+    return titles
+
+def check_titles():
+    titles = e2e_titles()
+    bad = [k for k, text in T.items() if text not in titles]
+    for k in bad:
+        print(f"test key {k}: no test in tests/e2e has the title \u201c{T[k]}\u201d", file=sys.stderr)
+    if bad:
+        sys.exit(f"{len(bad)} test keys in T are not test titles; make each T text equal its test title")
 
 def google_run():
     run = {}
@@ -1063,38 +1093,45 @@ def google_run():
         if line.strip():
             st, test_id, title = line.rstrip("\n").split("\t")
             run.setdefault(title, []).append(st)
-    return {key: run.get(text, []) for key, text in T.items()}
+    status = {key: run.get(text, []) for key, text in T.items()}
+    for key, hits in status.items():
+        if len(hits) > 1:
+            sys.exit(f"test key {key} matches {len(hits)} tests in docs/e2e-google-run.tsv")
+    return status
 
 GOOGLE_RUN_STATUS = google_run()
 
-def google_missing(key):
-    """How the test of a key missed the Google run ("added after", "skipped", ...),
-    or None when it passed there."""
-    hits = GOOGLE_RUN_STATUS[key]
-    if "passed" in hits:
-        return None
-    return "added after" if not hits else hits[0] if len(set(hits)) == 1 else "did not pass in"
+# Why a test did not pass in the Google run: (singular, plural) phrases.
+ADDED_AFTER, SKIPPED, NOT_PASSED = "added after", "skipped", "not passed"
+GOOGLE_MISSING_TEXT = {
+    ADDED_AFTER: ("was added after", "were added after"),
+    SKIPPED: ("was skipped in", "were skipped in"),
+    NOT_PASSED: ("failed in", "failed in"),
+}
 
-def google_missing_text(how, plural):
-    if how == "did not pass in":
-        return how
-    return ("were " if plural else "was ") + (how if how == "added after" else f"{how} in")
+def google_missing(key):
+    """Why the test of a key is not proven on Google (ADDED_AFTER, SKIPPED or
+    NOT_PASSED), or None when it passed there. A failed, timed-out or interrupted
+    test is NOT_PASSED."""
+    hits = GOOGLE_RUN_STATUS[key]
+    if not hits:
+        return ADDED_AFTER
+    if hits[0] == "passed":
+        return None
+    return SKIPPED if hits[0] == "skipped" else NOT_PASSED
 
 def e2e_status(row_id, keys):
     tests = "; ".join(f"\u201c{T[k]}\u201d" for k in keys)
     note = f" {E2E_NOTES[row_id]}." if row_id in E2E_NOTES else ""
-    missing = {k: google_missing(k) for k in keys if google_missing(k)}
+    missing = {k: why for k in keys if (why := google_missing(k))}
     if not missing:
-        for k in keys:
-            if len(GOOGLE_RUN_STATUS[k]) != 1:
-                sys.exit(f"row {row_id}: test key {k} matches {len(GOOGLE_RUN_STATUS[k])} tests in docs/e2e-google-run.tsv")
         return "done (Google)", f"Full UI E2E passes on CalDAV (Radicale) and on Google Calendar (docs/e2e-google-run.md): {tests}.{note}"
-    hows = set(missing.values())
-    if len(missing) == len(keys) and len(hows) == 1:
+    reasons = set(missing.values())
+    if len(missing) == len(keys) and len(reasons) == 1:
         subject = "the test" if len(keys) == 1 else "all these tests"
-        why = f"{subject} {google_missing_text(hows.pop(), len(keys) > 1)} the Google run"
+        why = f"{subject} {GOOGLE_MISSING_TEXT[reasons.pop()][len(keys) > 1]} the Google run"
     else:
-        why = "; ".join(f"\u201c{T[k]}\u201d {google_missing_text(how, False)} the Google run" for k, how in missing.items())
+        why = "; ".join(f"\u201c{T[k]}\u201d {GOOGLE_MISSING_TEXT[r][0]} the Google run" for k, r in missing.items())
     return "done (CalDAV)", (f"Full UI E2E passes on CalDAV (Radicale): {tests}.{note} "
                              f"Not proven on Google Calendar (docs/e2e-google-run.md): {why}.")
 
@@ -1132,6 +1169,7 @@ def check_one_map_per_row():
 
 def main():
     check_one_map_per_row()
+    check_titles()
     files = sorted(glob.glob(f"{STAGING}/parity-[A-F]-*.md"))
     rows, n = [], 0
     for f in files:

@@ -32,9 +32,10 @@ python3 scripts/build-parity.py
 ```
 
 Each test key in `scripts/build-parity.py` (`T`) is the exact title of one
-test, so a key matches the line with that title. A key with no line was added
-after the run. A row is "done (Google)" only when each of its keys matches
-exactly one passed test; else the build stops and names the key.
+test, so a key matches the line with that title. The build stops and names the
+key when a key is not the title of a test in `tests/e2e`, or when it matches
+more than one line. A key with no line was added after the run. A row is
+"done (Google)" only when each of its keys matches a passed test.
 
 ## Passed tests
 
