@@ -153,12 +153,14 @@ export function cacheEvent(db: Db, calendarId: string, e: ProviderEvent): void {
     e.conference ?? "",
     e.rsvpNote ?? "",
   );
-  // Alerts on Tempoloom's own events, so a copy that someone gave an alert is written again.
+  // Alerts and privacy of Tempoloom's own events: a copy that someone gave an
+  // alert, or a meeting occurrence with a new privacy, is written again.
   if (e.privateProps.tl === "1")
     run(
       db,
-      "UPDATE events SET alerts = ? WHERE calendar_id = ? AND event_id = ?",
+      "UPDATE events SET alerts = ?, own_visibility = ? WHERE calendar_id = ? AND event_id = ?",
       e.alerts ? 1 : 0,
+      e.visibility,
       calendarId,
       e.id,
     );

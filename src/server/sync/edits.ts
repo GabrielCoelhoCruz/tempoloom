@@ -55,7 +55,11 @@ export function moveTaskStart(db: Db, userId: string, row: ManagedRow, start: nu
  * exclusion or a dismissed key by kind (CED-20, CED-24, CED-25); a deleted past
  * chunk gives its minutes back and reopens a done task (CED-21, CED-22); a move
  * of a task's first chunk sets the task's start (CED-11); a title edit of a
- * non-task event locks it (CED-40).
+ * non-task event locks it (CED-40). Other edits of a meeting occurrence
+ * need nothing here: push never writes them over (MEET-02 rule 22).
+ * An event outside the calendar's read window is not in the cache because it
+ * was not read, not because it was deleted: its row stays as it is, so done
+ * and logged work of old chunks still counts.
  */
 export function applyCalendarEdits(
   db: Db,
@@ -76,13 +80,18 @@ export function applyCalendarEdits(
   // CED-22 needs a delete that the calendar reports: a chunk that ended before
   // the start of the last read window is missing from the cache because the
   // read did not ask for it, not because the user deleted it.
-  const windowStart = new Map(
-    all<{ id: string; window_start: number | null }>(
+  const windows = new Map(
+    all<{ id: string; window_start: number | null; window_end: number | null }>(
       db,
-      `SELECT id, window_start FROM calendars WHERE id IN (${marks})`,
+      `SELECT id, window_start, window_end FROM calendars WHERE id IN (${marks})`,
       ...calendarIds,
-    ).map((c) => [c.id, c.window_start]),
+    ).map((c) => [c.id, c]),
   );
+  const outsideWindow = (row: ManagedRow) => {
+    const w = windows.get(row.calendar_id);
+    if (!w || w.window_start === null || w.window_end === null) return false;
+    return row.end_ms <= w.window_start || row.start_ms >= w.window_end;
+  };
   tx(db, () => {
     for (const row of rows) {
       const cached = one<{
@@ -96,6 +105,7 @@ export function applyCalendarEdits(
         row.calendar_id,
         row.event_id,
       );
+      if (!cached && outsideWindow(row)) continue;
       if (row.kind === "mirror") {
         // The source event is the source of truth (mirroring rule 38): a deleted
         // or edited copy is written again by the next push, and never locks.
@@ -134,7 +144,10 @@ export function applyCalendarEdits(
           } else {
             exclude(db, userId, row.kind, row.source_id, row.start_ms, row.end_ms);
           }
-        } else if (row.kind === "task" && row.end_ms > (windowStart.get(row.calendar_id) ?? 0)) {
+        } else if (
+          row.kind === "task" &&
+          row.end_ms > (windows.get(row.calendar_id)?.window_start ?? 0)
+        ) {
           // "This work did not happen": the minutes go back to the task, which is open again.
           run(
             db,

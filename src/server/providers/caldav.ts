@@ -160,6 +160,12 @@ function attendeeFacts(ev: ICAL.Component, selfEmail: string) {
   };
 }
 
+const CLASSES: Record<string, ProviderEvent["visibility"]> = {
+  PUBLIC: "public",
+  PRIVATE: "private",
+  CONFIDENTIAL: "confidential",
+};
+
 function baseEvent(
   comp: ICAL.Component,
   id: string,
@@ -192,6 +198,7 @@ function baseEvent(
     // RFC 7986 CONFERENCE: a video call link (automations-meeting-quality.md, video_link).
     conference: str("conference"),
     alerts: comp.getAllSubcomponents("valarm").length > 0,
+    visibility: CLASSES[str("class").toUpperCase()] ?? "default",
   };
 }
 
@@ -294,6 +301,22 @@ function toUtcTime(ms: number): ICAL.Time {
   );
 }
 
+/** Adds the VALARMs of `reminders` to an event; none when missing. */
+function addAlarms(ev: ICAL.Component, reminders: EventWrite["reminders"], summary: string) {
+  const alerts = !reminders
+    ? []
+    : "useDefault" in reminders
+      ? [DEFAULT_REMINDER_MINUTES]
+      : reminders.minutes;
+  for (const minutes of alerts) {
+    const alarm = new ICAL.Component("valarm");
+    alarm.addPropertyWithValue("action", "DISPLAY");
+    alarm.addPropertyWithValue("description", summary);
+    alarm.addPropertyWithValue("trigger", ICAL.Duration.fromSeconds(-minutes * 60));
+    ev.addSubcomponent(alarm);
+  }
+}
+
 export function objectFromWrite(uid: string, w: EventWrite, now: number): string {
   const cal = new ICAL.Component(["vcalendar", [], []]);
   cal.addPropertyWithValue("version", "2.0");
@@ -318,18 +341,7 @@ export function objectFromWrite(uid: string, w: EventWrite, now: number): string
   if (w.visibility === "public" || w.visibility === "private") {
     ev.addPropertyWithValue("class", w.visibility.toUpperCase());
   }
-  const alerts = !w.reminders
-    ? []
-    : "useDefault" in w.reminders
-      ? [DEFAULT_REMINDER_MINUTES]
-      : w.reminders.minutes;
-  for (const minutes of alerts) {
-    const alarm = new ICAL.Component("valarm");
-    alarm.addPropertyWithValue("action", "DISPLAY");
-    alarm.addPropertyWithValue("description", w.summary);
-    alarm.addPropertyWithValue("trigger", ICAL.Duration.fromSeconds(-minutes * 60));
-    ev.addSubcomponent(alarm);
-  }
+  addAlarms(ev, w.reminders, w.summary);
   if (w.organizer) ev.addPropertyWithValue("organizer", `mailto:${w.organizer}`);
   for (const email of w.attendees ?? []) ev.addPropertyWithValue("attendee", `mailto:${email}`);
   for (const email of w.optionalAttendees ?? []) {
@@ -342,6 +354,17 @@ export function objectFromWrite(uid: string, w: EventWrite, now: number): string
   );
   cal.addSubcomponent(ev);
   return cal.toString();
+}
+
+/** A series object, with the instance an id names (`<object url>#<recurrence id>`). */
+interface Series {
+  client: DAVClient;
+  url: string;
+  etag: string | null;
+  root: ICAL.Component;
+  master: ICAL.Component;
+  occurrence: ICAL.Time;
+  override: ICAL.Component | undefined;
 }
 
 export class CalDavProvider implements CalendarProvider {
@@ -582,6 +605,7 @@ export class CalDavProvider implements CalendarProvider {
       colorId: fallback.colorId,
       updated: this.#now(),
       privateProps: fallback.privateProps,
+      visibility: fallback.visibility ?? "default",
     };
   }
 
@@ -699,13 +723,7 @@ export class CalDavProvider implements CalendarProvider {
     change: ExternalChange,
     etag: string | null,
   ): Promise<ProviderEvent> {
-    if (eventId.includes("#")) {
-      throw new ProviderError(
-        "other",
-        501,
-        "Edits of one occurrence of a series are not supported",
-      );
-    }
+    if (eventId.includes("#")) return this.#editInstance(calendarId, eventId, change, etag);
     const client = await this.#connect();
     const cal = await this.#calendar(calendarId);
     const [obj] = await retryRead(() =>
@@ -715,50 +733,7 @@ export class CalDavProvider implements CalendarProvider {
     const root = new ICAL.Component(ICAL.parse(obj.data));
     const ev = root.getAllSubcomponents("vevent").find((v) => !v.hasProperty("recurrence-id"));
     if (!ev) throw new ProviderError("not_found", 404, "Event not found");
-    if (change.summary !== undefined) {
-      ev.removeAllProperties("summary");
-      ev.addPropertyWithValue("summary", change.summary);
-    }
-    if (change.description !== undefined) {
-      ev.removeAllProperties("description");
-      if (change.description) ev.addPropertyWithValue("description", change.description);
-    }
-    if (change.busy !== undefined) {
-      ev.removeAllProperties("transp");
-      ev.addPropertyWithValue("transp", change.busy ? "OPAQUE" : "TRANSPARENT");
-    }
-    if (change.end !== undefined) {
-      ev.removeAllProperties("duration");
-      ev.removeAllProperties("dtend");
-      ev.addPropertyWithValue("dtend", toUtcTime(change.end));
-    }
-    if (change.start !== undefined) {
-      ev.removeAllProperties("dtstart");
-      ev.addPropertyWithValue("dtstart", toUtcTime(change.start));
-    }
-    if (change.summary !== undefined) {
-      ev.removeAllProperties("summary");
-      ev.addPropertyWithValue("summary", change.summary);
-    }
-    if (change.selfResponse) {
-      const self = this.#creds.email.toLowerCase();
-      const partstat = {
-        needsAction: "NEEDS-ACTION",
-        accepted: "ACCEPTED",
-        declined: "DECLINED",
-        tentative: "TENTATIVE",
-      }[change.selfResponse];
-      for (const a of ev.getAllProperties("attendee")) {
-        if (mailto(a.getFirstValue()) === self) a.setParameter("partstat", partstat);
-      }
-      // The note goes with the answer, as an iCalendar COMMENT of the user's copy.
-      if (change.comment !== undefined) {
-        ev.removeAllProperties("comment");
-        if (change.comment) ev.addPropertyWithValue("comment", change.comment);
-      }
-    }
-    ev.removeAllProperties("last-modified");
-    ev.addPropertyWithValue("last-modified", toUtcTime(this.#now()));
+    this.#apply(ev, change);
     const match = obj.etag ?? etag;
     const res = await client.updateCalendarObject({
       calendarObject: { url: eventId, data: root.toString(), ...(match ? { etag: match } : {}) },
@@ -782,11 +757,117 @@ export class CalDavProvider implements CalendarProvider {
     );
   }
 
+  /** Changes the given fields of one instance of a series, in its override. */
+  async #editInstance(
+    calendarId: string,
+    eventId: string,
+    change: ExternalChange,
+    etag: string | null,
+  ): Promise<ProviderEvent> {
+    const series = await this.#series(calendarId, eventId);
+    const { start, end } = this.#instanceTimes(series);
+    const ov = this.#override(series);
+    this.#apply(ov, change);
+    const tag = await this.#putSeries(series.url, series.root, series.etag ?? etag);
+    const found = eventsFromObject(
+      series.root.toString(),
+      series.url,
+      tag,
+      Math.min(start, change.start ?? start) - 86_400_000,
+      Math.max(end, change.end ?? end) + 86_400_000,
+      this.#zone,
+      this.#creds.email,
+    ).find((e) => e.id === eventId);
+    if (!found) throw new ProviderError("other", 500, "Instance missing after update");
+    return found;
+  }
+
+  /** Writes `change` into one VEVENT; every other property stays. */
+  #apply(ev: ICAL.Component, change: ExternalChange): void {
+    const set = (name: string, value: string | null) => {
+      ev.removeAllProperties(name);
+      if (value) ev.addPropertyWithValue(name, value);
+    };
+    if (change.summary !== undefined) {
+      ev.removeAllProperties("summary");
+      ev.addPropertyWithValue("summary", change.summary);
+    }
+    if (change.description !== undefined) set("description", change.description);
+    if (change.location !== undefined) set("location", change.location);
+    if (change.busy !== undefined) set("transp", change.busy ? "OPAQUE" : "TRANSPARENT");
+    if (change.visibility !== undefined)
+      set("class", change.visibility === "default" ? null : change.visibility.toUpperCase());
+    if (change.colorId !== undefined)
+      set("color", change.colorId ? (COLOR_NAMES[change.colorId] ?? null) : null);
+    if (change.reminders !== undefined) {
+      for (const alarm of ev.getAllSubcomponents("valarm")) ev.removeSubcomponent(alarm);
+      addAlarms(ev, change.reminders, String(ev.getFirstPropertyValue("summary") ?? ""));
+    }
+    const instant = (name: string) => {
+      const v = ev.getFirstPropertyValue(name);
+      return v instanceof ICAL.Time ? instantOf(v, this.#zone) : null;
+    };
+    const retimed =
+      (change.start !== undefined && change.start !== instant("dtstart")) ||
+      (change.end !== undefined && change.end !== instant("dtend"));
+    if (change.end !== undefined) {
+      ev.removeAllProperties("duration");
+      ev.removeAllProperties("dtend");
+      ev.addPropertyWithValue("dtend", toUtcTime(change.end));
+    }
+    if (change.start !== undefined) {
+      ev.removeAllProperties("dtstart");
+      ev.addPropertyWithValue("dtstart", toUtcTime(change.start));
+    }
+    const self = this.#creds.email.toLowerCase();
+    if (change.guests) {
+      const { add, remove } = change.guests;
+      const gone = new Set(remove.map((e) => e.toLowerCase()));
+      const role = new Map(add.map((g) => [g.email.toLowerCase(), g.optional]));
+      for (const a of ev.getAllProperties("attendee")) {
+        const email = mailto(a.getFirstValue());
+        if (gone.has(email)) ev.removeProperty(a);
+        else if (role.has(email)) {
+          if (role.get(email)) a.setParameter("role", "OPT-PARTICIPANT");
+          else a.removeParameter("role");
+          role.delete(email);
+        }
+      }
+      for (const [email, optional] of role) {
+        const p = ev.addPropertyWithValue("attendee", `mailto:${email}`);
+        if (optional) p.setParameter("role", "OPT-PARTICIPANT");
+      }
+    }
+    // A new time asks the guests again (RFC 5546 3.2.2: a new SEQUENCE).
+    if (retimed) {
+      for (const a of ev.getAllProperties("attendee"))
+        if (mailto(a.getFirstValue()) !== self) a.removeParameter("partstat");
+      const sequence = Number(ev.getFirstPropertyValue("sequence") ?? 0);
+      ev.removeAllProperties("sequence");
+      ev.addPropertyWithValue("sequence", sequence + 1);
+    }
+    if (change.selfResponse) {
+      const partstat = {
+        needsAction: "NEEDS-ACTION",
+        accepted: "ACCEPTED",
+        declined: "DECLINED",
+        tentative: "TENTATIVE",
+      }[change.selfResponse];
+      for (const a of ev.getAllProperties("attendee")) {
+        if (mailto(a.getFirstValue()) === self) a.setParameter("partstat", partstat);
+      }
+      // The note goes with the answer, as an iCalendar COMMENT of the user's copy.
+      if (change.comment !== undefined) set("comment", change.comment);
+    }
+    ev.removeAllProperties("last-modified");
+    ev.addPropertyWithValue("last-modified", toUtcTime(this.#now()));
+  }
+
   /**
    * The series object of an instance id (`<object url>#<recurrence id>`): the
    * parsed object, its master, the instance's original start and its override.
    */
-  async #series(calendarId: string, eventId: string) {
+  async #series(calendarId: string, eventId: string): Promise<Series> {
     const client = await this.#connect();
     const cal = await this.#calendar(calendarId);
     const hash = eventId.indexOf("#");
@@ -834,6 +915,50 @@ export class CalDavProvider implements CalendarProvider {
     return res.headers.get("etag");
   }
 
+  /** The current start and end of an instance: its override's, or the series rule's. */
+  #instanceTimes(
+    { master, occurrence, override }: Series,
+    fallbackLength = 0,
+  ): { start: number; end: number } {
+    const at = (name: string) => {
+      const v = override?.getFirstPropertyValue(name);
+      return v instanceof ICAL.Time ? instantOf(v, this.#zone) : null;
+    };
+    const length = (master.getFirstPropertyValue("dtend") as ICAL.Time | null)?.subtractDate(
+      master.getFirstPropertyValue("dtstart") as ICAL.Time,
+    );
+    const start = at("dtstart") ?? instantOf(occurrence, this.#zone);
+    const end = at("dtend") ?? start + (length ? length.toSeconds() * 1000 : fallbackLength);
+    return { start, end };
+  }
+
+  /**
+   * The override of an instance (RFC 5545 RECURRENCE-ID); a new one copies the
+   * series' properties and the instance's time.
+   */
+  #override(series: Series): ICAL.Component {
+    const { root, master, occurrence, override } = series;
+    if (override) return override;
+    const { start, end } = this.#instanceTimes(series);
+    const ov = new ICAL.Component("vevent");
+    const skip = new Set(["rrule", "rdate", "exdate", "exrule", "dtstart", "dtend", "duration"]);
+    for (const p of master.getAllProperties()) {
+      if (!skip.has(p.name)) ov.addProperty(new ICAL.Property(structuredClone(p.toJSON())));
+    }
+    for (const alarm of master.getAllSubcomponents("valarm"))
+      ov.addSubcomponent(new ICAL.Component(structuredClone(alarm.toJSON())));
+    const rid = new ICAL.Property("recurrence-id");
+    rid.setValue(occurrence);
+    const tzid = occurrence.zone?.tzid;
+    if (tzid && tzid !== "UTC" && tzid !== "floating") rid.setParameter("tzid", tzid);
+    ov.addProperty(rid);
+    ov.addPropertyWithValue("dtstart", toUtcTime(start));
+    ov.addPropertyWithValue("dtend", toUtcTime(end));
+    root.addSubcomponent(ov);
+    series.override = ov;
+    return ov;
+  }
+
   /** Changes one instance of a series: writes or replaces its override (RFC 5545 RECURRENCE-ID). */
   async #updateInstance(
     calendarId: string,
@@ -841,38 +966,10 @@ export class CalDavProvider implements CalendarProvider {
     w: EventWrite,
     etag: string | null,
   ): Promise<ProviderEvent> {
-    const {
-      url,
-      etag: current,
-      root,
-      master,
-      occurrence,
-      override,
-    } = await this.#series(calendarId, eventId);
-    let ov = override;
-    if (!ov) {
-      ov = new ICAL.Component("vevent");
-      const skip = new Set(["rrule", "rdate", "exdate", "exrule", "dtstart", "dtend", "duration"]);
-      for (const p of master.getAllProperties()) {
-        if (!skip.has(p.name)) ov.addProperty(new ICAL.Property(structuredClone(p.toJSON())));
-      }
-      const rid = new ICAL.Property("recurrence-id");
-      rid.setValue(occurrence);
-      const tzid = occurrence.zone?.tzid;
-      if (tzid && tzid !== "UTC" && tzid !== "floating") rid.setParameter("tzid", tzid);
-      ov.addProperty(rid);
-      root.addSubcomponent(ov);
-    }
-    const startOf = (name: string) => {
-      const v = ov?.getFirstPropertyValue(name);
-      return v instanceof ICAL.Time ? instantOf(v, this.#zone) : null;
-    };
-    const length = (master.getFirstPropertyValue("dtend") as ICAL.Time | null)?.subtractDate(
-      master.getFirstPropertyValue("dtstart") as ICAL.Time,
-    );
-    const oldStart = startOf("dtstart") ?? instantOf(occurrence, this.#zone);
-    const oldEnd =
-      startOf("dtend") ?? oldStart + (length ? length.toSeconds() * 1000 : w.end - w.start);
+    const series = await this.#series(calendarId, eventId);
+    const { url, etag: current, root, master } = series;
+    const { start: oldStart, end: oldEnd } = this.#instanceTimes(series, w.end - w.start);
+    const ov = this.#override(series);
     // Guests keep their answers unless the time changes (a new time asks again).
     const keep = oldStart === w.start && oldEnd === w.end;
     const answers = new Map(

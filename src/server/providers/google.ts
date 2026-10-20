@@ -59,6 +59,7 @@ export function fromGoogleEvent(e: GoogleEvent, zone: string): ProviderEvent {
     ),
     conference: e.hangoutLink ?? "",
     alerts: e.reminders?.useDefault === true || (e.reminders?.overrides?.length ?? 0) > 0,
+    visibility: e.visibility ?? "default",
   };
 }
 
@@ -67,6 +68,17 @@ export function fromGoogleEvent(e: GoogleEvent, zone: string): ProviderEvent {
  * not offered (accounts-connected-calendars.md rules 4, 5).
  */
 export const providerMade = (id: string) => id.endsWith("@group.v.calendar.google.com");
+
+function toGoogleReminders(r: EventWrite["reminders"]): NonNullable<GoogleEventInput["reminders"]> {
+  return !r
+    ? { useDefault: false }
+    : "useDefault" in r
+      ? { useDefault: true }
+      : {
+          useDefault: false,
+          overrides: r.minutes.map((minutes) => ({ method: "popup", minutes })),
+        };
+}
 
 function toGoogleEvent(w: EventWrite): GoogleEventInput {
   return {
@@ -87,14 +99,7 @@ function toGoogleEvent(w: EventWrite): GoogleEventInput {
           ],
         }
       : {}),
-    reminders: !w.reminders
-      ? { useDefault: false }
-      : "useDefault" in w.reminders
-        ? { useDefault: true }
-        : {
-            useDefault: false,
-            overrides: w.reminders.minutes.map((minutes) => ({ method: "popup", minutes })),
-          },
+    reminders: toGoogleReminders(w.reminders),
     ...(w.visibility ? { visibility: w.visibility } : {}),
     extendedProperties: { private: w.privateProps },
     ...(w.recurrence ? { recurrence: [`RRULE:${w.recurrence}`] } : {}),
@@ -203,23 +208,48 @@ export class GoogleProvider implements CalendarProvider {
     const patch: Partial<GoogleEventInput> = {};
     if (change.summary !== undefined) patch.summary = change.summary;
     if (change.description !== undefined) patch.description = change.description;
+    if (change.location !== undefined) patch.location = change.location;
     if (change.busy !== undefined) patch.transparency = change.busy ? "opaque" : "transparent";
+    if (change.visibility !== undefined) patch.visibility = change.visibility;
+    if (change.colorId !== undefined) patch.colorId = change.colorId ?? "";
+    if (change.reminders !== undefined) patch.reminders = toGoogleReminders(change.reminders);
     if (change.end !== undefined) patch.end = { dateTime: new Date(change.end).toISOString() };
     if (change.start !== undefined)
       patch.start = { dateTime: new Date(change.start).toISOString() };
-    if (change.summary !== undefined) patch.summary = change.summary;
     const answer = change.selfResponse;
-    if (answer) {
+    const retimed = change.start !== undefined || change.end !== undefined;
+    if (answer || change.guests || retimed) {
       const current = await this.#api.getEvent(calendarId, eventId).catch(mapError);
-      patch.attendees = (current.attendees ?? []).map((a) =>
-        a.self
-          ? {
+      const moved =
+        retimed &&
+        ((change.start !== undefined &&
+          Date.parse(current.start?.dateTime ?? "") !== change.start) ||
+          (change.end !== undefined && Date.parse(current.end?.dateTime ?? "") !== change.end));
+      if (answer || change.guests || (moved && current.attendees?.length)) {
+        const gone = new Set(change.guests?.remove.map((e) => e.toLowerCase()));
+        const role = new Map(change.guests?.add.map((g) => [g.email.toLowerCase(), g.optional]));
+        const list = (current.attendees ?? [])
+          .filter((a) => !gone.has(a.email.toLowerCase()))
+          .map((a) => {
+            const email = a.email.toLowerCase();
+            const optional = role.get(email);
+            role.delete(email);
+            return {
               ...a,
-              responseStatus: answer,
-              ...(change.comment !== undefined ? { comment: change.comment } : {}),
-            }
-          : a,
-      );
+              ...(optional !== undefined ? { optional } : {}),
+              // A new time asks the guests again.
+              ...(moved && !a.self ? { responseStatus: "needsAction" as const } : {}),
+              ...(a.self && answer
+                ? {
+                    responseStatus: answer,
+                    ...(change.comment !== undefined ? { comment: change.comment } : {}),
+                  }
+                : {}),
+            };
+          });
+        for (const [email, optional] of role) list.push({ email, optional });
+        patch.attendees = list;
+      }
     }
     // The organizer hears about a changed answer; nobody hears about other edits.
     const ev = await this.#api

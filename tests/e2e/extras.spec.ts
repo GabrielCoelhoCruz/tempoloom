@@ -1,7 +1,7 @@
 // External event priority for booking links, and travel and airport buffers.
 import type { Page } from "@playwright/test";
 import { addDays } from "../../src/shared/time.ts";
-import { at, blockUntil, eventually, expect, local, test } from "./fixtures.ts";
+import { at, blockUntil, eventually, expect, local, planNow, test } from "./fixtures.ts";
 import { openWeek, titled, visitor, W } from "./helpers.ts";
 
 const day = (n: number) => addDays(W, n);
@@ -17,6 +17,8 @@ test("a lowered external event is offered only by higher-priority booking links 
   await blockUntil(cal, W);
   await cal.addEvent({ title: "Team standup", start: at(W, "09:00"), end: at(W, "10:00") });
   await signIn();
+  // The event was written straight to the calendar: wait for the sync that reads it.
+  await planNow(page);
   await page.getByRole("link", { name: "Booking links" }).click();
   await page.getByTestId("claim-form").getByLabel("Page address").fill("hana");
   await page.getByRole("button", { name: "Create booking page" }).click();

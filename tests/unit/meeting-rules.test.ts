@@ -377,6 +377,7 @@ describe("series adoption", () => {
         colorId: null,
         updated: null,
         privateProps: {},
+        visibility: "default",
       });
     }
     return { ...s, starts };
