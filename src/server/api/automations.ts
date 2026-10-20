@@ -209,6 +209,59 @@ const orderInput = z.object({
     .max(500),
 });
 
+/**
+ * Rules 7 and 8: sets the order of one priority group, top first. An
+ * automation from another group moves to this one and takes its priority.
+ * The automation list and the priorities page (PRI-51, PRI-53) both use it.
+ */
+export function orderAutomations(
+  db: Db,
+  sync: SyncService,
+  userId: string,
+  level: number,
+  group: { type: string; id: string }[],
+  t: number,
+): void {
+  const items = group.map((it) => {
+    const type = LISTED_TYPES.find((x) => x.type === it.type);
+    if (!type) badRequest("items", `Unknown automation type ${it.type}`);
+    if (type.fixedLevel === null) badRequest("items", "This automation has no priority");
+    if (type.fixedLevel !== undefined && type.fixedLevel !== level) {
+      badRequest("level", `This automation stays at P${type.fixedLevel}`);
+    }
+    if (!one(db, `SELECT 1 FROM ${type.table} WHERE id = ? AND user_id = ?`, it.id, userId)) {
+      badRequest("items", "Unknown automation");
+    }
+    return { type, id: it.id };
+  });
+  let meetings = false;
+  tx(db, () => {
+    items.forEach(({ type, id }, rank) => {
+      if (type.fixedLevel !== undefined) {
+        run(db, `UPDATE ${type.table} SET rank = ? WHERE id = ?`, rank, id);
+        return;
+      }
+      if (type.table === "meetings") {
+        // A meeting whose rank or priority changed is placed again (meetings-flexible.md
+        // edge case 9: the lower rank wins a slot that two meetings want).
+        run(
+          db,
+          `UPDATE meetings SET rules_changed_at = ? WHERE id = ? AND (level <> ? OR rank <> ?)`,
+          t,
+          id,
+          level,
+          rank,
+        );
+        meetings = true;
+      }
+      run(db, `UPDATE ${type.table} SET level = ?, rank = ? WHERE id = ?`, level, rank, id);
+    });
+  });
+  // Rule 18: a new order is a saved change; the attendees' plans hold the meeting too.
+  sync.request(userId);
+  if (meetings) for (const id of meetingPeers(db, userId).attendees) sync.request(id);
+}
+
 export function automationRoutes(
   db: Db,
   sync: SyncService,
@@ -218,51 +271,11 @@ export function automationRoutes(
 
   r.get("/automations", (c) => c.json({ automations: listAutomations(db, c.get("user").id) }));
 
-  /**
-   * Rules 7 and 8: sets the order of one priority group. An automation from
-   * another group moves to this one and takes its priority.
-   */
+  /** Rules 7 and 8: sets the order of one priority group (orderAutomations). */
   r.post("/automations/order", async (c) => {
     const user = c.get("user");
     const body = await jsonBody(c, orderInput);
-    const items = body.items.map((it) => {
-      const t = LISTED_TYPES.find((x) => x.type === it.type);
-      if (!t) badRequest("items", `Unknown automation type ${it.type}`);
-      if (t.fixedLevel === null) badRequest("items", "This automation has no priority");
-      if (t.fixedLevel !== undefined && t.fixedLevel !== body.level) {
-        badRequest("level", `This automation stays at P${t.fixedLevel}`);
-      }
-      if (!one(db, `SELECT 1 FROM ${t.table} WHERE id = ? AND user_id = ?`, it.id, user.id)) {
-        badRequest("items", "Unknown automation");
-      }
-      return { t, id: it.id };
-    });
-    let meetings = false;
-    tx(db, () => {
-      items.forEach(({ t, id }, rank) => {
-        if (t.fixedLevel !== undefined) {
-          run(db, `UPDATE ${t.table} SET rank = ? WHERE id = ?`, rank, id);
-          return;
-        }
-        if (t.table === "meetings") {
-          // A meeting whose rank or priority changed is placed again (meetings-flexible.md
-          // edge case 9: the lower rank wins a slot that two meetings want).
-          run(
-            db,
-            `UPDATE meetings SET rules_changed_at = ? WHERE id = ? AND (level <> ? OR rank <> ?)`,
-            now(),
-            id,
-            body.level,
-            rank,
-          );
-          meetings = true;
-        }
-        run(db, `UPDATE ${t.table} SET level = ?, rank = ? WHERE id = ?`, body.level, rank, id);
-      });
-    });
-    // Rule 18: a new order is a saved change; the attendees' plans hold the meeting too.
-    sync.request(user.id);
-    if (meetings) for (const id of meetingPeers(db, user.id).attendees) sync.request(id);
+    orderAutomations(db, sync, user.id, body.level, body.items, now());
     return c.json({ automations: listAutomations(db, user.id) });
   });
 

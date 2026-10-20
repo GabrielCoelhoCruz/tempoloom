@@ -21,6 +21,9 @@ import "./parts.css";
 const TimerDialog = lazyComponent<{ onClose: () => void }>(() =>
   import("./timer-dialog.tsx").then((m) => m.TimerDialog),
 );
+const PrioritiesPanel = lazyComponent(() =>
+  import("./priorities.tsx").then((m) => m.PrioritiesPanel),
+);
 const HoursReview = lazyComponent<{ onClose: () => void }>(() =>
   import("./hours-review.tsx").then((m) => m.HoursReview),
 );
@@ -31,6 +34,7 @@ interface TaskLite {
   level: number;
   dueAt: number | null;
   remainingMinutes: number;
+  nextUp: boolean;
 }
 interface Now {
   nextUp: TaskLite | null;
@@ -112,6 +116,18 @@ function TasksPanel({ onClose }: { onClose: () => void }) {
       setMessage(reason(err));
     }
   };
+  // NXT-6: the planner tasks panel adds a task to the next-up queue.
+  const addToQueue = async (t: TaskLite) => {
+    setMessage(null);
+    try {
+      await api("POST", `/api/tasks/${t.id}/queue`, {});
+      await planNow();
+      plannerReload.value++;
+      await load();
+    } catch (err) {
+      setMessage(reason(err));
+    }
+  };
   if (!data) return null;
   return (
     <div class="popover" data-testid="tasks-panel">
@@ -123,6 +139,11 @@ function TasksPanel({ onClose }: { onClose: () => void }) {
             {data.placement === "suggestions" && (
               <button type="button" onClick={() => void blockTime(t)}>
                 Block time
+              </button>
+            )}
+            {!t.nextUp && (
+              <button type="button" aria-label="Add to next up" onClick={() => void addToQueue(t)}>
+                ↑
               </button>
             )}
             <button type="button" onClick={() => void startTimer(t)}>
@@ -163,7 +184,7 @@ export function NowBar({ from, to }: { from: number; to: number }) {
   const z = zone();
   const [now, setNow] = useState<Now | null>(null);
   const [conflicts, setConflicts] = useState<Conflict[]>([]);
-  const [open, setOpen] = useState<"tasks" | "conflicts" | null>(null);
+  const [open, setOpen] = useState<"tasks" | "priorities" | "conflicts" | null>(null);
   const [stopping, setStopping] = useState(false);
   const [reviewing, setReviewing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -235,6 +256,13 @@ export function NowBar({ from, to }: { from: number; to: number }) {
       >
         Tasks
       </button>
+      <button
+        type="button"
+        aria-expanded={open === "priorities"}
+        onClick={() => setOpen(open === "priorities" ? null : "priorities")}
+      >
+        Priorities
+      </button>
       {now.timer && (
         <span class="timer-bar" data-testid="timer-bar">
           ⏱ {now.timer.title} <Elapsed since={now.timer.startedAt} />
@@ -278,6 +306,7 @@ export function NowBar({ from, to }: { from: number; to: number }) {
         </button>
       )}
       {open === "tasks" && <TasksPanel onClose={() => setOpen(null)} />}
+      {open === "priorities" && <PrioritiesPanel />}
       {open === "conflicts" && (
         <div class="popover" data-testid="conflicts">
           {conflicts.map((c) => (
