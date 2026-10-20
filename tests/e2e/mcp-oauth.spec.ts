@@ -13,14 +13,19 @@
 // - RSVP, focus time or a work session is written at once, not staged, or not at all;
 // - revoking one client stops another, disconnects the calendar, or removes its events;
 // - a revoked client still reads with its access token, or gets new tokens by refresh;
-// - a staged change of a revoked client is lost.
+// - a staged change of a revoked client is lost;
+// - the consent page hides where the code goes, can be framed, or redirects a bad
+//   request without a click (anyone can register a client);
+// - a signed-out user who signs in loses the AI tool's request;
+// - a delegate or an API key connects an AI tool to the owner's account.
 import { addDays, utcToLocal } from "../../src/shared/time.ts";
-import { createKey } from "./delegation-helpers.ts";
+import { createKey, giveAccess, statuses, switchTo } from "./delegation-helpers.ts";
 import {
   at,
   BASE_URL,
   blockUntil,
   type CalendarDriver,
+  COLLEAGUE_EMAIL,
   EMAIL,
   eventually,
   expect,
@@ -35,11 +40,13 @@ import {
   answerConsent,
   finishOAuth,
   oauthConnect,
+  REDIRECT,
   refreshWith,
   startOAuth,
   statusWith,
 } from "./mcp-oauth-helpers.ts";
 import { connect, iso, previewPanel, reviewAndApply, stagedRow } from "./preview-helpers.ts";
+import { teamOfTwo } from "./team-helpers.ts";
 
 const tue = addDays(W, 1);
 const wed = addDays(W, 2);
@@ -83,12 +90,21 @@ test("an MCP client signs in with OAuth on the consent page, reads at once, and 
   expect(no.get("code")).toBeNull();
   expect(no.get("state")).toBe(cancelled.nonce);
 
-  // Allow access: the page names the client and the Tempoloom account it connects.
+  // Allow access: the page names the client, where the code goes, when the client
+  // registered, that its name is unverified, and the Tempoloom account it connects.
+  // The page may not be framed.
   const provider = await startOAuth("Claude");
-  await page.goto(provider.authUrl?.toString() ?? "");
+  const shown = await page.goto(provider.authUrl?.toString() ?? "");
+  expect(shown?.headers()["x-frame-options"]).toBe("DENY");
+  expect(shown?.headers()["content-security-policy"]).toBe("frame-ancestors 'none'");
   const consent = page.getByTestId("oauth-consent");
   await expect(consent).toContainText("Claude");
   await expect(consent).toContainText(EMAIL);
+  const details = page.getByTestId("oauth-client-details");
+  await expect(details).toContainText("Unverified");
+  await expect(details).toContainText("sends you to 127.0.0.1:9");
+  const today = await page.evaluate(() => new Date().toLocaleDateString());
+  await expect(details).toContainText(`registered on ${today}`);
   const yes = await answerConsent(page, provider, "Allow access");
   const claude = await finishOAuth(provider, yes.get("code") ?? "");
   // A code works once.
@@ -133,6 +149,31 @@ test("an MCP client signs in with OAuth on the consent page, reads at once, and 
   );
   expect(local(report?.start ?? 0)).toBe(`${wed} 15:00`);
 
+  // Rule 3: after the user confirms in the chat, the client lists and applies its own change.
+  const sprint = await claude.tool<{ id: string }>("propose_create_event", {
+    title: "Plan sprint",
+    start: iso(at(thu, "09:00")),
+    end: iso(at(thu, "10:00")),
+  });
+  const { changes } = await claude.tool<{ changes: { id: string; source: string }[] }>(
+    "list_staged_changes",
+  );
+  expect(changes.map((c) => [c.id, c.source])).toEqual([[sprint.id, "mcp_client"]]);
+  await planNow(page);
+  expect(named(await weekEvents(cal), "Plan sprint")).toHaveLength(0);
+  expect(
+    await claude.tool<{ results: unknown[] }>("apply_staged_changes", { ids: [sprint.id] }),
+  ).toEqual({ results: [{ id: sprint.id, result: "applied" }] });
+  const [planned] = named(
+    await eventually(
+      () => weekEvents(cal),
+      (evs) => expect(named(evs, "Plan sprint")).toHaveLength(1),
+    ),
+    "Plan sprint",
+  );
+  expect(local(planned?.start ?? 0)).toBe(`${thu} 09:00`);
+  expect((await claude.tool<{ changes: unknown[] }>("list_staged_changes")).changes).toEqual([]);
+
   // Reload: the grants stay, with their last use; nothing is left staged.
   await page.reload();
   await expect(previewPanel(page).getByTestId("staged-change")).toHaveCount(0);
@@ -147,6 +188,7 @@ test("an AI tool answers an invitation, protects focus time and records a work s
   page,
   cal,
   signIn,
+  colleague,
 }) => {
   // The plan of the task starts in the test week, at any time of day.
   await blockUntil(cal, W);
@@ -157,6 +199,8 @@ test("an AI tool answers an invitation, protects focus time and records a work s
     answer: "NEEDS-ACTION",
   });
   await cal.addEvent({ title: "Team lunch", start: at(wed, "12:00"), end: at(wed, "13:00") });
+  // The colleague uses this server, so find_free_time knows their busy times.
+  await colleague.signIn();
   await signIn();
   await addTask(page, { title: "Onboarding guide", minutes: 240, due: "" });
   const ai = await oauthConnect(page, "Claude");
@@ -259,6 +303,24 @@ test("an AI tool answers an invitation, protects focus time and records a work s
   });
   expect(Date.parse(slots[0]?.start ?? "")).toBe(at(thu, "11:00"));
 
+  // Find meeting times: "a 30-minute slot for me, my colleague and Ben". The colleague
+  // uses this server and is busy until 12:30; Ben does not use it.
+  await colleague.cal.addEvent({
+    title: "Colleague busy",
+    start: at(thu, "10:30"),
+    end: at(thu, "12:30"),
+  });
+  const met = await eventually(
+    () =>
+      ai.tool<{ slots: { start: string }[]; unknown_attendees: string[] }>("find_free_time", {
+        duration_minutes: 30,
+        ...day(thu),
+        attendees: [COLLEAGUE_EMAIL, "ben@elsewhere.test"],
+      }),
+    (r) => expect(Date.parse(r.slots[0]?.start ?? "")).toBe(at(thu, "12:30")),
+  );
+  expect(met.unknown_attendees).toEqual(["ben@elsewhere.test"]);
+
   // Reload: the changes are applied and stay.
   await page.reload();
   await expect(previewPanel(page).getByTestId("staged-change")).toHaveCount(0);
@@ -341,4 +403,141 @@ test("revoking one AI tool on the Account page stops only that tool; calendar ac
   ]);
   await page.goto("/account");
   await expect(grants.locator("[data-grant]")).toHaveCount(2);
+});
+
+test("a signed-out user signs in on the consent page and comes back to it; a bad request stays on the page with a link back (integrations-ai-tools Authorization, edge case 2)", async ({
+  page,
+  app,
+  cal,
+  radicale,
+}) => {
+  test.skip(!radicale, "CalDAV sign-in");
+  expect(app.baseUrl).toBe(BASE_URL);
+  expect(cal.calendarId).toBeTruthy();
+  const back: string[] = [];
+  await page.route(`${REDIRECT}**`, (r) => {
+    back.push(r.request().url());
+    return r.fulfill({ body: "You can close this window." });
+  });
+
+  // Signed out: the sign-in form shows on the consent URL; after CalDAV sign-in
+  // the consent page of the same request comes back.
+  const provider = await startOAuth("Claude");
+  await page.goto(provider.authUrl?.toString() ?? "");
+  const form = page.getByTestId("caldav-form");
+  await form.getByLabel("CalDAV server URL").fill(radicale?.url ?? "");
+  await form.getByLabel("User name", { exact: true }).fill(radicale?.username ?? "");
+  await form.getByLabel("Password", { exact: true }).fill(radicale?.password ?? "");
+  await form.getByLabel(/^Email/).fill(EMAIL);
+  await form.getByRole("button", { name: /sign in with caldav/i }).click();
+  const consent = page.getByTestId("oauth-consent");
+  await expect(consent).toContainText("Claude");
+  await expect(consent).toContainText(EMAIL);
+  expect(new URL(page.url()).pathname).toBe("/oauth/authorize");
+  const redirected = page.waitForRequest((r) => r.url().startsWith(REDIRECT));
+  await consent.getByRole("button", { name: "Allow access" }).click();
+  const answer = new URL((await redirected).url()).searchParams;
+  expect(answer.get("state")).toBe(provider.nonce);
+  const claude = await finishOAuth(provider, answer.get("code") ?? "");
+  expect((await claude.tool<Listed>("list_events", day(tue))).events).toEqual([]);
+
+  // A bad request of a registered client: an error on the page, a link back, and
+  // no redirect until the user clicks it.
+  const bad = new URL(provider.authUrl?.toString() ?? "");
+  bad.searchParams.set("response_type", "token");
+  back.length = 0;
+  await page.goto(bad.toString());
+  await expect(consent.getByRole("alert")).toContainText("cannot accept");
+  const link = page.getByTestId("oauth-return");
+  await expect(link).toHaveText("Return to 127.0.0.1:9");
+  await expect(consent.getByRole("button", { name: "Allow access" })).toHaveCount(0);
+  await page.waitForLoadState("networkidle");
+  expect(back).toEqual([]);
+  const clicked = page.waitForRequest((r) => r.url().startsWith(REDIRECT));
+  await link.click();
+  const refused = new URL((await clicked).url()).searchParams;
+  expect(refused.get("error")).toBe("unsupported_response_type");
+  expect(refused.get("code")).toBeNull();
+
+  // Reload of the Account page: one grant, the one the user allowed, with its host.
+  await page.goto("/account");
+  await page.reload();
+  const grants = page.getByTestId("oauth-grants");
+  await expect(grants.locator("[data-grant]")).toHaveCount(1);
+  await expect(grants.locator('[data-grant="Claude"]')).toContainText("127.0.0.1:9");
+});
+
+test("only the owner can connect or revoke an AI tool: a delegate gets 403 on the consent page and on Revoke, and an API key cannot approve (integrations-ai-tools rules 6-8, delegated access)", async ({
+  page,
+  signIn,
+  colleague,
+  mail,
+  request,
+}) => {
+  const pb = await teamOfTwo(page, signIn, colleague, mail);
+  await giveAccess(page, COLLEAGUE_EMAIL);
+  await page.goto("/account");
+  const key = await createKey(page, "Leaked key");
+  const owned = await oauthConnect(page, "Cursor");
+  await pb.reload();
+  await switchTo(pb, "e2e");
+
+  // The delegate opens a consent link in the owner's account: Allow access is refused.
+  const provider = await startOAuth("Claude");
+  await pb.route(`${REDIRECT}**`, (r) => r.fulfill({ body: "You can close this window." }));
+  await pb.goto(provider.authUrl?.toString() ?? "");
+  const consent = pb.getByTestId("oauth-consent");
+  await expect(consent).toContainText(EMAIL);
+  const refused = pb.waitForResponse(
+    (r) => r.request().method() === "POST" && r.url().includes("/api/oauth/consent"),
+  );
+  await consent.getByRole("button", { name: "Allow access" }).click();
+  expect((await refused).status()).toBe(403);
+  await expect(consent.getByRole("alert")).toHaveText(
+    "Delegates cannot connect or revoke AI tools. Ask e2e to do it.",
+  );
+  expect(new URL(pb.url()).pathname).toBe("/oauth/authorize");
+
+  // Revoke on the Account page is refused too; the owner's grant stays.
+  await pb.goto("/account");
+  const grants = pb.getByTestId("oauth-grants");
+  const revoke = pb.waitForResponse(
+    (r) => r.request().method() === "DELETE" && r.url().includes("/api/oauth/grants/"),
+  );
+  await grants.locator('[data-grant="Cursor"]').getByRole("button", { name: "Revoke" }).click();
+  await pb.getByRole("dialog").getByRole("button", { name: "Revoke access" }).click();
+  expect((await revoke).status()).toBe(403);
+  await expect(pb.getByTestId("mcp-section").getByRole("alert")).toHaveText(
+    "Delegates cannot connect or revoke AI tools. Ask e2e to do it.",
+  );
+  await expect(grants.locator("[data-grant]")).toHaveCount(1);
+
+  // The API refuses the delegate's consent and revoke as well.
+  const grantId = (
+    await pb.evaluate(() =>
+      fetch("/api/oauth/grants").then((r) => r.json() as Promise<{ id: string }[]>),
+    )
+  )[0]?.id;
+  const ask = Object.fromEntries(new URL(provider.authUrl?.toString() ?? "").searchParams);
+  expect(
+    await statuses(pb, [
+      { method: "POST", url: "/api/oauth/consent", body: { ...ask, allow: true } },
+      { method: "DELETE", url: `/api/oauth/grants/${grantId}` },
+    ]),
+  ).toEqual(Array(2).fill({ status: 403, error: "delegate_forbidden" }));
+
+  // An API key has no session: it cannot approve a consent.
+  const viaKey = await request.post("/api/oauth/consent", {
+    headers: { authorization: `Bearer ${key}` },
+    data: { ...ask, allow: true },
+  });
+  expect(viaKey.status()).toBe(403);
+  expect(await viaKey.json()).toMatchObject({ error: "session_required" });
+
+  // Reload as the owner: only the owner's own grant, and it still works.
+  await page.goto("/account");
+  await page.reload();
+  await expect(page.getByTestId("oauth-grants").locator("[data-grant]")).toHaveCount(1);
+  await expect(page.locator('[data-grant="Cursor"]')).toBeVisible();
+  expect(await statusWith(owned.provider.saved?.access_token ?? "")).toBe(200);
 });

@@ -1068,20 +1068,22 @@ T.update({
     "u34_flow": "an MCP client signs in with OAuth on the consent page, reads at once, and its writes wait in preview mode until the user applies them (integrations-ai-tools rules 1-3, 21)",
     "u34_caps": "an AI tool answers an invitation, protects focus time and records a work session, each staged until the user applies it (integrations-ai-tools capability groups)",
     "u34_revoke": "revoking one AI tool on the Account page stops only that tool; calendar access, its events and its staged changes stay (integrations-ai-tools rules 6-8, edge case 1)",
+    "u34_signin": "a signed-out user signs in on the consent page and comes back to it; a bad request stays on the page with a link back (integrations-ai-tools Authorization, edge case 2)",
+    "u34_owner": "only the owner can connect or revoke an AI tool: a delegate gets 403 on the consent page and on Revoke, and an API key cannot approve (integrations-ai-tools rules 6-8, delegated access)",
 })
 E2E.update({
     944: ["u34_flow"],
     945: ["u34_flow", "u34_caps"],
     946: ["u34_flow", "u34_caps", "s7_mcp_read", "s7_final"],
-    947: ["u34_revoke"],
-    953: ["u34_flow"],
+    947: ["u34_revoke", "u34_owner"],
+    953: ["u34_flow", "u34_signin", "u34_owner"],
 })
 E2E_NOTES.update({
-    944: "One URL, <BASE_URL>/mcp, shown on the Account page with a copy button; two OAuth clients and an API-key client read the same data",
-    945: "Read tools answer at once; propose_* tools stage changes that the user applies in the planner (or the client applies with apply_staged_changes after the user confirms)",
-    946: "Tools: list_events, find_free_time, propose_create_event, propose_update_event, propose_delete_event, propose_rsvp, propose_focus_time, get_week_summary, get_stats, propose_log_task_time, list_staged_changes, apply_staged_changes. A focus block is a busy event with the #tl_focus tag",
-    947: "The Account page lists each OAuth client with its last use and a Revoke action; revoke deletes the grant and its tokens. Calendar accounts stay connected",
-    953: "A standard MCP client (the official MCP TypeScript SDK) registers itself, gets the user's consent and uses OAuth 2.1 with PKCE",
+    944: "One URL, <BASE_URL>/mcp, shown on the Account page; two OAuth clients and an API-key client read the same data",
+    945: "Read tools answer at once; propose_* tools stage changes that the user applies in the planner, or that the client lists with list_staged_changes and applies with apply_staged_changes after the user confirms",
+    946: "Tools: list_events, find_free_time (also with attendees: a colleague on this server and an unknown guest), propose_create_event, propose_update_event, propose_delete_event, propose_rsvp, propose_focus_time, get_week_summary, get_stats, propose_log_task_time, list_staged_changes, apply_staged_changes. A focus block is a busy event with the #tl_focus tag",
+    947: "The Account page lists each OAuth client with its redirect host, last use and a Revoke action; revoke deletes the grant and its tokens. Calendar accounts stay connected. Only the owner in a session of their own can allow or revoke: a delegate and an API key get 403",
+    953: "A standard MCP client (the official MCP TypeScript SDK) registers itself, gets the user's consent and uses OAuth 2.1 with PKCE. The consent page names the redirect host, the registration date and \u201cUnverified\u201d, may not be framed, keeps a bad request on the page with a link back, and comes back after a CalDAV sign-in",
 })
 _SERVER = "the server side it uses (OAuth 2.1 with dynamic client registration and PKCE, the consent page, the MCP URL) passes E2E with the MCP SDK client (\u201c" + T["u34_flow"] + "\u201d)"
 BLOCKED[948] = "Needs ChatGPT with a paid plan that allows a custom connector, and a published app for the app directory; " + _SERVER

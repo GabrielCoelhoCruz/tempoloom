@@ -1237,4 +1237,8 @@ export const MIGRATIONS: readonly string[] = [
   ) STRICT;
   CREATE INDEX oauth_tokens_grant ON oauth_tokens(grant_id);
   `,
+  `
+  ALTER TABLE oauth_tokens ADD COLUMN used_at INTEGER;
+  ALTER TABLE oauth_states ADD COLUMN return_to TEXT;
+  `,
 ];

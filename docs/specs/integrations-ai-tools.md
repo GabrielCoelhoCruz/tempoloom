@@ -34,13 +34,27 @@ Tempoloom decision: the server publishes OAuth protected resource metadata
 (RFC 9728) at `/.well-known/oauth-protected-resource/mcp` and authorization
 server metadata (RFC 8414) at `/.well-known/oauth-authorization-server`; a 401
 from `/mcp` names the resource metadata. Clients register themselves
-(RFC 7591, `/oauth/register`, public clients only); a redirect URI is https,
-http on a loopback host, or an app's own scheme. The consent page is
-`/oauth/authorize` in the web app; it needs the S256 PKCE method and has the
-one scope `mcp`. Codes last 10 minutes and work once; access tokens last 1
-hour; refresh tokens last 30 days and rotate at each use. One grant per
-client and user; Revoke deletes it with all its tokens. A personal API key
-still works as a bearer token.
+(RFC 7591, `/oauth/register`, public clients only), at most 20 times per hour
+from one address; when 1000 clients wait for a first consent, registration
+pauses, and a client with no consent after 24 hours is deleted. A redirect URI
+has no fragment and is one of: https; http on a loopback host (`localhost`,
+`127.0.0.1`, `[::1]`); a private-use scheme in reverse-domain form (RFC 8252
+7.1, for example `com.example.app:/callback`); or the scheme `cursor`, which
+Cursor uses. Every other scheme is refused. The consent page is
+`/oauth/authorize` in the web app; it may not be framed. It names the client
+as "unverified" (the client chose the name), the host the answer goes to (the
+scheme and host for an app scheme), and the registration date. Only the
+signed-in owner in a session of their own can allow access or revoke it: a
+delegate and an API key get 403. A request with an unknown client or an
+unregistered redirect URI shows an error; any other bad request of a known
+client shows an error with a "Return to <host>" link and is never redirected
+without a click. A user who must sign in first (Google or CalDAV) comes back
+to the same consent page. It needs the S256 PKCE method and has the one scope
+`mcp`. Codes last 10 minutes and work once; access tokens last 1 hour; refresh
+tokens last 30 days and rotate at each use; a second use of a rotated refresh
+token revokes the grant. One grant per client and user; Revoke deletes it with
+all its tokens, and so does deactivation of the user. A personal API key still
+works as a bearer token.
 
 Client grant record: client name, user, scopes, created_at, last_used_at.
 

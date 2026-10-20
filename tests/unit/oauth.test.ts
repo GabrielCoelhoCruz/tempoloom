@@ -5,17 +5,34 @@
 // Ways it can fail:
 // 1. A client registers a redirect URI that runs script or leaves loopback over http.
 // 2. A code is exchanged without the PKCE verifier, with another redirect URI, or twice.
-// 3. A used refresh token still works (no rotation), or a token outlives its grant.
+// 3. A token outlives its grant (a used refresh token: see 9).
 // 4. An expired access token still reads.
 // 5. The consent request of an unknown client, or with a URI it did not register,
 //    redirects anyway (an open redirect), or a request without PKCE gets a code.
+// 6. A bad request of a registered client sends the browser to the client without a
+//    click: anyone can register a client, so that is an open redirect.
+// 7. The consent page does not say where the code goes, so a client named "Claude"
+//    with an attacker's redirect URI looks like Claude.
+// 8. A delegate or an API key mints a grant that outlives their access.
+// 9. A stolen refresh token used after the real client keeps working; a deactivated
+//    user's grant keeps refreshing.
+// 10. Anonymous registration fills the disk: no rate limit, no cap, no clean-up.
 import { createHash } from "node:crypto";
 import { Hono } from "hono";
 import { describe, expect, it } from "vitest";
 import { ensureUser, type User } from "../../src/server/accounts.ts";
 import type { AppEnv } from "../../src/server/app.ts";
-import { openDb } from "../../src/server/db.ts";
-import { oauthConsentRoutes, oauthRoutes, oauthUser } from "../../src/server/oauth.ts";
+import { all, one, openDb, run } from "../../src/server/db.ts";
+import { blockedForDelegate } from "../../src/server/delegation.ts";
+import { setActive } from "../../src/server/directory.ts";
+import {
+  CLIENT_CAP,
+  oauthConsentRoutes,
+  oauthRoutes,
+  oauthUser,
+  REGISTRATIONS_PER_HOUR,
+} from "../../src/server/oauth.ts";
+import { membership } from "../../src/server/teams.ts";
 
 const BASE = "https://cal.example.com";
 const T0 = Date.parse("2026-10-19T08:00:00Z");
@@ -41,12 +58,17 @@ function setup() {
       headers: { "content-type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams(body).toString(),
     });
+  let ip = "203.0.113.1";
   const register = async (redirect_uris: string[]) =>
-    app.request("/oauth/register", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ client_name: "Claude", redirect_uris }),
-    });
+    app.request(
+      "/oauth/register",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ client_name: "Claude", redirect_uris }),
+      },
+      { incoming: { socket: { remoteAddress: ip } } },
+    );
   const clientId = async () =>
     ((await (await register([REDIRECT])).json()) as { client_id: string }).client_id;
   const query = (client_id: string, extra: Record<string, string> = {}) => ({
@@ -93,6 +115,15 @@ function setup() {
     tick: (ms: number) => {
       t += ms;
     },
+    fromIp: (address: string) => {
+      ip = address;
+    },
+    getConsent: async (client_id: string, extra: Record<string, string> = {}) => {
+      const res = await app.request(
+        `/api/oauth/consent?${new URLSearchParams(query(client_id, extra))}`,
+      );
+      return { status: res.status, body: (await res.json()) as Record<string, unknown> };
+    },
   };
 }
 
@@ -127,8 +158,20 @@ describe("OAuth for MCP clients", () => {
       REDIRECT,
       "https://claude.ai/api/mcp/auth_callback",
       "cursor://anysphere.cursor-mcp/oauth/callback",
+      "com.example.app:/oauth/callback",
+      "http://localhost:4000/cb",
     ])
       expect((await register([good])).status).toBe(201);
+    // Only https, loopback http and private-use schemes in reverse-domain form (RFC 8252).
+    for (const bad of [
+      "ftp://files.example.com/cb",
+      "ws://127.0.0.1:1/cb",
+      "intent://x#Intent;end",
+      "ldap://example.com",
+      "myapp:/cb",
+      "https://claude.ai/cb#frag",
+    ])
+      expect((await register([bad])).status, bad).toBe(400);
   });
 
   it("needs the PKCE verifier and the same redirect URI, and a code works once (2)", async () => {
@@ -170,7 +213,6 @@ describe("OAuth for MCP clients", () => {
       refresh_token: string;
     };
     expect(second.access_token).toBeTruthy();
-    expect((await refresh(first.refresh_token)).status).toBe(400);
     expect(oauthUser(s.db, `Bearer ${second.access_token}`, T0)?.client).toBe("Claude");
     const [grant] = (await (await s.app.request("/api/oauth/grants")).json()) as { id: string }[];
     expect(
@@ -200,5 +242,160 @@ describe("OAuth for MCP clients", () => {
     expect(back.searchParams.get("error")).toBe("invalid_request");
     expect(back.searchParams.get("code")).toBeNull();
     expect(back.searchParams.get("state")).toBe("s1");
+  });
+
+  it("shows a bad request of a registered client on the page with a link, never redirects without a click (6)", async () => {
+    const s = setup();
+    const id = await s.clientId();
+    for (const extra of [
+      { response_type: "token" },
+      { code_challenge_method: "plain" },
+      { scope: "admin" },
+      { resource: "https://other.example/mcp" },
+    ]) {
+      const r = await s.getConsent(id, extra);
+      expect(r.status).toBe(400);
+      expect(r.body.redirect).toBeUndefined();
+      expect(r.body.error).toBeTruthy();
+      expect(r.body.host).toBe("127.0.0.1:33418");
+      const back = new URL(String(r.body.returnTo));
+      expect(`${back.origin}${back.pathname}`).toBe(REDIRECT);
+      expect(back.searchParams.get("code")).toBeNull();
+      expect(back.searchParams.get("error")).toBeTruthy();
+    }
+    // Unknown client or unregistered URI: no link at all.
+    for (const r of [
+      await s.getConsent("unknown"),
+      await s.getConsent(id, { redirect_uri: "https://evil.example.com/cb" }),
+    ]) {
+      expect(r.status).toBe(400);
+      expect(r.body.redirect).toBeUndefined();
+      expect(r.body.returnTo).toBeUndefined();
+    }
+  });
+
+  it("the consent request names where the code goes, the registration date, and that the name is unverified (7)", async () => {
+    const s = setup();
+    const id = await s.clientId();
+    expect((await s.getConsent(id)).body).toMatchObject({
+      client: "Claude",
+      email: "owner@example.com",
+      host: "127.0.0.1:33418",
+      registeredAt: T0,
+      unverified: true,
+    });
+    const app = (await (
+      await s.register(["cursor://anysphere.cursor-mcp/oauth/callback"])
+    ).json()) as { client_id: string };
+    const r = await s.getConsent(app.client_id, {
+      redirect_uri: "cursor://anysphere.cursor-mcp/oauth/callback",
+    });
+    expect(r.body.host).toBe("cursor://anysphere.cursor-mcp");
+    // The Account page shows the host of each grant, too.
+    await s.code(id);
+    expect(await (await s.app.request("/api/oauth/grants")).json()).toMatchObject([
+      { client: "Claude", host: "127.0.0.1:33418" },
+    ]);
+  });
+
+  it("only the owner in a session of their own approves or revokes (8)", () => {
+    for (const [method, path] of [
+      ["POST", "/api/oauth/consent"],
+      ["DELETE", "/api/oauth/grants/g1"],
+    ] as const)
+      expect(blockedForDelegate(method, path, "Owner"), path).toBeTruthy();
+    expect(blockedForDelegate("GET", "/api/oauth/consent", "Owner")).toBeUndefined();
+    expect(blockedForDelegate("GET", "/api/oauth/grants", "Owner")).toBeUndefined();
+  });
+
+  it("a deactivated user's grants and refresh tokens end (8)", async () => {
+    const s = setup();
+    const id = await s.clientId();
+    const tokens = (await (await s.exchange(id, await s.code(id))).json()) as {
+      refresh_token: string;
+    };
+    setActive(s.db, s.user.id, membership(s.db, s.user.id).team.id, false, T0);
+    expect(all(s.db, "SELECT id FROM oauth_grants")).toEqual([]);
+    expect(
+      (
+        await s.form({
+          grant_type: "refresh_token",
+          client_id: id,
+          refresh_token: tokens.refresh_token,
+        })
+      ).status,
+    ).toBe(400);
+  });
+
+  it("a deactivated user cannot refresh even if the grant row is left (8)", async () => {
+    const s = setup();
+    const id = await s.clientId();
+    const tokens = (await (await s.exchange(id, await s.code(id))).json()) as {
+      refresh_token: string;
+    };
+    run(s.db, "UPDATE users SET deactivated_at = ? WHERE id = ?", T0, s.user.id);
+    expect(
+      (
+        await s.form({
+          grant_type: "refresh_token",
+          client_id: id,
+          refresh_token: tokens.refresh_token,
+        })
+      ).status,
+    ).toBe(400);
+  });
+
+  it("a reused refresh token revokes the whole grant (9)", async () => {
+    const s = setup();
+    const id = await s.clientId();
+    const first = (await (await s.exchange(id, await s.code(id))).json()) as {
+      refresh_token: string;
+    };
+    const refresh = (token: string) =>
+      s.form({ grant_type: "refresh_token", client_id: id, refresh_token: token });
+    // The thief uses the token first and gets the new pair.
+    const stolen = (await (await refresh(first.refresh_token)).json()) as {
+      access_token: string;
+      refresh_token: string;
+    };
+    expect(oauthUser(s.db, `Bearer ${stolen.access_token}`, T0)).toBeDefined();
+    // The real client uses the old token again: the grant ends for both.
+    const reuse = await refresh(first.refresh_token);
+    expect(reuse.status).toBe(400);
+    expect(await reuse.json()).toMatchObject({ error: "invalid_grant" });
+    expect(oauthUser(s.db, `Bearer ${stolen.access_token}`, T0)).toBeUndefined();
+    expect((await refresh(stolen.refresh_token)).status).toBe(400);
+    expect(all(s.db, "SELECT id FROM oauth_grants")).toEqual([]);
+  });
+
+  it("limits registrations per address and in total, and deletes clients never authorized after a day (10)", async () => {
+    const s = setup();
+    for (let i = 0; i < REGISTRATIONS_PER_HOUR; i++)
+      expect((await s.register([REDIRECT])).status).toBe(201);
+    expect((await s.register([REDIRECT])).status).toBe(429);
+    // Another address is not limited; an hour later the first one is not either.
+    s.fromIp("203.0.113.2");
+    expect((await s.register([REDIRECT])).status).toBe(201);
+    s.fromIp("203.0.113.1");
+    s.tick(61 * 60_000);
+    const kept = await s.clientId();
+    await s.code(kept);
+    // A day later, clients without a grant are gone; the one with a grant stays.
+    s.tick(24 * 60 * 60_000);
+    await s.clientId();
+    const ids = all<{ id: string }>(s.db, "SELECT id FROM oauth_clients").map((r) => r.id);
+    expect(ids).toHaveLength(2);
+    expect(ids).toContain(kept);
+    // The cap counts clients without a grant on the whole server.
+    for (let i = 0; i < CLIENT_CAP; i++)
+      run(
+        s.db,
+        "INSERT INTO oauth_clients (id, name, redirect_uris, created_at) VALUES (?, 'x', '[]', ?)",
+        `filler-${i}`,
+        T0 + 25 * 60 * 60_000,
+      );
+    s.fromIp("203.0.113.9");
+    expect((await s.register([REDIRECT])).status).toBe(429);
+    expect(one(s.db, "SELECT 1 FROM oauth_clients WHERE id = ?", kept)).toBeTruthy();
   });
 });

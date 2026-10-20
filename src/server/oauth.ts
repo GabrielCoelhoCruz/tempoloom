@@ -15,6 +15,13 @@ export const SCOPE = "mcp";
 const CODE_TTL = 10 * 60_000;
 const ACCESS_TTL = 60 * 60_000;
 const REFRESH_TTL = 30 * 86_400_000;
+/** Registrations that one address may make in an hour. */
+export const REGISTRATIONS_PER_HOUR = 20;
+/** Clients that no user has authorized yet, on the whole server. */
+export const CLIENT_CAP = 1000;
+/** A client that no user authorized in this time is deleted. */
+const UNUSED_CLIENT_TTL = 86_400_000;
+const HOUR = 60 * 60_000;
 
 const newToken = () => randomBytes(32).toString("base64url");
 const s256 = (verifier: string) => createHash("sha256").update(verifier).digest("base64url");
@@ -27,7 +34,14 @@ export const resourceMetadataUrl = (baseUrl: string) =>
 
 const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
-/** https, http on loopback only, or an app's own scheme; never a script or a file. */
+/** App schemes without a dot that known AI tools use (Cursor). */
+const APP_SCHEMES = new Set(["cursor:"]);
+
+/**
+ * An allow list: https; http on a loopback host; a private-use scheme in
+ * reverse-domain form (RFC 8252 7.1, for example com.example.app:/cb), or a
+ * scheme of APP_SCHEMES. No fragment.
+ */
 function redirectAllowed(uri: string): boolean {
   let u: URL;
   try {
@@ -35,20 +49,32 @@ function redirectAllowed(uri: string): boolean {
   } catch {
     return false;
   }
-  if (u.hash) return false;
+  if (u.hash || uri.includes("#")) return false;
   if (u.protocol === "https:") return true;
   if (u.protocol === "http:") return LOOPBACK.has(u.hostname);
-  return !["javascript:", "data:", "file:", "blob:", "vbscript:", "about:"].includes(u.protocol);
+  return /^[a-z][a-z0-9+-]*(\.[a-z0-9+-]+)+:$/.test(u.protocol) || APP_SCHEMES.has(u.protocol);
+}
+
+/** Where a redirect URI sends the user, as the consent page shows it. */
+export function redirectHost(uri: string): string {
+  const u = new URL(uri);
+  if (u.protocol === "https:" || u.protocol === "http:") return u.host;
+  return u.host ? `${u.protocol}//${u.host}` : u.protocol;
 }
 
 interface ClientRow {
   id: string;
   name: string;
   redirect_uris: string;
+  created_at: number;
 }
 
 const clientOf = (db: Db, id: string) =>
-  one<ClientRow>(db, "SELECT id, name, redirect_uris FROM oauth_clients WHERE id = ?", id);
+  one<ClientRow>(
+    db,
+    "SELECT id, name, redirect_uris, created_at FROM oauth_clients WHERE id = ?",
+    id,
+  );
 
 /** The request of the consent page: the query of /oauth/authorize. */
 export const authorizeQuery = z.object({
@@ -67,7 +93,7 @@ type Checked =
   | { ok: true; client: ClientRow; challenge: string }
   /** No safe place to send the error to: the page shows it. */
   | { ok: false; show: string }
-  /** The client gets the error at its redirect URI. */
+  /** The client is known and the URI is registered: the page links back to it with the error. */
   | { ok: false; error: string; description: string };
 
 function check(db: Db, baseUrl: string, q: AuthorizeQuery): Checked {
@@ -157,7 +183,13 @@ export function oauthRoutes(db: Db, baseUrl: string, now: () => number): Hono {
     await next();
     c.header("Access-Control-Allow-Origin", "*");
   });
-  r.use("/oauth/*", async (c, next) => {
+  // The consent page may not be framed (clickjacking of "Allow access").
+  r.use("/oauth/authorize", async (c, next) => {
+    await next();
+    c.header("X-Frame-Options", "DENY");
+    c.header("Content-Security-Policy", "frame-ancestors 'none'");
+  });
+  r.use("/oauth/:endpoint{register|token}", async (c, next) => {
     if (c.req.method === "OPTIONS") {
       c.header("Access-Control-Allow-Origin", "*");
       c.header("Access-Control-Allow-Methods", "POST, OPTIONS");
@@ -191,8 +223,48 @@ export function oauthRoutes(db: Db, baseUrl: string, now: () => number): Hono {
     }),
   );
 
+  // Registrations per address in the last hour; kept in memory.
+  const recent = new Map<string, number[]>();
+  const limited = (ip: string, t: number) => {
+    for (const [k, times] of recent) {
+      const kept = times.filter((x) => x > t - HOUR);
+      if (kept.length) recent.set(k, kept);
+      else recent.delete(k);
+    }
+    const times = recent.get(ip) ?? [];
+    if (times.length >= REGISTRATIONS_PER_HOUR) return true;
+    recent.set(ip, [...times, t]);
+    return false;
+  };
+
   // Dynamic client registration (RFC 7591): public clients only, no secret.
   r.post("/oauth/register", async (c) => {
+    const at = now();
+    const ip =
+      (c.env as { incoming?: { socket?: { remoteAddress?: string } } } | undefined)?.incoming
+        ?.socket?.remoteAddress ?? "unknown";
+    const busy = () =>
+      c.json(
+        { error: "temporarily_unavailable", error_description: "Too many registrations" },
+        429,
+      );
+    if (limited(ip, at)) return busy();
+    // Clean-up: clients nobody authorized in a day, expired codes and tokens.
+    run(
+      db,
+      `DELETE FROM oauth_clients WHERE created_at < ?
+       AND NOT EXISTS (SELECT 1 FROM oauth_grants g WHERE g.client_id = oauth_clients.id)`,
+      at - UNUSED_CLIENT_TTL,
+    );
+    run(db, "DELETE FROM oauth_codes WHERE expires_at <= ?", at);
+    run(db, "DELETE FROM oauth_tokens WHERE expires_at <= ?", at);
+    const unused =
+      one<{ n: number }>(
+        db,
+        `SELECT COUNT(*) AS n FROM oauth_clients c
+         WHERE NOT EXISTS (SELECT 1 FROM oauth_grants g WHERE g.client_id = c.id)`,
+      )?.n ?? 0;
+    if (unused >= CLIENT_CAP) return busy();
     const parsed = registration.safeParse(await c.req.json().catch(() => null));
     if (!parsed.success)
       return c.json({ error: "invalid_client_metadata", error_description: "Bad metadata" }, 400);
@@ -205,7 +277,6 @@ export function oauthRoutes(db: Db, baseUrl: string, now: () => number): Hono {
       );
     const id = randomUUID();
     const name = m.client_name || "AI tool";
-    const at = now();
     run(
       db,
       "INSERT INTO oauth_clients (id, name, redirect_uris, created_at) VALUES (?, ?, ?, ?)",
@@ -265,19 +336,26 @@ export function oauthRoutes(db: Db, baseUrl: string, now: () => number): Hono {
 
     if (f("grant_type") === "refresh_token") {
       const hash = hashToken(f("refresh_token"));
-      const row = one<{ grant_id: string }>(
+      const row = one<{ grant_id: string; used_at: number | null }>(
         db,
-        `SELECT t.grant_id FROM oauth_tokens t JOIN oauth_grants g ON g.id = t.grant_id
-         WHERE t.token_hash = ? AND t.kind = 'refresh' AND t.expires_at > ? AND g.client_id = ?`,
+        `SELECT t.grant_id, t.used_at FROM oauth_tokens t JOIN oauth_grants g ON g.id = t.grant_id
+         JOIN users u ON u.id = g.user_id
+         WHERE t.token_hash = ? AND t.kind = 'refresh' AND t.expires_at > ? AND g.client_id = ?
+           AND u.deactivated_at IS NULL`,
         hash,
         t,
         client.id,
       );
       if (!row) return fail("invalid_grant", "The refresh token is unknown, revoked or expired");
-      // Rotation: the used refresh token stops working.
+      // Reuse of a rotated token shows a theft: the whole grant ends (OAuth 2.1 4.3.1).
+      if (row.used_at !== null) {
+        run(db, "DELETE FROM oauth_grants WHERE id = ?", row.grant_id);
+        return fail("invalid_grant", "The refresh token was used before; access is revoked");
+      }
+      // Rotation: the used refresh token stops working, and is kept to detect reuse.
       return c.json(
         tx(db, () => {
-          run(db, "DELETE FROM oauth_tokens WHERE token_hash = ?", hash);
+          run(db, "UPDATE oauth_tokens SET used_at = ? WHERE token_hash = ?", t, hash);
           run(
             db,
             "DELETE FROM oauth_tokens WHERE grant_id = ? AND expires_at <= ?",
@@ -302,12 +380,29 @@ export function oauthConsentRoutes(db: Db, baseUrl: string, now: () => number): 
     const q = authorizeQuery.safeParse(c.req.query());
     if (!q.success) return c.json({ error: "The request of the AI tool is incomplete." }, 400);
     const v = check(db, baseUrl, q.data);
+    // Errors stay on the page. A registered client gets a link back, never an
+    // automatic redirect: anyone can register a client (RFC 9700 4.11.2).
     if (!v.ok)
       return "show" in v
         ? c.json({ error: v.show }, 400)
-        : c.json({ redirect: back(q.data, { error: v.error, error_description: v.description }) });
+        : c.json(
+            {
+              error: `The AI tool sent a request that Tempoloom cannot accept: ${v.description}.`,
+              host: redirectHost(q.data.redirect_uri),
+              returnTo: back(q.data, { error: v.error, error_description: v.description }),
+            },
+            400,
+          );
     const user = c.get("user");
-    return c.json({ client: v.client.name, email: user.email, scope: SCOPE });
+    return c.json({
+      client: v.client.name,
+      email: user.email,
+      scope: SCOPE,
+      host: redirectHost(q.data.redirect_uri),
+      registeredAt: v.client.created_at,
+      // Every client registers itself (RFC 7591): nobody checked its name.
+      unverified: true,
+    });
   });
 
   r.post("/oauth/consent", async (c) => {
@@ -362,13 +457,18 @@ export function oauthConsentRoutes(db: Db, baseUrl: string, now: () => number): 
         scope: string;
         createdAt: number;
         lastUsedAt: number | null;
+        uris: string;
       }>(
         db,
-        `SELECT g.id, c.name AS client, g.scope, g.created_at AS createdAt, g.last_used_at AS lastUsedAt
+        `SELECT g.id, c.name AS client, g.scope, g.created_at AS createdAt,
+           g.last_used_at AS lastUsedAt, c.redirect_uris AS uris
          FROM oauth_grants g JOIN oauth_clients c ON c.id = g.client_id
          WHERE g.user_id = ? ORDER BY g.created_at, g.id`,
         c.get("user").id,
-      ),
+      ).map(({ uris, ...g }) => ({
+        ...g,
+        host: [...new Set((JSON.parse(uris) as string[]).map(redirectHost))].join(", "),
+      })),
     ),
   );
 

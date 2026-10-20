@@ -3,7 +3,7 @@
 // sign in, what they may do here, and the AI tools connected with OAuth, each
 // with a Revoke action.
 import { useCallback, useEffect, useState } from "preact/hooks";
-import { api } from "../lib/api.ts";
+import { ApiError, api } from "../lib/api.ts";
 import { toLocalInput } from "../lib/format.ts";
 import { zone } from "../lib/state.ts";
 
@@ -12,6 +12,8 @@ interface Grant {
   client: string;
   createdAt: number;
   lastUsedAt: number | null;
+  /** Where the client's sign-in returned to. */
+  host: string;
 }
 
 const when = (t: number) => toLocalInput(zone(), t).replace("T", " ");
@@ -20,6 +22,7 @@ export function McpSection() {
   const [info, setInfo] = useState<{ url: string; writeEnabled: boolean } | null>(null);
   const [grants, setGrants] = useState<Grant[] | null>(null);
   const [revoking, setRevoking] = useState<Grant | null>(null);
+  const [revokeError, setRevokeError] = useState<string | null>(null);
   const loadGrants = useCallback(
     () => void api<Grant[]>("GET", "/api/oauth/grants").then(setGrants),
     [],
@@ -56,7 +59,7 @@ export function McpSection() {
             <span>
               {g.client}{" "}
               <span class="meta">
-                · connected {when(g.createdAt)} ·{" "}
+                · {g.host} · connected {when(g.createdAt)} ·{" "}
                 {g.lastUsedAt === null ? "never used" : `last used ${when(g.lastUsedAt)}`}
               </span>
             </span>
@@ -68,6 +71,11 @@ export function McpSection() {
           </div>
         ))}
       </div>
+      {revokeError && (
+        <p class="error" role="alert">
+          {revokeError}
+        </p>
+      )}
       <p class="status">
         Revoking removes only that tool's access. Your calendars stay connected to Tempoloom, and
         events the tool made stay on your calendar.
@@ -87,7 +95,16 @@ export function McpSection() {
                 onClick={() => {
                   const g = revoking;
                   setRevoking(null);
-                  void api("DELETE", `/api/oauth/grants/${g.id}`).then(loadGrants);
+                  setRevokeError(null);
+                  void api("DELETE", `/api/oauth/grants/${g.id}`)
+                    .catch((err: unknown) =>
+                      setRevokeError(
+                        (err instanceof ApiError &&
+                          (err.body as { message?: string } | undefined)?.message) ||
+                          "The access was not revoked. Try again.",
+                      ),
+                    )
+                    .then(loadGrants);
                 }}
               >
                 Revoke access

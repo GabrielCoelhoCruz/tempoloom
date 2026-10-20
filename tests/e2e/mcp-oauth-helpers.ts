@@ -17,7 +17,7 @@ import type { Page } from "@playwright/test";
 import { BASE_URL, expect } from "./fixtures.ts";
 
 /** The client's redirect URI: loopback, never reached; the test catches the redirect in the browser. */
-const REDIRECT = "http://127.0.0.1:9/callback";
+export const REDIRECT = "http://127.0.0.1:9/callback";
 
 /** Keeps the client's registration, tokens and PKCE verifier in memory. */
 class MemoryProvider implements OAuthClientProvider {
