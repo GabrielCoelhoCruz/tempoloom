@@ -193,16 +193,42 @@ const GAP: Record<Snapshot["chunkCooldown"], number> = {
   "2h": 120,
   "4h": 240,
 };
-const localDate = (t: number) => new Date(t).toLocaleDateString("sv-SE", { timeZone: ZONE });
+const dayFormat = new Intl.DateTimeFormat("sv-SE", { timeZone: ZONE });
+const localDate = (t: number) => dayFormat.format(t);
+// TSK-14 for one task: each placed (not locked) chunk keeps the cooldown
+// from every other chunk of the task and, with once-per-day, has its local
+// day to itself. Linear after a sort: the nearest chunk before c is the
+// largest end among chunks that start no later; the nearest after is the
+// next start. Returns the chunks that break the rule.
+const cooldownBreaks = (mine: Placement[], cooldown: Snapshot["chunkCooldown"]) => {
+  const sorted = [...mine].sort((a, b) => a.start - b.start);
+  const days = new Map<string, number>();
+  const dayOf = sorted.map((c) => localDate(c.start));
+  for (const d of dayOf) days.set(d, (days.get(d) ?? 0) + 1);
+  const gap = GAP[cooldown] * MIN;
+  const bad: Placement[] = [];
+  let maxEnd = -Infinity;
+  sorted.forEach((c, i) => {
+    const next = sorted[i + 1];
+    const tooClose = c.start - maxEnd < gap || (next !== undefined && next.start - c.end < gap);
+    const sameDay = cooldown === "once-per-day" && (days.get(dayOf[i] as string) ?? 0) > 1;
+    if (!c.locked && (tooClose || sameDay)) bad.push(c);
+    maxEnd = Math.max(maxEnd, c.end);
+  });
+  return bad;
+};
 // PLAN_RUNS=3000 PLAN_SEED=<n> raise the run count and fix the seed. The
 // overlap test spends most of its time in its pairwise expect() calls (about
 // 1.3 ms per run; plan() takes about 0.2 ms), so long runs get a long timeout.
+// The chunk-bounds test takes about 1.3 s at its 3000 default runs on a dev
+// host (plan() is about 0.3 ms per run) and about 1.5x that on CI: the
+// default timeout keeps a wide margin.
 const runs = (n: number) => ({
   numRuns: Number(process.env.PLAN_RUNS) || n,
   ...(process.env.PLAN_SEED ? { seed: Number(process.env.PLAN_SEED) } : {}),
 });
 
-describe("plan() invariants", { timeout: process.env.PLAN_RUNS ? 300_000 : 5_000 }, () => {
+describe("plan() invariants", { timeout: process.env.PLAN_RUNS ? 300_000 : 15_000 }, () => {
   it("never overlaps blocking events or other placements, and keeps each item in its hours", () => {
     fc.assert(
       fc.property(snapshotArb, (s) => {
@@ -250,16 +276,7 @@ describe("plan() invariants", { timeout: process.env.PLAN_RUNS ? 300_000 : 5_000
           );
           // TSK-14: chunks of one task keep the cooldown from each other and
           // from locked chunks; once-per-day keeps them on different days.
-          for (const c of chunks) {
-            for (const o of mine) {
-              if (o === c) continue;
-              const gap = Math.max(o.start - c.end, c.start - o.end);
-              expect(gap).toBeGreaterThanOrEqual(GAP[s.chunkCooldown] * MIN);
-              if (s.chunkCooldown === "once-per-day") {
-                expect(localDate(o.start)).not.toBe(localDate(c.start));
-              }
-            }
-          }
+          expect(cooldownBreaks(mine, s.chunkCooldown)).toEqual([]);
           // TSK-13 applied to the rest: a chunk shorter than the minimum is
           // allowed only when no split of the remaining work R (the work not
           // in locked chunks) fits the bounds (ceil(R / max) * min > R). Then
