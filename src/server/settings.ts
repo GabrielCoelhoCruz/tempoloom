@@ -77,6 +77,11 @@ export const settingsSchema = z.object({
   tabAlert: z.boolean().default(true),
   startChime: z.boolean().default(false),
   hoursReviewed: z.boolean().default(false),
+  // planning-planner.md: the days the planner shows (PLN-3) and calendars it hides (PLN-20).
+  plannerDays: z.enum(["all-days", "weekdays", "rolling-9-days"]).default("all-days"),
+  hiddenCalendars: z.array(z.string().max(200)).max(500).default([]),
+  // planning-event-content.md CNT-15: a short tip in managed event descriptions.
+  eventTips: z.boolean().default(true),
   profile: z
     .object({
       jobTitle: z.string().trim().max(100).default(""),

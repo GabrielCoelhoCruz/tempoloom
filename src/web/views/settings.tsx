@@ -15,6 +15,7 @@ import { MeetingSettings } from "./meeting-settings.tsx";
 import {
   AlertSettings,
   DeleteHoursSet,
+  EventTipsSetting,
   FocusNotes,
   HoursZoneNote,
   PlacementSetting,
@@ -380,6 +381,7 @@ export function Settings() {
       </section>
 
       <AlertSettings settings={settings} act={act} />
+      <EventTipsSetting settings={settings} act={act} />
 
       <section id="hours">
         <h2>Hours</h2>

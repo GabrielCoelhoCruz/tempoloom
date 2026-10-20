@@ -14,7 +14,13 @@ import { formatWhen, hhmm } from "../lib/format.ts";
 import { lazyComponent } from "../lib/lazy.ts";
 import { useLive } from "../lib/live.ts";
 import { Markdown } from "../lib/markdown.tsx";
-import { blockPreview, conflictIds, extraZone, plannerReload } from "../lib/planner-signals.ts";
+import {
+  blockPreview,
+  conflictIds,
+  extraZone,
+  plannerReload,
+  sidePanel,
+} from "../lib/planner-signals.ts";
 import { LEVEL_NAMES, loadMe, me, planNow, zone } from "../lib/state.ts";
 import "./parts.css";
 
@@ -184,7 +190,9 @@ export function NowBar({ from, to }: { from: number; to: number }) {
   const z = zone();
   const [now, setNow] = useState<Now | null>(null);
   const [conflicts, setConflicts] = useState<Conflict[]>([]);
-  const [open, setOpen] = useState<"tasks" | "priorities" | "conflicts" | null>(null);
+  // PLN-21: one panel at a time; opening one closes the event details.
+  const open = sidePanel.value;
+  const setOpen = (v: typeof open) => (sidePanel.value = v);
   const [stopping, setStopping] = useState(false);
   const [reviewing, setReviewing] = useState(false);
   const [error, setError] = useState<string | null>(null);

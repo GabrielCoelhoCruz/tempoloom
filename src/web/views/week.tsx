@@ -27,7 +27,15 @@ interface Props {
   flagged?: ReadonlySet<string>;
   /** A second time column in this zone (timezones-home-and-travel.md rule 10). */
   extraZone?: string | null;
+  /** Days that a busy all-day event uses, with its title (planning-planner.md PLN-5). */
+  busyDays?: ReadonlyMap<string, string>;
 }
+
+/** PLN-5: a grey dashed pattern across a day with a busy all-day event. */
+const BUSY_DAY = {
+  backgroundImage:
+    "repeating-linear-gradient(135deg, rgba(128,128,128,0.18) 0 6px, transparent 6px 14px)",
+};
 
 const city = (z: string) => (z.split("/").at(-1) ?? z).replace(/_/g, " ");
 
@@ -89,7 +97,17 @@ export function layout(days: LocalDate[], zone: string, events: WeekEvent[]): Bo
 
 const drag = signal<{ id: string; dx: number; dyMin: number } | null>(null);
 
-export function WeekView({ days, zone, events, now, onMove, onSelect, flagged, extraZone }: Props) {
+export function WeekView({
+  days,
+  zone,
+  events,
+  now,
+  onMove,
+  onSelect,
+  flagged,
+  extraZone,
+  busyDays,
+}: Props) {
   const boxes = useMemo(() => layout(days, zone, events), [days, zone, events]);
   const gridRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -163,7 +181,7 @@ export function WeekView({ days, zone, events, now, onMove, onSelect, flagged, e
           <div />
         )}
         {days.map((d, i) => (
-          <div class={i === todayIdx ? "day-name today" : "day-name"} key={d}>
+          <div class={i === todayIdx ? "day-name today" : "day-name"} key={d} data-date={d}>
             {new Date(`${d}T12:00:00Z`).toLocaleDateString(undefined, {
               weekday: "short",
               day: "numeric",
@@ -206,9 +224,20 @@ export function WeekView({ days, zone, events, now, onMove, onSelect, flagged, e
             ref={gridRef}
             style={{ gridTemplateColumns: `repeat(${days.length}, 1fr)` }}
           >
-            {days.map((d) => (
-              <div class="day-col" key={d} />
-            ))}
+            {days.map((d) => {
+              const busyTitle = busyDays?.get(d);
+              return busyTitle === undefined ? (
+                <div class="day-col" key={d} data-date={d} />
+              ) : (
+                <div
+                  class="day-col day-busy"
+                  key={d}
+                  data-date={d}
+                  title={busyTitle}
+                  style={BUSY_DAY}
+                />
+              );
+            })}
             {todayIdx >= 0 && (
               <div
                 class="now-line"

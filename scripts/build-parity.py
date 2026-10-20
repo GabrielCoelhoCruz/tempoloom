@@ -1090,6 +1090,38 @@ BLOCKED[43] = ("Needs the Google Calendar add-on's developer app and a test acco
                + T["u35_panel"] + "\u201d; \u201c" + T["u35_page"] + "\u201d; \u201c" + T["u35_sticky"] + "\u201d)")
 # --- end U35 ---
 
+# --- U41: planner views and event content (planner-views.spec.ts, event-tips.spec.ts, support-guidance.spec.ts) ---
+T.update({
+    "u41_days": "the gear menu shows weekdays only or a rolling 9 days, and the choice stays after reload (PLN-3; AT 1)",
+    "u41_viewas": "view as others hides free events and the details of private events (PLN-6)",
+    "u41_allday": "a day with a busy all-day event shows the dashed pattern and gets no managed event (PLN-5; AT 6)",
+    "u41_calendars": "the calendars panel hides a connected calendar from the planner; it still blocks time and stays connected (PLN-20; AT 5)",
+    "u41_modes": "the details panel has one mode at a time: tasks, priorities or event details (PLN-21)",
+    "u41_tips": "event tips sit between the notes and the planner link, and turning them off removes them from future events (CNT-15; AT 3)",
+    "u41_reset": "the account page lists the manual reset steps in order, each with a link to its page (planning-pause.md manual reset steps)",
+    "u41_invitee": "a booked invitee is not accepted for them: the answer stays needs-action (support rule 14; AT-5)",
+    "u41_antispam": "the help explains invitations hidden by anti-spam rules, without a Google account (support rules 13, 15, 16)",
+})
+E2E.update({
+    121: ["u41_days"],
+    122: ["u41_viewas"],
+    123: ["u41_allday"],
+    128: ["u41_calendars"],
+    129: ["u41_modes"],
+    140: ["u41_tips"],
+    144: ["u41_reset"],
+    542: ["u41_invitee"],
+    543: ["u41_antispam"],
+})
+E2E_NOTES.update({
+    121: "The rolling 9 days start on the first day of the shown week and run to Tuesday of the next week",
+    122: "\u201cOthers\u201d is anyone who sees the calendar without private details: free events are not drawn and private or confidential events show as \u201cBusy\u201d; the choice is not kept after a reload",
+    129: "The Tasks and Priorities buttons on the now line and a click on an event switch the one open panel; the priorities view and the tasks panel have their own rows (64, 42)",
+    140: "Tips go on task, habit, focus time and flexible meeting events that the planner places, and say what a move, delete or decline does",
+    144: "Tempoloom has no task integrations of its own, so that step points to the API keys that other tools use",
+})
+# --- end U41 ---
+
 # Google Calendar proof. docs/e2e-google-run.tsv records a full E2E run on Google
 # (status, test id, title per line; docs/e2e-google-run.md says how it ran and how to
 # regenerate the file). Each T[key] is the exact title of one test in tests/e2e, and the

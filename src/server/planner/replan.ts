@@ -520,21 +520,35 @@ function reminderFields(
   };
 }
 
+/** CNT-15: what a calendar edit does to each kind of event (planning-calendar-edits.md). */
+export const EVENT_TIPS: Record<string, string> = {
+  task: "Tempoloom tip: move this event to lock it at the new time; delete it to place the work again later.",
+  habit:
+    "Tempoloom tip: move this event to lock it at the new time; delete it and Tempoloom finds another time.",
+  focus:
+    "Tempoloom tip: move this event to lock it at the new time; delete it to skip this focus time.",
+  meeting:
+    "Tempoloom tip: to reschedule, decline this event and Tempoloom finds the next common time; the organizer deletes it to skip this time.",
+};
+
 /**
- * CNT-10: the notes, a link that opens the item in the planner, and the
- * footer. Meetings get no link: their events go to guests.
+ * CNT-10: the notes, a tip when event tips are on (CNT-15), a link that opens
+ * the item in the planner, and the footer. Meetings get no link: their events
+ * go to guests.
  */
 export function eventDescription(
   notes: string,
   baseUrl: string,
   kind: string,
   itemId: string,
+  tips = false,
 ): string {
   const link =
     kind === "task" || kind === "habit" || kind === "focus"
       ? `Open in Tempoloom: ${baseUrl}/?item=${kind}:${itemId}`
       : "";
-  return [notes, link, FOOTER].filter(Boolean).join("\n\n");
+  const tip = tips ? (EVENT_TIPS[kind] ?? "") : "";
+  return [notes, tip, link, FOOTER].filter(Boolean).join("\n\n");
 }
 
 /** The organizer, guests and location of a meeting occurrence (rules 35, 41). */
@@ -656,7 +670,7 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
       description:
         keepUserTitle && row && p.kind !== "meeting"
           ? row.description
-          : eventDescription(itemNotes, ctx.baseUrl, p.kind, p.itemId),
+          : eventDescription(itemNotes, ctx.baseUrl, p.kind, p.itemId, settings.eventTips),
       busy: p.busy || p.locked,
       colorId: null,
       ...(p.kind === "habit" && es?.location ? { location: es.location } : {}),

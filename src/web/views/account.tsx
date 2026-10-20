@@ -10,6 +10,7 @@ import { ApiError, api } from "../lib/api.ts";
 import { toLocalInput } from "../lib/format.ts";
 import { lazyComponent } from "../lib/lazy.ts";
 import { useLive } from "../lib/live.ts";
+import { onLinkClick } from "../lib/router.ts";
 import { loadMe, me, type Person, zone } from "../lib/state.ts";
 
 const McpSection = lazyComponent(() => import("./mcp-section.tsx").then((m) => m.McpSection));
@@ -76,6 +77,50 @@ function Section({
       <h2>{title}</h2>
       {children}
     </section>
+  );
+}
+
+/** Links inside the app, without a full page load. */
+function Go({ href, children }: { href: string; children: ComponentChildren }) {
+  return (
+    <a href={href} onClick={onLinkClick}>
+      {children}
+    </a>
+  );
+}
+
+/** planning-pause.md, manual reset steps (E-0110): how to stop all scheduling by hand. */
+function ResetSteps() {
+  return (
+    <Section title="Reset scheduling by hand" id="reset-steps">
+      <p class="status">
+        To stop Tempoloom from changing your calendar, do these steps in order. To come back, turn
+        the items on again one by one.
+      </p>
+      <ol>
+        <li>
+          Turn off each calendar mirroring policy in <Go href="/settings">Settings</Go>.
+        </li>
+        <li>
+          Turn off each habit on the <Go href="/habits">Habits</Go> page.
+        </li>
+        <li>
+          Delete open tasks or mark them done on the <Go href="/tasks">Tasks</Go> page; their future
+          chunks go away.
+        </li>
+        <li>Turn off task integrations: delete the API keys that other tools use, above.</li>
+        <li>
+          Turn off flexible meetings you own on the <Go href="/meetings">Meetings</Go> page; decline
+          those you attend.
+        </li>
+        <li>
+          Turn off recovery and travel buffers in <Go href="/settings">Settings</Go>.
+        </li>
+        <li>
+          Turn off focus time in <Go href="/settings">Settings</Go>.
+        </li>
+      </ol>
+    </Section>
   );
 }
 
@@ -496,6 +541,8 @@ export function AccountPage() {
       </Section>
 
       <McpSection />
+
+      <ResetSteps />
 
       <Section title="Delete account" id="delete-account">
         {!deleting ? (
