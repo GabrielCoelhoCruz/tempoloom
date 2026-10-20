@@ -17,6 +17,9 @@
 // 9. A stolen refresh token used after the real client keeps working; a deactivated
 //    user's grant keeps refreshing.
 // 10. Anonymous registration fills the disk: no rate limit, no cap, no clean-up.
+// 11. One anonymous party stops all new connections: the cap refuses everyone, a
+//     forged X-Forwarded-For dodges the limit, a proxy puts every user in one
+//     bucket, an IPv6 host uses many addresses, or the limiter grows without end.
 import { createHash } from "node:crypto";
 import { Hono } from "hono";
 import { describe, expect, it } from "vitest";
@@ -27,6 +30,7 @@ import { blockedForDelegate } from "../../src/server/delegation.ts";
 import { setActive } from "../../src/server/directory.ts";
 import {
   CLIENT_CAP,
+  createLimiter,
   oauthConsentRoutes,
   oauthRoutes,
   oauthUser,
@@ -40,13 +44,13 @@ const REDIRECT = "http://127.0.0.1:33418/callback";
 const VERIFIER = "a-verifier-of-enough-length-for-pkce-0123456789";
 const CHALLENGE = createHash("sha256").update(VERIFIER).digest("base64url");
 
-function setup() {
+function setup(trustedProxies: string[] = []) {
   const db = openDb(":memory:");
   let t = T0;
   const now = () => t;
   const user = ensureUser(db, "owner@example.com", "Owner", T0) as User;
   const app = new Hono<AppEnv>();
-  app.route("/", oauthRoutes(db, BASE, now));
+  app.route("/", oauthRoutes(db, BASE, now, trustedProxies));
   app.use("/api/*", async (c, next) => {
     c.set("user", user);
     await next();
@@ -59,12 +63,16 @@ function setup() {
       body: new URLSearchParams(body).toString(),
     });
   let ip = "203.0.113.1";
+  let forwarded: string | undefined;
   const register = async (redirect_uris: string[]) =>
     app.request(
       "/oauth/register",
       {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: {
+          "content-type": "application/json",
+          ...(forwarded ? { "x-forwarded-for": forwarded } : {}),
+        },
         body: JSON.stringify({ client_name: "Claude", redirect_uris }),
       },
       { incoming: { socket: { remoteAddress: ip } } },
@@ -115,8 +123,9 @@ function setup() {
     tick: (ms: number) => {
       t += ms;
     },
-    fromIp: (address: string) => {
+    fromIp: (address: string, xff?: string) => {
       ip = address;
+      forwarded = xff;
     },
     getConsent: async (client_id: string, extra: Record<string, string> = {}) => {
       const res = await app.request(
@@ -395,7 +404,80 @@ describe("OAuth for MCP clients", () => {
         T0 + 25 * 60 * 60_000,
       );
     s.fromIp("203.0.113.9");
-    expect((await s.register([REDIRECT])).status).toBe(429);
+    expect((await s.register([REDIRECT])).status).toBe(201);
     expect(one(s.db, "SELECT 1 FROM oauth_clients WHERE id = ?", kept)).toBeTruthy();
+  });
+
+  it("at the cap, a new client replaces the oldest client without a grant; a client with a grant stays (11)", async () => {
+    const s = setup();
+    const kept = await s.clientId();
+    await s.code(kept);
+    for (let i = 0; i < CLIENT_CAP; i++)
+      run(
+        s.db,
+        "INSERT INTO oauth_clients (id, name, redirect_uris, created_at) VALUES (?, 'x', '[]', ?)",
+        `filler-${String(i).padStart(4, "0")}`,
+        T0 - 60_000 + i,
+      );
+    // The granted client is the oldest of all; it is never evicted.
+    run(s.db, "UPDATE oauth_clients SET created_at = ? WHERE id = ?", T0 - 120_000, kept);
+    const res = await s.register([REDIRECT]);
+    expect(res.status).toBe(201);
+    const { client_id } = (await res.json()) as { client_id: string };
+    expect(one(s.db, "SELECT 1 FROM oauth_clients WHERE id = ?", kept)).toBeTruthy();
+    expect(one(s.db, "SELECT 1 FROM oauth_clients WHERE id = 'filler-0000'")).toBeUndefined();
+    expect(one(s.db, "SELECT 1 FROM oauth_clients WHERE id = 'filler-0001'")).toBeTruthy();
+    expect(one(s.db, "SELECT 1 FROM oauth_clients WHERE id = ?", client_id)).toBeTruthy();
+    const unused = one<{ n: number }>(
+      s.db,
+      `SELECT COUNT(*) AS n FROM oauth_clients c
+       WHERE NOT EXISTS (SELECT 1 FROM oauth_grants g WHERE g.client_id = c.id)`,
+    );
+    expect(unused?.n).toBe(CLIENT_CAP);
+  });
+
+  it("ignores X-Forwarded-For from a peer that is not a trusted proxy (11)", async () => {
+    const s = setup();
+    for (let i = 0; i < REGISTRATIONS_PER_HOUR; i++) {
+      s.fromIp("203.0.113.1", `198.51.100.${i}`);
+      expect((await s.register([REDIRECT])).status).toBe(201);
+    }
+    s.fromIp("203.0.113.1", "198.51.100.200");
+    expect((await s.register([REDIRECT])).status).toBe(429);
+  });
+
+  it("behind a trusted proxy, counts the client address of X-Forwarded-For (11)", async () => {
+    const s = setup(["10.0.0.1"]);
+    for (let i = 0; i < REGISTRATIONS_PER_HOUR; i++) {
+      // The client forged the left entry; the proxy appended the real address.
+      s.fromIp("10.0.0.1", `198.51.100.${i}, 192.0.2.7`);
+      expect((await s.register([REDIRECT])).status).toBe(201);
+    }
+    s.fromIp("10.0.0.1", "192.0.2.7");
+    expect((await s.register([REDIRECT])).status).toBe(429);
+    // Another user behind the same proxy has a bucket of their own.
+    s.fromIp("10.0.0.1", "192.0.2.8");
+    expect((await s.register([REDIRECT])).status).toBe(201);
+  });
+
+  it("counts IPv6 addresses by /64 (11)", async () => {
+    const s = setup();
+    for (let i = 0; i < REGISTRATIONS_PER_HOUR; i++) {
+      s.fromIp(`2001:db8:1:2::${(i + 1).toString(16)}`);
+      expect((await s.register([REDIRECT])).status).toBe(201);
+    }
+    s.fromIp("2001:db8:1:2:ffff:eeee:dddd:cccc");
+    expect((await s.register([REDIRECT])).status).toBe(429);
+    s.fromIp("2001:db8:1:3::1");
+    expect((await s.register([REDIRECT])).status).toBe(201);
+  });
+
+  it("the limiter keeps a bounded number of buckets and drops expired ones first (11)", () => {
+    const limiter = createLimiter({ perWindow: 1, windowMs: 1000, maxKeys: 3 });
+    for (let i = 0; i < 10; i++) expect(limiter.hit(`k${i}`, 0)).toBe(true);
+    expect(limiter.size()).toBe(3);
+    expect(limiter.hit("k9", 1)).toBe(false);
+    // After the window, an old key is counted again from zero.
+    expect(limiter.hit("k9", 2000)).toBe(true);
   });
 });

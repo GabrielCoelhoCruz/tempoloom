@@ -361,7 +361,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   );
 
   // OAuth for MCP clients: metadata, registration and tokens; no session.
-  app.route("/", oauthRoutes(db, config.BASE_URL, now));
+  app.route("/", oauthRoutes(db, config.BASE_URL, now, config.TRUSTED_PROXIES));
   app.route("/pub", publicInviteRoutes(db));
   app.route("/", embedRoutes());
   app.route("/pub", publicBrandingRoutes(db));

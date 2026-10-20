@@ -4,6 +4,7 @@
 // and a consent page in the web app, rotating refresh tokens, and a grant per
 // client and user that the user can revoke on the Account page (rules 6, 8).
 import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { isIP, isIPv4 } from "node:net";
 import { Hono } from "hono";
 import { z } from "zod";
 import { hashToken, type User } from "./accounts.ts";
@@ -17,8 +18,10 @@ const ACCESS_TTL = 60 * 60_000;
 const REFRESH_TTL = 30 * 86_400_000;
 /** Registrations that one address may make in an hour. */
 export const REGISTRATIONS_PER_HOUR = 20;
-/** Clients that no user has authorized yet, on the whole server. */
+/** Clients that no user has authorized yet, on the whole server; the oldest goes first. */
 export const CLIENT_CAP = 1000;
+/** Address buckets that the registration limiter keeps at most. */
+const LIMITER_KEYS = 10_000;
 /** A client that no user authorized in this time is deleted. */
 const UNUSED_CLIENT_TTL = 86_400_000;
 const HOUR = 60 * 60_000;
@@ -175,7 +178,87 @@ const registration = z.object({
 });
 
 /** The public OAuth endpoints: metadata, registration and the token endpoint. */
-export function oauthRoutes(db: Db, baseUrl: string, now: () => number): Hono {
+/**
+ * A fixed-window counter per key. The map keeps keys in the order their window
+ * started, so expired keys leave from the front and the oldest key goes when
+ * the map is full: each hit costs O(1) amortized and the size stays bounded.
+ */
+export function createLimiter(o: { perWindow: number; windowMs: number; maxKeys: number }) {
+  const windows = new Map<string, { start: number; count: number }>();
+  return {
+    /** Counts one hit; false when the key used up its window. */
+    hit(key: string, t: number): boolean {
+      for (const [k, w] of windows) {
+        if (w.start + o.windowMs > t) break;
+        windows.delete(k);
+      }
+      const w = windows.get(key);
+      if (w && w.start + o.windowMs > t) {
+        if (w.count >= o.perWindow) return false;
+        w.count++;
+        return true;
+      }
+      windows.delete(key);
+      if (windows.size >= o.maxKeys) {
+        const oldest = windows.keys().next().value;
+        if (oldest !== undefined) windows.delete(oldest);
+      }
+      windows.set(key, { start: t, count: 1 });
+      return true;
+    },
+    size: () => windows.size,
+  };
+}
+
+const plainAddress = (a: string) => {
+  const ip = a.trim().replace(/%.*$/, "");
+  const v4 = ip.toLowerCase().startsWith("::ffff:") ? ip.slice(7) : "";
+  return isIPv4(v4) ? v4 : ip.toLowerCase();
+};
+
+/**
+ * The client's address: the socket peer, or, when the peer is a trusted proxy,
+ * the rightmost address in X-Forwarded-For that is not a trusted proxy. Entries
+ * left of it may be forged by the client and are not read.
+ */
+export function clientAddress(
+  peer: string | undefined,
+  forwarded: string | undefined,
+  trusted: ReadonlySet<string>,
+): string {
+  const socket = plainAddress(peer ?? "unknown");
+  if (!trusted.has(socket) || !forwarded) return socket;
+  const hops = forwarded.split(",").map(plainAddress).reverse();
+  for (const hop of hops) {
+    if (!isIP(hop)) return socket;
+    if (!trusted.has(hop)) return hop;
+  }
+  return socket;
+}
+
+/** The limiter's bucket of an address: IPv4 as is, IPv6 by its /64 network. */
+export function addressBucket(address: string): string {
+  if (isIP(address) !== 6) return address;
+  const [head = "", tail] = address.split("::");
+  const left = head ? head.split(":") : [];
+  const right = tail ? tail.split(":") : [];
+  const groups =
+    tail === undefined
+      ? left
+      : [...left, ...Array(8 - left.length - right.length).fill("0"), ...right];
+  return `${groups
+    .slice(0, 4)
+    .map((g) => Number.parseInt(g || "0", 16).toString(16))
+    .join(":")}::/64`;
+}
+
+export function oauthRoutes(
+  db: Db,
+  baseUrl: string,
+  now: () => number,
+  trustedProxies: readonly string[] = [],
+): Hono {
+  const trusted = new Set(trustedProxies.map(plainAddress));
   const issuer = new URL(baseUrl).origin;
   const r = new Hono();
   // Clients may run in a browser: the public endpoints allow any origin, without credentials.
@@ -223,32 +306,27 @@ export function oauthRoutes(db: Db, baseUrl: string, now: () => number): Hono {
     }),
   );
 
-  // Registrations per address in the last hour; kept in memory.
-  const recent = new Map<string, number[]>();
-  const limited = (ip: string, t: number) => {
-    for (const [k, times] of recent) {
-      const kept = times.filter((x) => x > t - HOUR);
-      if (kept.length) recent.set(k, kept);
-      else recent.delete(k);
-    }
-    const times = recent.get(ip) ?? [];
-    if (times.length >= REGISTRATIONS_PER_HOUR) return true;
-    recent.set(ip, [...times, t]);
-    return false;
-  };
+  // Registrations per address (IPv6: per /64) in the last hour; kept in memory.
+  const limiter = createLimiter({
+    perWindow: REGISTRATIONS_PER_HOUR,
+    windowMs: HOUR,
+    maxKeys: LIMITER_KEYS,
+  });
 
   // Dynamic client registration (RFC 7591): public clients only, no secret.
   r.post("/oauth/register", async (c) => {
     const at = now();
-    const ip =
+    const ip = clientAddress(
       (c.env as { incoming?: { socket?: { remoteAddress?: string } } } | undefined)?.incoming
-        ?.socket?.remoteAddress ?? "unknown";
-    const busy = () =>
-      c.json(
+        ?.socket?.remoteAddress,
+      c.req.header("x-forwarded-for"),
+      trusted,
+    );
+    if (!limiter.hit(addressBucket(ip), at))
+      return c.json(
         { error: "temporarily_unavailable", error_description: "Too many registrations" },
         429,
       );
-    if (limited(ip, at)) return busy();
     // Clean-up: clients nobody authorized in a day, expired codes and tokens.
     run(
       db,
@@ -258,13 +336,6 @@ export function oauthRoutes(db: Db, baseUrl: string, now: () => number): Hono {
     );
     run(db, "DELETE FROM oauth_codes WHERE expires_at <= ?", at);
     run(db, "DELETE FROM oauth_tokens WHERE expires_at <= ?", at);
-    const unused =
-      one<{ n: number }>(
-        db,
-        `SELECT COUNT(*) AS n FROM oauth_clients c
-         WHERE NOT EXISTS (SELECT 1 FROM oauth_grants g WHERE g.client_id = c.id)`,
-      )?.n ?? 0;
-    if (unused >= CLIENT_CAP) return busy();
     const parsed = registration.safeParse(await c.req.json().catch(() => null));
     if (!parsed.success)
       return c.json({ error: "invalid_client_metadata", error_description: "Bad metadata" }, 400);
@@ -274,6 +345,22 @@ export function oauthRoutes(db: Db, baseUrl: string, now: () => number): Hono {
       return c.json(
         { error: "invalid_redirect_uri", error_description: `Not allowed: ${bad}` },
         400,
+      );
+    // At the cap the oldest clients without a grant make room; a client with a grant stays.
+    const unused =
+      one<{ n: number }>(
+        db,
+        `SELECT COUNT(*) AS n FROM oauth_clients c
+         WHERE NOT EXISTS (SELECT 1 FROM oauth_grants g WHERE g.client_id = c.id)`,
+      )?.n ?? 0;
+    if (unused >= CLIENT_CAP)
+      run(
+        db,
+        `DELETE FROM oauth_clients WHERE id IN (
+           SELECT c.id FROM oauth_clients c
+           WHERE NOT EXISTS (SELECT 1 FROM oauth_grants g WHERE g.client_id = c.id)
+           ORDER BY c.created_at, c.id LIMIT ?)`,
+        unused - CLIENT_CAP + 1,
       );
     const id = randomUUID();
     const name = m.client_name || "AI tool";

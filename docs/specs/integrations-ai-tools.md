@@ -35,8 +35,11 @@ Tempoloom decision: the server publishes OAuth protected resource metadata
 server metadata (RFC 8414) at `/.well-known/oauth-authorization-server`; a 401
 from `/mcp` names the resource metadata. Clients register themselves
 (RFC 7591, `/oauth/register`, public clients only), at most 20 times per hour
-from one address; when 1000 clients wait for a first consent, registration
-pauses, and a client with no consent after 24 hours is deleted. A redirect URI
+from one address (IPv6: one /64). The address is the socket peer, or, when the
+peer is in `TRUSTED_PROXIES`, the rightmost address of `X-Forwarded-For` that
+is not a trusted proxy. When 1000 clients wait for a first consent, a new
+registration deletes the oldest of them; a client with a grant is never
+deleted. A client with no consent after 24 hours is deleted. A redirect URI
 has no fragment and is one of: https; http on a loopback host (`localhost`,
 `127.0.0.1`, `[::1]`); a private-use scheme in reverse-domain form (RFC 8252
 7.1, for example `com.example.app:/callback`); or the scheme `cursor`, which
