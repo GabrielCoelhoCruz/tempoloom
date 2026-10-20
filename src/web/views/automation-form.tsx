@@ -18,7 +18,7 @@ import { type BufferPreset, entry, freeName, type LibraryEntry } from "../lib/li
 import { navigate, path } from "../lib/router.ts";
 import { LEVEL_NAMES, planNow } from "../lib/state.ts";
 import { EventSettingsFields, eventSettingsFrom, Select } from "./event-settings.tsx";
-import { FrequencyFields } from "./habit-editor.tsx";
+import { FrequencyFields, IdealAtEndField } from "./habit-editor.tsx";
 import { HoursField, ITEM, itemHoursFrom } from "./hours-field.tsx";
 
 interface HoursSet {
@@ -173,7 +173,45 @@ function FocusRules({
         />
       </label>
       <FocusHours row={row} hours={hours} preset={p} />
+      <PreferredWindow row={row} preset={p?.preferredWindow} />
       <ShowAs busy={row ? row.busy === 1 : true} />
+    </>
+  );
+}
+
+/** focus-time.md `preferred_window`: focus fills this time of day first. */
+function PreferredWindow({
+  row,
+  preset,
+}: {
+  row: Row | null;
+  preset: { from: string; to: string } | undefined;
+}) {
+  const stored = (k: string) => (row?.[k] == null ? "" : hhmm(Number(row[k])));
+  return (
+    <>
+      <label>
+        Preferred window begins
+        <input
+          name="preferredFrom"
+          type="time"
+          step={900}
+          defaultValue={row ? stored("preferred_from") : (preset?.from ?? "")}
+        />
+      </label>
+      <label>
+        Preferred window ends
+        <input
+          name="preferredTo"
+          type="time"
+          step={900}
+          defaultValue={row ? stored("preferred_to") : (preset?.to ?? "")}
+        />
+      </label>
+      <p class="meta wide">
+        Focus goes into this window first and into the rest of its hours when the window is full.
+        Leave both empty for no preference.
+      </p>
     </>
   );
 }
@@ -354,6 +392,7 @@ function HabitRules({ row, hours }: { row: Row; hours: HoursSet[] }) {
           defaultValue={hhmm(Number(row.ideal_minute))}
         />
       </label>
+      <IdealAtEndField checked={Number(row.ideal_at_end) === 1} />
       <label>
         Shortest (minutes)
         <input
@@ -434,6 +473,10 @@ function rulesBody(
           : {}
         : { hoursSetId: set || hours.find((h) => h.kind === "work")?.id }),
       busy: text("busy") === "busy",
+      preferredWindow:
+        text("preferredFrom") && text("preferredTo")
+          ? { from: text("preferredFrom"), to: text("preferredTo") }
+          : null,
     };
   }
   if (kind === "buffer") {
@@ -463,6 +506,7 @@ function rulesBody(
   return {
     level: num("level"),
     idealTime: text("idealTime"),
+    idealAtEnd: f.has("idealAtEnd"),
     minMinutes: num("minMinutes"),
     maxMinutes: num("maxMinutes"),
     hoursSetId: text("hoursSetId"),

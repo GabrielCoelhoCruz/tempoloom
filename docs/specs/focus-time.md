@@ -32,6 +32,7 @@ other managed items, and are strongly protected once placed.
 | `target_calendar` | calendar id | primary calendar | Legacy evidence (E-0078). |
 | `visibility` | `public`, `private`, `calendar_default` | `public` | Legacy default is public (E-0078). |
 | `reminders` | list of minutes, or off | off (Proposed) | E-0043. |
+| `preferred_window` | local time range (HH:MM to HH:MM), or none | none | Tempoloom decision, see below. The same range on each day. |
 
 The focus goal automation has no priority field. Its priority is fixed at P4
 (E-0077, E-0141).
@@ -41,6 +42,16 @@ creation only, its emoji goes before the title, and its color follows the
 color rule unless the user picks one. A new focus goal is public with no
 reminders. Focus events show no free or busy marker, only the lock marker
 (answers open question 2 of `events-title-emoji.md`).
+
+Tempoloom decision (library entries 7 and 23, "ideal time mornings"): a focus
+goal may have a `preferred_window`. It is a preference, not hard hours. In
+proactive mode Tempoloom first places focus in the free time that is inside
+both `hours` and the window, on each allowed day. Only when that time is full
+does it use the other free time inside `hours`. Rules 3 to 6 apply as before;
+for each daily limit pass (rule 5, then rule 4), the window goes first on all
+days, then the rest of `hours`. A placed focus event outside the window stays
+where it is while it is legal (no move only to reach the window). Reactive
+mode ignores the window. The window must start before it ends.
 
 ### Meeting overload automation
 

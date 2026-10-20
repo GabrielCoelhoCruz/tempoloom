@@ -1213,4 +1213,12 @@ export const MIGRATIONS: readonly string[] = [
     PRIMARY KEY (user_id, kind)
   ) STRICT;
   `,
+  // 36: a focus goal's preferred window in minutes of the day (focus-time.md
+  // `preferred_window`), and a habit whose ideal start is at the end of each
+  // day's hours (habits-automation.md `ideal_at_end`).
+  `
+  ALTER TABLE focus_goals ADD COLUMN preferred_from INTEGER;
+  ALTER TABLE focus_goals ADD COLUMN preferred_to INTEGER;
+  ALTER TABLE habits ADD COLUMN ideal_at_end INTEGER NOT NULL DEFAULT 0;
+  `,
 ];

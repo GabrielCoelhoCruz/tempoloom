@@ -25,6 +25,7 @@ the routine is at risk.
 | `color` | event color id or `category` | `category` | One of the 12 calendar event colors, or follow the color rule. See `events-categories-and-colors.md`. |
 | `hours` | hours set id or one-off window | work hours if `category=work`, personal hours if `personal` (Proposed default) | The days and time ranges where the habit may be placed. A one-off window is a set of weekday time ranges that belongs to this habit only (E-0172). |
 | `ideal_time` | local time (HH:MM) | Proposed default: start of the first range of `hours` | Must fall inside `hours` on at least one allowed day. Save fails otherwise (E-0082). |
+| `ideal_at_end` | bool | `false` | Tempoloom decision, see below. |
 | `duration_max` | minutes | Proposed default: 60 | The ideal length. 15 to 720, step 15 (Proposed range). |
 | `duration_min` | minutes | equal to `duration_max` | The shortest length Tempoloom may use on a busy day. 15 to `duration_max`, step 15 (Proposed range). |
 | `frequency` | object | daily | See "Frequency" below. |
@@ -48,6 +49,14 @@ Tempoloom decisions for the event fields:
 - `title` and emoji: the emoji is a field of its own; Tempoloom writes `<marker> <emoji> <title>`.
 - `category`: a new habit is personal when it uses personal hours, else work, unless the user picks one in the form. A personal habit gets the personal event category and color and does not count toward focus time; a work habit gets solo work and counts. Habits saved before the field existed count by their hours set, as before.
 - `color`: "Category color" follows the color rule; "Calendar color" or one of the 11 colors overrides it.
+
+Tempoloom decision (library entry 11, "the last 30 min of work hours"): when
+`ideal_at_end` is true, the ideal start on each date is the end of the last
+range of `hours` on that weekday minus `duration_max`. A day whose hours end
+earlier gets an earlier ideal start, and a change of the hours moves it.
+`ideal_time` is then only the value the form shows; the save check of
+`ideal_time` (rule 12, E-0082) still applies. A time the user picks for one date
+(rule 30) wins over it.
 - `target_calendar`: the form offers the main calendar and every writable calendar. If the chosen calendar is gone or read-only, new events go to the main calendar.
 - `reminders`: the form offers the calendar default, none, or one custom alert ("Remind me (minutes)").
 

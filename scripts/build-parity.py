@@ -665,7 +665,6 @@ T.update({
     "u9_lib_habits2": "library habit entries 40, 41, 42, 44 add habits with their presets: walk, exercise in personal hours, coding at P2, email at P4",
     "u9_lib_buffers": "library buffer entries 1, 10, 19 add buffers after large meetings, around flights and after long meetings only",
     "u9_lib_external": "library buffer entries 28, 29, 30 anchor on external meetings: travel only at an address, prep before, debrief after",
-    "u9_lib_focus": "library focus entries 7 and 23 place their weekly goal inside the 09:00 to 12:00 window, and the window stays on edit",
     "u9_lib_meetings": "library entries 32, 34 and 37: flexible meetings repeat at their period with the guests, and the priority link offers time over P3 and P4 habits",
     "u9_lib_mirror": "library mirroring entries 38 and 39 copy busy time only between job calendars, both ways, never copying a copy",
     "u9_timer": "the pomodoro timer plays the chosen alarm, resets a running session without counting it, and shows the stats view with streak, completion rate and a chart (rules 7, 9, 17; T3)",
@@ -705,14 +704,29 @@ BLOCKED[638] = (
 )
 # Rows whose entry covers only part of its preset (review of PR 10).
 PARTIAL.update({
-    725: "The entry adds 8 h of weekly focus in a 09:00 to 12:00 window on workdays (E2E: \u201clibrary focus entries 7 and 23 place their weekly goal inside the 09:00 to 12:00 window, and the window stays on edit\u201d). Focus time has no ideal time (focus-time.md), so the mornings are hard hours: with busy mornings no focus goes to the afternoon, where the preset's ideal time would allow it",
-    741: "The entry adds 10 h of weekly focus in a 09:00 to 12:00 window on workdays that the user can change (E2E: \u201clibrary focus entries 7 and 23 place their weekly goal inside the 09:00 to 12:00 window, and the window stays on edit\u201d). Focus time has no ideal time (focus-time.md), so the window is hard hours, not an ideal window",
-    729: "The entry adds the habit at P3, 30 min on workdays (E2E: \u201clibrary habit entries 11, 35, 36, 43, 45, 46 add habits with their presets: wrap-up at the end of work hours, Lunch inside 11:30 to 14:00\u201d). A habit has one ideal time, read from the latest end of work hours when the form opens; a day whose work hours end earlier keeps that time, not its own last 30 min",
     750: "The entry fills a flexible meeting every 2 weeks, 30 min, P2, that needs at least one guest (E2E: \u201clibrary entries 32, 34 and 37: flexible meetings repeat at their period with the guests, and the priority link offers time over P3 and P4 habits\u201d). It does not check that the guests are external",
     756: "The entry fills the mirroring form with busy-only copies (E2E: \u201clibrary mirroring entries 38 and 39 copy busy time only between job calendars, both ways, never copying a copy\u201d). It adds no two-way behavior: the user adds one policy in each direction",
     757: "The entry fills the mirroring form with busy-only copies (E2E: \u201clibrary mirroring entries 38 and 39 copy busy time only between job calendars, both ways, never copying a copy\u201d). It adds no mesh of calendars: the user adds one policy for each pair",
 })
 # --- end U09 ---
+
+# --- U53: ideal-time presets (focus preferred window, habit ideal at the end of hours) ---
+T.update({
+    "u53_focus7": "library focus entry 7 fills free mornings first and puts the rest of its 8 h in other work hours",
+    "u53_focus23": "library focus entry 23 prefers 09:00 to 12:00 over busy mornings, and a window the user changes moves its 10 h",
+    "u53_wrap": "library entry 11 puts the wrap-up in the last 30 min of each day's work hours, on a shorter Friday, and follows an hours change",
+})
+E2E.update({
+    725: ["u53_focus7"],
+    741: ["u53_focus23"],
+    729: ["u53_wrap", "u9_lib_habits1"],
+})
+E2E_NOTES.update({
+    725: "The preset is work hours with a preferred window of 09:00 to 12:00 (focus-time.md `preferred_window`): focus fills free mornings first and goes to other work hours when the mornings are busy",
+    741: "The same preferred window, 09:00 to 12:00 by default; the user changes it in the form and the focus moves into the new window",
+    729: "The habit's ideal start is the end of each day's work hours minus 30 min (habits-automation.md `ideal_at_end`), so a shorter day and a later hours change move it",
+})
+# --- end U53 ---
 
 # --- merge: rows that need the work of more than one stream ---
 E2E.update({282: ["s1_habit_es", "s1_task_color", "s4_labels"]})

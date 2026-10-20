@@ -6,7 +6,9 @@
 // - a preset value differs from the entries table (time, length, days, priority, hours);
 // - Lunch ignores its 11:30 to 14:00 window and goes before 11:30 when 12:15 is taken;
 // - the wrap-up time is fixed instead of the last 30 min of the user's work hours;
-// - the focus entries place focus outside their 09:00 to 12:00 window, or lose it on edit;
+// - the focus entries do not fill free mornings first, keep focus out of free afternoons
+//   when mornings are busy, or lose their window on edit;
+// - the wrap-up keeps a fixed time when a day's work hours end earlier or change;
 // - a buffer entry anchors on the wrong events (small meetings, solo events, internal
 //   meetings, external meetings without an address);
 // - a flexible meeting entry repeats at the wrong period, or saves without guests;
@@ -432,60 +434,150 @@ test("library buffer entries 28, 29, 30 anchor on external meetings: travel only
   ]);
 });
 
-test("library focus entries 7 and 23 place their weekly goal inside the 09:00 to 12:00 window, and the window stays on edit", async ({
+test("library focus entry 7 fills free mornings first and puts the rest of its 8 h in other work hours", async ({
+  page,
+  cal,
+  signIn,
+}) => {
+  await blockUntil(cal, W);
+  // Monday to Thursday mornings are busy: only Friday has a free morning.
+  for (const d of [0, 1, 2, 3]) {
+    await cal.addEvent({
+      title: "Morning meetings",
+      start: at(day(d), "09:00"),
+      end: at(day(d), "12:00"),
+    });
+  }
+  await signIn();
+  const form = page.getByTestId("automation-form");
+  await use(page, "Executive weekly focus");
+  await expect(form.getByLabel("Weekly goal (hours)")).toHaveValue("8");
+  await saveShared(page);
+  // Friday's free morning goes first (3 h); the other 5 h go to the largest free
+  // afternoon gaps, at most 4 h a day. Without the preferred window the goal
+  // fills Monday and Tuesday afternoons only; with the mornings as hard hours
+  // only Friday's 3 h fit.
+  await eventually(
+    () => week(cal),
+    (l) =>
+      expect(spans(l, "Executive weekly focus")).toEqual([
+        `${day(0)} 12:00-16:00`,
+        `${day(1)} 12:00-13:00`,
+        `${day(4)} 09:00-12:00`,
+      ]),
+  );
+  // The goal uses work hours and keeps its window: the edit form shows both after a reload.
+  await page.reload();
+  await automation(page, "Executive weekly focus").getByRole("link", { name: "Edit" }).click();
+  await expect(form.getByLabel("Hours").locator("option:checked")).toHaveText("Work hours");
+  await expect(form.getByLabel("Preferred window begins")).toHaveValue("09:00");
+  await expect(form.getByLabel("Preferred window ends")).toHaveValue("12:00");
+  await expectAdded(page, ["Executive weekly focus"]);
+});
+
+test("library focus entry 23 prefers 09:00 to 12:00 over busy mornings, and a window the user changes moves its 10 h", async ({
+  page,
+  cal,
+  signIn,
+}) => {
+  await blockUntil(cal, W);
+  // Monday to Wednesday mornings are busy.
+  for (const d of [0, 1, 2]) {
+    await cal.addEvent({
+      title: "Morning meetings",
+      start: at(day(d), "09:00"),
+      end: at(day(d), "12:00"),
+    });
+  }
+  await signIn();
+  const form = page.getByTestId("automation-form");
+  await use(page, "Peak-energy focus");
+  await expect(form.getByLabel("Weekly goal (hours)")).toHaveValue("10");
+  await saveShared(page);
+  // The free mornings of Thursday and Friday first, then 4 h on Monday afternoon.
+  await eventually(
+    () => week(cal),
+    (l) =>
+      expect(spans(l, "Peak-energy focus")).toEqual([
+        `${day(0)} 12:00-16:00`,
+        `${day(3)} 09:00-12:00`,
+        `${day(4)} 09:00-12:00`,
+      ]),
+  );
+  // The user changes the window to 13:00 to 15:00: each workday gets 2 h there.
+  await page.reload();
+  await automation(page, "Peak-energy focus").getByRole("link", { name: "Edit" }).click();
+  await expect(form.getByLabel("Preferred window begins")).toHaveValue("09:00");
+  await expect(form.getByLabel("Preferred window ends")).toHaveValue("12:00");
+  await form.getByLabel("Preferred window begins").fill("13:00");
+  await form.getByLabel("Preferred window ends").fill("15:00");
+  await saveShared(page);
+  await eventually(
+    () => week(cal),
+    (l) =>
+      expect(spans(l, "Peak-energy focus")).toEqual(
+        [0, 1, 2, 3, 4].map((d) => `${day(d)} 13:00-15:00`),
+      ),
+  );
+  await page.reload();
+  await automation(page, "Peak-energy focus").getByRole("link", { name: "Edit" }).click();
+  await expect(form.getByLabel("Preferred window begins")).toHaveValue("13:00");
+  await expect(form.getByLabel("Preferred window ends")).toHaveValue("15:00");
+});
+
+test("library entry 11 puts the wrap-up in the last 30 min of each day's work hours, on a shorter Friday, and follows an hours change", async ({
   page,
   cal,
   signIn,
 }) => {
   await blockUntil(cal, W);
   await signIn();
-  const form = page.getByTestId("automation-form");
-  const inWindow = (evs: Awaited<ReturnType<typeof week>>, title: string) => {
-    const blocks = titled(evs, title);
-    const minutes = blocks.reduce((a, e) => a + (e.end - e.start) / 60_000, 0);
-    const outside = blocks.filter(
-      (e) => local(e.start).slice(11) < "09:00" || local(e.end).slice(11) > "12:00",
-    );
-    return { minutes, outside: outside.length };
+  const saveWorkEnd = async (days: number[], end: string) => {
+    await page.getByRole("link", { name: "Settings" }).click();
+    for (const d of days) {
+      await page.getByTestId(`range-work-${d}-0`).locator("input").nth(1).fill(end);
+    }
+    await page.getByRole("button", { name: "Save work hours" }).click();
+    await expect(page.getByTestId("settings-message")).toHaveText("Saved");
   };
-
-  await use(page, "Executive weekly focus");
-  await expect(form.getByLabel("Weekly goal (hours)")).toHaveValue("8");
-  await expect(form.getByLabel("Hours").locator("option:checked")).toHaveText(
-    "Item-specific hours",
-  );
-  const window = form.getByTestId("item-hours");
-  expect(await checkedDays(window, "itemDays")).toEqual(["1", "2", "3", "4", "5"]);
-  await expect(window.getByLabel("From")).toHaveValue("09:00");
-  await expect(window.getByLabel("To")).toHaveValue("12:00");
-  await saveShared(page);
+  // Friday's work hours end at 15:00, the other workdays at 17:00.
+  await saveWorkEnd([5], "15:00");
+  const wrap = await habitPreset(page, "End-of-day wrap-up", {
+    ideal: "16:30",
+    minutes: 30,
+    level: 3,
+    days: [],
+    hours: "Work hours",
+  });
+  await addFromForm(page, wrap, "End-of-day wrap-up");
   await eventually(
     () => week(cal),
-    (l) => expect(inWindow(l, "Executive weekly focus")).toEqual({ minutes: 480, outside: 0 }),
+    (l) =>
+      expect(spans(l, "End-of-day wrap-up")).toEqual([
+        ...[0, 1, 2, 3].map((d) => `${day(d)} 16:30-17:00`),
+        `${day(4)} 14:30-15:00`,
+      ]),
   );
-  // The window is stored: the edit form shows it after a reload.
+  // Work hours now end at 18:00 from Monday to Thursday: the wrap-up follows the
+  // new end. A fixed ideal time (16:30) would keep it at 16:30.
+  await saveWorkEnd([1, 2, 3, 4], "18:00");
+  await eventually(
+    () => week(cal),
+    (l) =>
+      expect(spans(l, "End-of-day wrap-up")).toEqual([
+        ...[0, 1, 2, 3].map((d) => `${day(d)} 17:30-18:00`),
+        `${day(4)} 14:30-15:00`,
+      ]),
+  );
+  // The setting is stored: the edit form shows it after a reload.
+  await page.getByRole("link", { name: "Habits" }).click();
   await page.reload();
-  await automation(page, "Executive weekly focus").getByRole("link", { name: "Edit" }).click();
-  await expect(form.getByLabel("Hours").locator("option:checked")).toHaveText(
-    "Item-specific hours",
-  );
-  await expect(form.getByTestId("item-hours").getByLabel("From")).toHaveValue("09:00");
-  await expect(form.getByTestId("item-hours").getByLabel("To")).toHaveValue("12:00");
-  await turnOff(page, "Executive weekly focus");
-
-  await use(page, "Peak-energy focus");
-  await expect(form.getByLabel("Weekly goal (hours)")).toHaveValue("10");
-  await expect(form.getByTestId("item-hours").getByLabel("From")).toHaveValue("09:00");
-  await expect(form.getByTestId("item-hours").getByLabel("To")).toHaveValue("12:00");
-  await saveShared(page);
-  await eventually(
-    () => week(cal),
-    (l) => {
-      expect(titled(l, "Executive weekly focus")).toHaveLength(0);
-      expect(inWindow(l, "Peak-energy focus")).toEqual({ minutes: 600, outside: 0 });
-    },
-  );
-  await expectAdded(page, ["Executive weekly focus", "Peak-energy focus"]);
+  const row = page.locator('[data-habit-title="End-of-day wrap-up"]');
+  await expect(row).toContainText("ideal: end of each day");
+  await row.getByRole("button", { name: "Edit" }).click();
+  await expect(
+    page.getByTestId("habit-editor").getByLabel("Place at the end of each day"),
+  ).toBeChecked();
 });
 
 test("focus time keeps item-specific hours of several ranges when the form saves other fields", async ({

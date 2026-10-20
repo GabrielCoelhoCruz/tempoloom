@@ -581,7 +581,12 @@ function searchHabit(
   date: LocalDate,
   window?: TimeSet,
 ): Interval | null {
-  const ideal = localToUtc(ctx.s.zone, date, h.rescheduled?.[date] ?? h.idealMinute);
+  const picked = h.rescheduled?.[date];
+  const dayEnd = h.idealAtEnd ? dayWindow(ctx, h.hours, date).intervals().at(-1)?.end : undefined;
+  const ideal =
+    picked === undefined && dayEnd !== undefined
+      ? dayEnd - h.maxMinutes * MINUTE
+      : localToUtc(ctx.s.zone, date, picked ?? h.idealMinute);
   const lengths: number[] = [];
   for (let m = h.maxMinutes; m >= h.minMinutes; m -= 15) lengths.push(m * MINUTE);
   if (lengths.at(-1) !== h.minMinutes * MINUTE) lengths.push(h.minMinutes * MINUTE);
@@ -1248,6 +1253,16 @@ function placeFocus(ctx: Ctx, f: FocusItem): void {
     const dayTotal = (d: LocalDate) => countedMinutes(ctx, f, range(d));
     const freeOn = (d: LocalDate) =>
       minus(dayWindow(ctx, f.hours, d).intersect(ctx.freeOther), f.exclusions);
+    const pref = f.preferred;
+    // Free time inside the preferred window of a day (focus-time.md `preferred_window`).
+    const inWindow = (d: LocalDate) =>
+      freeOn(d).intersect(
+        TimeSet.from(
+          pref
+            ? [{ start: localToUtc(s.zone, d, pref.from), end: localToUtc(s.zone, d, pref.to) }]
+            : [],
+        ),
+      );
     // Block indexes per day already used by this item's current events.
     const used = new Map<LocalDate, Set<number>>();
     const indexes = (d: LocalDate) => {
@@ -1318,11 +1333,15 @@ function placeFocus(ctx: Ctx, f: FocusItem): void {
           (d: LocalDate) => f.dailyMinMinutes * MINUTE - dayTotal(d),
           (d: LocalDate) => f.dailyMaxMinutes * MINUTE - dayTotal(d),
         ]) {
-      for (const d of days) {
+      // Inside the preferred window on every day first, then the rest of the hours.
+      const passes = (pref ? [inWindow, freeOn] : [freeOn]).flatMap((free) =>
+        days.map((d) => ({ free, d })),
+      );
+      for (const { free, d } of passes) {
         for (;;) {
           const cap = capOf(d);
           if (need < minB || cap < minB) break;
-          const best = [...freeOn(d).intervals()]
+          const best = [...free(d).intervals()]
             .map((i) => ({ start: ceilTo(i.start, ctx.step), end: i.end }))
             .filter((i) => len(i) >= minB)
             .sort((a, b) => len(b) - len(a) || a.start - b.start)[0];

@@ -10,7 +10,12 @@ import { useLive } from "../lib/live.ts";
 import { loadPolicyMarks, PolicyMark, policyMarks } from "../lib/policy-marks.tsx";
 import { LEVEL_NAMES, planNow } from "../lib/state.ts";
 import { EventSettingsFields, eventSettingsFrom } from "./event-settings.tsx";
-import { type EditorTarget, FrequencyFields, HabitEditor } from "./habit-editor.tsx";
+import {
+  type EditorTarget,
+  FrequencyFields,
+  HabitEditor,
+  IdealAtEndField,
+} from "./habit-editor.tsx";
 import {
   describeWeekly,
   type HoursChoice,
@@ -25,6 +30,7 @@ interface Habit {
   level: number;
   enabled: number;
   ideal_minute: number;
+  ideal_at_end: number;
   min_minutes: number;
   max_minutes: number;
   frequency: string;
@@ -112,6 +118,7 @@ export function Habits() {
         title: text("title"),
         level: Number(f.get("level")),
         idealTime: text("idealTime"),
+        idealAtEnd: f.has("idealAtEnd"),
         minMinutes: Number(f.get("minMinutes")),
         maxMinutes: Number(f.get("maxMinutes")),
         frequency: readFrequency(f),
@@ -176,6 +183,7 @@ export function Habits() {
           Ideal time
           <input name="idealTime" type="time" step={900} defaultValue={idealTime ?? "12:00"} />
         </label>
+        <IdealAtEndField checked={preset?.idealAtEnd === true} />
         <label>
           Shortest (minutes)
           <input
@@ -269,8 +277,9 @@ export function Habits() {
               <div>
                 <div>{withEmoji(h)}</div>
                 <div class="meta">
-                  {LEVEL_NAMES[h.level]} · ideal {hhmm(h.ideal_minute)} · {duration(h.min_minutes)}{" "}
-                  to {duration(h.max_minutes)} · {frequencyText(f)} ·{" "}
+                  {LEVEL_NAMES[h.level]} ·{" "}
+                  {h.ideal_at_end ? "ideal: end of each day" : `ideal ${hhmm(h.ideal_minute)}`} ·{" "}
+                  {duration(h.min_minutes)} to {duration(h.max_minutes)} · {frequencyText(f)} ·{" "}
                   {DEFENSE[h.defense] ?? h.defense}
                   {h.item_hours
                     ? ` · Item-specific hours: ${describeWeekly(JSON.parse(h.item_hours))}`
