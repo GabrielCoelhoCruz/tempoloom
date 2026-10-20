@@ -42,6 +42,7 @@ class StatusMap(dict):
         return self[row_id]
 
 T = {
+    "x_selfhost": "the Docker image keeps the session, a task and its event in one SQLite volume across restarts (X2)",
     "split": "places a split task in work hours and keeps it after reload and restart (SPEC-PLANNING-01 AT 1)",
     "meeting": "moves a chunk away from a new meeting and never touches the meeting (SCH-1, SCH-55)",
     "drag": "a drag in the planner moves the chunk and locks it there (CED-50, LCK-2)",
@@ -1548,7 +1549,7 @@ def main():
     out += ["", "## Beyond the reference product", "",
             "| # | Feature | Evidence | Spec | Status | Proof or reason |", "|---|---|---|---|---|---|",
             "| X1 | Sign in with a CalDAV account (Radicale, Nextcloud, Fastmail) | none | [accounts-login-emails-permissions.md](specs/accounts-login-emails-permissions.md) | partial | CalDAV E2E passes: “signs in with CalDAV, rejects a wrong password, and keeps the session”. Not a reference feature, so no Google E2E applies. |",
-            "| X2 | Self-hosting with one process and one SQLite file, Docker image | none | [../adr/0001-stack.md](adr/0001-stack.md) | partial | Docker image builds; no deployment test yet. |"]
+            f"| X2 | Self-hosting with one process and one SQLite file, Docker image | none | [../adr/0001-stack.md](adr/0001-stack.md) | done (CalDAV) | CalDAV E2E passes: “{T['x_selfhost']}”; CI job self-host builds the image and runs it. Not a reference feature, so no Google E2E applies. |"]
     open(OUT, "w", encoding="utf8").write("\n".join(out) + "\n")
     print(len(rows), counts)
 
