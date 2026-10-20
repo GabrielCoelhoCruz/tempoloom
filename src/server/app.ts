@@ -418,6 +418,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
     return c.json({
       user,
       actor: actor ?? null,
+      live: live.mark(user.id),
       owners: ownersOf(db, (actor ?? user).id),
       settings: getSettings(db, user.id),
       accounts: all(

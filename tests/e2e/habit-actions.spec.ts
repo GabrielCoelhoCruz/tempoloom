@@ -36,7 +36,17 @@ import {
   span,
   week,
 } from "./automation-helpers.ts";
-import { at, BACKEND, blockUntil, eventually, expect, local, managed, test } from "./fixtures.ts";
+import {
+  at,
+  BACKEND,
+  blockUntil,
+  eventually,
+  expect,
+  local,
+  managed,
+  planNow,
+  test,
+} from "./fixtures.ts";
 import { addHabit, addTask, openWeek, titled, W } from "./helpers.ts";
 
 test.skip(BACKEND === "google", "These scenarios write raw CalDAV objects and move events.");
@@ -65,6 +75,8 @@ test("a solo recurring event becomes a habit from the planner; a series with gue
     attendees: ["ana@example.com"],
   });
   await signIn();
+  // The series were written straight to the calendar: wait for the sync that reads them.
+  await planNow(page);
   await openWeek(page);
   const drawer = page.getByTestId("event-drawer");
   await page.locator(".ev-external", { hasText: "Team sync" }).first().click();
