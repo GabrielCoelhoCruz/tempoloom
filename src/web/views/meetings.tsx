@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "preact/hooks";
 import { defaultEventSettings, type EventSettings } from "../../shared/event-settings.ts";
-import { itemRangeOf } from "../../shared/item-hours.ts";
+import { type ItemRange, itemHoursOf, itemRangeOf, type Weekly } from "../../shared/item-hours.ts";
 import { api } from "../lib/api.ts";
 import { duration, formatWhen, hhmm } from "../lib/format.ts";
 import { freeName, templateFromUrl } from "../lib/library.ts";
@@ -35,7 +35,12 @@ interface Meeting {
   frequency: Frequency;
   item_hours: string | null;
   event_settings: EventSettings;
-  attendees: (Person & { required: boolean })[];
+  attendees: (Person & { required: boolean; hoursOverride: Weekly | null })[];
+  availability: AvailabilityData;
+  /** MEET-02 rule 34: periods removed for lack of time. */
+  skipped: { period: string; reason: string }[];
+  /** MEET-02 rule 16: the period after missed ones and its level. */
+  boost: { period: string; level: number; missed: number } | null;
   occurrences: { id: string; key: string; start_ms: number; end_ms: number; locked: number }[];
   problems: {
     demandKey: string;
@@ -47,6 +52,20 @@ interface Meeting {
   }[];
   changes: Change[];
   series_event_id: string | null;
+}
+
+/** Rules 6-7: hours of next week in the organizer's zone (src/server/meeting-availability.ts). */
+interface AvailabilityData {
+  zone: string;
+  week: string;
+  people: { email: string; zone: string | null; set: boolean }[];
+  days: {
+    date: string;
+    day: number;
+    you: [number, number][];
+    people: ([number, number][] | null)[];
+    overlap: [number, number][];
+  }[];
 }
 
 type Frequency =
@@ -152,8 +171,8 @@ const CHANGE_REASONS: Record<string, string> = {
   declined: "declined",
   ruleChanged: "rules changed",
   noFreeSlot: "cancelled, no free time",
-  manualMove: "moved by you",
-  manualSkip: "skipped by you",
+  manualMove: "moved by hand",
+  manualSkip: "skipped",
 };
 const MOVES: [string, string][] = [
   ["none", "No automatic moves"],
@@ -219,6 +238,110 @@ function PersonLine({ p }: { p: Person }) {
   );
 }
 
+const rangesText = (ranges: [number, number][]) =>
+  ranges.length ? ranges.map(([s, e]) => `${hhmm(s)}–${hhmm(e)}`).join(", ") : "none";
+
+/** Rule 6: for each day, the organizer's hours, each required guest's hours and the overlap. */
+function AvailabilityMap({ map }: { map: AvailabilityData }) {
+  return (
+    <table class="wide meta" data-testid="availability-map" data-week={map.week}>
+      <caption>
+        Meeting hours in the week of {map.week}, in {map.zone}
+      </caption>
+      <thead>
+        <tr>
+          <th>Day</th>
+          <th>You</th>
+          {map.people.map((p) => (
+            <th key={p.email}>{p.email}</th>
+          ))}
+          <th>Overlap</th>
+        </tr>
+      </thead>
+      <tbody>
+        {map.days.map((d) => (
+          <tr key={d.date} data-day={d.day}>
+            <th>{DAY_NAMES[d.day - 1]}</th>
+            <td data-person="you">{rangesText(d.you)}</td>
+            {d.people.map((r, i) => (
+              <td key={map.people[i]?.email} data-person={map.people[i]?.email}>
+                {r ? rangesText(r) : "unknown"}
+              </td>
+            ))}
+            <td data-person="overlap">{rangesText(d.overlap)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+const WEEKDAYS_ON = { days: [1, 2, 3, 4, 5], from: "09:00", to: "17:00" };
+
+/** Rule 7: the organizer's hours for one guest, in the guest's time zone. */
+function GuestHours({
+  person,
+  value,
+  onChange,
+}: {
+  person: Person;
+  value: ItemRange | null;
+  onChange: (v: ItemRange | null) => void;
+}) {
+  return (
+    <div class="item-hours" data-testid="attendee-hours" data-email={person.email}>
+      <label class="inline">
+        <input
+          type="checkbox"
+          checked={value !== null}
+          onChange={(e) => onChange(e.currentTarget.checked ? WEEKDAYS_ON : null)}
+        />
+        Set hours for {person.email}
+      </label>
+      {value && (
+        <>
+          {DAY_NAMES.map((n, i) => (
+            <label class="inline" key={n}>
+              <input
+                type="checkbox"
+                checked={value.days.includes(i + 1)}
+                onChange={(e) =>
+                  onChange({
+                    ...value,
+                    days: e.currentTarget.checked
+                      ? [...value.days, i + 1].sort()
+                      : value.days.filter((d) => d !== i + 1),
+                  })
+                }
+              />
+              {n}
+            </label>
+          ))}
+          <label class="inline">
+            From
+            <input
+              type="time"
+              step={900}
+              value={value.from}
+              onInput={(e) => onChange({ ...value, from: e.currentTarget.value })}
+            />
+          </label>
+          <label class="inline">
+            To
+            <input
+              type="time"
+              step={900}
+              value={value.to}
+              onInput={(e) => onChange({ ...value, to: e.currentTarget.value })}
+            />
+          </label>
+          <span class="meta">in {person.timeZone}</span>
+        </>
+      )}
+    </div>
+  );
+}
+
 /** MEET-02 rule 33: every unplaced or conflicting occurrence of all meetings, with its reason. */
 function Attention({ meetings, zone: z }: { meetings: Meeting[]; zone: string }) {
   const items = meetings.flatMap((m) =>
@@ -275,6 +398,31 @@ export function Meetings() {
   // The meeting whose rules the form edits (MEET-02 rule 4: a rule change places it again).
   const [editing, setEditing] = useState<Meeting | null>(null);
   const ed = editing;
+  // Rule 7: hours the organizer sets for guests, by email; the map follows them (rule 6).
+  const [overrides, setOverrides] = useState<Record<string, ItemRange>>({});
+  const [map, setMap] = useState<AvailabilityData | null>(null);
+  const guestsWith = (list: Person[]) =>
+    list.map((p) => ({
+      email: p.email,
+      required: true,
+      hoursOverride: overrides[p.email] ? itemHoursOf(overrides[p.email] as ItemRange) : null,
+    }));
+  useEffect(() => {
+    if (people.length === 0) {
+      setMap(null);
+      return;
+    }
+    let live = true;
+    api<AvailabilityData>("POST", "/api/meetings/availability", {
+      attendees: guestsWith(people),
+    }).then(
+      (m) => live && setMap(m),
+      () => undefined,
+    );
+    return () => {
+      live = false;
+    };
+  }, [people, overrides]);
 
   const load = useCallback(async () => {
     const r = await api<{ meetings: Meeting[]; mailConfigured: boolean }>("GET", "/api/meetings");
@@ -305,6 +453,13 @@ export function Meetings() {
     setEvery(init.every);
     setUnit(init.unit);
     setHoursMode(m.item_hours ? "itemSpecific" : m.hours_mode);
+    setOverrides(
+      Object.fromEntries(
+        m.attendees.flatMap((a) =>
+          a.hoursOverride ? [[a.email, itemRangeOf(a.hoursOverride)]] : [],
+        ),
+      ),
+    );
     setPreview(null);
     void lookup(
       m.attendees
@@ -320,6 +475,7 @@ export function Meetings() {
     setEvery("1");
     setHoursMode("everyone");
     setPeople([]);
+    setOverrides({});
   };
   const everyInit = ed
     ? everyOf(ed.frequency).every
@@ -392,7 +548,11 @@ export function Meetings() {
     return {
       title: text("title"),
       attendees: [
-        ...emails(text("guests")).map((email) => ({ email, required: true })),
+        ...emails(text("guests")).map((email) => ({
+          email,
+          required: true,
+          hoursOverride: overrides[email] ? itemHoursOf(overrides[email] as ItemRange) : null,
+        })),
         ...emails(text("optional")).map((email) => ({ email, required: false })),
       ],
       frequency,
@@ -441,6 +601,7 @@ export function Meetings() {
             await api("POST", "/api/meetings", body(form));
             setSaved((n) => n + 1);
             setPeople([]);
+            setOverrides({});
             setPreview(null);
             setSeed(null);
             setEvery("1");
@@ -509,10 +670,21 @@ export function Meetings() {
             {people.map((p) => (
               <li key={p.email}>
                 <PersonLine p={p} />
+                {p.class === "user" && (
+                  <GuestHours
+                    person={p}
+                    value={overrides[p.email] ?? null}
+                    onChange={(v) => {
+                      const { [p.email]: _, ...rest } = overrides;
+                      setOverrides(v ? { ...rest, [p.email]: v } : rest);
+                    }}
+                  />
+                )}
               </li>
             ))}
           </ul>
         )}
+        {map && <AvailabilityMap map={map} />}
         <label class="wide">
           Optional guests (comma list)
           <input
@@ -863,6 +1035,9 @@ export function Meetings() {
                       {m.attendees.map((a) => (
                         <li key={a.email}>
                           <PersonLine p={a} />
+                          {a.hoursOverride
+                            ? ` · hours set by you: ${describeWeekly(a.hoursOverride)}`
+                            : ""}
                           {a.required ? "" : " (optional)"}
                         </li>
                       ))}
@@ -914,6 +1089,30 @@ export function Meetings() {
                           </div>
                         );
                       })}
+                    {m.boost && (
+                      <div class="meta warning" data-testid="meeting-boost">
+                        Priority boost: {m.boost.period} uses P{m.boost.level} after{" "}
+                        {m.boost.missed} missed period{m.boost.missed === 1 ? "" : "s"}
+                      </div>
+                    )}
+                    {m.skipped.length > 0 && (
+                      <div class="meta">
+                        Skipped for lack of time:
+                        <ul data-testid="skipped-periods">
+                          {m.skipped.map((p) => (
+                            <li key={p.period}>
+                              {p.period}: {REASONS[p.reason] ?? p.reason}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    {m.availability.people.length > 0 && (
+                      <details class="meta">
+                        <summary>Availability map</summary>
+                        <AvailabilityMap map={m.availability} />
+                      </details>
+                    )}
                     {m.changes.length > 0 && (
                       <details class="meta" open>
                         <summary>Changes</summary>

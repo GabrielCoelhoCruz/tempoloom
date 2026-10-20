@@ -1090,6 +1090,34 @@ BLOCKED[43] = ("Needs the Google Calendar add-on's developer app and a test acco
                + T["u35_panel"] + "\u201d; \u201c" + T["u35_page"] + "\u201d; \u201c" + T["u35_sticky"] + "\u201d)")
 # --- end U35 ---
 
+# --- U39: flexible meetings part C (meeting-extras.spec.ts) ---
+T.update({
+    "u39_map": "the availability map shows each guest's meeting hours in my time zone and the overlap; hours I set for one guest replace theirs in the map and in placement (rules 6-7, 11)",
+    "u39_cadence": "cadence: after an occurrence moves late in its week, the next one keeps at least half a week away instead of its ideal day (rule 18)",
+    "u39_resched": "the reschedule action moves an occurrence to another time the same day or to another day of its period, never its current time, and leaves it unlocked (MEET-02 rule 19)",
+    "u39_guest": "in a 1:1 the guest reschedules or skips an occurrence from the guest's planner; a guest of a group meeting gets no such action (MEET-02 rules 20, 26)",
+    "u39_boost": "a daily meeting lists the days skipped for lack of time; after one missed day it uses one level higher, after two P1, and the boost ends once a day is held (MEET-02 rules 16, 34)",
+})
+E2E.update({
+    326: ["u39_map"],
+    327: ["u39_map"],
+    340: ["u39_cadence"],
+    362: ["u39_boost"],
+    365: ["u39_resched"],
+    370: ["u39_guest"],
+    375: ["u39_boost"],
+})
+E2E_NOTES.update({
+    326: "The map shows next week, one row per day; a guest who is not a user here shows as unknown",
+    327: "The hours are one range on chosen weekdays, in the guest's time zone; they apply to a guest who is a user here",
+    340: "Tempoloom decision on the Proposed rule: in the next period, starts less than half a period after the previous occurrence are skipped when another start exists, also for an occurrence placed before",
+    362: "A period counts as missed when it ended with no time (removed, or kept in conflict); a period with no hours, or skipped by hand, neither counts nor breaks the run",
+    365: "The result stays unlocked and is logged as a move by hand; the lead time and the move limit do not apply",
+    370: "The guest sees the occurrence in the guest's own planner; Tempoloom writes the change on the organizer's calendar and logs the guest",
+    375: "Periods removed for lack of time stay listed after they end; a period that gets a time later leaves the list",
+})
+# --- end U39 ---
+
 # Google Calendar proof. docs/e2e-google-run.tsv records a full E2E run on Google
 # (status, test id, title per line; docs/e2e-google-run.md says how it ran and how to
 # regenerate the file). Each T[key] is the exact title of one test in tests/e2e, and the

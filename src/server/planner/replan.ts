@@ -45,7 +45,7 @@ import {
   placementState,
   TRAVEL_MARKER,
 } from "./markers.ts";
-import { recordMeetingChanges } from "./meeting-log.ts";
+import { recordMeetingChanges, recordMissedPeriods } from "./meeting-log.ts";
 import { attendeeOccurrences, attendeesOf, meetingItems } from "./meetings.ts";
 import { LABELS, mirrorCopies } from "./mirror.ts";
 import { type DesiredEvent, type ManagedRow, type PushResult, pushSchedule } from "./push.ts";
@@ -790,6 +790,7 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
     desired,
   );
   recordMeetingChanges(db, userId, rows, now, last);
+  recordMissedPeriods(db, userId, result, now);
   // Rule 8: a new color also repaints managed events that ended, up to 90 days back.
   // Rule 12, "repaint all": every managed event gets its color again, also where
   // the user changed the color in the calendar. The run only lists the paints;
