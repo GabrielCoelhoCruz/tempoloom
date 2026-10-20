@@ -1,6 +1,6 @@
 import type { ComponentChildren } from "preact";
 import { useCallback, useEffect, useState } from "preact/hooks";
-import { addLocalDays } from "../../shared/time.ts";
+import { addDays, addLocalDays, localToUtc } from "../../shared/time.ts";
 import { api } from "../lib/api.ts";
 import { COLORS } from "../lib/categories.ts";
 import { duration, formatWhen, fromLocalInput, toLocalInput } from "../lib/format.ts";
@@ -20,7 +20,11 @@ interface Task {
   level: number;
   total_minutes: number;
   due_at: number | null;
+  start_after: number;
+  hours_set_id: string;
+  visibility: "calendar_default" | "private";
   next_up_rank: number | null;
+  schedulingRank: number | null;
   state: string;
   scheduledMinutes: number;
   remainingMinutes: number;
@@ -89,6 +93,7 @@ export function TaskForm({
         ...(text("hoursSetId") ? { hoursSetId: text("hoursSetId") } : {}),
         nextUp: f.get("nextUp") === "on",
         color: text("taskColor"),
+        visibility: text("visibility"),
       });
       // Clear the title before the plan runs, and only if it still holds this
       // task: the user may have typed the next title already.
@@ -140,7 +145,12 @@ export function TaskForm({
           Start after
           <input name="startAfter" type="datetime-local" />
         </label>
-        <HoursField sets={hours} allowItem={false} />
+        <HoursField
+          key={hours.length}
+          sets={hours}
+          initial={hours.some((h) => h.id === d?.hoursSetId) ? (d?.hoursSetId ?? "") : ""}
+          allowItem={false}
+        />
         <label>
           Split into chunks
           <select
@@ -177,8 +187,19 @@ export function TaskForm({
           </>
         )}
         <label class="inline">
-          <input name="nextUp" type="checkbox" />
+          <input name="nextUp" type="checkbox" defaultChecked={d?.nextUp ?? false} />
           Next up (work on it first)
+        </label>
+        <label>
+          Visibility
+          <select name="visibility">
+            <option value="calendar_default" selected={d?.visibility !== "private"}>
+              Calendar default
+            </option>
+            <option value="private" selected={d?.visibility === "private"}>
+              Private
+            </option>
+          </select>
         </label>
         <label class="wide">
           Notes
@@ -213,10 +234,218 @@ interface Timer {
   itemId: string;
 }
 
+type StateFilter = "open" | "scheduled" | "time-used" | "done";
+type Sort = "due" | "priority" | "scheduling";
+
+const STATES: [StateFilter, string][] = [
+  ["open", "Open"],
+  ["scheduled", "Scheduled"],
+  ["time-used", "Time used"],
+  ["done", "Done"],
+];
+
+/** The list view in the address (TSK-60, TSK-61), so a reload keeps it. */
+interface View {
+  state: StateFilter;
+  hours: string;
+  /** Local dates "YYYY-MM-DD" or "". */
+  dueBy: string;
+  startsFrom: string;
+  sort: Sort;
+}
+
+function readView(): View {
+  const q = new URLSearchParams(location.search);
+  const pick = <T extends string>(k: string, all: readonly T[], d: T): T =>
+    all.includes(q.get(k) as T) ? (q.get(k) as T) : d;
+  return {
+    state: pick("state", ["open", "scheduled", "time-used", "done"], "open"),
+    hours: q.get("hours") ?? "",
+    dueBy: q.get("due") ?? "",
+    startsFrom: q.get("start") ?? "",
+    sort: pick("sort", ["due", "priority", "scheduling"], "due"),
+  };
+}
+
+function writeView(v: View) {
+  const q = new URLSearchParams();
+  if (v.state !== "open") q.set("state", v.state);
+  if (v.hours) q.set("hours", v.hours);
+  if (v.dueBy) q.set("due", v.dueBy);
+  if (v.startsFrom) q.set("start", v.startsFrom);
+  if (v.sort !== "due") q.set("sort", v.sort);
+  const s = q.toString();
+  history.replaceState(history.state, "", `${location.pathname}${s ? `?${s}` : ""}`);
+}
+
+/** The tasks the view shows, in its order. The server sends them by due date. */
+function shown(tasks: Task[], v: View, z: string): Task[] {
+  const dueEnd = v.dueBy ? localToUtc(z, addDays(v.dueBy, 1), 0) : null;
+  const startFrom = v.startsFrom ? localToUtc(z, v.startsFrom, 0) : null;
+  const list = tasks.filter(
+    (t) =>
+      (v.state === "open" || v.state === "done" || t.state === v.state) &&
+      (!v.hours || t.hours_set_id === v.hours) &&
+      (dueEnd === null || (t.due_at !== null && t.due_at < dueEnd)) &&
+      (startFrom === null || t.start_after >= startFrom),
+  );
+  const last = Number.POSITIVE_INFINITY;
+  if (v.sort === "priority") return [...list].sort((a, b) => a.level - b.level);
+  if (v.sort === "scheduling")
+    return [...list].sort((a, b) => (a.schedulingRank ?? last) - (b.schedulingRank ?? last));
+  return list;
+}
+
+const SNOOZES: [string, string][] = [
+  ["1h", "1 hour"],
+  ["3h", "3 hours"],
+  ["tomorrow", "Tomorrow"],
+  ["next-week", "Next week"],
+];
+
+/** Snooze (TSK-24) and visibility (CNT-20) of one task. */
+function TaskMore({ task, act }: { task: Task; act: (fn: () => Promise<unknown>) => unknown }) {
+  const z = zone();
+  const [until, setUntil] = useState("");
+  return (
+    <details class="task-more" data-testid="task-more">
+      <summary>More</summary>
+      {task.state !== "done" && (
+        <div class="actions">
+          <span class="meta">Snooze:</span>
+          {SNOOZES.map(([choice, label]) => (
+            <button
+              type="button"
+              key={choice}
+              onClick={() =>
+                void act(() => api("POST", `/api/tasks/${task.id}/snooze`, { choice }))
+              }
+            >
+              {label}
+            </button>
+          ))}
+          <label class="inline">
+            Snooze until
+            <input
+              type="datetime-local"
+              value={until}
+              onInput={(e) => setUntil(e.currentTarget.value)}
+            />
+          </label>
+          <button
+            type="button"
+            disabled={!until}
+            onClick={() =>
+              void act(() =>
+                api("POST", `/api/tasks/${task.id}/snooze`, { until: fromLocalInput(z, until) }),
+              )
+            }
+          >
+            Snooze
+          </button>
+        </div>
+      )}
+      <label class="inline">
+        Visibility
+        <select
+          value={task.visibility}
+          onChange={(e) => {
+            const visibility = e.currentTarget.value;
+            void act(() => api("PATCH", `/api/tasks/${task.id}`, { visibility }));
+          }}
+        >
+          <option value="calendar_default">Calendar default</option>
+          <option value="private">Private</option>
+        </select>
+      </label>
+    </details>
+  );
+}
+
+/** TSK-45: one change to the selected tasks. */
+function BulkBar({
+  ids,
+  act,
+  clear,
+}: {
+  ids: string[];
+  act: (fn: () => Promise<unknown>) => Promise<void>;
+  clear: () => void;
+}) {
+  const z = zone();
+  const [level, setLevel] = useState("2");
+  const [start, setStart] = useState("");
+  const [due, setDue] = useState("");
+  const bulk = (change: Record<string, unknown>) =>
+    act(() => api("POST", "/api/tasks/bulk", { ids, change }));
+  return (
+    <div class="toolbar bulk-bar" data-testid="bulk-bar">
+      <span class="meta">{ids.length} selected</span>
+      <label class="inline">
+        Priority
+        <select value={level} onChange={(e) => setLevel(e.currentTarget.value)}>
+          {[1, 2, 3, 4].map((l) => (
+            <option value={l} key={l}>
+              {LEVEL_NAMES[l]}
+            </option>
+          ))}
+        </select>
+      </label>
+      <button type="button" onClick={() => void bulk({ action: "level", level: Number(level) })}>
+        Set priority
+      </button>
+      <label class="inline">
+        Start after
+        <input
+          type="datetime-local"
+          value={start}
+          onInput={(e) => setStart(e.currentTarget.value)}
+        />
+      </label>
+      <button
+        type="button"
+        disabled={!start}
+        onClick={() => void bulk({ action: "start", startAfter: fromLocalInput(z, start) })}
+      >
+        Set start
+      </button>
+      <label class="inline">
+        Due
+        <input type="datetime-local" value={due} onInput={(e) => setDue(e.currentTarget.value)} />
+      </label>
+      <button
+        type="button"
+        onClick={() => void bulk({ action: "due", dueAt: due ? fromLocalInput(z, due) : null })}
+      >
+        Set due
+      </button>
+      <button type="button" onClick={() => void bulk({ action: "done" }).then(clear)}>
+        Mark done
+      </button>
+      <button
+        type="button"
+        class="danger"
+        onClick={() => void bulk({ action: "delete" }).then(clear)}
+      >
+        Delete
+      </button>
+    </div>
+  );
+}
+
 export function Tasks() {
   const z = zone();
-  const [filter, setFilter] = useState<"open" | "done">("open");
+  const [view, setViewState] = useState<View>(readView);
+  const setView = (patch: Partial<View>) =>
+    setViewState((v) => {
+      const next = { ...v, ...patch };
+      writeView(next);
+      return next;
+    });
+  const filter = view.state === "done" ? "done" : "open";
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [hours, setHours] = useState<HoursChoice[]>([]);
+  const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const [timer, setTimer] = useState<Timer | null>(null);
   const [stopping, setStopping] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -230,6 +459,9 @@ export function Tasks() {
     setTimer(tm.timer);
   }, [filter]);
   useEffect(() => void load(), [load]);
+  useEffect(() => {
+    void api<{ hours: HoursChoice[] }>("GET", "/api/hours").then((h) => setHours(h.hours));
+  }, []);
   useLive(load);
 
   const act = async (fn: () => Promise<unknown>) => {
@@ -242,6 +474,17 @@ export function Tasks() {
       setError(errorText(err));
     }
   };
+
+  const list = shown(tasks, view, z);
+  const picked = list.filter((t) => selected.has(t.id)).map((t) => t.id);
+  const toggle = (id: string, on: boolean) =>
+    setSelected((s) => {
+      const next = new Set(s);
+      if (on) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  const now = Date.now();
 
   return (
     <div class="page" data-testid="tasks-page">
@@ -260,25 +503,88 @@ export function Tasks() {
           }}
         />
       )}
-      <div class="toolbar" style={{ padding: "0 0 8px", border: 0 }}>
-        <button type="button" aria-pressed={filter === "open"} onClick={() => setFilter("open")}>
-          Open
-        </button>
-        <button type="button" aria-pressed={filter === "done"} onClick={() => setFilter("done")}>
-          Done
-        </button>
+      <div class="toolbar" data-testid="task-states" style={{ padding: "0 0 8px", border: 0 }}>
+        {STATES.map(([state, label]) => (
+          <button
+            type="button"
+            key={state}
+            aria-pressed={view.state === state}
+            onClick={() => setView({ state })}
+          >
+            {label}
+          </button>
+        ))}
       </div>
+      <div class="toolbar" data-testid="task-filters" style={{ padding: "0 0 8px", border: 0 }}>
+        <label class="inline">
+          Hours
+          <select value={view.hours} onChange={(e) => setView({ hours: e.currentTarget.value })}>
+            <option value="">Any hours</option>
+            {hours.map((h) => (
+              <option value={h.id} key={h.id}>
+                {h.kind === "work" ? "Work hours" : h.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label class="inline">
+          Due by
+          <input
+            type="date"
+            value={view.dueBy}
+            onInput={(e) => setView({ dueBy: e.currentTarget.value })}
+          />
+        </label>
+        <label class="inline">
+          Starts from
+          <input
+            type="date"
+            value={view.startsFrom}
+            onInput={(e) => setView({ startsFrom: e.currentTarget.value })}
+          />
+        </label>
+        <label class="inline">
+          Sort
+          <select
+            value={view.sort}
+            onChange={(e) => setView({ sort: e.currentTarget.value as Sort })}
+          >
+            <option value="due">Due date</option>
+            <option value="priority">Priority</option>
+            {filter === "open" && <option value="scheduling">Scheduling order</option>}
+          </select>
+        </label>
+      </div>
+      {picked.length > 0 && <BulkBar ids={picked} act={act} clear={() => setSelected(new Set())} />}
       <div class="list" data-testid="task-list">
-        {tasks.map((t) => (
+        {list.map((t) => (
           <div class="row" key={t.id} data-testid="task-row" data-task-title={t.title}>
+            <input
+              type="checkbox"
+              aria-label={`Select ${t.title}`}
+              checked={selected.has(t.id)}
+              onChange={(e) => toggle(t.id, e.currentTarget.checked)}
+            />
             <div>
               <div>
                 {t.title}
                 {t.next_up_rank !== null && <span class="badge"> next up</span>}
+                {t.visibility === "private" && (
+                  <span class="badge" data-testid="task-private">
+                    {" "}
+                    private
+                  </span>
+                )}
               </div>
               <div class="meta">
                 <span data-testid="task-level">{LEVEL_NAMES[t.level]}</span> ·{" "}
                 {duration(t.total_minutes)}
+                {t.start_after > now && t.state !== "done" && (
+                  <>
+                    {" "}
+                    · starts <span data-testid="task-start">{formatWhen(z, t.start_after)}</span>
+                  </>
+                )}
                 {t.due_at ? (
                   <>
                     {" "}
@@ -302,6 +608,7 @@ export function Tasks() {
                   </span>
                 )}
               </div>
+              <TaskMore task={t} act={act} />
             </div>
             <div class="actions">
               {filter === "open" &&
@@ -351,7 +658,11 @@ export function Tasks() {
             </div>
           </div>
         ))}
-        {tasks.length === 0 && <p class="status">No {filter} tasks.</p>}
+        {list.length === 0 && (
+          <p class="status">
+            No {STATES.find(([s]) => s === view.state)?.[1].toLowerCase()} tasks.
+          </p>
+        )}
       </div>
     </div>
   );

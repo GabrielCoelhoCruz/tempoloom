@@ -77,6 +77,13 @@ test("the New task form keeps open for the next task with Create another, and cl
   await expect(page.getByRole("dialog", { name: "New task" })).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog", { name: "New task" })).toBeHidden();
+  // The key works from any page, not only the planner.
+  await page.getByRole("link", { name: "Settings" }).click();
+  await expect(page.getByTestId("settings-page")).toBeVisible();
+  await page.keyboard.press("c");
+  await expect(page.getByRole("dialog", { name: "New task" })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog", { name: "New task" })).toBeHidden();
 
   await eventually(
     () => allEvents(cal),

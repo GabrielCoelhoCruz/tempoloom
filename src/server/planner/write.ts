@@ -15,6 +15,7 @@ export interface LockedEvent {
   end: number;
   title: string;
   description: string;
+  visibility?: "private";
 }
 
 /** A calendar of the user that Tempoloom may write to, or undefined. */
@@ -71,6 +72,7 @@ export async function writeLocked(
         end: e.end,
         busy: true,
         colorId: null,
+        ...(e.visibility ? { visibility: e.visibility } : {}),
         privateProps: { [MANAGED_PROP]: "1", [KEY_PROP]: e.key, tl_user: userId },
       });
       cacheEvent(db, cal.id, ev);

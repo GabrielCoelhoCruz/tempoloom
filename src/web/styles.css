@@ -311,6 +311,11 @@ label > textarea {
   top: 2px;
   font-size: 10px;
 }
+.ev-pick {
+  background: var(--line);
+  opacity: 0.7;
+  pointer-events: none;
+}
 .ev-drag {
   opacity: 0.85;
   z-index: 4;

@@ -1059,6 +1059,34 @@ BLOCKED[322] = ("Not built: the scheduler reads the availability of attendees wh
 BLOCKED[345] = "Needs Google Meet (a Google account), the Zoom vendor app and Google Workspace room resources; an address or a custom text or link is written as the location of every occurrence (E2E: \u201c" + T["mr_settings"] + "\u201d)"
 # --- end U06 ---
 
+# --- U33: task list UX, task defaults, planner create ---
+T.update({
+    "u33_filters": "the task list filters by state, hours set, due date and start date, and sorts by due date, priority or scheduling order (TSK-60, TSK-61)",
+    "u33_bulk": "bulk edit sets the start date, due date and priority of the selected tasks, marks them done or deletes them (TSK-45)",
+    "u33_snooze": "snooze moves a task to a later start and places its chunks again, unlocked (TSK-24)",
+    "u33_private": "a private task writes private chunk events; the default comes from task settings and each task can change it (CNT-20, CNT-24)",
+    "u33_defaults": "task defaults in Settings fill new tasks: priority, duration, chunks, hours, start delay, due in and next up; older tasks keep theirs (TSK-1 to TSK-3)",
+    "u33_here": "a drag on the planner makes a locked task of that length there; a click makes one of the default length (TSK-7, AT-T10)",
+})
+E2E.update({
+    2: ["s3_another"], 5: ["u33_here"], 14: ["u33_snooze"], 16: ["u33_private"],
+    18: ["u33_defaults", "t_title"], 25: ["u33_bulk"], 28: ["u33_filters"], 29: ["u33_filters"],
+})
+E2E_NOTES.update({
+    2: "The key opens the New task form on the planner and on other pages; it does nothing while the user types in a field",
+    5: "A click picks a range of the default task duration; the due date is the default one, never before the chunk ends",
+    14: "Choices: 1 hour, 3 hours, tomorrow and next week (each at the start of the task's hours, on the first later day with hours) and a date-time picker; \u201cnext week\u201d and \u201ctomorrow\u201d also have unit tests",
+    16: "The visibility is set in the task form, in each task's More menu, and as a task default; CalDAV writes CLASS:PRIVATE, Google visibility \u201cprivate\u201d",
+    18: "The start delay is in minutes and the due-in in days, both from the creation time",
+    25: "Every task is a Tempoloom task, so no task is skipped for bulk priority (TSK-46 has no integrations to skip)",
+    28: "Due by and Starts from are local dates; the filters and the sort stay in the page address, so a reload keeps them",
+    29: "Scheduling order is the scheduler's task order without urgency lifts: next-up rank, priority, due date, remaining work, age",
+})
+PARTIAL[17] = ("The Settings page has every task default but one, with E2E (\u201c" + T["u33_defaults"] + "\u201d, \u201c"
+               + T["u33_private"] + "\u201d; the time between chunks is row 9). Missing: the quick task duration (quickTaskMinutes), "
+               "used only for tasks made from chat-app or mail messages, which need the Slack app and a mail integration (row 19)")
+# --- end U33 ---
+
 # Google Calendar proof. docs/e2e-google-run.tsv records a full E2E run on Google
 # (status, test id, title per line; docs/e2e-google-run.md says how it ran and how to
 # regenerate the file). Each T[key] is the exact title of one test in tests/e2e, and the

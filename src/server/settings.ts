@@ -42,6 +42,11 @@ export const settingsSchema = z.object({
       maxChunkMinutes: z.number().int().min(15).default(120),
       dueInDays: z.number().int().min(0).nullable().default(3),
       startDelayMinutes: z.number().int().min(0).default(0),
+      // planning-tasks.md user task defaults: defaultNextUp, defaultHoursSet
+      // (null: work hours), defaultVisibility.
+      nextUp: z.boolean().default(false),
+      hoursSetId: z.string().nullable().default(null),
+      visibility: z.enum(["calendar_default", "private"]).default("calendar_default"),
     })
     .prefault({}),
   markers: z
