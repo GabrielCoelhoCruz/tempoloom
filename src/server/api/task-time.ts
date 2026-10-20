@@ -190,6 +190,8 @@ export function taskTimeRoutes(
         end,
         title: it.title,
         description: eventDescription(it.notes, baseUrl, "task", id),
+        // Logged work is started work (PRG-20), so manual start mode counts it.
+        started: true,
       },
     ]);
     sync.request(user.id, 0);

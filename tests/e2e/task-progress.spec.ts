@@ -877,3 +877,53 @@ test("logged work goes to the task calendar of the task's hours set, and a drag 
   const row = await taskRow(page, "AT-Home");
   await expect(row.getByTestId("task-left")).toHaveText("1 h left");
 });
+
+test("a drag from a past time into the future logs work only up to now (PRG-21, edge case 6)", async ({
+  page,
+  cal,
+  app,
+  signIn,
+}) => {
+  await clockAt(app, at(D, "12:00"));
+  await page.clock.install({ time: new Date(at(D, "12:00")) });
+  await signIn();
+  // It starts the next day, so its chunks leave the dragged column free.
+  await addTask(page, {
+    title: "AT-Now",
+    minutes: 240,
+    due: "",
+    startAfter: `${addDays(D, 1)}T09:00`,
+  });
+  await openWeek(page, W);
+  await expect(page.locator(".ev", { hasText: "AT-Now" }).first()).toBeVisible();
+  // From 11:00 down to 14:00: two hours of the drag lie after now (12:00).
+  const col = page.locator(`.day-col[data-date="${D}"]`);
+  const y = (h: number) => ({ position: { x: 20, y: h * 48 + 4 } });
+  await col.hover(y(11));
+  await page.mouse.down();
+  await col.hover(y(12.5));
+  await col.hover(y(14));
+  await page.mouse.up();
+  const form = page.getByTestId("log-work");
+  await expect(form.getByLabel("Start")).toHaveValue(`${D}T11:00`);
+  // Without the clamp the form shows 180 minutes and the server refuses it.
+  const room = await page.evaluate((t) => Math.floor((Date.now() - t) / 60_000), at(D, "11:00"));
+  expect(room).toBeLessThan(180);
+  const minutes = Number(await form.getByLabel("Minutes").inputValue());
+  expect(minutes).toBeGreaterThanOrEqual(60);
+  expect(minutes).toBeLessThanOrEqual(room);
+  await form.getByLabel("Work on").selectOption({ label: "AT-Now" });
+  const saved = page.waitForResponse(
+    (r) => r.request().method() === "POST" && new URL(r.url()).pathname === "/api/log-work",
+  );
+  await form.getByRole("button", { name: "Log work" }).click();
+  expect((await saved).status()).toBe(201);
+  await expect(form).toBeHidden();
+  await eventually(
+    () => dayEvents(cal),
+    (l) =>
+      expect(times(l, "AT-Now")).toContain(
+        `${D} 11:00-${local(at(D, "11:00") + minutes * MIN).slice(11)}`,
+      ),
+  );
+});

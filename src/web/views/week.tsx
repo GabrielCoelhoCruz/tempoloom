@@ -154,8 +154,11 @@ export function WeekView({
         const lo = Math.floor(Math.min(from, to) / SNAP_MIN) * SNAP_MIN;
         const hi = Math.round(Math.max(from, to) / SNAP_MIN) * SNAP_MIN;
         const t = localToUtc(zone, date, lo);
-        if (t >= Date.now()) return;
-        pick(t, hi - lo >= SNAP_MIN && Math.abs(to - from) >= SNAP_MIN / 2 ? hi - lo : undefined);
+        const room = Math.floor((Date.now() - t) / 60_000);
+        if (room <= 0) return;
+        // A drag into the future logs work only up to now (edge case 6).
+        const dragged = hi - lo >= SNAP_MIN && Math.abs(to - from) >= SNAP_MIN / 2;
+        pick(t, dragged ? Math.min(hi - lo, room) : undefined);
       },
       { once: true },
     );
