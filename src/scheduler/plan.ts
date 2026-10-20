@@ -680,6 +680,7 @@ function placeHabit(ctx: Ctx, h: HabitItem): void {
       const iv = searchHabit(ctx, h, frees[i] as TimeSet, days[i] as LocalDate, windows[i]);
       if (iv) chosen = { iv, dayIdx: i };
     }
+    chosen ??= takeRecovery(ctx, h, frees, days, windows);
     if (chosen) {
       ctx.habitSeen.set(key, minus(frees[chosen.dayIdx] as TimeSet, [chosen.iv]));
       occupy(ctx, chosen.iv, "habit");
@@ -747,6 +748,59 @@ function placeHabit(ctx: Ctx, h: HabitItem): void {
       reason,
     });
   }
+}
+
+/**
+ * buffers-automation.md rule 18: a recovery buffer (the after side of a buffer
+ * that is not travel time) gives way to a habit occurrence that has no other
+ * slot on any of its days. The buffers under the chosen time are removed; the
+ * occurrence then has no other room, so an adaptive habit turns busy (DEF-23).
+ */
+function takeRecovery(
+  ctx: Ctx,
+  h: HabitItem,
+  frees: TimeSet[],
+  days: LocalDate[],
+  windows: TimeSet[],
+): { iv: Interval; dayIdx: number } | null {
+  const recoveryIds = new Set(
+    ctx.s.buffers.filter((b) => !b.filter.travel && !b.filter.flight).map((b) => b.id),
+  );
+  const recovery = ctx.placements.filter(
+    (p) =>
+      p.kind === "buffer" &&
+      !p.conflict &&
+      p.key.endsWith(":after") &&
+      !ctx.fixedKeys.has(p.key) &&
+      recoveryIds.has(p.itemId),
+  );
+  if (recovery.length === 0) return null;
+  // Break gaps around tasks and habits stay out of the habit's reach.
+  const pads = ctx.placements
+    .filter((p) => (p.kind === "task" || p.kind === "habit") && !p.conflict)
+    .map((p) => ({ start: p.start - ctx.breakMs, end: p.end + ctx.breakMs }));
+  for (let i = 0; i < days.length; i++) {
+    const w = windows[i] as TimeSet;
+    const mine = recovery.filter((p) => w.overlaps(p));
+    if (mine.length === 0) continue;
+    const back = minus(TimeSet.from(mine), pads);
+    const free = minus(
+      TimeSet.from([...(frees[i] as TimeSet).intervals(), ...back.intervals()]).intersect(w),
+      h.exclusions,
+    );
+    const iv = searchHabit(ctx, h, free, days[i] as LocalDate, w);
+    if (!iv) continue;
+    const gone = new Set(mine.filter((p) => p.start < iv.end && p.end > iv.start));
+    ctx.placements = ctx.placements.filter((p) => !gone.has(p));
+    const freed = [...gone].map((p) => ({ start: p.start, end: p.end }));
+    ctx.freeOther = TimeSet.from([...ctx.freeOther.intervals(), ...freed]);
+    ctx.freeTH = TimeSet.from([
+      ...ctx.freeTH.intervals(),
+      ...minus(TimeSet.from(freed), pads).intervals(),
+    ]);
+    return { iv, dayIdx: i };
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------- meetings

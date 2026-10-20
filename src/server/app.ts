@@ -81,6 +81,7 @@ import { getSettings } from "./settings.ts";
 import { otherSignIn } from "./sso/policy.ts";
 import type { SyncService } from "./sync/service.ts";
 import { enqueueBookingEvent, type WebhookWorker } from "./webhooks.ts";
+import { weeklyShareRoutes } from "./weekly-share.ts";
 
 export interface AppDeps {
   db: Db;
@@ -348,6 +349,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   app.route("/", embedRoutes());
   app.route("/pub", publicBrandingRoutes(db));
   app.route("/scim/v2", scimRoutes(db, config.BASE_URL, now));
+  app.route("/r", weeklyShareRoutes(db, config.BASE_URL, now));
   const ssoDeps = {
     db,
     box,

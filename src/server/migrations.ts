@@ -1213,4 +1213,21 @@ export const MIGRATIONS: readonly string[] = [
     PRIMARY KEY (user_id, kind)
   ) STRICT;
   `,
+  // 36: focus time hidden from booking links (focus-time.md offer_to_booking_links),
+  // and the share pages of weekly reports (analytics-weekly-reports.md rules 10-12):
+  // the top part as sent, public once a share action set shared_at.
+  `
+  ALTER TABLE focus_goals ADD COLUMN offer_to_links INTEGER NOT NULL DEFAULT 1;
+  CREATE TABLE weekly_shares (
+    token TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    week_from TEXT NOT NULL,
+    week_to TEXT NOT NULL,
+    totals TEXT NOT NULL,
+    facts TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    shared_at INTEGER
+  ) STRICT;
+  CREATE INDEX weekly_shares_user ON weekly_shares(user_id);
+  `,
 ];

@@ -14,6 +14,9 @@ const Habits = lazyComponent(() => import("./views/habits.tsx").then((m) => m.Ha
 const Meetings = lazyComponent(() => import("./views/meetings.tsx").then((m) => m.Meetings));
 const Library = lazyComponent(() => import("./views/library.tsx").then((m) => m.Library));
 const Settings = lazyComponent(() => import("./views/settings.tsx").then((m) => m.Settings));
+const Integrations = lazyComponent(() =>
+  import("./views/integrations.tsx").then((m) => m.Integrations),
+);
 const StatsPage = lazyComponent(() => import("./views/stats.tsx").then((m) => m.StatsPage));
 const MeetingCost = lazyComponent(() => import("./views/tools.tsx").then((m) => m.MeetingCost));
 const Pomodoro = lazyComponent(() => import("./views/tools.tsx").then((m) => m.Pomodoro));
@@ -137,6 +140,8 @@ function Page() {
       return <Library />;
     case "/settings":
       return <Settings />;
+    case "/settings/integrations":
+      return <Integrations />;
     case "/links":
       return <Links />;
     case "/stats":

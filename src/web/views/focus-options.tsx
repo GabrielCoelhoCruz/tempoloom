@@ -14,6 +14,7 @@ interface FocusRow {
   decline_enabled: number;
   decline_message: string;
   task_search_id: string | null;
+  offer_to_links: number;
 }
 
 const DEFAULT_MESSAGE = "Declined automatically: this time is protected for focus.";
@@ -23,6 +24,7 @@ function FocusOptions({ focus }: { focus: FocusRow }) {
   const [decline, setDecline] = useState(focus.decline_enabled === 1);
   const [message, setMessage] = useState(focus.decline_message);
   const [searchId, setSearchId] = useState(focus.task_search_id);
+  const [offer, setOffer] = useState(focus.offer_to_links !== 0);
   const [status, setStatus] = useState<string | null>(null);
   const save = async () => {
     setStatus(null);
@@ -31,6 +33,7 @@ function FocusOptions({ focus }: { focus: FocusRow }) {
         mode,
         autoDecline: { enabled: decline, message },
         taskSearchId: searchId,
+        offerToBookingLinks: offer,
       });
       await planNow();
       setStatus("Saved");
@@ -69,6 +72,14 @@ function FocusOptions({ focus }: { focus: FocusRow }) {
         />
       </label>
       {decline && <p class="meta warning wide">Tempoloom sends these declines to other people.</p>}
+      <label class="inline wide">
+        <input
+          type="checkbox"
+          checked={offer}
+          onChange={(e) => setOffer(e.currentTarget.checked)}
+        />
+        Offer focus time to P1 booking links
+      </label>
       <div class="wide">
         <TaskSearchPicker value={searchId} onChange={setSearchId} />
       </div>

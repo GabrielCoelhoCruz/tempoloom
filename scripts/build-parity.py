@@ -1163,7 +1163,7 @@ BLOCKED[770] = "Not needed: no legacy users (platform-current-version rule 11)"
 # Buildable rows that no unit has built yet. Rows that units U31 to U33 and PR #23 build now keep their text.
 PLANNED = "Buildable; not built yet (planned)"
 for n in [36, 38, 40, 102, 118, 121, 122, 123, 128, 129, 140, 144, 167, 169, 170, 183, 185, 187, 189,
-          201, 205, 232, 326, 327, 340, 347, 361, 362, 365, 370, 375, 542, 543, 635, 636, 637, 775, 776, 783, 784]:
+          326, 327, 340, 347, 361, 362, 365, 370, 375, 542, 543]:
     BLOCKED[n] = PLANNED
 BLOCKED[92] = PLANNED + ": the reason for each move and skip, and a view per item; the change log of every calendar write is built (src/server/change-log.ts)"
 BLOCKED[507] = PLANNED + ": the link's events go to the calendar chosen on the link (\u201c" + T["u7_locations"] + "\u201d); the choice of an added account, whose primary calendar gets the events and sends the invitations, is not built"
@@ -1221,6 +1221,40 @@ BLOCKED[43] = ("Needs the Google Calendar add-on's developer app and a test acco
                "page, done leaving the queue, and an up arrow that moves no other task (\u201c" + T["u35_arrows"] + "\u201d; \u201c"
                + T["u35_panel"] + "\u201d; \u201c" + T["u35_page"] + "\u201d; \u201c" + T["u35_sticky"] + "\u201d)")
 # --- end U35 ---
+
+# --- U46: focus and buffers, integrations page, weekly report part B
+# (focus-buffer-extras.spec.ts, integrations.spec.ts, weekly-report-extras.spec.ts) ---
+T.update({
+    "u46_focus_links": "with offer to booking links off, focus time is hidden from every booking link, also a P1 link (rule 32; offer_to_booking_links)",
+    "u46_focus_resched": "reschedule moves a focus event to the first free time at least the chosen delay from now, and it stays there (rule 22)",
+    "u46_recovery": "a recovery buffer gives its time to a habit when that is the habit's last slot, and keeps it where the habit has room (buffers rule 18)",
+    "u46_int_cards": "Settings > Integrations shows one card per integration by category; tools without a client on this server show Not configured on this server with Connect disabled (rules 1, 13)",
+    "u46_int_calendar": "the Google Calendar card follows the server's Google client and the Outlook Calendar card is not configured; Suggest a tool opens the server's support address or the project's issue form (rules 2, 13; calendar cards)",
+    "u46_wr_preview": "the weekly report previews next week's calendar by day with the busiest and the lightest day, and lists the top open tasks and next week's habits by priority; each links into the app (rules 8, 9)",
+    "u46_wr_share": "a share action makes a public page of the report's top part: name, week, totals and facts, no event titles; X, LinkedIn and Facebook links carry the page link (rules 10-12, edge case 6)",
+})
+E2E.update({
+    201: ["u46_focus_links"], 205: ["u46_focus_resched"], 232: ["u46_recovery"],
+    635: ["u46_wr_preview"], 636: ["u46_wr_preview"], 637: ["u46_wr_share"],
+    775: ["u46_int_cards"], 776: ["u46_int_calendar"], 783: ["u46_int_calendar"],
+    784: ["u46_int_cards", "u46_int_calendar"],
+})
+E2E_NOTES.update({
+    201: "The setting is in the focus time options in Settings; it is on for a new focus goal",
+    205: ("The delays are 15 and 30 minutes, 1 to 4 hours and 1 day; the new time is in the focus goal's hours, free of blocking events and other "
+          "Tempoloom events, not the old time, and the moved event is locked there like a move (rule 20)"),
+    232: ("A recovery buffer is the after side of a buffer that is not travel time; it gives way only when no allowed day of the occurrence has "
+          "other room, and a locked buffer does not give way. The rule applies whatever the buffer's priority (rule 18 over rule 17)"),
+    635: "Next week's events on the primary calendar of the main account, on each workday (Monday to Friday without work hours); days and events link to the planner week of that day",
+    636: "The 5 open tasks with the highest priority, then the nearest due date, and the habits with an event next week; each links to its edit form",
+    637: "The email has the four share links; the page is public only after one of them is opened, and shows the top part as it was sent",
+    775: ("Tools with no provider client in Tempoloom (Outlook, Slack, Zoom, Gong, the task apps, the calendar add-on) show Not configured on this "
+          "server; webhooks, Raycast, Zapier and AI tools link to their settings; the connect flow of each tool is in rows 777 to 782"),
+    776: "The link goes to the server's SUPPORT_URL, else to the project's issue form",
+    783: "Not configured on this server without a Google client; Not connected with a Connect link, Connected or Needs attention with the account's email when the server has one",
+    784: "The Microsoft Graph calendar provider is not built (rows 520 to 536), so the card is always Not configured on this server",
+})
+# --- end U46 ---
 
 # Google Calendar proof. docs/e2e-google-run.tsv records a full E2E run on Google
 # (a "# commit <sha>" line, then status, test id, title per line; docs/e2e-google-run.md

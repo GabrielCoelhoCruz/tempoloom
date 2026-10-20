@@ -8,6 +8,7 @@ import { CATEGORY_LABELS, COLORS } from "../lib/categories.ts";
 import { hhmm, parseHhmm } from "../lib/format.ts";
 import { lazyComponent } from "../lib/lazy.ts";
 import { loadPolicyMarks, PolicyMark, policyMarks } from "../lib/policy-marks.tsx";
+import { onLinkClick } from "../lib/router.ts";
 import { loadMe, me, planNow } from "../lib/state.ts";
 import { BufferEditor } from "./buffer-editor.tsx";
 import { FocusOptionsList, MeetingOverloadSection } from "./focus-options.tsx";
@@ -267,6 +268,11 @@ export function Settings() {
   return (
     <div class="page" data-testid="settings-page">
       <h1>Settings</h1>
+      <p>
+        <a href="/settings/integrations" onClick={onLinkClick}>
+          Integrations
+        </a>
+      </p>
       {message && (
         <p class="status" data-testid="settings-message">
           {message}

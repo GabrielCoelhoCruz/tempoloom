@@ -3,23 +3,33 @@
 import { randomUUID } from "node:crypto";
 import { Hono } from "hono";
 import { z } from "zod";
-import { hasTag, TAG_FOCUS, tagText } from "../../scheduler/blocking.ts";
+import { blockingIntervals, hasTag, TAG_FOCUS, tagText } from "../../scheduler/blocking.ts";
 import { hoursToTimeSet, type WeeklyHours } from "../../scheduler/hours.ts";
 import type { ReportEntry } from "../../scheduler/model.ts";
 import { TimeSet } from "../../scheduler/timeset.ts";
-import { addDays, type LocalDate, localToUtc, weekdayOf } from "../../shared/time.ts";
+import {
+  addDays,
+  type LocalDate,
+  localToUtc,
+  schedulingWindowEnd,
+  weekdayOf,
+} from "../../shared/time.ts";
 import type { AppEnv } from "../app.ts";
 import { all, type Db, one, run } from "../db.ts";
 import { jsonBody, notFound } from "../http.ts";
+import { externalEvents } from "../planner/events.ts";
 import { getSettings } from "../settings.ts";
 import type { SyncService } from "../sync/service.ts";
+import { planningZone } from "../travel.ts";
 import { badRequest, hoursSetId } from "./items.ts";
+import { moveManaged } from "./planner.ts";
 
 const decline = z.object({ enabled: z.boolean(), message: z.string().trim().max(500) });
 const optionsInput = z.object({
   mode: z.enum(["proactive", "reactive"]).optional(),
   autoDecline: decline.optional(),
   taskSearchId: z.string().nullable().optional(),
+  offerToBookingLinks: z.boolean().optional(),
 });
 
 const hours = (max: number) =>
@@ -109,6 +119,57 @@ function countedMinutes(
   return hoursToTimeSet(weekly, zone, from, to).intersect(TimeSet.from(ranges)).total() / 60_000;
 }
 
+const STEP = 15 * 60_000;
+/** The minimum delays the reschedule action offers, in minutes (rule 22). */
+export const RESCHEDULE_DELAYS = [15, 30, 60, 120, 180, 240, 1440] as const;
+
+/**
+ * Rule 22: the start of the first free range in the event's hours that starts
+ * at or after `earliest` and holds the event's length. Free means no blocking
+ * event and no other Tempoloom event; the event's old time is not used again.
+ * Null when the scheduling window has no such range.
+ */
+export function rescheduleStart(
+  db: Db,
+  userId: string,
+  event: { id: string; source_id: string; start_ms: number; end_ms: number },
+  earliest: number,
+  now: number,
+): number | null {
+  const set = one<{ weekly: string }>(
+    db,
+    `SELECT s.weekly FROM hours_sets s WHERE s.id = (
+       SELECT hours_set_id FROM focus_goals WHERE id = ?1 UNION ALL
+       SELECT hours_set_id FROM meeting_overloads WHERE id = ?1 LIMIT 1)`,
+    event.source_id,
+  );
+  if (!set) return null;
+  const zone = planningZone(db, userId);
+  const to = schedulingWindowEnd(zone, now, getSettings(db, userId).schedulingWindowWeeks);
+  const from = Math.ceil(earliest / STEP) * STEP;
+  if (from >= to) return null;
+  const free = hoursToTimeSet(JSON.parse(set.weekly) as WeeklyHours, zone, from, to);
+  const taken = [
+    ...blockingIntervals(externalEvents(db, userId, from, to)),
+    ...all<{ start_ms: number; end_ms: number }>(
+      db,
+      "SELECT start_ms, end_ms FROM managed_events WHERE user_id = ? AND id <> ? AND end_ms > ? AND start_ms < ?",
+      userId,
+      event.id,
+      from,
+      to,
+    ).map((m) => ({ start: m.start_ms, end: m.end_ms })),
+    { start: event.start_ms, end: event.end_ms },
+  ];
+  for (const t of taken) free.subtract(t);
+  const length = event.end_ms - event.start_ms;
+  for (const i of free.intervals()) {
+    const start = Math.ceil(i.start / STEP) * STEP;
+    if (start + length <= i.end) return start;
+  }
+  return null;
+}
+
 export function focusExtraRoutes(db: Db, sync: SyncService, now: () => number): Hono<AppEnv> {
   const r = new Hono<AppEnv>();
   const changed = (userId: string) => sync.request(userId);
@@ -142,6 +203,14 @@ export function focusExtraRoutes(db: Db, sync: SyncService, now: () => number): 
         id,
       );
     }
+    if (body.offerToBookingLinks !== undefined) {
+      run(
+        db,
+        "UPDATE focus_goals SET offer_to_links = ? WHERE id = ?",
+        body.offerToBookingLinks ? 1 : 0,
+        id,
+      );
+    }
     if (body.taskSearchId !== undefined) {
       if (
         body.taskSearchId &&
@@ -158,6 +227,39 @@ export function focusExtraRoutes(db: Db, sync: SyncService, now: () => number): 
     }
     changed(user.id);
     return c.json({ focus: one(db, "SELECT * FROM focus_goals WHERE id = ?", id) });
+  });
+
+  /** Rule 22: reschedule a focus event to the first free range after a minimum delay. */
+  r.post("/focus/events/:id/reschedule", async (c) => {
+    const user = c.get("user");
+    const { delayMinutes } = await jsonBody(
+      c,
+      z.object({
+        delayMinutes: z
+          .number()
+          .int()
+          .refine((m) => RESCHEDULE_DELAYS.some((d) => d === m)),
+      }),
+    );
+    const row = one<{ id: string; source_id: string; start_ms: number; end_ms: number }>(
+      db,
+      "SELECT id, source_id, start_ms, end_ms FROM managed_events WHERE id = ? AND user_id = ? AND kind = 'focus'",
+      c.req.param("id"),
+      user.id,
+    );
+    if (!row) notFound("focus event");
+    const t = now();
+    if (row.start_ms <= t) return c.json({ error: "event_started" }, 409);
+    const start = rescheduleStart(db, user.id, row, t + delayMinutes * 60_000, t);
+    if (start === null) return c.json({ error: "no_free_time" }, 409);
+    const moved = await moveManaged(db, sync, now, user.id, row.id, start, {
+      actor: c.get("actor")?.email ?? "",
+      reason: `rescheduled at least ${delayMinutes} minutes from now`,
+    });
+    if (moved === null) notFound("focus event");
+    if (moved === "started") return c.json({ error: "event_started" }, 409);
+    sync.request(user.id, 0);
+    return c.json({ start });
   });
 
   /** Outputs: weekly progress toward each goal and the "goal not reached" notice (rule 35). */
