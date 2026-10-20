@@ -372,7 +372,16 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
     app: () => app,
     dry: () => {
       if (dry === undefined) {
-        const dryDb = config.dbPath === ":memory:" ? null : openDb(config.dbPath);
+        // A dry connection closed by a failed ROLLBACK is dropped; the next
+        // dry run opens a new one.
+        const dryDb =
+          config.dbPath === ":memory:"
+            ? null
+            : openDb(config.dbPath, {
+                onBroken: () => {
+                  dry = undefined;
+                },
+              });
         dry = dryDb && {
           db: dryDb,
           app: createApp({

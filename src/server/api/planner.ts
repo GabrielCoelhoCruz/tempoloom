@@ -7,6 +7,7 @@ import { all, type Db, one, run } from "../db.ts";
 import { jsonBody, notFound } from "../http.ts";
 import { type CachedEvent, categoryContext, externalCategory } from "../planner/categories.ts";
 import { stripMarker, withState } from "../planner/markers.ts";
+import { mirrorKey, mirrorSource } from "../planner/mirror.ts";
 import { MANAGED_PROP, type ManagedRow, rowWrite } from "../planner/push.ts";
 import { getSettings } from "../settings.ts";
 import { cacheEvent } from "../sync/pull.ts";
@@ -21,8 +22,11 @@ export interface PlannerEvent {
   /** External events: the stored priority (1 when never lowered). */
   level?: number;
   /** Why the priority of an external event cannot change; absent when it can. */
-  levelFixed?: "booking-link" | "other-calendar";
+  levelFixed?: "booking-link" | "mirrored" | "other-calendar";
   recurring?: boolean;
+  /** External events: the calendar and the calendars that hold its mirror copies (mirroring rule 33). */
+  calendar?: CalendarRef;
+  copies?: CalendarRef[];
   start: number;
   end: number;
   title: string;
@@ -33,6 +37,12 @@ export interface PlannerEvent {
   sourceId: string | null;
   /** Markdown notes of the event (planning-event-content.md CNT-12). */
   description: string;
+}
+
+/** A calendar by id, with its name for when the client has no calendar list. */
+export interface CalendarRef {
+  id: string;
+  name: string;
 }
 
 const range = z.object({ from: z.coerce.number().int(), to: z.coerce.number().int() });
@@ -52,10 +62,11 @@ export function plannerEvents(db: Db, userId: string, from: number, to: number):
       all_day: number;
       private_props: string;
       main: number;
+      calendar_name: string;
     }
   >(
     db,
-    `SELECT e.*, (a.is_main = 1 AND c.is_primary = 1) AS main
+    `SELECT e.*, (a.is_main = 1 AND c.is_primary = 1) AS main, c.name AS calendar_name
      FROM events e JOIN calendars c ON c.id = e.calendar_id JOIN accounts a ON a.id = c.account_id
      WHERE a.user_id = ? AND c.check_availability = 1 AND e.end_ms > ? AND e.start_ms < ?
      ORDER BY e.start_ms`,
@@ -87,10 +98,33 @@ export function plannerEvents(db: Db, userId: string, from: number, to: number):
       userId,
     ).map((x) => [`${x.calendar_id}:${x.target_id}`, x.level]),
   );
+  // Mirroring rule 33: the copies stay hidden; their source names where they are.
+  const copiedTo = new Map<string, CalendarRef[]>();
+  for (const m of all<{
+    key: string;
+    policy_id: string;
+    source_calendar_id: string;
+    dest_id: string;
+    dest: string;
+  }>(
+    db,
+    `SELECT m.key, p.id AS policy_id, p.source_calendar_id, d.id AS dest_id, d.name AS dest
+     FROM managed_events m JOIN mirror_policies p ON p.id = m.source_id
+       JOIN calendars d ON d.id = p.dest_calendar_id
+     WHERE m.user_id = ? AND m.kind = 'mirror' AND m.event_id IS NOT NULL AND m.end_ms > ? AND m.start_ms < ?
+     ORDER BY d.name`,
+    userId,
+    from,
+    to,
+  )) {
+    const k = `${m.source_calendar_id}:${mirrorSource(m.key, m.policy_id)}`;
+    copiedTo.set(k, [...(copiedTo.get(k) ?? []), { id: m.dest_id, name: m.dest }]);
+  }
   for (const e of external) {
     if (e.all_day) continue;
     const props = JSON.parse(e.private_props) as Record<string, string>;
     if (props[MANAGED_PROP] === "1") continue;
+    const copies = copiedTo.get(`${e.calendar_id}:${e.event_id}`) ?? [];
     out.push({
       id: `ext:${e.calendar_id}:${e.event_id}`,
       category: externalCategory(cats, e),
@@ -108,17 +142,28 @@ export function plannerEvents(db: Db, userId: string, from: number, to: number):
         levels.get(`${e.calendar_id}:${e.event_id}`) ??
         (e.recurring_id ? levels.get(`${e.calendar_id}:${e.recurring_id}`) : undefined) ??
         1,
-      ...levelRule(e.main === 1, props.tl_booking === "1"),
+      ...levelRule(e.main === 1, props, copies.length > 0),
       recurring: e.recurring_id !== null,
+      calendar: { id: e.calendar_id, name: e.calendar_name },
+      copies,
     });
   }
   return out.sort((a, b) => a.start - b.start || a.id.localeCompare(b.id));
 }
 
-/** External priority rule 4 and booking rule 11: why the level of an external event cannot change. */
-function levelRule(main: boolean, booking: boolean): Pick<PlannerEvent, "levelFixed"> {
-  if (booking) return { levelFixed: "booking-link" };
+/**
+ * External priority rule 4, booking rule 11 and mirroring rule 34: why the level
+ * of an external event cannot change. A mirrored event is one item with its
+ * copies (mirroring rule 33), and the copies stay P1, so its time stays P1.
+ */
+function levelRule(
+  main: boolean,
+  props: Record<string, string>,
+  mirrored: boolean,
+): Pick<PlannerEvent, "levelFixed"> {
+  if (props.tl_booking === "1") return { levelFixed: "booking-link" };
   if (!main) return { levelFixed: "other-calendar" };
+  if (mirrored) return { levelFixed: "mirrored" };
   return {};
 }
 
@@ -233,16 +278,32 @@ export function plannerRoutes(db: Db, sync: SyncService, now: () => number): Hon
       c,
       z.object({ level: z.number().int().min(1).max(4), series: z.boolean().default(false) }),
     );
-    const ev = one<{ recurring_id: string | null; main: number }>(
+    const ev = one<{ recurring_id: string | null; main: number; private_props: string }>(
       db,
-      `SELECT e.recurring_id, (a.is_main = 1 AND c.is_primary = 1) AS main FROM events e JOIN calendars c ON c.id = e.calendar_id
+      `SELECT e.recurring_id, e.private_props, (a.is_main = 1 AND c.is_primary = 1) AS main FROM events e JOIN calendars c ON c.id = e.calendar_id
        JOIN accounts a ON a.id = c.account_id WHERE a.user_id = ? AND e.calendar_id = ? AND e.event_id = ?`,
       user.id,
       c.req.param("calendarId"),
       c.req.param("eventId"),
     );
-    if (!ev) notFound("event");
-    if (!ev.main) return c.json({ error: "not_main_calendar" }, 400);
+    const props = JSON.parse(ev?.private_props ?? "{}") as Record<string, string>;
+    // Like the planner list: a managed event (a copy too) is not an external event.
+    if (!ev || props[MANAGED_PROP] === "1") notFound("event");
+    const mirrored = all<{ id: string }>(
+      db,
+      "SELECT id FROM mirror_policies WHERE user_id = ? AND source_calendar_id = ?",
+      user.id,
+      c.req.param("calendarId"),
+    ).some((p) =>
+      one(
+        db,
+        "SELECT 1 FROM managed_events WHERE user_id = ? AND key = ? AND event_id IS NOT NULL",
+        user.id,
+        mirrorKey(p.id, c.req.param("eventId")),
+      ),
+    );
+    const fixed = levelRule(ev.main === 1, props, mirrored).levelFixed;
+    if (fixed) return c.json({ error: "level_fixed", reason: fixed }, 400);
     const target = series && ev.recurring_id ? ev.recurring_id : c.req.param("eventId");
     run(
       db,
