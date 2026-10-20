@@ -147,6 +147,7 @@ export function taskTimeRoutes(
       end,
       title: it.title,
       description: eventDescription(it.notes, baseUrl, t.kind, t.item_id),
+      started: true,
     };
     await writeLocked(db, sync, user.id, body.calendarId, [event]);
     run(db, "DELETE FROM item_timers WHERE user_id = ?", user.id);
@@ -189,6 +190,8 @@ export function taskTimeRoutes(
         end,
         title: it.title,
         description: eventDescription(it.notes, baseUrl, "task", id),
+        // Logged work is started work (PRG-20), so manual start mode counts it.
+        started: true,
       },
     ]);
     sync.request(user.id, 0);

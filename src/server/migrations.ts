@@ -1258,4 +1258,11 @@ export const MIGRATIONS: readonly string[] = [
   ALTER TABLE oauth_tokens ADD COLUMN used_at INTEGER;
   ALTER TABLE oauth_states ADD COLUMN return_to TEXT;
   `,
+  // 39: the user started this task chunk or habit event, or logged it as work
+  // (planning-task-progress.md PRG-3, PRG-4, PRG-20). In manual start mode only
+  // a started event counts as done work; a lock or a drag does not start it.
+  `
+  ALTER TABLE managed_events ADD COLUMN started INTEGER NOT NULL DEFAULT 0;
+  UPDATE managed_events SET started = 1 WHERE key LIKE '%:log-%';
+  `,
 ];

@@ -29,6 +29,11 @@ interface Props {
   flagged?: ReadonlySet<string>;
   /** A second time column in this zone (timezones-home-and-travel.md rule 10). */
   extraZone?: string | null;
+  /**
+   * A click or a drag on a past time (planning-task-progress.md PRG-21): the
+   * start, rounded down to 15 minutes, and for a drag its length in minutes.
+   */
+  onPickPast?: (t: number, minutes?: number) => void;
 }
 
 const city = (z: string) => (z.split("/").at(-1) ?? z).replace(/_/g, " ");
@@ -105,6 +110,7 @@ export function WeekView({
   onCreate,
   flagged,
   extraZone,
+  onPickPast,
 }: Props) {
   const boxes = useMemo(() => layout(days, zone, events), [days, zone, events]);
   const gridRef = useRef<HTMLDivElement>(null);
@@ -121,6 +127,42 @@ export function WeekView({
     ? Array.from({ length: 24 }, (_, h) => utcToLocal(extraZone, localToUtc(zone, ref, h * 60)))
     : null;
   const labelCols = extra ? "56px 56px" : "56px";
+
+  /** The pointer is on a time before now. */
+  const isPast = (e: PointerEvent, date: LocalDate) => {
+    const top = (e.currentTarget as HTMLElement).getBoundingClientRect().top;
+    const m = Math.min(24 * 60, Math.max(0, ((e.clientY - top) / HOUR_PX) * 60));
+    return localToUtc(zone, date, Math.floor(m / SNAP_MIN) * SNAP_MIN) < Date.now();
+  };
+
+  /** PRG-21: a click or a drag down an empty day column on a past time opens Log work. */
+  const pickPast = (
+    e: PointerEvent,
+    date: LocalDate,
+    pick: (t: number, minutes?: number) => void,
+  ) => {
+    if (e.button !== 0 || e.target !== e.currentTarget) return;
+    const el = e.currentTarget as HTMLElement;
+    el.setPointerCapture(e.pointerId);
+    const minuteAt = (y: number) =>
+      Math.min(24 * 60, Math.max(0, ((y - el.getBoundingClientRect().top) / HOUR_PX) * 60));
+    const from = minuteAt(e.clientY);
+    el.addEventListener(
+      "pointerup",
+      (u) => {
+        const to = minuteAt(u.clientY);
+        const lo = Math.floor(Math.min(from, to) / SNAP_MIN) * SNAP_MIN;
+        const hi = Math.round(Math.max(from, to) / SNAP_MIN) * SNAP_MIN;
+        const t = localToUtc(zone, date, lo);
+        const room = Math.floor((Date.now() - t) / 60_000);
+        if (room <= 0) return;
+        // A drag into the future logs work only up to now (edge case 6).
+        const dragged = hi - lo >= SNAP_MIN && Math.abs(to - from) >= SNAP_MIN / 2;
+        pick(t, dragged ? Math.min(hi - lo, room) : undefined);
+      },
+      { once: true },
+    );
+  };
 
   const startDrag = (e: PointerEvent, box: Box) => {
     if (e.button !== 0) return;
@@ -260,7 +302,16 @@ export function WeekView({
             style={{ gridTemplateColumns: `repeat(${days.length}, 1fr)` }}
           >
             {days.map((d, i) => (
-              <div class="day-col" key={d} data-date={d} onPointerDown={(e) => startPick(e, i)} />
+              <div
+                class="day-col"
+                key={d}
+                data-date={d}
+                // A past time logs work (PRG-21), a future time makes a task (TSK-7).
+                // The toolbar's "Log work" button is the keyboard path.
+                onPointerDown={(e) =>
+                  onPickPast && isPast(e, d) ? pickPast(e, d, onPickPast) : startPick(e, i)
+                }
+              />
             ))}
             {picked && (
               <div

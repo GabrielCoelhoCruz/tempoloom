@@ -72,6 +72,11 @@ const EventActions = lazyComponent<{
 const CurrentTasks = lazyComponent(() =>
   import("./planner-extras.tsx").then((m) => m.CurrentTasks),
 );
+const LogWork = lazyComponent<{
+  start: number;
+  minutes?: number | undefined;
+  onClose: (saved: boolean) => void;
+}>(() => import("./planner-extras.tsx").then((m) => m.LogWork));
 const FocusProgress = lazyComponent<{ week: string }>(() =>
   import("./planner-extras.tsx").then((m) => m.FocusProgress),
 );
@@ -93,6 +98,8 @@ export function Planner() {
   const [events, setEvents] = useState<PlannerEvent[]>([]);
   const [report, setReport] = useState<ReportEntry[]>([]);
   const [selected, setSelected] = useState<PlannerEvent | null>(null);
+  // PRG-20, PRG-21: the log work form, opened on a past time or from the toolbar.
+  const [logAt, setLogAt] = useState<{ start: number; minutes?: number | undefined } | null>(null);
   // The drawer names calendars as the calendar list does; that list loads on the first open.
   const external = selected?.kind === "external";
   useEffect(() => {
@@ -241,6 +248,14 @@ export function Planner() {
         </span>
         <button
           type="button"
+          onClick={() =>
+            setLogAt({ start: Math.floor((Date.now() - 3_600_000) / 900_000) * 900_000 })
+          }
+        >
+          Log work
+        </button>
+        <button
+          type="button"
           class="primary"
           disabled={busy}
           onClick={() => void run(async () => {})}
@@ -248,6 +263,18 @@ export function Planner() {
           Plan now
         </button>
       </div>
+      {logAt !== null && (
+        <LogWork
+          key={`${logAt.start}:${logAt.minutes}`}
+          start={logAt.start}
+          minutes={logAt.minutes}
+          onClose={(saved) => {
+            setLogAt(null);
+            // The new past event changes the plan: plan again, then draw the week.
+            if (saved) void planNow().then(load);
+          }}
+        />
+      )}
       <div class="now-bar" data-testid="now-bar">
         {settled.value && (
           <NowBar from={localToUtc(z, weekStart, 0)} to={localToUtc(z, addDays(weekStart, 7), 0)} />
@@ -276,6 +303,10 @@ export function Planner() {
         }}
         flagged={conflictIds.value}
         extraZone={extraZone.value}
+        onPickPast={(start, minutes) => {
+          setSelected(null);
+          setLogAt({ start, minutes });
+        }}
       />
       {here && (
         <TaskHereDialog

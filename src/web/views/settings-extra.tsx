@@ -29,6 +29,24 @@ export function PlacementSetting({ settings, act }: { settings: Settings; act: A
   );
 }
 
+/** planning-task-progress.md PRG-1, PRG-3: when a chunk or habit event counts as done. */
+export function StartModeSetting({ settings, act }: { settings: Settings; act: Act }) {
+  return (
+    <label>
+      Start mode
+      <select
+        value={settings.startMode}
+        onChange={(e) =>
+          void act(() => api("PATCH", "/api/settings", { startMode: e.currentTarget.value }))
+        }
+      >
+        <option value="auto">Count when the time passes</option>
+        <option value="manual">Count only after I press Start</option>
+      </select>
+    </label>
+  );
+}
+
 const AUTO_LOCK = [
   ["meeting", "Flexible meetings"],
   ["habit", "Habits"],

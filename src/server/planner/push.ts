@@ -52,6 +52,8 @@ export interface ManagedRow {
   extra: string;
   /** Buffers: the length the user gave this event in the calendar (buffers rule 14). */
   kept_minutes: number | null;
+  /** 1 when the user started the event or logged it as work (PRG-3, PRG-20). */
+  started: number;
 }
 
 /** Guests, location, reminders and visibility as stored in `managed_events.extra`. */
@@ -116,6 +118,11 @@ export interface PushContext {
   now: number;
   /** Also compare the time and color of mirroring copies with the calendar (full reconcile). */
   fullCheck?: boolean;
+  /**
+   * Ended events that go back to the plan (manual start mode, PRG-3): a new
+   * event of the same item moves one of them instead of being created.
+   */
+  reopen?: ManagedRow[];
 }
 
 export interface PushResult {
@@ -348,9 +355,14 @@ export async function pushSchedule(
     }
   }
 
+  const reopen = (ctx.reopen ?? []).filter((r) => !frozen.has(r.calendar_id));
   for (const d of creates) {
     const row = byKey.get(d.key);
     if (row && (row.locked || row.start_ms <= now)) continue;
+    if (!row && (await moveReopened(ctx, reopen, d))) {
+      result.updated++;
+      continue;
+    }
     if (row?.event_id) await deleteRemote(ctx, row);
     const { provider, providerCalendarId } = ctx.target(d.calendarId);
     const ev = await provider.insertEvent(providerCalendarId, write(userId, d));
@@ -361,6 +373,48 @@ export async function pushSchedule(
   }
   pruneChangeLog(db, now);
   return result;
+}
+
+/** PRG-3: moves an ended, unstarted event of the same item to the new time. */
+async function moveReopened(
+  ctx: PushContext,
+  reopen: ManagedRow[],
+  d: DesiredEvent,
+): Promise<boolean> {
+  const i = reopen.findIndex(
+    (r) =>
+      r.kind === d.kind &&
+      r.source_id === d.sourceId &&
+      r.calendar_id === d.calendarId &&
+      (d.kind !== "habit" || r.key === d.key),
+  );
+  const old = reopen[i];
+  if (!old?.event_id) return false;
+  reopen.splice(i, 1);
+  const { db, userId, now } = ctx;
+  const cached = one<{ etag: string | null }>(
+    db,
+    "SELECT etag FROM events WHERE calendar_id = ? AND event_id = ?",
+    old.calendar_id,
+    old.event_id,
+  );
+  const { provider, providerCalendarId } = ctx.target(old.calendar_id);
+  try {
+    const ev = await provider.updateEvent(
+      providerCalendarId,
+      old.event_id,
+      write(userId, d),
+      cached?.etag ?? old.etag,
+    );
+    cacheEvent(db, old.calendar_id, ev);
+    run(db, "UPDATE managed_events SET key = ? WHERE id = ?", d.key, old.id);
+    saveRow(db, userId, d, ev.id, ev.etag, old.id);
+    logManaged(db, userId, desiredRef(d, ev.id), "update", { ...d, moved: true }, now);
+    return true;
+  } catch (err) {
+    if (err instanceof ProviderError) return false;
+    throw err;
+  }
 }
 
 // Change log references (docs/specs/support-troubleshooting.md rule 12).
