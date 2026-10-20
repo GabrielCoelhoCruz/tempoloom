@@ -333,6 +333,8 @@ interface LinkInfo {
   organizers: string[];
   branding: Branding;
   oneOff: { expiresAt: number; expired: boolean } | null;
+  /** The link takes no new bookings: its account for booked events is lost. */
+  paused?: boolean;
 }
 
 const LOCATION_KINDS = { address: "Address", phone: "Phone", custom: "Other" } as const;
@@ -611,6 +613,17 @@ function BookingPage({ page, link }: { page: string; link: string }) {
           This link has expired. Ask {info.organizers.join(", ") || "the organizer"} for a new one.
         </p>
         {editOneOff}
+      </div>
+    );
+  }
+  if (info.paused) {
+    return (
+      <div data-testid="booking-page">
+        <Brand b={info.branding} />
+        <h1>{info.link.title}</h1>
+        <p data-testid="paused">
+          This link takes no bookings right now. Ask the organizer for another way to meet.
+        </p>
       </div>
     );
   }

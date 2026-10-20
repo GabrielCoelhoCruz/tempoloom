@@ -1,0 +1,127 @@
+// Public mail services: domains that unrelated people share. A user's address
+// there tells nothing about their organization, so Tempoloom never groups
+// users by such a domain (teams) and never takes it as the user's own domain
+// (library entry 32).
+
+/** Services with one address domain per country, such as yahoo.co.uk or gmx.at. */
+const FAMILIES = new Set(["gmail", "yahoo", "hotmail", "outlook", "live", "msn", "gmx", "yandex"]);
+
+/** A country or generic ending: de, com, co.uk, com.br. */
+const ENDING = /^(?:[a-z]{2,3}|(?:co|com|net|org)\.[a-z]{2})$/;
+
+const SERVICES = new Set([
+  // International
+  "googlemail.com",
+  "aol.com",
+  "aim.com",
+  "ymail.com",
+  "rocketmail.com",
+  "icloud.com",
+  "me.com",
+  "mac.com",
+  "proton.me",
+  "protonmail.com",
+  "protonmail.ch",
+  "pm.me",
+  "tutanota.com",
+  "tutanota.de",
+  "tuta.io",
+  "tuta.com",
+  "fastmail.com",
+  "fastmail.fm",
+  "hey.com",
+  "zoho.com",
+  "zohomail.com",
+  "zohomail.eu",
+  "mail.com",
+  "email.com",
+  "usa.com",
+  "inbox.com",
+  "hushmail.com",
+  "runbox.com",
+  "posteo.de",
+  "posteo.net",
+  "mailbox.org",
+  "ya.ru",
+  // Europe
+  "web.de",
+  "t-online.de",
+  "freenet.de",
+  "arcor.de",
+  "orange.fr",
+  "wanadoo.fr",
+  "free.fr",
+  "laposte.net",
+  "sfr.fr",
+  "neuf.fr",
+  "libero.it",
+  "virgilio.it",
+  "tiscali.it",
+  "alice.it",
+  "tin.it",
+  "bluewin.ch",
+  "telenet.be",
+  "skynet.be",
+  "ziggo.nl",
+  "kpnmail.nl",
+  "home.nl",
+  "planet.nl",
+  "btinternet.com",
+  "sky.com",
+  "virginmedia.com",
+  "ntlworld.com",
+  "talktalk.net",
+  "seznam.cz",
+  "centrum.cz",
+  "wp.pl",
+  "o2.pl",
+  "interia.pl",
+  "onet.pl",
+  "abv.bg",
+  "inbox.lv",
+  "mail.ru",
+  "inbox.ru",
+  "list.ru",
+  "bk.ru",
+  "rambler.ru",
+  "ukr.net",
+  // Americas and Oceania
+  "comcast.net",
+  "verizon.net",
+  "att.net",
+  "sbcglobal.net",
+  "bellsouth.net",
+  "cox.net",
+  "charter.net",
+  "earthlink.net",
+  "shaw.ca",
+  "rogers.com",
+  "sympatico.ca",
+  "uol.com.br",
+  "bol.com.br",
+  "terra.com.br",
+  "bigpond.com",
+  "optusnet.com.au",
+  "xtra.co.nz",
+  // Asia
+  "qq.com",
+  "163.com",
+  "126.com",
+  "yeah.net",
+  "sina.com",
+  "sohu.com",
+  "aliyun.com",
+  "naver.com",
+  "daum.net",
+  "hanmail.net",
+  "kakao.com",
+  "rediffmail.com",
+]);
+
+/** True for the domain of a public mail service. */
+export function isPublicMailDomain(domain: string): boolean {
+  const d = domain.toLowerCase();
+  if (SERVICES.has(d)) return true;
+  const dot = d.indexOf(".");
+  return dot > 0 && FAMILIES.has(d.slice(0, dot)) && ENDING.test(d.slice(dot + 1));
+}

@@ -11,6 +11,7 @@ import { editedEventSettings, eventSettingsInput, newEventSettings } from "../ev
 import { jsonBody, notFound } from "../http.ts";
 import { createItemHours, dropItemHours, itemHoursSchema, saveItemHours } from "../item-hours.ts";
 import type { Mailer } from "../mail.ts";
+import { isPublicMailDomain } from "../mail-domains.ts";
 import { notifyMeetingCancelled } from "../meeting-mail.ts";
 import { adoptableSeries, type Series } from "../meeting-series.ts";
 import { withState } from "../planner/markers.ts";
@@ -29,6 +30,7 @@ import type { ProviderPool } from "../providers/index.ts";
 import { getSettings } from "../settings.ts";
 import { cacheEvent } from "../sync/pull.ts";
 import type { SyncService } from "../sync/service.ts";
+import { domainOf, membership } from "../teams.ts";
 import { homeZone } from "../travel.ts";
 import { badRequest, hhmm, hoursSetId, nextRank } from "./items.ts";
 
@@ -95,41 +97,39 @@ const meetingInput = z.object({
 });
 type MeetingInput = z.infer<typeof meetingInput>;
 
-/** Mail domains that many people share: a guest there is not on the user's own domain. */
-const SHARED_DOMAINS = new Set([
-  "gmail.com",
-  "googlemail.com",
-  "outlook.com",
-  "hotmail.com",
-  "live.com",
-  "yahoo.com",
-  "icloud.com",
-  "me.com",
-  "proton.me",
-  "protonmail.com",
-  "gmx.de",
-  "web.de",
-]);
-
-/** Refuses a guest on the user's own domain or a user of this instance (library entry 32). */
+/**
+ * Refuses a guest on the user's own domain or a person of the user's team
+ * (library entry 32). Own domains come from the user's mail addresses: the
+ * main email and the added calendar accounts, not ICS feeds (their name is a
+ * feed title), and not public mail services. Only the user's team is checked,
+ * so the refusal tells nothing about users of other teams.
+ */
 function checkExternal(db: Db, userId: string, attendees: { email: string }[]) {
-  const domain = (e: string) => e.slice(e.lastIndexOf("@") + 1).toLowerCase();
   const own = new Set(
     all<{ email: string }>(
       db,
-      "SELECT email FROM users WHERE id = ? UNION SELECT email FROM accounts WHERE user_id = ?",
+      `SELECT email FROM users WHERE id = ?
+       UNION SELECT email FROM accounts WHERE user_id = ? AND provider <> 'ics'`,
       userId,
       userId,
     )
-      .map((r) => domain(r.email))
-      .filter((d) => !SHARED_DOMAINS.has(d)),
+      .map((r) => domainOf(r.email))
+      .filter((d) => d !== "" && !isPublicMailDomain(d)),
   );
   const why = "Recurring client meetings take external guests only.";
   for (const { email } of attendees) {
-    if (own.has(domain(email)))
+    if (own.has(domainOf(email)))
       badRequest("attendees", `${email.toLowerCase()} is on your own domain. ${why}`);
-    if (one(db, "SELECT 1 FROM users WHERE email = ? COLLATE NOCASE", email))
-      badRequest("attendees", `${email.toLowerCase()} uses Tempoloom here. ${why}`);
+    if (
+      one(
+        db,
+        `SELECT 1 FROM users u JOIN team_members m ON m.user_id = u.id
+         WHERE u.email = ? COLLATE NOCASE AND m.team_id = ?`,
+        email,
+        membership(db, userId).team.id,
+      )
+    )
+      badRequest("attendees", `${email.toLowerCase()} is in your team. ${why}`);
   }
 }
 

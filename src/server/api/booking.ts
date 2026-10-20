@@ -645,6 +645,31 @@ function itemWeekly(db: Db, setId: string | null): WeeklyHours | null {
   return row ? (JSON.parse(row.weekly) as WeeklyHours) : null;
 }
 
+/**
+ * Why the link's calendar for booked events cannot take them, or null
+ * (connected calendars rules 19, 22): its account was removed or is
+ * disconnected, or the calendar is read-only. The link then takes no new
+ * bookings until the owner picks another account; it does not fall back.
+ */
+export function targetProblem(db: Db, link: LinkRow): string | null {
+  if (!link.calendar_id) return null;
+  const c = one<{ email: string; status: string; writable: number }>(
+    db,
+    `SELECT a.email, a.status, c.writable FROM calendars c JOIN accounts a ON a.id = c.account_id
+     WHERE c.id = ? AND a.user_id = ?`,
+    link.calendar_id,
+    link.user_id,
+  );
+  const pick = "choose another account for booked events.";
+  if (!c)
+    return "Paused: the account for booked events was removed. Choose another account for booked events.";
+  if (c.status !== "ok")
+    return `Paused: ${c.email} is disconnected. Reconnect it on the Account page, or ${pick}`;
+  if (!c.writable)
+    return `Paused: Tempoloom cannot write to this calendar of ${c.email}. Please ${pick}`;
+  return null;
+}
+
 /** A link as its owner and co-organizers see it, with its people. */
 function linkView(db: Db, link: LinkRow, oneOffDays: number) {
   const user = (id: string) =>
@@ -668,6 +693,7 @@ function linkView(db: Db, link: LinkRow, oneOffDays: number) {
     page: link.group_id ?? (link.hidden ? "hidden" : "main"),
     pageSlug: linkPageSlug(db, link),
     expiresAt: oneOffExpiry(link, oneOffDays, zoneOf(db, link.user_id)),
+    targetError: targetProblem(db, link),
     organizers: people
       .filter((p) => p.kind === "organizer")
       .map((p) => ({ ...view(p), required: p.required, isHost: p.isHost })),
@@ -1410,6 +1436,7 @@ export function publicBookingRoutes(
       timeZone: zoneOf(db, link.user_id),
       branding: brandingFor(db, link.user_id, resolveLinkBranding(db, link)),
       oneOff: link.source_id ? { expiresAt: expiryOf(link), expired: expired(link) } : null,
+      paused: targetProblem(db, link) !== null,
     });
   });
 
@@ -1531,6 +1558,7 @@ export function publicBookingRoutes(
     const link = findLink(c.req.param("page"), c.req.param("link"));
     if (!link) notFound("link");
     if (expired(link)) return c.json({ error: "expired" }, 410);
+    if (targetProblem(db, link)) return c.json({ error: "paused" }, 409);
     const body = await jsonBody(c, bookInput);
     if (!(JSON.parse(link.durations) as number[]).includes(body.duration))
       return c.json({ error: "invalid_duration" }, 400);

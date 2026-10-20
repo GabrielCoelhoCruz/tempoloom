@@ -11,6 +11,7 @@ import {
 } from "../../shared/item-hours.ts";
 import { ApiError, api } from "../lib/api.ts";
 import { LEVEL_NAMES } from "../lib/state.ts";
+import { ITEM, ItemHoursFields } from "./hours-field.tsx";
 
 export interface PersonOption {
   userId: string;
@@ -30,8 +31,8 @@ interface Person {
   item?: ItemRange | null;
 }
 
-const ITEM = "item";
-const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+/** The account choice of a link whose saved account was removed. */
+const REMOVED = "removed";
 
 /** The item-specific hours the form shows for a person, or null. */
 const itemOf = (p: Person): ItemRange | null =>
@@ -83,6 +84,8 @@ export interface EditableLink {
   locations: LocationOption[];
   range_end_date: string | null;
   calendar_id: string | null;
+  /** Why the calendar for booked events takes no bookings now, or null (accounts rule 19). */
+  targetError: string | null;
   use_travel_buffer: number;
   use_recovery_buffer: number;
   branding: string;
@@ -342,8 +345,6 @@ function HoursPicker({
 }) {
   const sets = people.find((p) => p.userId === person.userId)?.hoursSets ?? [];
   const item = itemOf(person);
-  const setItem = (change: Partial<ItemRange>) =>
-    item && onChange({ item: { ...item, ...change } });
   return (
     <>
       <label>
@@ -372,44 +373,7 @@ function HoursPicker({
           <option value={ITEM}>Item-specific hours</option>
         </select>
       </label>
-      {item && (
-        <span class="item-hours" data-testid="item-hours">
-          {DAYS.map((d, i) => (
-            <label class="inline" key={d}>
-              <input
-                type="checkbox"
-                checked={item.days.includes(i + 1)}
-                onChange={(e) =>
-                  setItem({
-                    days: e.currentTarget.checked
-                      ? [...item.days, i + 1].sort((a, b) => a - b)
-                      : item.days.filter((x) => x !== i + 1),
-                  })
-                }
-              />
-              {d}
-            </label>
-          ))}
-          <label class="inline">
-            From
-            <input
-              type="time"
-              step={900}
-              value={item.from}
-              onInput={(e) => setItem({ from: e.currentTarget.value })}
-            />
-          </label>
-          <label class="inline">
-            To
-            <input
-              type="time"
-              step={900}
-              value={item.to}
-              onInput={(e) => setItem({ to: e.currentTarget.value })}
-            />
-          </label>
-        </span>
-      )}
+      {item && <ItemHoursFields value={item} onChange={(r) => onChange({ item: r })} />}
     </>
   );
 }
@@ -562,6 +526,11 @@ export function LinkEditor({
     ([id]) => id !== mainAccount,
   );
   const chosenAccount = calendars.find((c) => c.id === calendarId)?.account_id;
+  // The saved calendar's account is gone: show that, not the main account (accounts rule 19).
+  const removed =
+    link.targetError !== null &&
+    calendarId === (link.calendar_id ?? "") &&
+    !calendars.some((c) => c.id === calendarId);
   // Main and hidden links share the main page URL; a group has its own (sharing rule 5).
   const urlPage = (p: string) => (p === "main" || p === "hidden" ? "" : p);
   const [error, setError] = useState<string | null>(null);
@@ -737,13 +706,21 @@ export function LinkEditor({
         <label>
           Account for booked events
           <select
-            value={chosenAccount && chosenAccount !== mainAccount ? chosenAccount : ""}
+            value={
+              removed
+                ? REMOVED
+                : chosenAccount && chosenAccount !== mainAccount
+                  ? chosenAccount
+                  : ""
+            }
             onChange={(e) => {
               const id = e.currentTarget.value;
+              if (id === REMOVED) return setCalendarId(link.calendar_id ?? "");
               const own = calendars.filter((c) => c.account_id === id);
               setCalendarId(id ? ((own.find((c) => c.is_primary) ?? own[0])?.id ?? "") : "");
             }}
           >
+            {removed && <option value={REMOVED}>Removed account</option>}
             <option value="">{mainEmail ? `Main account (${mainEmail})` : "Main account"}</option>
             {accounts.map(([id, email]) => (
               <option value={id} key={id}>
@@ -752,6 +729,11 @@ export function LinkEditor({
             ))}
           </select>
         </label>
+      )}
+      {isOwner && link.targetError && calendarId === (link.calendar_id ?? "") && (
+        <p class="error wide" role="alert" data-testid="link-target-error">
+          {link.targetError}
+        </p>
       )}
       {isOwner && (
         <label>

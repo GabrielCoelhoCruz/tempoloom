@@ -25,6 +25,7 @@ import {
   test,
 } from "./fixtures.ts";
 import { addHabit, claimPage, slot, titled, visitor, W } from "./helpers.ts";
+import { teamOf } from "./link-helpers.ts";
 
 const day = (n: number) => addDays(W, n);
 const week = (cal: CalendarDriver) => cal.events(at(W, "00:00"), at(day(7), "00:00"));
@@ -631,17 +632,20 @@ test("library entries 32, 34 and 37: flexible meetings repeat at their period wi
   await expectAdded(page, ["Recurring client meetings", "One-on-ones", "Priority booking link"]);
 });
 
-test("library entry 32 takes external guests only: a guest on the user's own domain or a user of this instance is refused with the reason, an outside guest saves (entry 32 preset)", async ({
+test("library entry 32 takes external guests only: a guest on the user's own domain or a person of the user's team is refused with the reason; an outside guest, also a user of another team, saves (entry 32 preset)", async ({
   page,
   cal,
   signIn,
   people,
+  mail,
 }) => {
   await blockUntil(cal, W);
-  // A user of this instance whose address is on another domain.
+  // A person of the user's team whose address is on another domain.
   const partner = await people(3, "pat@partner.example");
-  await partner.signIn();
-  await signIn();
+  // A user of this instance in another team: the user cannot see them.
+  const other = await people(4, "max@other.example");
+  await other.signIn();
+  await teamOf(page, signIn, [partner], mail);
   const meeting = page.getByTestId("meeting-form");
   const guests = meeting.getByLabel("Guests (comma list)", { exact: true });
   const alert = page.getByTestId("meetings-page").locator("p.error");
@@ -663,20 +667,22 @@ test("library entry 32 takes external guests only: a guest on the user's own dom
   await guests.fill("pat@partner.example");
   await meeting.getByRole("button", { name: "Add meeting" }).click();
   await expect(alert).toHaveText(
-    "pat@partner.example uses Tempoloom here. Recurring client meetings take external guests only.",
+    "pat@partner.example is in your team. Recurring client meetings take external guests only.",
   );
   await page.reload();
   await expect(page.locator('[data-meeting-title="Recurring client meetings"]')).toHaveCount(0);
 
-  await guests.fill("client@example.com");
+  await guests.fill("client@example.com, max@other.example");
   await meeting.getByRole("button", { name: "Add meeting" }).click();
   await expect(page.locator('[data-meeting-title="Recurring client meetings"]')).toBeVisible();
   const placed = await eventually(twoWeeks, (l) =>
     expect(titled(l, "Recurring client meetings")).toHaveLength(1),
   );
   const client = titled(placed, "Recurring client meetings")[0];
-  expect(await cal.guests(client?.id ?? "")).toEqual([
+  const invited = await cal.guests(client?.id ?? "");
+  expect(invited.sort((a, b) => a.email.localeCompare(b.email))).toEqual([
     { email: "client@example.com", optional: false },
+    { email: "max@other.example", optional: false },
   ]);
   await page.reload();
   await expect(page.locator('[data-meeting-title="Recurring client meetings"]')).toBeVisible();

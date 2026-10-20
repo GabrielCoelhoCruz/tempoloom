@@ -215,9 +215,15 @@ export async function writeBookingEvents(
 ): Promise<{ calendarId: string; eventId: string } | null> {
   const touched = new Set<string>();
   const calendarOf = (id: string) =>
-    one<{ account_id: string; provider_id: string; provider: string; email: string }>(
+    one<{
+      account_id: string;
+      provider_id: string;
+      provider: string;
+      email: string;
+      status: string;
+    }>(
       db,
-      `SELECT c.account_id, c.provider_id, a.provider, a.email FROM calendars c
+      `SELECT c.account_id, c.provider_id, a.provider, a.email, a.status FROM calendars c
        JOIN accounts a ON a.id = c.account_id WHERE c.id = ?`,
       id,
     );
@@ -262,11 +268,21 @@ export async function writeBookingEvents(
   if (prev?.calendarId && prev.eventId && !sameHost) {
     await remove(prev.hostId, prev.calendarId, prev.eventId);
   }
+  // The old event's account was removed or is disconnected: the booking moves
+  // to a new event, so the booker can still change it (connected calendars rule 19).
+  const old = sameHost && prev?.calendarId ? calendarOf(prev.calendarId) : undefined;
+  if (sameHost && prev?.calendarId && old?.status !== "ok") {
+    run(
+      db,
+      "DELETE FROM events WHERE calendar_id = ? AND event_id = ?",
+      prev.calendarId,
+      prev.eventId,
+    );
+  }
   if (next && write) {
     // The account of the host's calendar sends the invitations (connected calendars rule 22).
-    if (sameHost && prev?.calendarId && prev.eventId) {
-      const cal = calendarOf(prev.calendarId);
-      if (!cal) throw new Error("no_calendar");
+    if (sameHost && prev?.calendarId && prev.eventId && old?.status === "ok") {
+      const cal = old;
       write.organizer = cal.email;
       const ev = await sync
         .pool(next.hostId)

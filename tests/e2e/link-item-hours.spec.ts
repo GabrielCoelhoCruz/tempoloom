@@ -6,7 +6,7 @@
 // - the link keeps offering its organizer's meeting hours after the change;
 // - a team link uses one organizer's item-specific hours for everyone;
 // - the ranges are lost or changed on reload, or after a save of other fields;
-// - the private ranges show as a named set in another item's hours menu.
+// - the private ranges show as a named set in another link's hours menus.
 import { addDays } from "../../src/shared/time.ts";
 import { blockUntil, EMAIL, expect, test } from "./fixtures.ts";
 import { addLink, claimPage, visitor, W } from "./helpers.ts";
@@ -86,9 +86,15 @@ test("a booking link offers times only inside its item-specific hours, and on a 
   await v.goto("/book/ivy/early-call");
   expect(await offered(v, TUE)).toEqual(["08:00"]);
 
-  // The private ranges are no named set: another item's hours menu does not list them.
-  await page.getByRole("link", { name: "Habits" }).click();
-  await expect(page.getByTestId("habit-form").getByLabel("Hours")).not.toContainText(
-    "item-specific hours)",
-  );
+  // The private ranges are no named set: the hours menus of the people on another
+  // link do not list them, also not the colleague's (the team people list).
+  await addLink(page, { title: "Late call", durations: "30" });
+  await editLink(page, "Late call");
+  await addOrganizer(page, colleague.email);
+  for (const email of [EMAIL, colleague.email]) {
+    const menu = organizer(page, email).getByLabel("Hours");
+    await expect(menu.locator("option")).not.toHaveCount(0);
+    await expect(menu).toContainText("Item-specific hours");
+    await expect(menu).not.toContainText("(item-specific hours)");
+  }
 });
