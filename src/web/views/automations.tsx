@@ -3,6 +3,7 @@
 // scheduler gives them time. Drag an entry to change its rank or its priority.
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import { api } from "../lib/api.ts";
+import { CalendarDisconnected } from "../lib/calendars.tsx";
 import { useLive } from "../lib/live.ts";
 import { loadPolicyMarks, PolicyMark, policyMarks } from "../lib/policy-marks.tsx";
 import { onLinkClick } from "../lib/router.ts";
@@ -11,6 +12,8 @@ import { ItemChanges } from "./item-changes.tsx";
 
 interface Automation {
   type: string;
+  /** The email of the disconnected account that holds the automation's calendar. */
+  disconnected?: string;
   id: string;
   name: string;
   emoji: string;
@@ -212,6 +215,7 @@ export function Automations() {
             )}
             {a.enabled ? "" : " · Off"} <PolicyMark id={a.id} />
           </div>
+          <CalendarDisconnected email={a.disconnected} />
           {planned && <ItemChanges kind={planned} id={a.id} />}
         </div>
         <div class="actions">

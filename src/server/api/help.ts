@@ -54,9 +54,11 @@ export function helpRoutes(
     const found = lookupEvent(db, userId, q, now());
     if ("error" in found) return c.json(found, 404);
     if (found.repair.length === 0) return c.json({ error: "nothing_to_repair" }, 409);
-    await sync.repair(userId, found.repair);
+    const repaired = await sync.repair(userId, found.repair);
     const result = lookup(userId, q);
-    return "error" in result ? c.json(result, 404) : c.json(result);
+    if ("error" in result) return c.json(result, 404);
+    // The run failed or left the event as it was: the page says so (rule 10).
+    return c.json({ ...result, repaired }, repaired ? 200 : 502);
   });
 
   r.get("/hints", (c) => {

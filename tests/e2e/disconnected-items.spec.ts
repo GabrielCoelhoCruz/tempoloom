@@ -1,7 +1,7 @@
 // Items that write to a calendar of a disconnected account
-// (docs/specs/accounts-login-emails-permissions.md rule 16): habits, flexible
-// meetings, task calendars and booking links show an error state and get no
-// new events until the user reconnects the account. The CalDAV server stops
+// (docs/specs/accounts-login-emails-permissions.md rule 16): habits, focus
+// time, flexible meetings, task calendars and booking links show an error
+// state and get no new events until the user reconnects the account. The CalDAV server stops
 // taking the added account's stored password, the way a revoked Google token
 // stops working.
 //
@@ -10,10 +10,20 @@
 // - the item shows no error                                    -> the "is disconnected" note on each item
 // - a booking is written to another calendar                   -> the booker gets a refusal; no event anywhere
 // - reconnect does not resume the items                        -> events on the added calendar after reconnect
+// - focus time waits with no error                             -> the note on the automations list
+// - the events of a waiting item change while it waits          -> its focus events, read on the server
 // - the state is not stored                                    -> reload after each step
 import type { Page } from "@playwright/test";
 import type { ProviderEvent } from "../../src/server/providers/types.ts";
 import { addDays } from "../../src/shared/time.ts";
+import {
+  automation,
+  create,
+  eventProp,
+  openAutomations,
+  rawEvent,
+  save,
+} from "./automation-list-helpers.ts";
 import { week } from "./calendar-helpers.ts";
 import { addCalDavAccount, openAccount } from "./delegation-helpers.ts";
 import { at, BACKEND, blockUntil, eventually, expect, planNow, test } from "./fixtures.ts";
@@ -61,7 +71,7 @@ async function reconnect(
   await expect(page.getByTestId("account-message")).toHaveText(`${email} is connected again.`);
 }
 
-test("habits, flexible meetings and task calendars that write to a disconnected account show an error and get no new events until reconnect (accounts rule 16)", async ({
+test("habits, focus time, flexible meetings and task calendars that write to a disconnected account show an error and get no new events until reconnect (accounts rule 16)", async ({
   page,
   cal,
   signIn,
@@ -103,13 +113,31 @@ test("habits, flexible meetings and task calendars that write to a disconnected 
     await mform.getByRole("button", { name: "Add meeting" }).click();
     const meeting = page.locator('[data-meeting-title="Sync"]');
     await expect(meeting).toBeVisible();
+    // Focus time on the added account's calendar; it stays on. The habit's
+    // time counts toward the goal, so the goal is larger than the habit.
+    const focusForm = await create(page, "Focus time");
+    await focusForm.getByLabel("Title").fill("Deep work");
+    await focusForm.getByLabel("Weekly goal (hours)").fill("10");
+    await focusForm.getByLabel("Daily minimum (hours)").fill("0");
+    await focusForm.getByLabel("Daily maximum (hours)").fill("3");
+    const focusCalendar = focusForm.getByLabel("Calendar", { exact: true });
+    await expect(focusCalendar.locator("option")).toHaveCount(3);
+    await focusCalendar.selectOption(
+      (await focusCalendar.locator("option").last().getAttribute("value")) ?? "",
+    );
+    await save(focusForm);
+    const focus = automation(page, "Deep work");
+    await expect(focus).toBeVisible();
+    await expect(focus.getByTestId("calendar-disconnected")).toHaveCount(0);
     await eventually(
       () => week(extra.cal),
       (l) => {
         expect(titled(l, "Stretch").length).toBeGreaterThan(0);
         expect(titled(l, "Sync")).toHaveLength(1);
+        expect(titled(l, "Deep work").length).toBeGreaterThan(0);
       },
     );
+    await page.getByRole("link", { name: "Meetings" }).click();
     await meeting.getByRole("button", { name: "Turn off" }).click();
     await expect(meeting).toContainText("Turn on");
     await page.getByRole("link", { name: "Habits" }).click();
@@ -125,7 +153,22 @@ test("habits, flexible meetings and task calendars that write to a disconnected 
       (l) => expect(titled(l, "Stretch").length + titled(l, "Sync").length).toBe(0),
     );
 
+    // The focus events as the server has them; read again while the account is disconnected.
+    await planNow(page);
+    const focusEvents = async (ids: string[]) =>
+      Promise.all(
+        ids.map(async (id) => {
+          const ics = await rawEvent(id);
+          return [id, eventProp(ics, "DTSTART"), eventProp(ics, "DTEND")];
+        }),
+      );
+    const focusBefore = await focusEvents(
+      titled(await week(extra.cal), "Deep work").map((e) => e.id),
+    );
+    expect(focusBefore.length).toBeGreaterThan(0);
     await disconnect(page, six.username, extra.email);
+    await openAutomations(page);
+    await expect(focus.getByTestId("calendar-disconnected")).toHaveText(note(extra.email));
 
     // Turned on while the account is disconnected: no events anywhere, and an error.
     await page.getByRole("link", { name: "Habits" }).click();
@@ -143,8 +186,13 @@ test("habits, flexible meetings and task calendars that write to a disconnected 
     expect(titled(main, "Stretch")).toHaveLength(0);
     expect(titled(main, "Sync")).toHaveLength(0);
     expect(titled(main, "Report")).toHaveLength(0);
+    expect(titled(main, "Deep work")).toHaveLength(0);
+    // The waiting focus time's events stay as they are.
+    expect(await focusEvents(focusBefore.map(([id]) => id ?? ""))).toEqual(focusBefore);
     await page.reload();
     await expect(work.getByTestId("calendar-disconnected")).toHaveText(note(extra.email));
+    await openAutomations(page);
+    await expect(focus.getByTestId("calendar-disconnected")).toHaveText(note(extra.email));
     await page.getByRole("link", { name: "Habits" }).click();
     await expect(habit.getByTestId("calendar-disconnected")).toHaveText(note(extra.email));
 
@@ -161,6 +209,8 @@ test("habits, flexible meetings and task calendars that write to a disconnected 
     const after = await week(cal);
     expect(titled(after, "Stretch").length + titled(after, "Sync").length).toBe(0);
     expect(titled(after, "Report")).toHaveLength(0);
+    expect(titled(after, "Deep work")).toHaveLength(0);
+    expect(titled(await week(extra.cal), "Deep work").length).toBeGreaterThan(0);
     await page.reload();
     await page.getByRole("link", { name: "Habits" }).click();
     await expect(habit).toBeVisible();
@@ -171,6 +221,9 @@ test("habits, flexible meetings and task calendars that write to a disconnected 
     await page.getByRole("link", { name: "Settings", exact: true }).click();
     await expect(work).toBeVisible();
     await expect(work.getByTestId("calendar-disconnected")).toHaveCount(0);
+    await openAutomations(page);
+    await expect(focus).toBeVisible();
+    await expect(focus.getByTestId("calendar-disconnected")).toHaveCount(0);
   } finally {
     setPassword(six.username, 6, six.password);
   }

@@ -62,6 +62,8 @@ export interface ReplanContext {
   fullMirror?: boolean;
   /** Managed keys to repair: written again from the plan, compared field by field. */
   repair?: ReadonlySet<string>;
+  /** Filled with the repair keys the push checked in full or wrote. */
+  repaired?: Set<string>;
 }
 
 export interface ReplanResult {
@@ -87,15 +89,17 @@ export function writeCalendar(
   db: Db,
   userId: string,
   preferredId?: string | null,
+  opts: { anyStatus?: boolean } = {},
 ): CalendarInfo | undefined {
   const pick = (only: string | null) =>
     one<CalendarInfo>(
       db,
       `SELECT c.id, c.account_id, c.provider_id, c.is_primary, c.writable, c.check_availability
        FROM calendars c JOIN accounts a ON a.id = c.account_id
-       WHERE a.user_id = ? AND a.status = 'ok' AND c.writable = 1 AND (? IS NULL OR c.id = ?)
+       WHERE a.user_id = ? AND (? OR a.status = 'ok') AND c.writable = 1 AND (? IS NULL OR c.id = ?)
        ORDER BY a.is_main DESC, c.is_primary DESC, a.created_at, c.name LIMIT 1`,
       userId,
+      opts.anyStatus ? 1 : 0,
       only,
       only,
     );
@@ -565,11 +569,16 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
   if (!user) return null;
   const settings = getSettings(db, userId);
   if (settings.paused || isAnalyticsOnly(db, userId)) return null;
-  const target = writeCalendar(db, userId);
+  // The main calendar, also while its account is disconnected: items that use
+  // it then wait instead of moving to another account (accounts rule 16).
+  const target = writeCalendar(db, userId, null, { anyStatus: true });
   if (!target) return null;
-  const last =
-    one<{ planned_at: number }>(db, "SELECT planned_at FROM plan_reports WHERE user_id = ?", userId)
-      ?.planned_at ?? 0;
+  const lastRun = one<{ planned_at: number; report: string }>(
+    db,
+    "SELECT planned_at, report FROM plan_reports WHERE user_id = ?",
+    userId,
+  );
+  const last = lastRun?.planned_at ?? 0;
   const { snapshot, rows, notes, titles, eventSettings } = loadSnapshot(
     db,
     userId,
@@ -578,32 +587,12 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
     now,
     last,
   );
-  const result = plan(snapshot);
-
-  const rowByKey = new Map(rows.map((r) => [r.key, r]));
   const taskCalendar = new Map(
     all<{ id: string; task_calendar_id: string | null }>(
       db,
       "SELECT id, task_calendar_id FROM hours_sets WHERE user_id = ?",
       userId,
     ).map((h) => [h.id, h.task_calendar_id]),
-  );
-  const taskHours = new Map(snapshot.tasks.map((t) => [t.id, t.hours]));
-  // Guests and location of each flexible meeting (meetings-flexible.md rules 35, 41).
-  const meetingRows = new Map(
-    all<{ id: string; location: string }>(
-      db,
-      "SELECT id, location FROM meetings WHERE user_id = ?",
-      userId,
-    ).map((m) => [m.id, { location: m.location, people: attendeesOf(db, m.id) }]),
-  );
-  // The organizer of an occurrence is the account that owns its calendar.
-  const accountEmail = new Map(
-    all<{ id: string; email: string }>(
-      db,
-      "SELECT id, email FROM accounts WHERE user_id = ?",
-      userId,
-    ).map((a) => [a.id, a.email.toLowerCase()]),
   );
   const calendars = new Map(
     all<CalendarInfo & { ok: number }>(
@@ -626,6 +615,39 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
     return cal?.writable === 1 ? cal.id : undefined;
   };
   const chosenCalendar = (es: EventSettings | undefined) => chosen(es?.calendarId);
+  // Accounts rule 16: an item whose calendar is on a disconnected account
+  // waits. It is left out of the plan, so it takes no time from other items;
+  // its events stay as they are.
+  if ([...calendars.values()].some((c) => c.ok !== 1)) {
+    const waits = (id: string | undefined) => calendars.get(id ?? target.id)?.ok !== 1;
+    const item = (kind: string) => (i: { id: string }) =>
+      !waits(chosenCalendar(eventSettings.get(`${kind}:${i.id}`)));
+    snapshot.tasks = snapshot.tasks.filter((t) => !waits(chosen(taskCalendar.get(t.hours ?? ""))));
+    snapshot.habits = snapshot.habits.filter(item("habit"));
+    snapshot.meetings = snapshot.meetings.filter(item("meeting"));
+    snapshot.buffers = snapshot.buffers.filter(item("buffer"));
+    snapshot.focus = snapshot.focus.filter(item("focus"));
+  }
+  const result = plan(snapshot);
+
+  const rowByKey = new Map(rows.map((r) => [r.key, r]));
+  const taskHours = new Map(snapshot.tasks.map((t) => [t.id, t.hours]));
+  // Guests and location of each flexible meeting (meetings-flexible.md rules 35, 41).
+  const meetingRows = new Map(
+    all<{ id: string; location: string }>(
+      db,
+      "SELECT id, location FROM meetings WHERE user_id = ?",
+      userId,
+    ).map((m) => [m.id, { location: m.location, people: attendeesOf(db, m.id) }]),
+  );
+  // The organizer of an occurrence is the account that owns its calendar.
+  const accountEmail = new Map(
+    all<{ id: string; email: string }>(
+      db,
+      "SELECT id, email FROM accounts WHERE user_id = ?",
+      userId,
+    ).map((a) => [a.id, a.email.toLowerCase()]),
+  );
   const travelBuffers = new Set(
     snapshot.buffers.filter((b) => b.filter.travel || b.filter.flight).map((b) => b.id),
   );
@@ -784,23 +806,40 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
     );
   }
 
-  const push = await pushSchedule(
-    {
-      db,
-      userId,
-      now,
-      fullCheck: ctx.fullMirror ?? false,
-      ...(ctx.repair ? { repair: ctx.repair } : {}),
-      target: (calendarId) => {
-        const c = calendars.get(calendarId);
-        if (!c) throw new Error(`Unknown calendar ${calendarId}`);
-        return { provider: ctx.provider(c.account_id), providerCalendarId: c.provider_id };
+  // SCH-119: what the push wrote is logged per item, also when a later write fails.
+  const written = new Map<string, { start: number; end: number } | null>();
+  const reportJson = JSON.stringify(result.report);
+  let push: Awaited<ReturnType<typeof pushSchedule>>;
+  try {
+    push = await pushSchedule(
+      {
+        db,
+        userId,
+        now,
+        fullCheck: ctx.fullMirror ?? false,
+        ...(ctx.repair ? { repair: ctx.repair } : {}),
+        ...(ctx.repaired ? { repaired: ctx.repaired } : {}),
+        written,
+        target: (calendarId) => {
+          const c = calendars.get(calendarId);
+          if (!c) throw new Error(`Unknown calendar ${calendarId}`);
+          return { provider: ctx.provider(c.account_id), providerCalendarId: c.provider_id };
+        },
       },
-    },
-    desired,
-  );
+      desired,
+    );
+  } finally {
+    recordItemChanges(db, userId, {
+      before: rows,
+      written,
+      prevReport: lastRun?.report ?? null,
+      reportJson,
+      snapshot,
+      result,
+      now,
+    });
+  }
   recordMeetingChanges(db, userId, rows, now, last);
-  recordItemChanges(db, userId, rows, snapshot, result, now);
   // Rule 8: a new color also repaints managed events that ended, up to 90 days back.
   // Rule 12, "repaint all": every managed event gets its color again, also where
   // the user changed the color in the calendar. The run only lists the paints;
@@ -847,7 +886,7 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
     `INSERT INTO plan_reports (user_id, report, planned_at) VALUES (?, ?, ?)
      ON CONFLICT (user_id) DO UPDATE SET report = excluded.report, planned_at = excluded.planned_at`,
     userId,
-    JSON.stringify(result.report),
+    reportJson,
     now,
   );
   return { push, report: result.report, paint: { paints, requestedAt } };

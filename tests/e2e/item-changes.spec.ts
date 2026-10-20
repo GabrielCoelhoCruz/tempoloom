@@ -7,21 +7,25 @@
 // - the reason is wrong (a busy event took the time)    -> "no-space-fixed", not another code
 // - one item's log shows another item's entries         -> the task log has only its placement
 // - the log is not stored                                -> reload
+// - a period with no event, a kept conflict or a new status is not logged
+//                                                        -> "skipped", "conflict" and "status" entries
+// - the flexible meeting view has no log                 -> the meeting's entries
 import type { Page } from "@playwright/test";
 import { addDays } from "../../src/shared/time.ts";
 import { automation, openAutomations } from "./automation-list-helpers.ts";
 import { at, blockUntil, type CalendarDriver, eventually, expect, test } from "./fixtures.ts";
 import { addHabit, addTask, titled, W } from "./helpers.ts";
+import { addMeeting } from "./meeting-helpers.ts";
 
 const tue = addDays(W, 1);
 const week = (cal: CalendarDriver) => cal.events(at(W, "00:00"), at(addDays(W, 7), "00:00"));
 
 /** Opens the change log of an item; it loads each time it opens. */
-async function openLog(page: Page, where: "habit" | "task", name: string) {
+async function openLog(page: Page, where: "habit" | "task" | "meeting", name: string) {
   if (where === "habit") await openAutomations(page);
-  else await page.getByRole("link", { name: "Tasks" }).click();
+  else await page.getByRole("link", { name: where === "task" ? "Tasks" : "Meetings" }).click();
   const log = (
-    where === "habit" ? automation(page, name) : page.locator(`[data-task-title="${name}"]`)
+    where === "habit" ? automation(page, name) : page.locator(`[data-${where}-title="${name}"]`)
   ).getByTestId("item-changes");
   if ((await log.getAttribute("open")) !== null) await log.locator("summary").click();
   await log.locator("summary").click();
@@ -122,4 +126,106 @@ test("each item keeps a change log of its placements, moves and removals, each w
   await expect(
     log.getByTestId("item-change").and(page.locator('[data-action="moved"]')),
   ).toHaveAttribute("data-reason", "no-space-fixed");
+});
+
+/** Waits until the item's log shows an entry with the action that contains the text; returns it. */
+async function entry(
+  page: Page,
+  where: "habit" | "task" | "meeting",
+  name: string,
+  action: string,
+  text: string,
+) {
+  const pick = (log: Awaited<ReturnType<typeof openLog>>) =>
+    log
+      .getByTestId("item-change")
+      .and(page.locator(`[data-action="${action}"]`))
+      .filter({
+        hasText: text,
+      });
+  await expect(async () => {
+    await expect(pick(await openLog(page, where, name))).toHaveCount(1, { timeout: 1_000 });
+  }).toPass({ timeout: 30_000 });
+  return pick(await openLog(page, where, name));
+}
+
+test("the change log names a skipped period, a kept conflict and a status change, and shows on the flexible meeting view (SCH-114, SCH-116, SCH-119)", async ({
+  page,
+  cal,
+  signIn,
+}) => {
+  const wed = addDays(W, 2);
+  const thu = addDays(W, 3);
+  await blockUntil(cal, W);
+  await signIn();
+  // A habit that keeps its time as a conflict when its period has no room.
+  await addHabit(page, {
+    title: "Walk",
+    ideal: "16:00",
+    min: 30,
+    max: 30,
+    days: ["Tue"],
+    noRoom: "Keep and mark the conflict",
+  });
+  // A task that cannot end before its due time.
+  await addTask(page, { title: "Draft", minutes: 120, split: false, due: `${W}T10:00` });
+  // A flexible meeting.
+  await addMeeting(page, {
+    title: "Sync",
+    guests: "dana@example.com",
+    idealTime: "11:00",
+    days: ["Thu"],
+  });
+  await eventually(
+    () => week(cal),
+    (l) => {
+      expect(titled(l, "Walk").map((e) => e.start)).toEqual([at(tue, "16:00")]);
+      expect(titled(l, "Draft").map((e) => e.start)).toEqual([at(W, "09:00")]);
+      expect(titled(l, "Sync").map((e) => e.start)).toEqual([at(thu, "11:00")]);
+    },
+  );
+
+  // The task's status changes: placed, and some work ends after the due time.
+  const late = await entry(page, "task", "Draft", "status", "");
+  await expect(late).toHaveAttribute("data-reason", "after-due");
+  await expect(late).toContainText("status changed");
+  await expect(late).toContainText("some work ends after the due date");
+
+  // The flexible meeting has its log on the meeting view.
+  const placed = await entry(page, "meeting", "Sync", "placed", `Thu ${thu} 11:00–`);
+  await expect(placed).toContainText("placed");
+
+  // The whole week fills up: the habit keeps its time as a conflict.
+  await cal.addEvent({
+    title: "Offsite",
+    start: at(W, "00:00"),
+    end: at(addDays(W, 7), "00:00"),
+  });
+  const conflict = await entry(page, "habit", "Walk", "conflict", `Tue ${tue} 16:00–16:30`);
+  await expect(conflict).toContainText("kept as conflict");
+  await expect(conflict).toHaveAttribute("data-reason", "no-space-fixed");
+  expect(titled(await week(cal), "Walk").map((e) => e.start)).toEqual([at(tue, "16:00")]);
+
+  // A new habit gets no event in the full week: that period is skipped.
+  await addHabit(page, {
+    title: "Read",
+    ideal: "10:00",
+    min: 30,
+    max: 30,
+    days: ["Wed"],
+    noRoom: "Remove that day",
+  });
+  const skipped = await entry(page, "habit", "Read", "skipped", `period of ${wed}`);
+  await expect(skipped).toHaveAttribute("data-reason", "no-space-fixed");
+  expect(titled(await week(cal), "Read")).toHaveLength(0);
+
+  await page.reload();
+  const shown = async (where: "habit" | "task" | "meeting", name: string, action: string) =>
+    (await openLog(page, where, name))
+      .getByTestId("item-change")
+      .and(page.locator(`[data-action="${action}"]`));
+  await expect((await shown("meeting", "Sync", "placed")).filter({ hasText: thu })).toHaveCount(1);
+  await expect((await shown("habit", "Read", "skipped")).filter({ hasText: wed })).toHaveCount(1);
+  await expect((await shown("habit", "Walk", "conflict")).filter({ hasText: tue })).toHaveCount(1);
+  await expect(await shown("task", "Draft", "status")).not.toHaveCount(0);
 });

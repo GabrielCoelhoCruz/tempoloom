@@ -39,8 +39,11 @@ export class SyncService {
   readonly #timers = new Map<string, NodeJS.Timeout>();
   /** The newest repaint job per user; an older job stops when a newer one starts. */
   readonly #paintJobs = new Map<string, PaintJob>();
-  /** Managed keys to repair on the user's next run (support-troubleshooting.md rule 10). */
-  readonly #repairs = new Map<string, Set<string>>();
+  /**
+   * Managed keys to repair on the user's next run (support-troubleshooting.md
+   * rule 10), and the keys that run checked in full or wrote.
+   */
+  readonly #repairs = new Map<string, { keys: Set<string>; done: Set<string> }>();
   #interval: NodeJS.Timeout | undefined;
   #stopped = false;
   readonly #listeners = new Set<(userId: string) => void>();
@@ -192,12 +195,17 @@ export class SyncService {
     return job;
   }
 
-  /** Runs one sync and replan that writes the given managed events again, compared in full. */
-  repair(userId: string, keys: string[]): Promise<void> {
-    const set = this.#repairs.get(userId) ?? new Set<string>();
-    for (const k of keys) set.add(k);
-    this.#repairs.set(userId, set);
-    return this.runNow(userId);
+  /**
+   * Runs one sync and replan that writes the given managed events again,
+   * compared in full. True when that run checked or wrote every key; false
+   * when the run failed or left a key as it is.
+   */
+  async repair(userId: string, keys: string[]): Promise<boolean> {
+    const job = this.#repairs.get(userId) ?? { keys: new Set<string>(), done: new Set<string>() };
+    for (const k of keys) job.keys.add(k);
+    this.#repairs.set(userId, job);
+    await this.runNow(userId);
+    return keys.every((k) => job.done.has(k));
   }
 
   /** Runs a calendar write for the user inside the user's queue, then plans again. */
@@ -386,6 +394,8 @@ export class SyncService {
       }
       const repair = this.#repairs.get(userId);
       this.#repairs.delete(userId);
+      // A repair counts only when the whole run succeeds.
+      const done = new Set<string>();
       const result = await replanUser(
         {
           db,
@@ -393,13 +403,14 @@ export class SyncService {
           now: this.#deps.now(),
           baseUrl: this.#deps.baseUrl,
           fullMirror,
-          ...(repair ? { repair } : {}),
+          ...(repair ? { repair: repair.keys, repaired: done } : {}),
         },
         userId,
       );
       if (fullMirror)
         run(db, "UPDATE users SET mirror_reconciled_at = ? WHERE id = ?", now, userId);
       if (result) this.#paint(userId, result.paint);
+      for (const k of done) repair?.done.add(k);
       // Team out-of-office calendars this user owns (teams-ooo-calendar.md).
       await syncOutOfOffice(db, userId, pool, this.#deps.now());
       // Flexible meetings join calendars of several users (meetings-flexible.md

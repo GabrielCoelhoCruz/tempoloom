@@ -19,7 +19,7 @@ import { jsonBody, notFound } from "../http.ts";
 import { createItemHours, dropItemHours, itemHoursSchema, saveItemHours } from "../item-hours.ts";
 import { automationCount, limitRefusal } from "../limits.ts";
 import { itemChanges } from "../planner/item-log.ts";
-import { disconnectedEmail } from "../planner/write.ts";
+import { waitingCalendars } from "../planner/write.ts";
 import { when, zoneOf } from "../preview.ts";
 import { getSettings } from "../settings.ts";
 import type { SyncService } from "../sync/service.ts";
@@ -513,36 +513,37 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
     const range = (s: number | null, e: number | null) =>
       s !== null && e !== null ? when(zone, s, e) : "";
     return c.json({
-      changes: itemChanges(db, userId, kind, c.req.param("id")).map((x) => ({
+      changes: itemChanges(db, userId, kind, c.req.param("id"), now()).map((x) => ({
         at: when(zone, x.at),
         action: x.action,
         from: range(x.old_start, x.old_end),
         to: range(x.new_start, x.new_end),
-        // A skipped period is named by the first day in its demand key.
-        period: /\d{4}-\d{2}-\d{2}$/.exec(x.demand_key)?.[0] ?? "",
+        // A skipped period is named by the first day in its demand key (also of a chunk key).
+        period: /\d{4}-\d{2}-\d{2}/.exec(x.demand_key)?.[0] ?? "",
         reason: x.reason,
       })),
     });
   });
 
-  r.get("/habits", (c) =>
-    c.json({
+  r.get("/habits", (c) => {
+    const userId = c.get("user").id;
+    // Accounts rule 16: the habit's calendar is on a disconnected account.
+    const waiting = waitingCalendars(db, userId);
+    return c.json({
       habits: all<{ event_settings: string }>(
         db,
         `SELECT h.*, CASE WHEN s.item_specific = 1 THEN s.weekly END AS item_hours
          FROM habits h JOIN hours_sets s ON s.id = h.hours_set_id
          WHERE h.user_id = ? ORDER BY h.level, h.rank, h.created_at`,
-        c.get("user").id,
+        userId,
       ).map((h) => ({
         ...h,
-        // Accounts rule 16: the habit's calendar is on a disconnected account.
-        disconnected: disconnectedEmail(
-          db,
+        disconnected: waiting(
           readEventSettings(h.event_settings, defaultEventSettings("habit")).calendarId,
         ),
       })),
-    }),
-  );
+    });
+  });
 
   r.post("/habits", async (c) => {
     const user = c.get("user");

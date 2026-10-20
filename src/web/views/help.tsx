@@ -313,6 +313,8 @@ function LookupView() {
   const [result, setResult] = useState<Lookup | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [repairing, setRepairing] = useState<"busy" | "done" | null>(null);
+  // The query of the result on the page: repair acts on that event, also after the input changes.
+  const [shown, setShown] = useState("");
   const run = async (value: string) => {
     setError(null);
     setRepairing(null);
@@ -320,6 +322,7 @@ function LookupView() {
     if (!value.trim()) return;
     try {
       setResult(await api<Lookup>("GET", `/api/help/lookup?q=${encodeURIComponent(value)}`));
+      setShown(value);
     } catch (err) {
       const code = err instanceof ApiError ? (err.body as { error?: string })?.error : undefined;
       setError(ERRORS[code ?? ""] ?? "The lookup failed. Try again.");
@@ -330,11 +333,14 @@ function LookupView() {
     setError(null);
     setRepairing("busy");
     try {
-      setResult(await api<Lookup>("POST", "/api/help/repair", { q }));
+      setResult(await api<Lookup>("POST", "/api/help/repair", { q: shown }));
       setRepairing("done");
-    } catch {
+    } catch (err) {
       setRepairing(null);
-      setError("The repair failed. Try again.");
+      // 502: the run failed or left the event as it was; the lookup shows the event now.
+      const body = err instanceof ApiError ? (err.body as Lookup | undefined) : undefined;
+      if (body?.event) setResult(body);
+      setError("The repair failed: the event is as it was. Try again later.");
     }
   };
   // A link to this page with ?q= shows that event, also after a reload.

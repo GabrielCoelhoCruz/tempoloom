@@ -89,8 +89,9 @@ that come from the calendar provider or the device, not from Tempoloom.
     repair button in its calendar add-on, E-0160, legacy evidence.)
 
     Tempoloom decision: repair is offered for a copy and for a source event
-    of a mirroring policy. It runs one sync that writes the copies of that
-    event again and compares them in full, as the full reconcile does
+    of a mirroring policy, only where Tempoloom can write the copy (not for a
+    source that the policy skipped). It runs one sync that writes the copies
+    of that event again and compares them in full, as the full reconcile does
     (`sync-calendar-mirroring.md` rule 39). The change log names the write
     "copy restored".
 

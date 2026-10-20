@@ -196,6 +196,40 @@ interface Previous {
   eventId: string | null;
 }
 
+/** Thrown before any write when the host's calendar is on a disconnected account (accounts rule 16). */
+export class CalendarDisconnected extends Error {
+  readonly email: string;
+  constructor(email: string) {
+    super("calendar_disconnected");
+    this.email = email;
+  }
+}
+
+/** The email of the disconnected account that holds a calendar, or null. */
+function frozenEmail(db: Db, calendarId: string | null | undefined): string | null {
+  if (!calendarId) return null;
+  return (
+    one<{ email: string }>(
+      db,
+      `SELECT a.email FROM calendars c JOIN accounts a ON a.id = c.account_id
+       WHERE c.id = ? AND a.status <> 'ok'`,
+      calendarId,
+    )?.email ?? null
+  );
+}
+
+/**
+ * The calendar a booking's host event goes to: the chosen calendar, else the
+ * host's main calendar. Accounts rule 16: when that calendar's account is
+ * disconnected, the booking waits; it never moves to another calendar.
+ */
+export function hostCalendar(db: Db, hostId: string, chosenId: string | null) {
+  const cal = writeCalendar(db, hostId, chosenId, { anyStatus: true });
+  const email = frozenEmail(db, cal?.id);
+  if (email) throw new CalendarDisconnected(email);
+  return cal;
+}
+
 const lower = (e: string) => e.toLowerCase();
 const emailOf = (db: Db, userId: string) =>
   one<{ email: string }>(db, "SELECT email FROM users WHERE id = ?", userId)?.email ?? "";
@@ -256,9 +290,14 @@ export async function writeBookingEvents(
     };
   }
 
-  // The host's event.
+  // The host's event. Accounts rule 16: nothing is written while the host's
+  // old or new calendar is on a disconnected account.
   let placed: { calendarId: string; eventId: string } | null = null;
   const sameHost = prev && next && prev.hostId === next.hostId && prev.calendarId && prev.eventId;
+  const oldEmail = prev?.eventId ? frozenEmail(db, prev.calendarId) : null;
+  if (oldEmail) throw new CalendarDisconnected(oldEmail);
+  const target =
+    next && !sameHost ? hostCalendar(db, next.hostId, next.event.calendarId ?? null) : undefined;
   if (prev?.calendarId && prev.eventId && !sameHost) {
     await remove(prev.hostId, prev.calendarId, prev.eventId);
   }
@@ -273,7 +312,6 @@ export async function writeBookingEvents(
       cacheEvent(db, prev.calendarId, ev);
       placed = { calendarId: prev.calendarId, eventId: ev.id };
     } else {
-      const target = writeCalendar(db, next.hostId, next.event.calendarId);
       if (!target) throw new Error("no_calendar");
       const ev = await sync
         .pool(next.hostId)

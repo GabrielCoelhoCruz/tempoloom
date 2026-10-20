@@ -118,6 +118,10 @@ export interface PushContext {
   fullCheck?: boolean;
   /** Keys to repair (support-troubleshooting.md rule 10): compared in full, logged as restored. */
   repair?: ReadonlySet<string>;
+  /** Filled with the repair keys that were compared in full and are now as the plan gives them. */
+  repaired?: Set<string>;
+  /** Filled with what the push wrote per key: the new times, or null for a delete (SCH-119 log). */
+  written?: Map<string, { start: number; end: number } | null>;
 }
 
 export interface PushResult {
@@ -294,6 +298,7 @@ export async function pushSchedule(
     if (wanted.has(row.key) || row.locked || row.start_ms <= now) continue;
     await deleteRemote(ctx, row);
     run(db, "DELETE FROM managed_events WHERE id = ?", row.id);
+    ctx.written?.set(row.key, null);
     if (row.event_id)
       logManaged(db, userId, managedRef(row, row.event_id), "delete", plain(row), now);
     result.deleted++;
@@ -322,7 +327,10 @@ export async function pushSchedule(
       row.kind === "meeting"
         ? meetingChange(row, cached, d)
         : differs(row, cached, d, (ctx.fullCheck ?? false) || repaired(row.key));
-    if (!change) continue;
+    if (!change) {
+      if (repaired(row.key)) ctx.repaired?.add(row.key);
+      continue;
+    }
     const { provider, providerCalendarId } = ctx.target(row.calendar_id);
     const etag = cached?.etag ?? row.etag;
     try {
@@ -332,10 +340,12 @@ export async function pushSchedule(
           : await provider.editExternal(providerCalendarId, row.event_id, change, etag);
       cacheEvent(db, row.calendar_id, ev);
       saveRow(db, userId, d, ev.id, ev.etag, row.id);
+      ctx.written?.set(d.key, { start: d.start, end: d.end });
       const moved = row.start_ms !== d.start || row.end_ms !== d.end;
       logManaged(db, userId, desiredRef(d, ev.id), "update", { ...d, moved }, now, {
         restored: repaired(row.key),
       });
+      if (repaired(row.key)) ctx.repaired?.add(row.key);
       result.updated++;
     } catch (err) {
       // precondition_failed: the user changed the event since our last read. The
@@ -346,6 +356,7 @@ export async function pushSchedule(
       }
       if (err instanceof ProviderError && err.kind === "not_found") {
         run(db, "DELETE FROM managed_events WHERE id = ?", row.id);
+        ctx.written?.set(row.key, null);
         result.conflicts++;
         continue;
       }
@@ -361,7 +372,9 @@ export async function pushSchedule(
     const ev = await provider.insertEvent(providerCalendarId, write(userId, d));
     cacheEvent(db, d.calendarId, ev);
     saveRow(db, userId, d, ev.id, ev.etag, row?.id);
+    ctx.written?.set(d.key, { start: d.start, end: d.end });
     logManaged(db, userId, desiredRef(d, ev.id), "create", d, now);
+    if (repaired(d.key)) ctx.repaired?.add(d.key);
     result.created++;
   }
   pruneChangeLog(db, now);

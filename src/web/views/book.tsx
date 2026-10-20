@@ -14,6 +14,9 @@ import {
   type View,
 } from "../lib/zoned.ts";
 
+/** Accounts rule 16: the booking's calendar is on a disconnected account. */
+const NOT_NOW = "This booking link cannot take bookings right now. Please try again later.";
+
 interface Question {
   label: string;
   type: "singleLine" | "multiLine" | "choice";
@@ -471,7 +474,7 @@ function DetailsForm({
                 "This time leaves no travel time for that location. Pick another location or time.",
               );
             } else if (err instanceof ApiError && err.status === 503) {
-              setError("This booking link cannot take bookings right now. Please try again later.");
+              setError(NOT_NOW);
             } else if (err instanceof ApiError && err.status === 409) {
               onTaken();
             } else if (err instanceof ApiError && err.status === 400) {
@@ -798,6 +801,12 @@ function Manage({ token }: { token: string }) {
     format: savedFormat(),
   };
   const booked = booking.status === "booked";
+  // Accounts rule 16: the host's calendar is on a disconnected account.
+  const notNow = (err: unknown) => {
+    if (!(err instanceof ApiError && err.status === 503)) throw err;
+    setMode("view");
+    setMessage(NOT_NOW);
+  };
   return (
     <div data-testid="manage-page">
       <h1>{link?.title ?? "Booking"}</h1>
@@ -828,10 +837,12 @@ function Manage({ token }: { token: string }) {
             type="button"
             class="danger"
             onClick={() =>
-              void api("POST", `/pub/bookings/${token}/cancel`).then(() => {
-                setMessage("Your booking is cancelled.");
-                load();
-              })
+              void api("POST", `/pub/bookings/${token}/cancel`)
+                .then(() => {
+                  setMessage("Your booking is cancelled.");
+                  load();
+                })
+                .catch(notNow)
             }
           >
             Cancel booking
@@ -849,11 +860,13 @@ function Manage({ token }: { token: string }) {
             void api("POST", `/pub/bookings/${token}/reschedule`, {
               start: t.start,
               timeZone: view.zone,
-            }).then(() => {
-              setMode("view");
-              setMessage("Your booking has a new time.");
-              load();
             })
+              .then(() => {
+                setMode("view");
+                setMessage("Your booking has a new time.");
+                load();
+              })
+              .catch(notNow)
           }
         />
       )}

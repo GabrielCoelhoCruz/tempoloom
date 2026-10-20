@@ -6,7 +6,7 @@
 // (another item of this run took it), "rules-changed" (the item's settings
 // changed) or "rearranged" (the plan changed around it).
 import type { Plan, ReportEntry, Snapshot } from "../../scheduler/model.ts";
-import { all, type Db, run, tx } from "../db.ts";
+import { all, type Db, run as dbRun } from "../db.ts";
 import type { ManagedRow } from "./push.ts";
 
 const DAY = 86_400_000;
@@ -17,122 +17,177 @@ type Action = "placed" | "moved" | "removed" | "skipped" | "conflict" | "status"
 const overlaps = (a: { start: number; end: number }, start: number, end: number) =>
   a.start < end && a.end > start;
 
-/** The report entry of a demand: an exact key, or the key of the demand a chunk belongs to. */
-function entryFor(report: ReportEntry[], kind: string, itemId: string, key: string) {
-  return report.find(
-    (e) =>
-      e.itemKind === kind &&
-      e.itemId === itemId &&
-      (key === e.demandKey || key.startsWith(`${e.demandKey}:`)),
-  );
+/** What a push wrote per managed key: the new times, or null for a delete. */
+export type Written = ReadonlyMap<string, { start: number; end: number } | null>;
+
+/** The demand key of a report entry that a managed key belongs to: itself, or the demand of a chunk. */
+function demandOf(byDemand: Map<string, ReportEntry>, key: string): ReportEntry | undefined {
+  for (let k = key; ; k = k.slice(0, k.lastIndexOf(":"))) {
+    const e = byDemand.get(k);
+    if (e) return e;
+    if (k.indexOf(":") === k.lastIndexOf(":")) return undefined;
+  }
 }
 
-/** Logs the changes of one plan run: `before` is the managed rows the run started from. */
+/**
+ * Logs the changes of one plan run. `before` is the managed rows the run
+ * started from, `written` what its push wrote, `prevReport` the report of the
+ * run before (JSON). A run that changed nothing writes nothing.
+ */
 export function recordItemChanges(
   db: Db,
   userId: string,
-  before: ManagedRow[],
-  snapshot: Snapshot,
-  result: Plan,
-  now: number,
+  run: {
+    before: readonly ManagedRow[];
+    written: Written;
+    prevReport: string | null;
+    /** This run's report as JSON, when known: equal to `prevReport` means no new shortfall. */
+    reportJson?: string;
+    snapshot: Snapshot;
+    result: Plan;
+    now: number;
+  },
 ): void {
-  const prevReport = JSON.parse(
-    all<{ report: string }>(db, "SELECT report FROM plan_reports WHERE user_id = ?", userId)[0]
-      ?.report ?? "[]",
-  ) as ReportEntry[];
-  const own = (r: ManagedRow) => r.kind !== "mirror" && r.end_ms > now;
-  const was = new Map(before.filter(own).map((r) => [r.key, r]));
-  const is = new Map(
-    all<ManagedRow>(db, "SELECT * FROM managed_events WHERE user_id = ?", userId)
-      .filter(own)
-      .map((r) => [r.key, r]),
-  );
-  const changed = new Set(
-    [
-      ...snapshot.tasks.map((t) => ["task", t.id, t.changed] as const),
-      ...snapshot.habits.map((h) => ["habit", h.id, h.changed] as const),
-      ...snapshot.meetings.map((m) => ["meeting", m.id, m.changed] as const),
-      ...snapshot.buffers.map((b) => ["buffer", b.id, b.changed] as const),
-      ...snapshot.focus.map((f) => ["focus", f.id, f.changed] as const),
-    ]
-      .filter(([, , c]) => c)
-      .map(([k, id]) => `${k}:${id}`),
-  );
-  const busy = snapshot.events.filter((e) => e.busy && !e.allDay);
-  /** Why a placed event moved, when the report has no entry for it. */
-  const moveReason = (b: ManagedRow): string => {
-    if (busy.some((e) => overlaps(e, b.start_ms, b.end_ms))) return "no-space-fixed";
-    if (result.placements.some((p) => p.key !== b.key && overlaps(p, b.start_ms, b.end_ms)))
-      return "no-space-priority";
-    return changed.has(`${b.kind}:${b.source_id}`) ? "rules-changed" : "rearranged";
-  };
+  const { before, written, snapshot, result, now } = run;
+  const own = (r: { kind: string; end_ms: number }) => r.kind !== "mirror" && r.end_ms > now;
+  const byDemand = new Map<string, ReportEntry>();
+  for (const e of result.report) if (!byDemand.has(e.demandKey)) byDemand.set(e.demandKey, e);
 
-  const rows: {
+  type Row = {
     kind: string;
     itemId: string;
     key: string;
     action: Action;
-    old: ManagedRow | undefined;
-    now: ManagedRow | undefined;
+    old: { start: number; end: number } | undefined;
+    now: { start: number; end: number } | undefined;
     reason: string;
-  }[] = [];
+  };
+  const rows: Row[] = [];
   const logged = new Set<string>();
-  for (const key of new Set([...was.keys(), ...is.keys()])) {
-    const b = was.get(key);
-    const a = is.get(key);
-    const r = (a ?? b) as ManagedRow;
-    // Started events never change; their end is no move.
-    if (b && b.start_ms <= now) continue;
-    const entry = entryFor(result.report, r.kind, r.source_id, key);
-    let action: Action;
-    if (!b) action = "placed";
-    else if (!a) action = "removed";
-    else if (a.start_ms !== b.start_ms || a.end_ms !== b.end_ms) action = "moved";
-    else continue;
-    const reason =
-      action === "placed" ? "" : (entry?.reason ?? (action === "moved" && b ? moveReason(b) : ""));
-    rows.push({ kind: r.kind, itemId: r.source_id, key, action, old: b, now: a, reason });
-    if (entry && action !== "placed") logged.add(entry.demandKey);
-  }
-  // A new shortfall that changed no event: a skipped period, a kept conflict or a new status.
-  const seen = new Set(prevReport.map((e) => `${e.demandKey}|${e.status}|${e.reason}`));
-  for (const e of result.report) {
-    if (logged.has(e.demandKey) || seen.has(`${e.demandKey}|${e.status}|${e.reason}`)) continue;
-    const action: Action =
-      e.status === "conflict" ? "conflict" : e.status === "unplaced" ? "skipped" : "status";
-    const placed = [...is.values()].find(
-      (r) => r.key === e.demandKey || r.key.startsWith(`${e.demandKey}:`),
+  /** The times of each demand's event after the push, for shortfall entries. */
+  const placedAt = new Map<string, { start: number; end: number }>();
+  const beforeKeys = new Set<string>();
+  let changed: Set<string> | undefined;
+  let busy: Snapshot["events"] | undefined;
+  /** Why a placed event moved (Tempoloom decision, SCH-119). */
+  const moveReason = (b: ManagedRow): string => {
+    busy ??= snapshot.events.filter((e) => e.busy && !e.allDay);
+    if (busy.some((e) => overlaps(e, b.start_ms, b.end_ms))) return "no-space-fixed";
+    if (result.placements.some((p) => p.key !== b.key && overlaps(p, b.start_ms, b.end_ms)))
+      return "no-space-priority";
+    changed ??= new Set(
+      [
+        ...snapshot.tasks.map((t) => ["task", t.id, t.changed] as const),
+        ...snapshot.habits.map((h) => ["habit", h.id, h.changed] as const),
+        ...snapshot.meetings.map((m) => ["meeting", m.id, m.changed] as const),
+        ...snapshot.buffers.map((x) => ["buffer", x.id, x.changed] as const),
+        ...snapshot.focus.map((f) => ["focus", f.id, f.changed] as const),
+      ]
+        .filter(([, , c]) => c)
+        .map(([k, id]) => `${k}:${id}`),
     );
-    rows.push({
-      kind: e.itemKind,
-      itemId: e.itemId,
-      key: e.demandKey,
-      action,
-      old: undefined,
-      now: placed,
-      reason: e.reason,
-    });
+    return changed.has(`${b.kind}:${b.source_id}`) ? "rules-changed" : "rearranged";
+  };
+
+  for (const b of before) {
+    if (!own(b)) continue;
+    beforeKeys.add(b.key);
+    const w = written.get(b.key);
+    const after = w === undefined ? { start: b.start_ms, end: b.end_ms } : w;
+    if (after) {
+      const e = demandOf(byDemand, b.key);
+      if (e && !placedAt.has(e.demandKey)) placedAt.set(e.demandKey, after);
+    }
+    // Started events never change; their end is no move.
+    if (w === undefined || b.start_ms <= now) continue;
+    const old = { start: b.start_ms, end: b.end_ms };
+    if (w === null) {
+      const e = demandOf(byDemand, b.key);
+      if (e) logged.add(e.demandKey);
+      rows.push({
+        kind: b.kind,
+        itemId: b.source_id,
+        key: b.key,
+        action: "removed",
+        old,
+        now: undefined,
+        reason: e?.reason ?? "",
+      });
+    } else if (w.start !== b.start_ms || w.end !== b.end_ms) {
+      rows.push({
+        kind: b.kind,
+        itemId: b.source_id,
+        key: b.key,
+        action: "moved",
+        old,
+        now: w,
+        reason: moveReason(b),
+      });
+    }
   }
-  tx(db, () => {
-    for (const c of rows)
-      run(
-        db,
-        `INSERT INTO item_changes (user_id, kind, item_id, demand_key, action, old_start, old_end,
-           new_start, new_end, reason, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        userId,
-        c.kind,
-        c.itemId,
-        c.key,
-        c.action,
-        c.old?.start_ms ?? null,
-        c.old?.end_ms ?? null,
-        c.now?.start_ms ?? null,
-        c.now?.end_ms ?? null,
-        c.reason,
-        now,
-      );
-    run(db, "DELETE FROM item_changes WHERE at < ?", now - ITEM_LOG_DAYS * DAY);
-  });
+  if (written.size > 0)
+    for (const p of result.placements) {
+      const w = written.get(p.key);
+      if (!w || beforeKeys.has(p.key)) continue;
+      const e = demandOf(byDemand, p.key);
+      if (e && !placedAt.has(e.demandKey)) placedAt.set(e.demandKey, w);
+      rows.push({
+        kind: p.kind,
+        itemId: p.itemId,
+        key: p.key,
+        action: "placed",
+        old: undefined,
+        now: w,
+        reason: "",
+      });
+    }
+  // A new shortfall that changed no event: a skipped period, a kept conflict or a new status.
+  if (byDemand.size > 0 && run.reportJson !== run.prevReport) {
+    const seen = new Set(
+      (JSON.parse(run.prevReport ?? "[]") as ReportEntry[]).map(
+        (e) => `${e.demandKey}|${e.status}|${e.reason}`,
+      ),
+    );
+    for (const e of byDemand.values()) {
+      if (logged.has(e.demandKey) || seen.has(`${e.demandKey}|${e.status}|${e.reason}`)) continue;
+      rows.push({
+        kind: e.itemKind,
+        itemId: e.itemId,
+        key: e.demandKey,
+        action:
+          e.status === "conflict" ? "conflict" : e.status === "unplaced" ? "skipped" : "status",
+        old: undefined,
+        now: placedAt.get(e.demandKey),
+        reason: e.reason,
+      });
+    }
+  }
+  if (rows.length === 0) return;
+  // One statement for the run, then the user's entries older than 30 days.
+  dbRun(
+    db,
+    `INSERT INTO item_changes (user_id, kind, item_id, demand_key, action, old_start, old_end,
+       new_start, new_end, reason, at) VALUES ${rows.map(() => "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").join(", ")}`,
+    ...rows.flatMap((c) => [
+      userId,
+      c.kind,
+      c.itemId,
+      c.key,
+      c.action,
+      c.old?.start ?? null,
+      c.old?.end ?? null,
+      c.now?.start ?? null,
+      c.now?.end ?? null,
+      c.reason,
+      now,
+    ]),
+  );
+  dbRun(
+    db,
+    "DELETE FROM item_changes WHERE user_id = ? AND at < ?",
+    userId,
+    now - ITEM_LOG_DAYS * DAY,
+  );
 }
 
 export interface ItemChange {
@@ -147,13 +202,20 @@ export interface ItemChange {
 }
 
 /** The log of one item, newest first. */
-export function itemChanges(db: Db, userId: string, kind: string, itemId: string): ItemChange[] {
+export function itemChanges(
+  db: Db,
+  userId: string,
+  kind: string,
+  itemId: string,
+  now: number,
+): ItemChange[] {
   return all<ItemChange>(
     db,
     `SELECT demand_key, action, old_start, old_end, new_start, new_end, reason, at FROM item_changes
-     WHERE user_id = ? AND kind = ? AND item_id = ? ORDER BY at DESC, id DESC LIMIT 200`,
+     WHERE user_id = ? AND kind = ? AND item_id = ? AND at >= ? ORDER BY at DESC, id DESC LIMIT 200`,
     userId,
     kind,
     itemId,
+    now - ITEM_LOG_DAYS * DAY,
   );
 }
