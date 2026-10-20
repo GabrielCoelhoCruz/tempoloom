@@ -43,6 +43,8 @@ export function recordItemChanges(
     prevReport: string | null;
     /** This run's report as JSON, when known: equal to `prevReport` means no new shortfall. */
     reportJson?: string;
+    /** False after a failed push: skips, conflicts and status changes wait for a whole run. */
+    shortfalls?: boolean;
     snapshot: Snapshot;
     result: Plan;
     now: number;
@@ -142,7 +144,7 @@ export function recordItemChanges(
       });
     }
   // A new shortfall that changed no event: a skipped period, a kept conflict or a new status.
-  if (byDemand.size > 0 && run.reportJson !== run.prevReport) {
+  if (run.shortfalls !== false && byDemand.size > 0 && run.reportJson !== run.prevReport) {
     const seen = new Set(
       (JSON.parse(run.prevReport ?? "[]") as ReportEntry[]).map(
         (e) => `${e.demandKey}|${e.status}|${e.reason}`,
@@ -163,25 +165,29 @@ export function recordItemChanges(
     }
   }
   if (rows.length === 0) return;
-  // One statement for the run, then the user's entries older than 30 days.
-  dbRun(
-    db,
-    `INSERT INTO item_changes (user_id, kind, item_id, demand_key, action, old_start, old_end,
-       new_start, new_end, reason, at) VALUES ${rows.map(() => "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").join(", ")}`,
-    ...rows.flatMap((c) => [
-      userId,
-      c.kind,
-      c.itemId,
-      c.key,
-      c.action,
-      c.old?.start ?? null,
-      c.old?.end ?? null,
-      c.now?.start ?? null,
-      c.now?.end ?? null,
-      c.reason,
-      now,
-    ]),
-  );
+  // One statement per 500 rows (SQLite takes at most 32,766 values in one statement).
+  for (let i = 0; i < rows.length; i += 500) {
+    const part = rows.slice(i, i + 500);
+    dbRun(
+      db,
+      `INSERT INTO item_changes (user_id, kind, item_id, demand_key, action, old_start, old_end,
+         new_start, new_end, reason, at) VALUES ${part.map(() => "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").join(", ")}`,
+      ...part.flatMap((c) => [
+        userId,
+        c.kind,
+        c.itemId,
+        c.key,
+        c.action,
+        c.old?.start ?? null,
+        c.old?.end ?? null,
+        c.now?.start ?? null,
+        c.now?.end ?? null,
+        c.reason,
+        now,
+      ]),
+    );
+  }
+  // Then the user's entries older than 30 days.
   dbRun(
     db,
     "DELETE FROM item_changes WHERE user_id = ? AND at < ?",

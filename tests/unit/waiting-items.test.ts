@@ -7,6 +7,9 @@
 //    calendar moves away from its ideal time for an event that is never written.
 // 2. The main account is disconnected and items on the main calendar move to
 //    an added account's calendar instead of waiting.
+// 3. An item's calendar changed, then that calendar's account disconnects: the
+//    item's events on the old, connected calendar are deleted or moved.
+// 4. Another item is placed over an event that a waiting item keeps.
 import { describe, expect, it } from "vitest";
 import { ensureUser } from "../../src/server/accounts.ts";
 import { type Db, one, openDb, run } from "../../src/server/db.ts";
@@ -26,18 +29,19 @@ interface Write {
   account: string;
   calendar: string;
   event: EventWrite;
+  method?: "update" | "delete";
 }
 
+let n = 0;
 function fakeProvider(account: string, writes: Write[]): CalendarProvider {
-  let n = 0;
   const fail = async (): Promise<never> => {
     throw new Error("not used");
   };
-  return {
+  const fake = {
     listCalendars: fail,
     listEvents: fail,
-    insertEvent: async (calendar: string, event: EventWrite) => {
-      writes.push({ account, calendar, event });
+    insertEvent: async (calendar: string, event: EventWrite, method?: "update") => {
+      writes.push({ account, calendar, event, ...(method ? { method } : {}) });
       n++;
       const ev: ProviderEvent = {
         id: `${account}-${n}`,
@@ -63,11 +67,17 @@ function fakeProvider(account: string, writes: Write[]): CalendarProvider {
       };
       return ev;
     },
-    updateEvent: fail,
-    deleteEvent: fail,
+    updateEvent: async (calendar: string, _id: string, event: EventWrite) => {
+      writes.push({ account, calendar, event, method: "update" });
+      return { ...(await fake.insertEvent(calendar, event)), id: _id };
+    },
+    deleteEvent: async (calendar: string) => {
+      writes.push({ account, calendar, event: {} as EventWrite, method: "delete" });
+    },
     setColor: fail,
     editExternal: fail,
-  } as unknown as CalendarProvider;
+  };
+  return fake as unknown as CalendarProvider;
 }
 
 function setup(mainStatus: "ok" | "reauth_required", addedStatus: "ok" | "reauth_required") {
@@ -112,12 +122,19 @@ function habit(db: Db, userId: string, id: string, level: number, calendarId: st
   );
 }
 
-async function plan(db: Db, userId: string) {
+async function plan(db: Db, userId: string, failWrites = false) {
   const writes: Write[] = [];
   const result = await replanUser(
     {
       db,
-      provider: (account) => fakeProvider(account, writes),
+      provider: (account) => {
+        const p = fakeProvider(account, writes);
+        if (failWrites)
+          p.insertEvent = async () => {
+            throw new Error("the server refuses writes");
+          };
+        return p;
+      },
       now: NOW,
       baseUrl: "http://localhost",
     },
@@ -152,5 +169,63 @@ describe("items of a disconnected account wait (accounts rule 16)", () => {
     const theirs = writes.filter((w) => w.event.summary.includes("theirs"));
     expect(theirs.length).toBeGreaterThan(0);
     expect(theirs.every((w) => w.account === "added")).toBe(true);
+  });
+
+  it("an item whose new calendar is disconnected keeps its events on the old, connected calendar", async () => {
+    const { db, userId } = setup("ok", "ok");
+    habit(db, userId, "own", 3, null);
+    await plan(db, userId);
+    const before = db
+      .prepare("SELECT key, calendar_id, start_ms FROM managed_events ORDER BY key")
+      .all();
+    expect(before.length).toBeGreaterThan(0);
+    // The habit moves to the added calendar (new events go there), then that account disconnects.
+    run(db, `UPDATE habits SET event_settings = '{"calendarId":"cal2"}' WHERE id = 'own'`);
+    run(db, "UPDATE accounts SET status = 'reauth_required' WHERE id = 'added'");
+    const { writes } = await plan(db, userId);
+    expect(writes.map((w) => `${w.method ?? "insert"} ${w.calendar}`)).toEqual([]);
+    expect(
+      db.prepare("SELECT key, calendar_id, start_ms FROM managed_events ORDER BY key").all(),
+    ).toEqual(before);
+  });
+
+  it("another item is not placed over an event that a waiting item keeps", async () => {
+    const { db, userId } = setup("ok", "ok");
+    habit(db, userId, "waiting", 1, "cal2");
+    const first = await plan(db, userId);
+    expect(first.writes.some((w) => w.event.start === TUE_9 && w.account === "added")).toBe(true);
+    run(db, "UPDATE accounts SET status = 'reauth_required' WHERE id = 'added'");
+    habit(db, userId, "fresh", 3, null);
+    const { writes } = await plan(db, userId);
+    const fresh = writes.filter((w) => w.event.summary?.includes("fresh"));
+    expect(fresh.length).toBeGreaterThan(0);
+    for (const w of fresh) expect(w.event.end <= TUE_9 || w.event.start >= TUE_9 + H).toBe(true);
+    expect(writes.filter((w) => w.account === "added")).toEqual([]);
+  });
+});
+
+// SCH-119 log after a failed push: a skipped period is logged once, not on each failed run.
+describe("change log after a failed push", () => {
+  it("logs a skipped period once when the push fails twice and then succeeds", async () => {
+    const { db, userId } = setup("ok", "ok");
+    habit(db, userId, "own", 3, null);
+    // Tuesday is full: its period of the daily habit is skipped.
+    run(
+      db,
+      `INSERT INTO events (calendar_id, event_id, summary, start_ms, end_ms, busy)
+       VALUES ('cal', 'full', 'Offsite', ?, ?, 1)`,
+      Date.UTC(2026, 10, 3, 0),
+      Date.UTC(2026, 10, 4, 0),
+    );
+    await expect(plan(db, userId, true)).rejects.toThrow("refuses writes");
+    await expect(plan(db, userId, true)).rejects.toThrow("refuses writes");
+    await plan(db, userId);
+    await plan(db, userId);
+    const skipped = db
+      .prepare(
+        "SELECT demand_key FROM item_changes WHERE action = 'skipped' AND demand_key LIKE '%2026-11-03'",
+      )
+      .all();
+    expect(skipped).toHaveLength(1);
   });
 });

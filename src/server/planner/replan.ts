@@ -616,17 +616,50 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
   };
   const chosenCalendar = (es: EventSettings | undefined) => chosen(es?.calendarId);
   // Accounts rule 16: an item whose calendar is on a disconnected account
-  // waits. It is left out of the plan, so it takes no time from other items;
-  // its events stay as they are.
+  // waits. Its new demands leave the plan, so they take no time from other
+  // items. The events it has stay as they are on every calendar: the push
+  // neither moves nor deletes them, and the busy ones block their time.
+  const kept = new Set<string>();
   if ([...calendars.values()].some((c) => c.ok !== 1)) {
     const waits = (id: string | undefined) => calendars.get(id ?? target.id)?.ok !== 1;
-    const item = (kind: string) => (i: { id: string }) =>
-      !waits(chosenCalendar(eventSettings.get(`${kind}:${i.id}`)));
-    snapshot.tasks = snapshot.tasks.filter((t) => !waits(chosen(taskCalendar.get(t.hours ?? ""))));
-    snapshot.habits = snapshot.habits.filter(item("habit"));
-    snapshot.meetings = snapshot.meetings.filter(item("meeting"));
-    snapshot.buffers = snapshot.buffers.filter(item("buffer"));
-    snapshot.focus = snapshot.focus.filter(item("focus"));
+    const left = new Set<string>();
+    const keep =
+      <T extends { id: string }>(kind: string, calendarOf: (i: T) => string | undefined) =>
+      (i: T) => {
+        if (!waits(calendarOf(i))) return true;
+        left.add(`${kind}:${i.id}`);
+        return false;
+      };
+    const settings = (kind: string) => (i: { id: string }) =>
+      chosenCalendar(eventSettings.get(`${kind}:${i.id}`));
+    snapshot.tasks = snapshot.tasks.filter(
+      keep("task", (t: { id: string; hours: string }) => chosen(taskCalendar.get(t.hours))),
+    );
+    snapshot.habits = snapshot.habits.filter(keep("habit", settings("habit")));
+    snapshot.meetings = snapshot.meetings.filter(keep("meeting", settings("meeting")));
+    snapshot.buffers = snapshot.buffers.filter(keep("buffer", settings("buffer")));
+    snapshot.focus = snapshot.focus.filter(keep("focus", settings("focus")));
+    for (const r of rows) {
+      if (r.end_ms <= now || !left.has(`${r.kind}:${r.source_id}`)) continue;
+      kept.add(r.key);
+      if (r.busy !== 1) continue;
+      snapshot.events.push({
+        id: `kept:${r.key}`,
+        start: r.start_ms,
+        end: r.end_ms,
+        allDay: false,
+        busy: true,
+        title: r.title,
+        description: "",
+        selfResponse: null,
+        organizerSelf: true,
+        attendeeCount: 0,
+        location: "",
+        eventType: "default",
+        bookedViaLink: false,
+        calendarId: r.calendar_id,
+      });
+    }
   }
   const result = plan(snapshot);
 
@@ -809,6 +842,19 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
   // SCH-119: what the push wrote is logged per item, also when a later write fails.
   const written = new Map<string, { start: number; end: number } | null>();
   const reportJson = JSON.stringify(result.report);
+  // After a failed push only the writes are logged: the report is saved only
+  // after a whole run, so its shortfalls are logged once, by the next whole run.
+  const logChanges = (shortfalls: boolean) =>
+    recordItemChanges(db, userId, {
+      before: rows,
+      written,
+      prevReport: lastRun?.report ?? null,
+      reportJson,
+      shortfalls,
+      snapshot,
+      result,
+      now,
+    });
   let push: Awaited<ReturnType<typeof pushSchedule>>;
   try {
     push = await pushSchedule(
@@ -819,6 +865,7 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
         fullCheck: ctx.fullMirror ?? false,
         ...(ctx.repair ? { repair: ctx.repair } : {}),
         ...(ctx.repaired ? { repaired: ctx.repaired } : {}),
+        keep: kept,
         written,
         target: (calendarId) => {
           const c = calendars.get(calendarId);
@@ -828,17 +875,15 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
       },
       desired,
     );
-  } finally {
-    recordItemChanges(db, userId, {
-      before: rows,
-      written,
-      prevReport: lastRun?.report ?? null,
-      reportJson,
-      snapshot,
-      result,
-      now,
-    });
+  } catch (err) {
+    try {
+      logChanges(false);
+    } catch {
+      // The push's own error is the one to report.
+    }
+    throw err;
   }
+  logChanges(true);
   recordMeetingChanges(db, userId, rows, now, last);
   // Rule 8: a new color also repaints managed events that ended, up to 90 days back.
   // Rule 12, "repaint all": every managed event gets its color again, also where

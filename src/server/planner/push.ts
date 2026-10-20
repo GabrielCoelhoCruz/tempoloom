@@ -120,6 +120,8 @@ export interface PushContext {
   repair?: ReadonlySet<string>;
   /** Filled with the repair keys that were compared in full and are now as the plan gives them. */
   repaired?: Set<string>;
+  /** Keys of events that stay as they are: the events of waiting items (accounts rule 16). */
+  keep?: ReadonlySet<string>;
   /** Filled with what the push wrote per key: the new times, or null for a delete (SCH-119 log). */
   written?: Map<string, { start: number; end: number } | null>;
 }
@@ -289,7 +291,12 @@ export async function pushSchedule(
     "SELECT * FROM managed_events WHERE user_id = ? AND end_ms > ?",
     userId,
     now,
-  ).filter((r) => !frozen.has(r.calendar_id) && !(r.kind === "mirror" && paused.has(r.source_id)));
+  ).filter(
+    (r) =>
+      !frozen.has(r.calendar_id) &&
+      !ctx.keep?.has(r.key) &&
+      !(r.kind === "mirror" && paused.has(r.source_id)),
+  );
   const byKey = new Map(rows.map((r) => [r.key, r]));
   const wanted = new Set(allDesired.map((d) => d.key));
   const desired = allDesired.filter((d) => !frozen.has(d.calendarId));

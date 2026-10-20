@@ -1221,23 +1221,22 @@ T.update({
     "u52_items": "habits, focus time, flexible meetings and task calendars that write to a disconnected account show an error and get no new events until reconnect (accounts rule 16)",
     "u52_links": "a booking link whose calendar is on a disconnected account shows an error and refuses bookings until reconnect (accounts rule 16)",
     "u52_log": "each item keeps a change log of its placements, moves and removals, each with the time and a reason code (SCH-114, SCH-116, SCH-119)",
+    "u52_log3": "a move the report does not explain names its cause: a higher-priority item, a settings change, or a plan that changed around it (SCH-119)",
     "u52_log2": "the change log names a skipped period, a kept conflict and a status change, and shows on the flexible meeting view (SCH-114, SCH-116, SCH-119)",
     "u52_repair": "repair on the lookup page runs the copy decision again for one event and writes it: a copy repainted by hand gets the policy color back, from the copy and from its source event (SPEC-SUPPORT-01 rule 10)",
 })
 E2E.update({
     517: ["u8_reconnect", "u52_items", "u52_links"],
-    92: ["u52_log", "u52_log2", "u7_notime"],
+    92: ["u52_log", "u52_log2", "u52_log3", "u7_notime"],
     540: ["u52_repair"],
 })
 E2E_NOTES.update({
     517: ("A Google account reconnects through Google sign-in with the account's email as the hint and refuses another identity "
-          "(unit tests). Waiting items do not move to the main calendar, and their events stay as they are (E2E). Waiting items "
-          "take no planner time from other items, items on a disconnected main calendar wait, and a team booking checks the "
-          "calendar of the member who hosts it; a reschedule or cancel on a disconnected calendar gets the same refusal (unit tests)"),
+          "(unit tests). Waiting items do not move to the main calendar, and their events stay as they are"),
     92: ("The log shows under each task and automation and on the flexible meeting view, for 30 days: placed, moved, removed, "
-         "skipped, kept as conflict and status change (E2E). A move the report does not explain gets no-space-fixed (E2E), "
-         "no-space-priority, rules-changed or rearranged (unit tests; Tempoloom decision, SCH-119). The log of calendar writes "
-         "is in the event lookup (src/server/change-log.ts)"),
+         "skipped, kept as conflict and status change; a move the report does not explain gets no-space-fixed, "
+         "no-space-priority, rules-changed or rearranged (Tempoloom decision, SCH-119). The log of calendar writes is in the "
+         "event lookup (src/server/change-log.ts)"),
     540: ("Repair is offered for a copy and for a source event of a mirroring policy, only where Tempoloom can write the copy "
           "(E2E: no button on a skipped source); the change log names the write “copy restored”; a failed run shows as failed (unit test)"),
 })

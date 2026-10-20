@@ -11,6 +11,7 @@
 //                                                        -> "skipped", "conflict" and "status" entries
 // - the flexible meeting view has no log                 -> the meeting's entries
 import type { Page } from "@playwright/test";
+import type { ProviderEvent } from "../../src/server/providers/types.ts";
 import { addDays } from "../../src/shared/time.ts";
 import { automation, openAutomations } from "./automation-list-helpers.ts";
 import { at, blockUntil, type CalendarDriver, eventually, expect, test } from "./fixtures.ts";
@@ -228,4 +229,88 @@ test("the change log names a skipped period, a kept conflict and a status change
   await expect((await shown("habit", "Read", "skipped")).filter({ hasText: wed })).toHaveCount(1);
   await expect((await shown("habit", "Walk", "conflict")).filter({ hasText: tue })).toHaveCount(1);
   await expect(await shown("task", "Draft", "status")).not.toHaveCount(0);
+});
+
+test("a move the report does not explain names its cause: a higher-priority item, a settings change, or a plan that changed around it (SCH-119)", async ({
+  page,
+  cal,
+  signIn,
+}) => {
+  const wed = addDays(W, 2);
+  const thu = addDays(W, 3);
+  await blockUntil(cal, W);
+  await signIn();
+  const habit = { min: 30, max: 30, noRoom: "Remove that day" } as const;
+  await addHabit(page, { ...habit, title: "Stretch", ideal: "10:00", days: ["Tue"] });
+  await addHabit(page, { ...habit, title: "Walk", ideal: "16:00", days: ["Wed"], level: 4 });
+  await addHabit(page, { ...habit, title: "Read", ideal: "10:00", days: ["Thu"] });
+  // Habit periods can lend a day to the next; each check looks at one start time.
+  const starts = (l: ProviderEvent[], name: string) => titled(l, name).map((e) => e.start);
+  await eventually(
+    () => week(cal),
+    (l) => {
+      expect(starts(l, "Stretch")).toContain(at(tue, "10:00"));
+      expect(starts(l, "Walk")).toContain(at(wed, "16:00"));
+      expect(starts(l, "Read")).toContain(at(thu, "10:00"));
+    },
+  );
+
+  // rules-changed: the habit's ideal time changes.
+  await page.getByRole("link", { name: "Habits" }).click();
+  await page.locator('[data-habit-title="Stretch"]').getByRole("button", { name: "Edit" }).click();
+  const editor = page.getByTestId("habit-editor");
+  await editor.getByLabel("Ideal time").fill("14:00");
+  await editor.getByRole("button", { name: "Save habit" }).click();
+  await eventually(
+    () => week(cal),
+    (l) => expect(starts(l, "Stretch")).toContain(at(tue, "14:00")),
+  );
+  const rules = await entry(page, "habit", "Stretch", "moved", `Tue ${tue} 10:00–10:30 →`);
+  await expect(rules).toHaveAttribute("data-reason", "rules-changed");
+  await expect(rules).toContainText("its settings changed");
+
+  // no-space-priority: a P1 habit wants Walk's time.
+  await addHabit(page, {
+    ...habit,
+    title: "Run",
+    ideal: "16:00",
+    days: ["Wed"],
+    level: 1,
+    defense: "Always busy",
+  });
+  await eventually(
+    () => week(cal),
+    (l) => {
+      expect(starts(l, "Run")).toContain(at(wed, "16:00"));
+      expect(starts(l, "Walk")).not.toContain(at(wed, "16:00"));
+    },
+  );
+  const priority = await entry(page, "habit", "Walk", "moved", `Wed ${wed} 16:00–16:30 →`);
+  await expect(priority).toHaveAttribute("data-reason", "no-space-priority");
+  await expect(priority).toContainText("higher-priority items take that time");
+
+  // rearranged: an all-day busy event takes Thursday. That is time away, not a
+  // timed event or another item over the old time, and the report has no
+  // entry when Read finds another day of its period.
+  await cal.addAllDay(thu, "Holiday", true);
+  await eventually(
+    () => week(cal),
+    (l) => expect(starts(l, "Read")).not.toContain(at(thu, "10:00")),
+  );
+  const moved = await entry(page, "habit", "Read", "moved", `Thu ${thu} 10:00–10:30 →`);
+  await expect(moved).toHaveAttribute("data-reason", "rearranged");
+  await expect(moved).toContainText("the plan changed around it");
+
+  await page.reload();
+  for (const [name, reason, day] of [
+    ["Stretch", "rules-changed", `Tue ${tue} 10:00`],
+    ["Walk", "no-space-priority", `Wed ${wed} 16:00`],
+    ["Read", "rearranged", `Thu ${thu} 10:00`],
+  ] as const)
+    await expect(
+      (await openLog(page, "habit", name))
+        .getByTestId("item-change")
+        .and(page.locator(`[data-action="moved"][data-reason="${reason}"]`))
+        .filter({ hasText: day }),
+    ).toHaveCount(1);
 });

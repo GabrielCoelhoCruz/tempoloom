@@ -802,10 +802,10 @@ function Manage({ token }: { token: string }) {
   };
   const booked = booking.status === "booked";
   // Accounts rule 16: the host's calendar is on a disconnected account.
-  const notNow = (err: unknown) => {
+  const notNow = (text: string) => (err: unknown) => {
     if (!(err instanceof ApiError && err.status === 503)) throw err;
     setMode("view");
-    setMessage(NOT_NOW);
+    setMessage(text);
   };
   return (
     <div data-testid="manage-page">
@@ -842,7 +842,9 @@ function Manage({ token }: { token: string }) {
                   setMessage("Your booking is cancelled.");
                   load();
                 })
-                .catch(notNow)
+                .catch(
+                  notNow("This booking cannot be cancelled right now. Please try again later."),
+                )
             }
           >
             Cancel booking
@@ -866,7 +868,7 @@ function Manage({ token }: { token: string }) {
                 setMessage("Your booking has a new time.");
                 load();
               })
-              .catch(notNow)
+              .catch(notNow("This booking cannot be moved right now. Please try again later."))
           }
         />
       )}
