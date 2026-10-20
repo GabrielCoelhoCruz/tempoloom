@@ -84,6 +84,7 @@ test("the New task form keeps open for the next task with Create another, and cl
   await expect(page.getByRole("dialog", { name: "New task" })).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog", { name: "New task" })).toBeHidden();
+  await page.getByRole("link", { name: "Tasks" }).click();
 
   await eventually(
     () => allEvents(cal),
