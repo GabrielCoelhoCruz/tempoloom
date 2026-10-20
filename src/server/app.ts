@@ -72,6 +72,7 @@ import { jsonBody } from "./http.ts";
 import { createLiveHub } from "./live.ts";
 import type { Mailer } from "./mail.ts";
 import { mcpRoutes } from "./mcp.ts";
+import { oauthConsentRoutes, oauthRoutes } from "./oauth.ts";
 import { wakeOrganizers } from "./planner/meetings.ts";
 import { createPreview } from "./preview.ts";
 import { CalDavProvider } from "./providers/caldav.ts";
@@ -343,6 +344,8 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
     ),
   );
 
+  // OAuth for MCP clients: metadata, registration and tokens; no session.
+  app.route("/", oauthRoutes(db, config.BASE_URL, now));
   app.route("/pub", publicInviteRoutes(db));
   app.route("/", embedRoutes());
   app.route("/pub", publicBrandingRoutes(db));
@@ -479,6 +482,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
     ),
   );
   app.route("/api", helpRoutes(db, config.SUPPORT_URL, now));
+  app.route("/api", oauthConsentRoutes(db, config.BASE_URL, now));
   app.route("/api", insightRoutes(db, now));
   app.route(
     "/mcp",

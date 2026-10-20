@@ -1203,4 +1203,38 @@ export const MIGRATIONS: readonly string[] = [
   ALTER TABLE events ADD COLUMN own_visibility TEXT
     CHECK (own_visibility IN ('default', 'public', 'private', 'confidential'));
   `,
+  // 35: OAuth 2.1 for MCP clients (integrations-ai-tools.md): clients that
+  // registered themselves, one-time authorization codes, the user's grants
+  // (one per client) and the tokens of each grant. Revoking a grant deletes it.
+  `
+  CREATE TABLE oauth_clients (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    redirect_uris TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  ) STRICT;
+  CREATE TABLE oauth_grants (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    client_id TEXT NOT NULL REFERENCES oauth_clients(id) ON DELETE CASCADE,
+    scope TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    last_used_at INTEGER,
+    UNIQUE (user_id, client_id)
+  ) STRICT;
+  CREATE TABLE oauth_codes (
+    code_hash TEXT PRIMARY KEY,
+    grant_id TEXT NOT NULL REFERENCES oauth_grants(id) ON DELETE CASCADE,
+    redirect_uri TEXT NOT NULL,
+    code_challenge TEXT NOT NULL,
+    expires_at INTEGER NOT NULL
+  ) STRICT;
+  CREATE TABLE oauth_tokens (
+    token_hash TEXT PRIMARY KEY,
+    grant_id TEXT NOT NULL REFERENCES oauth_grants(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL CHECK (kind IN ('access', 'refresh')),
+    expires_at INTEGER NOT NULL
+  ) STRICT;
+  CREATE INDEX oauth_tokens_grant ON oauth_tokens(grant_id);
+  `,
 ];

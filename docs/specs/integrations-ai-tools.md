@@ -30,6 +30,18 @@ authorization spec requires. The consent page names the client and has an
 user. (Protocol details: Proposed; the evidence shows an OAuth flow with an
 "Allow access" step.)
 
+Tempoloom decision: the server publishes OAuth protected resource metadata
+(RFC 9728) at `/.well-known/oauth-protected-resource/mcp` and authorization
+server metadata (RFC 8414) at `/.well-known/oauth-authorization-server`; a 401
+from `/mcp` names the resource metadata. Clients register themselves
+(RFC 7591, `/oauth/register`, public clients only); a redirect URI is https,
+http on a loopback host, or an app's own scheme. The consent page is
+`/oauth/authorize` in the web app; it needs the S256 PKCE method and has the
+one scope `mcp`. Codes last 10 minutes and work once; access tokens last 1
+hour; refresh tokens last 30 days and rotate at each use. One grant per
+client and user; Revoke deletes it with all its tokens. A personal API key
+still works as a bearer token.
+
 Client grant record: client name, user, scopes, created_at, last_used_at.
 
 Requirements on the user side: a Tempoloom account with a connected Google
