@@ -19,7 +19,7 @@
 // - Start with no chunk does nothing, or runs into a busy event           -> 10:00 to 10:30, locked
 // - Start on a running chunk moves it (auto mode)                        -> still 10:00
 // - Stop right after the start leaves a stub                              -> no event
-import type { Page } from "@playwright/test";
+import type { Locator, Page } from "@playwright/test";
 import { addDays, localToUtc } from "../../src/shared/time.ts";
 import { openSettings } from "./calendar-helpers.ts";
 import type { AppServer, CalendarDriver } from "./fixtures.ts";
@@ -52,13 +52,16 @@ const serverNow = (page: Page) =>
   );
 
 /**
- * Sets the server clock to `t` right before a Start click and returns the
+ * Sets the server clock to `t` right before a click on Start and returns the
  * starts that Start may give: `t` and the time after the click, rounded down
- * to 5 minutes. The two are the same unless the click took minutes.
+ * to 5 minutes. The two are the same unless the click took minutes. The
+ * button must show first: the restart must not cut the load of the page part
+ * that holds it.
  */
-async function startAt(page: Page, app: AppServer, t: number, click: () => Promise<void>) {
+async function startAt(page: Page, app: AppServer, t: number, button: Locator) {
+  await expect(button).toBeVisible();
   await clockAt(app, t);
-  await click();
+  await button.click();
   return [floor5(t), floor5(await serverNow(page))];
 }
 
@@ -94,8 +97,11 @@ test("Start moves the first chunk to now and Stop ends it now; the rest is place
 
   // Start at 09:03: the chunk begins at 09:00 and keeps its 60 minutes.
   let row = await taskRow(page, "AT-P1");
-  const starts = await startAt(page, app, at(D, "09:03"), () =>
-    row.getByRole("button", { name: "Start now" }).click(),
+  const starts = await startAt(
+    page,
+    app,
+    at(D, "09:03"),
+    row.getByRole("button", { name: "Start now" }),
   );
   const [started] = titled(
     await eventually(
@@ -248,8 +254,11 @@ test("manual start mode moves an unstarted chunk or habit event later that day, 
 
   // 7 minutes into the moved chunk the user presses Start: it starts 5 minutes in (rounded down).
   row = await taskRow(page, "AT-P5");
-  const starts = await startAt(page, app, (moved?.start ?? 0) + 7 * MIN, () =>
-    row.getByRole("button", { name: "Start now" }).click(),
+  const starts = await startAt(
+    page,
+    app,
+    (moved?.start ?? 0) + 7 * MIN,
+    row.getByRole("button", { name: "Start now" }),
   );
   expect(starts[0]).toBe((moved?.start ?? 0) + 5 * MIN);
   const start =
@@ -288,8 +297,11 @@ test("manual start mode moves an unstarted chunk or habit event later that day, 
   // Start on the running habit event moves its start to now, rounded down.
   await openWeek(page, W);
   await openEvent(page, "AT-H5");
-  const habitStarts = await startAt(page, app, (habit?.start ?? 0) + 7 * MIN, () =>
-    page.getByTestId("event-drawer").getByRole("button", { name: "Start now" }).click(),
+  const habitStarts = await startAt(
+    page,
+    app,
+    (habit?.start ?? 0) + 7 * MIN,
+    page.getByTestId("event-drawer").getByRole("button", { name: "Start now" }),
   );
   const habitStart =
     titled(
@@ -417,8 +429,11 @@ test("Start with no chunk makes one from now up to the next busy event, Start on
   expect(times(await dayEvents(cal), "AT-Edge")).toEqual([]);
 
   let row = await taskRow(page, "AT-Edge");
-  const starts = await startAt(page, app, at(D, "10:02"), () =>
-    row.getByRole("button", { name: "Start now" }).click(),
+  const starts = await startAt(
+    page,
+    app,
+    at(D, "10:02"),
+    row.getByRole("button", { name: "Start now" }),
   );
   const [chunk] = titled(
     await eventually(
@@ -749,8 +764,11 @@ test("Start now and End now in the planner move a task chunk to now and end it n
 
   await openWeek(page, W);
   await openEvent(page, "AT-Planner");
-  const starts = await startAt(page, app, at(D, "09:03"), () =>
-    page.getByTestId("event-drawer").getByRole("button", { name: "Start now" }).click(),
+  const starts = await startAt(
+    page,
+    app,
+    at(D, "09:03"),
+    page.getByTestId("event-drawer").getByRole("button", { name: "Start now" }),
   );
   expect(starts[0]).toBe(at(D, "09:00"));
   const [started] = titled(
