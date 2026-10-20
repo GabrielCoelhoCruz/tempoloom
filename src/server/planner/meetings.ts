@@ -221,6 +221,7 @@ export function meetingItem(
       (MOVE_LIMITS[m.auto_reschedule] ?? MOVE_LIMITS.moderate) - recentMoves(db, m.id, now),
     startMinutes: getPrefs(db, userId).startMinutes,
     ...lastStart(db, userId, m.id, now),
+    ...manualKeys(db, m.id, now),
     ...(boost ? { boost: { period: boost.period, level: boost.level } } : {}),
     // An adopted series: only periods that have an instance of it.
     ...(m.series_event_id
@@ -234,6 +235,19 @@ export function meetingItem(
         }
       : {}),
   };
+}
+
+/** MEET-02 rule 19: future occurrences whose last logged change is a move by hand. */
+function manualKeys(db: Db, meetingId: string, now: number) {
+  const keys = all<{ key: string }>(
+    db,
+    `SELECT occurrence_key AS key FROM meeting_changes c WHERE meeting_id = ? AND reason = 'manualMove'
+       AND new_start > ? AND id = (SELECT max(id) FROM meeting_changes
+         WHERE meeting_id = c.meeting_id AND occurrence_key = c.occurrence_key)`,
+    meetingId,
+    now,
+  ).map((r) => r.key);
+  return keys.length > 0 ? { manualKeys: keys } : {};
 }
 
 /** Rule 18: the start of the meeting's last occurrence before now. */

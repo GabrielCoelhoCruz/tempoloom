@@ -942,13 +942,23 @@ function halfPeriod(f: MeetingFrequency, start: LocalDate): number {
   return (dayDiff(end, start) * DAY) / 2;
 }
 
-/** True when `date` is an ideal day of its period (the period start for a daily meeting). */
-function onIdealDay(ctx: Ctx, m: MeetingItem, date: LocalDate): boolean {
+/**
+ * True when `date` is an ideal day of its period: the period start for a daily
+ * meeting; for a monthly one, the ideal day of the period's first month.
+ */
+export function onIdealDay(
+  zone: string,
+  weekStart: 1 | 7,
+  m: MeetingItem,
+  date: LocalDate,
+): boolean {
   const f = m.frequency;
   if (f.period === "weekly") return f.idealDays.includes(weekdayOf(date));
-  if (f.period === "daily")
-    return meetingPeriodStart(f, date, ctx.s.weekStart, meetingAnchor(ctx.s.zone, m)) === date;
-  const month = `${date.slice(0, 8)}01`;
+  const anchor = meetingAnchor(zone, m);
+  if (f.period === "daily") return meetingPeriodStart(f, date, weekStart, anchor) === date;
+  let month = `${date.slice(0, 8)}01`;
+  for (let i = 1; i < (f.everyMonths ?? 1) && !meetingPeriodStart(f, month, weekStart, anchor); i++)
+    month = `${addDays(month, -1).slice(0, 8)}01`;
   return (
     monthlyDate(
       month,
@@ -970,7 +980,10 @@ function previousStart(ctx: Ctx, m: MeetingItem, key: string, periodStart: numbe
   for (const p of ctx.placements)
     if (p.kind === "meeting" && p.itemId === m.id && p.key !== key && p.start < periodStart)
       prev = Math.max(prev ?? p.start, p.start);
-  return prev === null || onIdealDay(ctx, m, utcToLocal(ctx.s.zone, prev).date) ? null : prev;
+  return prev === null ||
+    onIdealDay(ctx.s.zone, ctx.s.weekStart, m, utcToLocal(ctx.s.zone, prev).date)
+    ? null
+    : prev;
 }
 
 /** `boosted`: place only the boosted period (MEET-02 rule 16); else every other period. */
@@ -980,6 +993,7 @@ function placeMeeting(ctx: Ctx, m: MeetingItem, boosted = false): void {
   const attendeeWindow = m.attendeeWindow ? TimeSet.from(m.attendeeWindow) : null;
   const required = m.durationMinutes;
   const periods = m.periods ? new Set(m.periods) : null;
+  const manual = new Set(m.manualKeys ?? []);
   // One budget for the boosted pass and the other periods of the run.
   const movesLeft = () => ctx.meetingMoves.get(m.id) ?? m.movesLeft ?? Number.POSITIVE_INFINITY;
   for (const period of meetingPeriods(ctx, m)) {
@@ -1022,7 +1036,9 @@ function placeMeeting(ctx: Ctx, m: MeetingItem, boosted = false): void {
     if (cur && !m.changed) {
       const l = len(cur);
       const okLen = l >= m.shortestMinutes * MINUTE && l <= m.durationMinutes * MINUTE;
-      const spacedOk = notBefore === null || cur.start >= notBefore || !spacedSlot();
+      // An occurrence moved by hand keeps its time (MEET-02 rule 19).
+      const spacedOk =
+        notBefore === null || manual.has(key) || cur.start >= notBefore || !spacedSlot();
       if (okLen && spacedOk && frees.some((f) => f.free.contains(cur)))
         chosen = { start: cur.start, end: cur.end };
     }

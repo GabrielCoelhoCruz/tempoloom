@@ -27,7 +27,7 @@ import type {
   Plan,
   Snapshot,
 } from "../../src/scheduler/model.ts";
-import { plan } from "../../src/scheduler/plan.ts";
+import { onIdealDay, plan } from "../../src/scheduler/plan.ts";
 import { ensureUser, type User } from "../../src/server/accounts.ts";
 import { meetingRoutes } from "../../src/server/api/meetings.ts";
 import type { AppEnv } from "../../src/server/app.ts";
@@ -126,6 +126,39 @@ const occurrence = (period: string, date: string) => ({
 });
 
 describe("cadence after a move (rule 18)", () => {
+  it("keeps an occurrence moved by hand, though it is less than half a period after the previous one", () => {
+    // Last Friday 16:00; Wednesday to Friday are busy. Monday 10:00 is too close, so Tuesday.
+    const s = snapshot({
+      now: at(MON, "07:00"),
+      windowEnd: at(addDays(MON, 7), "00:00"),
+      meetings: [meeting({ previousStart: at("2026-10-30", "16:00") })],
+      events: fullDays(addDays(MON, 2), 3),
+    });
+    expect(spans(of(plan(s), "m"))).toEqual(["2026-11-03T10:00/10:30"]);
+    // "Another day" put it on Monday 10:00; the plan that follows keeps it there.
+    const manual = plan({
+      ...s,
+      current: [occurrence(MON, MON)],
+      meetings: [
+        meeting({ previousStart: at("2026-10-30", "16:00"), manualKeys: [`meeting:m:${MON}`] }),
+      ],
+    });
+    expect(spans(of(manual, "m"))).toEqual(["2026-11-02T10:00/10:30"]);
+    // Without the move by hand, the same occurrence goes to Tuesday.
+    const auto = plan({ ...s, current: [occurrence(MON, MON)] });
+    expect(spans(of(auto, "m"))).toEqual(["2026-11-03T10:00/10:30"]);
+  });
+
+  it("reads an ideal day of a meeting every N months in the first month of its period", () => {
+    const f: MeetingItem["frequency"] = { period: "monthly", everyMonths: 3, dayOfMonth: 25 };
+    const m = meeting({ frequency: f, starting: "2026-11-01" });
+    expect(onIdealDay(ZONE, 1, m, "2026-11-25")).toBe(true);
+    // December and January are in the November period: the 25th there is not its ideal day.
+    expect(onIdealDay(ZONE, 1, m, "2026-12-25")).toBe(false);
+    expect(onIdealDay(ZONE, 1, m, "2027-01-25")).toBe(false);
+    expect(onIdealDay(ZONE, 1, m, "2027-02-25")).toBe(true);
+  });
+
   it("keeps the next occurrence half a period after a late one, and only the next", () => {
     const r = plan(snapshot({ meetings: [meeting()], events: fullDays(MON, 4) }));
     expect(spans(of(r, "m"))).toEqual(["2026-11-06T10:00/10:30", "2026-11-10T10:00/10:30"]);

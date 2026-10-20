@@ -1095,6 +1095,7 @@ T.update({
     "u39_map": "the availability map shows each guest's meeting hours in my time zone and the overlap; hours I set for one guest replace theirs in the map and in placement (rules 6-7, 11)",
     "u39_cadence": "cadence: after an occurrence moves late in its week, the next one keeps at least half a week away instead of its ideal day (rule 18)",
     "u39_resched": "the reschedule action moves an occurrence to another time the same day or to another day of its period, never its current time, and leaves it unlocked (MEET-02 rule 19)",
+    "u39_resched_kept": "after a Friday occurrence, a reschedule to another day that is less than half a week later stays where I put it, also after the next plan (MEET-02 rule 19)",
     "u39_guest": "in a 1:1 the guest reschedules or skips an occurrence from the guest's planner; a guest of a group meeting gets no such action (MEET-02 rules 20, 26)",
     "u39_boost": "a daily meeting lists the days skipped for lack of time; after a missed day the next day uses one level higher and takes the time of a habit at that level, and the boost ends once a day is held (MEET-02 rules 16, 34)",
     "u39_conflict": "a daily meeting kept in conflict counts each day it stayed in conflict as missed: after two such days it uses P1 and takes a P1 habit's time, and the boost ends once a day is held (MEET-02 rule 16)",
@@ -1104,7 +1105,7 @@ E2E.update({
     327: ["u39_map"],
     340: ["u39_cadence"],
     362: ["u39_boost", "u39_conflict"],
-    365: ["u39_resched"],
+    365: ["u39_resched", "u39_resched_kept"],
     370: ["u39_guest"],
     375: ["u39_boost"],
 })
@@ -1113,7 +1114,7 @@ E2E_NOTES.update({
     327: "The hours are one range on chosen weekdays, in the guest's time zone; they apply to a guest who is a user here",
     340: "Tempoloom decision on the Proposed rule: when the previous occurrence is not on an ideal day of its period, starts in the next period less than half a period after it are skipped when another start exists, also for an occurrence placed before",
     362: "A period counts as missed when it ended with no time (removed, or kept in conflict); a period with no hours, or skipped by hand, neither counts nor breaks the run",
-    365: "The result stays unlocked and is logged as a move by hand; the lead time and the move limit do not apply",
+    365: "The result stays unlocked and is logged as a move by hand; the lead time and the move limit do not apply; the cadence does not move it back",
     370: "The guest sees the occurrence in the guest's own planner; Tempoloom writes the change on the organizer's calendar and logs the guest",
     375: "Periods removed for lack of time stay listed after they end, for 90 days or the last three periods when longer; a period that gets a time later leaves the list",
 })

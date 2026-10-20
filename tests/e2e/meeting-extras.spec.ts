@@ -249,6 +249,52 @@ test("the reschedule action moves an occurrence to another time the same day or 
   );
 });
 
+test("after a Friday occurrence, a reschedule to another day that is less than half a week later stays where I put it, also after the next plan (MEET-02 rule 19)", async ({
+  page,
+  cal,
+  signIn,
+}) => {
+  await blockUntil(cal, W);
+  await signIn();
+  // Week W: Monday to Thursday are full, so W's occurrence goes to Friday. Next week:
+  // Wednesday to Friday are full; Monday 10:00 is too close to Friday (rule 18), so Tuesday.
+  for (const d of [0, 1, 2, 3, 9, 10, 11])
+    await cal.addEvent({ title: "Offsite", start: at(day(d), "08:00"), end: at(day(d), "18:00") });
+  await addMeeting(page, {
+    title: "After Friday",
+    guests: "dana@example.com",
+    days: ["Mon"],
+    idealTime: "10:00",
+  });
+  await eventually(
+    () => twoWeeks(cal),
+    (l) =>
+      expect(starts(l, "After Friday")).toEqual([`${day(4)} 10:00-10:30`, `${day(8)} 10:00-10:30`]),
+  );
+
+  // Another day: Tuesday is out, Monday is the only other day with room.
+  await openWeek(page, day(7));
+  await openEvent(page, "After Friday");
+  await page
+    .getByTestId("event-drawer")
+    .getByRole("button", { name: "Reschedule: another day" })
+    .click();
+  const expected = [`${day(4)} 10:00-10:30`, `${day(7)} 10:00-10:30`];
+  await eventually(
+    () => twoWeeks(cal),
+    (l) => expect(starts(l, "After Friday")).toEqual(expected),
+  );
+  // The plans after the move keep it: the cadence does not undo a move by hand.
+  await planNow(page);
+  await planNow(page);
+  await page.reload();
+  await page.getByRole("link", { name: "Meetings" }).click();
+  const r = row(page, "After Friday");
+  await expect(r.locator('[data-testid="change"][data-reason="manualMove"]')).toHaveCount(1);
+  await expect(r.locator('[data-testid="change"][data-reason="conflict"]')).toHaveCount(0);
+  expect(starts(await twoWeeks(cal), "After Friday")).toEqual(expected);
+});
+
 test("in a 1:1 the guest reschedules or skips an occurrence from the guest's planner; a guest of a group meeting gets no such action (MEET-02 rules 20, 26)", async ({
   page,
   cal,
