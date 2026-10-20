@@ -67,6 +67,12 @@ export function ProfilePage() {
             <span>Week starts on</span>
             <strong>{m.settings.weekStart === 7 ? "Sunday" : "Monday"}</strong>
           </div>
+          {m.settings.googleWeekStart !== null && (
+            <div class="row">
+              <span>Week start in your Google calendar</span>
+              <strong>{m.settings.googleWeekStart === 7 ? "Sunday" : "Monday"}</strong>
+            </div>
+          )}
           <div class="row">
             <span>Time format</span>
             <strong>{m.settings.timeFormat === "12h" ? "12-hour" : "24-hour"}</strong>

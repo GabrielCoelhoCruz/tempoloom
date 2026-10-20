@@ -1271,12 +1271,13 @@ PARTIAL[90] = ("E2E on CalDAV covers: an external event before demands, levels a
                "creation time)")
 GOOGLE_CONSENT = "Needs a Google E2E run with the owner's OAuth consent (a Google account that signs in through Tempoloom's OAuth client, row 510)"
 PARTIAL[145] = ("Not built: PRF-6, the planner, hours page and date displays do not use the time format, date format and week start "
-                "(only the profile page shows them). Built, with unit tests against a fake Google API (tests/unit/google-profile.test.ts, "
-                "tests/unit/week-start-switch.test.ts): the name and picture of the main Google account are kept at each sign-in and "
+                "(only the profile page shows them), and applying the Google week start to planning (the planning week start stays the "
+                "one set in Tempoloom; edge case 3). Built, with unit tests against a fake Google API (tests/unit/google-profile.test.ts): "
+                "the name and picture of the main Google account are kept at each sign-in and "
                 "each token refresh (at least daily; a refresh without the claims keeps them; only https pictures), a picture hidden at "
                 "sign-in shows none, and the picture shows on the profile page and booking pages; week start, time format and date "
-                "format are read from the Google Calendar settings (scope calendar.settings.readonly) at each calendar list sync, a new "
-                "week start from the next week on (edge case 3); each sync takes the time zone from the primary Google calendar. E2E on "
+                "format are read from the Google Calendar settings (scope calendar.settings.readonly) at each calendar list sync, and the "
+                "profile page shows them (the Google week start as information only); each sync takes the time zone from the primary Google calendar. E2E on "
                 "CalDAV: initials without a picture (\u201c" + T["u56_initials"] + "\u201d) and the editable profile fields (row 146). "
                 "The Google reads also wait for a Google E2E run" + GOOGLE_CONSENT[len("Needs a Google E2E run"):])
 BLOCKED[322] = (GOOGLE_CONSENT + " and a second Google account that is not a Tempoloom user, as a guest. Built, with unit tests against a "

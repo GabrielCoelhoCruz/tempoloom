@@ -1,6 +1,6 @@
 // Copies calendars and events from a provider into the local event cache.
 import { randomUUID } from "node:crypto";
-import { addDays, DAY, utcToLocal, weekdayOf } from "../../shared/time.ts";
+import { DAY } from "../../shared/time.ts";
 import { all, type Db, one, run, tx } from "../db.ts";
 import { GOOGLE_SETTINGS_SCOPE } from "../google/oauth.ts";
 import {
@@ -9,7 +9,7 @@ import {
   ProviderError,
   type ProviderEvent,
 } from "../providers/types.ts";
-import { getSettings, updateSettings } from "../settings.ts";
+import { updateSettings } from "../settings.ts";
 
 /** Events from 12 weeks ago (the stats range) to 120 days ahead are cached. */
 const WINDOW_PAST = 84 * DAY;
@@ -44,16 +44,15 @@ const settingsFailureLogged = new Set<string>();
 /**
  * Week start, time format and date format follow the user's main Google
  * account (settings-profile.md PRF-2, PRF-3): read with each calendar list
- * sync. A grant without the settings scope keeps the current values. A new
- * week start waits for the start of the next week (edge case 3), so the weekly
- * items placed in this week keep their planner keys (applyPendingWeekStart).
+ * sync. A grant without the settings scope keeps the current values. The
+ * Google week start is kept as googleWeekStart for the profile page only: the
+ * planning week start does not change, so no weekly planner key changes.
  */
 async function readProfileSettings(
   db: Db,
   provider: CalendarProvider,
   accountId: string,
   userId: string,
-  now: number,
 ): Promise<void> {
   if (!provider.profileSettings) return;
   // Only a user's own Google login: a service account reads its own settings.
@@ -66,18 +65,7 @@ async function readProfileSettings(
   try {
     const { weekStart, ...formats } = await provider.profileSettings();
     settingsFailureLogged.delete(accountId);
-    const current = getSettings(db, userId);
-    const patch: Record<string, unknown> = { ...formats };
-    if (weekStart === undefined || weekStart === current.weekStart) patch.weekStartNext = null;
-    else if (current.weekStartNext?.weekStart !== weekStart) {
-      const zone =
-        one<{ time_zone: string }>(db, "SELECT time_zone FROM users WHERE id = ?", userId)
-          ?.time_zone ?? "UTC";
-      let from = addDays(utcToLocal(zone, now).date, 1);
-      while (weekdayOf(from) !== current.weekStart) from = addDays(from, 1);
-      patch.weekStartNext = { weekStart, from };
-    }
-    updateSettings(db, userId, patch);
+    updateSettings(db, userId, { ...formats, googleWeekStart: weekStart ?? null });
   } catch (err) {
     if (settingsFailureLogged.has(accountId)) return;
     settingsFailureLogged.add(accountId);
@@ -90,10 +78,9 @@ export async function syncCalendarList(
   provider: CalendarProvider,
   accountId: string,
   userId: string,
-  now = Date.now(),
 ): Promise<void> {
   const listed = await provider.listCalendars();
-  await readProfileSettings(db, provider, accountId, userId, now);
+  await readProfileSettings(db, provider, accountId, userId);
   // Keep the account's main calendar stable: a backend without a primary flag
   // (CalDAV) must not move the main calendar when calendars are added.
   const current = one<{ provider_id: string }>(

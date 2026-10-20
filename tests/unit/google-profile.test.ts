@@ -16,15 +16,23 @@
 // 6. A token refresh whose ID token lacks a claim fails the API call, or wipes
 //    the name or picture.
 // 7. A picture URL that is not https reaches the pages.
+// 8. A Google week start that differs from the planning week start changes the
+//    planning week, so weekly meeting keys change and the push deletes and
+//    recreates their events (applying it to planning is not built).
 import { randomBytes } from "node:crypto";
+import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { plan } from "../../src/scheduler/plan.ts";
 import { googleAccessToken, upsertGoogleLogin } from "../../src/server/accounts.ts";
 import { publicBookingRoutes } from "../../src/server/api/booking.ts";
+import { meetingRoutes } from "../../src/server/api/meetings.ts";
+import type { AppEnv } from "../../src/server/app.ts";
 import { SecretBox } from "../../src/server/crypto.ts";
 import { all, type Db, one, openDb, run } from "../../src/server/db.ts";
 import { GoogleCalendarApi } from "../../src/server/google/calendar.ts";
 import { GOOGLE_SCOPES, type GoogleIdentity } from "../../src/server/google/oauth.ts";
 import type { Mailer } from "../../src/server/mail.ts";
+import { loadSnapshot } from "../../src/server/planner/replan.ts";
 import { GoogleProvider } from "../../src/server/providers/google.ts";
 import { getSettings } from "../../src/server/settings.ts";
 import { syncCalendarList } from "../../src/server/sync/pull.ts";
@@ -225,11 +233,11 @@ describe("Calendar settings from Google", () => {
       timeFormat: "24h",
       dateFormat: "YMD",
     });
-    await syncCalendarList(db, provider(db, box, accountId), accountId, user.id, T0);
-    // The new week start waits for the next week (edge case 3; tests/unit/week-start-switch.test.ts).
+    await syncCalendarList(db, provider(db, box, accountId), accountId, user.id);
+    // The Google week start is shown only; planning keeps its own (see the test below).
     expect(getSettings(db, user.id)).toMatchObject({
       weekStart: 1,
-      weekStartNext: { weekStart: 7, from: "2026-10-26" },
+      googleWeekStart: 7,
       timeFormat: "12h",
       dateFormat: "MDY",
     });
@@ -241,10 +249,10 @@ describe("Calendar settings from Google", () => {
           { id: "dateFieldOrder", value: "DMY" },
         ],
       });
-    await syncCalendarList(db, provider(db, box, accountId), accountId, user.id, T0);
+    await syncCalendarList(db, provider(db, box, accountId), accountId, user.id);
     expect(getSettings(db, user.id)).toMatchObject({
       weekStart: 1,
-      weekStartNext: null,
+      googleWeekStart: 1,
       timeFormat: "24h",
       dateFormat: "DMY",
     });
@@ -259,7 +267,7 @@ describe("Calendar settings from Google", () => {
       { ...tokens, scope: GOOGLE_SCOPES.filter((s) => !s.endsWith("settings.readonly")).join(" ") },
       T0,
     );
-    await syncCalendarList(db, provider(db, box, accountId), accountId, user.id, T0);
+    await syncCalendarList(db, provider(db, box, accountId), accountId, user.id);
     expect(requests.filter((r) => r.endsWith("/users/me/settings"))).toEqual([]);
     expect(getSettings(db, user.id)).toMatchObject({ weekStart: 1, timeFormat: "24h" });
     expect(all(db, "SELECT provider_id FROM calendars")).toEqual([
@@ -284,7 +292,7 @@ describe("Calendar settings from Google", () => {
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
       for (let i = 0; i < 3; i++)
-        await syncCalendarList(db, provider(db, box, accountId), accountId, user.id, T0);
+        await syncCalendarList(db, provider(db, box, accountId), accountId, user.id);
       expect(log.mock.calls.filter((c) => String(c[0]).includes("Calendar settings"))).toHaveLength(
         1,
       );
@@ -309,5 +317,45 @@ describe("Calendar settings from Google", () => {
     await syncCalendarList(db, provider(db, box, added.accountId), added.accountId, user.id);
     expect(requests.filter((r) => r.endsWith("/users/me/settings"))).toEqual([]);
     expect(getSettings(db, user.id).weekStart).toBe(1);
+  });
+
+  it("a different Google week start changes no planning week start and no weekly meeting key", async () => {
+    const { db, box } = setup();
+    const { user, accountId } = upsertGoogleLogin(db, box, identity(), tokens, T0);
+    run(db, "UPDATE users SET time_zone = 'UTC' WHERE id = ?", user.id);
+    const app = new Hono<AppEnv>();
+    app.use("*", async (c, next) => {
+      c.set("user", user);
+      await next();
+    });
+    app.route(
+      "/api",
+      meetingRoutes(db, { request() {} } as unknown as SyncService, () => T0),
+    );
+    const res = await app.request("/api/meetings", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        title: "Weekly sync",
+        attendees: [{ email: "guest@example.com" }],
+        frequency: { period: "weekly", everyWeeks: 2, idealDays: [2] },
+        idealTime: "10:00",
+        durationMinutes: 30,
+      }),
+    });
+    expect(res.status, await res.clone().text()).toBe(201);
+    const keys = () =>
+      plan(loadSnapshot(db, user.id, "UTC", getSettings(db, user.id), T0, 0).snapshot)
+        .placements.filter((p) => p.kind === "meeting")
+        .map((p) => [p.key, p.start]);
+    // The first list sync makes the calendar the plan needs.
+    await syncCalendarList(db, provider(db, box, accountId), accountId, user.id);
+    run(db, "UPDATE users SET settings = '{}' WHERE id = ?", user.id);
+    const before = keys();
+    expect(before.length).toBeGreaterThan(0);
+    // Google says Sunday (the default fake answer); planning keeps Monday.
+    await syncCalendarList(db, provider(db, box, accountId), accountId, user.id);
+    expect(getSettings(db, user.id)).toMatchObject({ weekStart: 1, googleWeekStart: 7 });
+    expect(keys()).toEqual(before);
   });
 });

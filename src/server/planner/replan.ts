@@ -51,7 +51,6 @@ import { attendeeOccurrences, attendeesOf, guestFreeBusy, meetingItems } from ".
 import { LABELS, mirrorCopies } from "./mirror.ts";
 import { type DesiredEvent, type ManagedRow, type PushResult, pushSchedule } from "./push.ts";
 import { type Paint, type PaintJob, repaintRequest } from "./repaint.ts";
-import { applyPendingWeekStart } from "./week-start.ts";
 
 export interface ReplanContext {
   db: Db;
@@ -564,8 +563,6 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
     userId,
   );
   if (!user) return null;
-  const zone = planningZone(db, userId, user.time_zone);
-  applyPendingWeekStart(db, userId, zone, now);
   const settings = getSettings(db, userId);
   if (settings.paused || isAnalyticsOnly(db, userId)) return null;
   const target = writeCalendar(db, userId);
@@ -573,6 +570,7 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
   const last =
     one<{ planned_at: number }>(db, "SELECT planned_at FROM plan_reports WHERE user_id = ?", userId)
       ?.planned_at ?? 0;
+  const zone = planningZone(db, userId, user.time_zone);
   const guestBusy = await guestFreeBusy(
     db,
     ctx.provider,
