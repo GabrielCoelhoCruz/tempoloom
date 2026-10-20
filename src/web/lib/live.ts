@@ -15,6 +15,11 @@ export function startLive(onChange: () => void): void {
     changes.value++;
     onChange();
   });
+  // The stream opens after the page's first load and reopens after a drop; a
+  // change made before it (re)connected sent no signal, so the views read again.
+  source.addEventListener("ready", () => {
+    changes.value++;
+  });
 }
 
 /** Calls `load` again after each change to the account by another page or the planner. */
