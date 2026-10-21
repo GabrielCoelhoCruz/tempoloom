@@ -556,7 +556,7 @@ async function writeSeries(
     "UPDATE meetings SET series_calendar_id = ?, series_event_id = ?, series_rule = ? WHERE id = ?",
     first.calendarId,
     seriesId,
-    JSON.stringify(ruleOf(instances[0]?.series)),
+    JSON.stringify(ruleOf(instances[0]?.series ?? ev.series)),
     m.id,
   );
   return made;

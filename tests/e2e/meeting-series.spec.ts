@@ -196,8 +196,8 @@ test("a calendar resize of all occurrences sets the meeting length for every occ
   signIn,
 }) => {
   await blockUntil(cal, W);
-  // Next week's Tuesday 10:00 is busy: that occurrence moves to 10:30 (an override).
-  await cal.addEvent({ title: "Stand-up", start: at(day(8), "10:00"), end: at(day(8), "10:30") });
+  // Next week's Tuesday 9:00 to 10:30 is busy: that occurrence moves to 10:30 (an override).
+  await cal.addEvent({ title: "Stand-up", start: at(day(8), "09:00"), end: at(day(8), "10:30") });
   await signIn();
   await addMeeting(page, { title: "Team sync", guests: "dana@example.com", days: ["Tue"] });
   const list = await eventually(
