@@ -1,15 +1,15 @@
 // Actions on one event from the planner (planning-planner.md PLN-11): make a
 // habit from a recurring event, reschedule a habit occurrence, and what the
 // details panel needs to offer them (habits-automation.md rules 6, 8, 30).
-import { Hono } from "hono";
+import { type Context, Hono } from "hono";
 import { z } from "zod";
-import { utcToLocal, weekdayOf } from "../../shared/time.ts";
+import { localToUtc, utcToLocal, weekdayOf } from "../../shared/time.ts";
 import type { AppEnv } from "../app.ts";
 import { all, type Db, one, run } from "../db.ts";
 import { jsonBody, notFound } from "../http.ts";
 import type { ManagedRow } from "../planner/push.ts";
 import type { SyncService } from "../sync/service.ts";
-import { hhmm } from "./items.ts";
+import { badRequest, hhmm } from "./items.ts";
 import { assignmentOf } from "./task-searches.ts";
 
 const pad = (n: number) => String(n).padStart(2, "0");
@@ -96,32 +96,76 @@ export function eventActionRoutes(db: Db, sync: SyncService, now: () => number):
     return c.json({ series: info });
   });
 
-  /** Rule 30: the occurrence goes to the legal slot nearest the chosen time on its day. */
-  r.post("/habits/:id/reschedule", async (c) => {
+  const occurrenceTime = async (c: Context<AppEnv>, id: string) => {
     const user = c.get("user");
-    const id = c.req.param("id");
     const body = await jsonBody(c, z.object({ date: z.iso.date(), time: hhmm }));
     if (!one(db, "SELECT 1 FROM habits WHERE id = ? AND user_id = ?", id, user.id))
       notFound("habit");
     const [h, m] = body.time.split(":").map(Number) as [number, number];
+    return { user, date: body.date, minute: h * 60 + m };
+  };
+
+  /**
+   * Stores the chosen time of one occurrence. A locked occurrence follows the
+   * new choice (Tempoloom decision: reschedule and snooze unlock it); `from`:
+   * only an occurrence that starts after it is unlocked.
+   */
+  const saveTime = (
+    userId: string,
+    id: string,
+    o: { date: string; minute: number },
+    notBefore: boolean,
+    from: number,
+  ) => {
     run(
       db,
-      `INSERT INTO habit_reschedules (user_id, habit_id, date, minute) VALUES (?, ?, ?, ?)
-       ON CONFLICT (habit_id, date) DO UPDATE SET minute = excluded.minute`,
-      user.id,
+      `INSERT INTO habit_reschedules (user_id, habit_id, date, minute, not_before) VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT (habit_id, date) DO UPDATE SET minute = excluded.minute, not_before = excluded.not_before`,
+      userId,
       id,
-      body.date,
-      h * 60 + m,
+      o.date,
+      o.minute,
+      notBefore ? 1 : 0,
     );
-    // A locked occurrence follows the new choice (Tempoloom decision: reschedule unlocks it).
     run(
       db,
       "UPDATE managed_events SET locked = 0, user_edited = 0 WHERE user_id = ? AND key = ? AND start_ms > ?",
-      user.id,
-      `habit:${id}:${body.date}`,
-      now(),
+      userId,
+      `habit:${id}:${o.date}`,
+      from,
     );
-    sync.request(user.id, 0);
+    sync.request(userId, 0);
+  };
+
+  /** Rule 30: the occurrence goes to the legal slot nearest the chosen time on its day. */
+  r.post("/habits/:id/reschedule", async (c) => {
+    const id = c.req.param("id");
+    const o = await occurrenceTime(c, id);
+    saveTime(o.user.id, id, o, false, now());
+    return c.json({ ok: true });
+  });
+
+  /**
+   * Rule 31: the occurrence goes to the first legal slot at or after the
+   * chosen time on its day. Tempoloom decision: the time must be after the
+   * occurrence's current start (an earlier time is not a snooze) and not in
+   * the past. A snooze is a user action, so it also moves an occurrence that
+   * has started (see plan.ts snoozedLater).
+   */
+  r.post("/habits/:id/snooze", async (c) => {
+    const id = c.req.param("id");
+    const o = await occurrenceTime(c, id);
+    const at = localToUtc(o.user.time_zone, o.date, o.minute);
+    const event = one<{ start_ms: number }>(
+      db,
+      "SELECT start_ms FROM managed_events WHERE user_id = ? AND key = ?",
+      o.user.id,
+      `habit:${id}:${o.date}`,
+    );
+    if (event && at <= event.start_ms)
+      badRequest("time", "Pick a time after the occurrence's current start");
+    if (at < now()) badRequest("time", "Pick a time that is not in the past");
+    saveTime(o.user.id, id, o, true, Number.NEGATIVE_INFINITY);
     return c.json({ ok: true });
   });
 

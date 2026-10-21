@@ -53,6 +53,11 @@ export const settingsSchema = z.object({
       maxChunkMinutes: z.number().int().min(15).default(120),
       dueInDays: z.number().int().min(0).nullable().default(3),
       startDelayMinutes: z.number().int().min(0).default(0),
+      // planning-tasks.md user task defaults: defaultNextUp, defaultHoursSet
+      // (null: work hours), defaultVisibility.
+      nextUp: z.boolean().default(false),
+      hoursSetId: z.string().nullable().default(null),
+      visibility: z.enum(["calendar_default", "private"]).default("calendar_default"),
     })
     .prefault({}),
   markers: z
@@ -83,11 +88,20 @@ export const settingsSchema = z.object({
   // r3 s3: task placement (planning-tasks.md TSK-70), in-app alerts
   // (planning-notifications.md), first-run hours review (HRS-15), profile fields.
   taskPlacement: z.enum(["chunks", "suggestions"]).default("chunks"),
+  // planning-task-progress.md PRG-1 to PRG-5: count a chunk when its time passes,
+  // or only after Start. manualSince: when manual mode began; older chunks keep counting.
+  startMode: z.enum(["auto", "manual"]).default("auto"),
+  manualSince: z.number().int().nullable().default(null),
   // sync-calendar-mirroring.md account-level setting: copies of events with no reply.
   noReplyCopies: z.enum(["free", "busy"]).default("free"),
   tabAlert: z.boolean().default(true),
   startChime: z.boolean().default(false),
   hoursReviewed: z.boolean().default(false),
+  // planning-planner.md: the days the planner shows (PLN-3) and calendars it hides (PLN-20).
+  plannerDays: z.enum(["all-days", "weekdays", "rolling-9-days"]).default("all-days"),
+  hiddenCalendars: z.array(z.string().max(200)).max(500).default([]),
+  // planning-event-content.md CNT-15: a short tip in managed event descriptions.
+  eventTips: z.boolean().default(true),
   profile: z
     .object({
       jobTitle: z.string().trim().max(100).default(""),
@@ -145,6 +159,10 @@ export function updateSettings(db: Db, userId: string, patch: unknown): Settings
     },
     profile: { ...current.profile, ...((patch as { profile?: object }).profile ?? {}) },
   });
+  // planning-tasks.md edge case 6: a new task's default due date must come after its start.
+  const td = merged.taskDefaults;
+  if (td.dueInDays !== null && td.dueInDays * 24 * 60 <= td.startDelayMinutes)
+    throw new Error("Due in must be longer than the start delay");
   run(db, "UPDATE users SET settings = ? WHERE id = ?", JSON.stringify(merged), userId);
   return merged;
 }

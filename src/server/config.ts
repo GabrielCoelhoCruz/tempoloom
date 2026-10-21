@@ -44,6 +44,20 @@ const schema = z
     MIRROR_RECONCILE_SECONDS: z.coerce.number().int().min(5).default(43_200),
     /** Directory with the built web client. */
     WEB_DIST: z.string().default("./dist/web"),
+    /**
+     * Comma-separated addresses of reverse proxies in front of this server. Only a
+     * request from one of them has its client address read from X-Forwarded-For.
+     */
+    TRUSTED_PROXIES: z
+      .string()
+      .default("")
+      .transform((v) =>
+        v
+          .split(",")
+          .map((x) => x.trim())
+          .filter(Boolean),
+      )
+      .pipe(z.array(z.union([z.ipv4(), z.ipv6()]))),
     /** false: AI tools (MCP clients) may read but not stage changes (plans-feature-inventory.md). */
     MCP_WRITE_ENABLED: z.stringbool().default(true),
     /** Where users ask for help, shown on the help page (support-troubleshooting.md rule 4). */

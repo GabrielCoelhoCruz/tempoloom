@@ -76,11 +76,11 @@ function blocks(src: string): Block[] {
   return out.filter((b) => b.t !== "p" || b.lines.length > 0);
 }
 
-/** The user's notes in a managed event description: without the planner link and footer. */
+/** The user's notes in a managed event description: without the tip, planner link and footer. */
 export function notesOf(description: string): string {
   return description
     .split("\n")
-    .filter((l) => !/^(Open in Tempoloom: |Planned by Tempoloom\.$)/.test(l.trim()))
+    .filter((l) => !/^(Open in Tempoloom: |Tempoloom tip: |Planned by Tempoloom\.$)/.test(l.trim()))
     .join("\n")
     .trim();
 }
