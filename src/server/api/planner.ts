@@ -38,7 +38,21 @@ export interface PlannerEvent {
   sourceId: string | null;
   /** Markdown notes of the event (planning-event-content.md CNT-12). */
   description: string;
+  /** The calendar that holds the event (planning-planner.md PLN-20). */
+  calendarId: string;
+  /** Private or confidential: others see only busy time (PLN-6). */
+  private: boolean;
 }
+
+/** A busy all-day event: its day gets the busy pattern (planning-planner.md PLN-5). */
+export interface AllDayBusy {
+  start: number;
+  end: number;
+  title: string;
+  calendarId: string;
+}
+
+const isPrivate = (v: string | null) => v === "private" || v === "confidential";
 
 /** A calendar by id, with its name for when the client has no calendar list. */
 export interface CalendarRef {
@@ -49,10 +63,21 @@ export interface CalendarRef {
 const range = z.object({ from: z.coerce.number().int(), to: z.coerce.number().int() });
 
 export function plannerEvents(db: Db, userId: string, from: number, to: number): PlannerEvent[] {
-  const managed = all<ManagedRow>(
+  return plannerView(db, userId, from, to).events;
+}
+
+export function plannerView(
+  db: Db,
+  userId: string,
+  from: number,
+  to: number,
+): { events: PlannerEvent[]; allDay: AllDayBusy[] } {
+  const managed = all<ManagedRow & { own_visibility: string | null }>(
     db,
-    `SELECT * FROM managed_events WHERE user_id = ? AND kind <> 'mirror' AND end_ms > ? AND start_ms < ?
-     ORDER BY start_ms`,
+    `SELECT m.*, e.own_visibility FROM managed_events m
+       LEFT JOIN events e ON e.calendar_id = m.calendar_id AND e.event_id = m.event_id
+     WHERE m.user_id = ? AND m.kind <> 'mirror' AND m.end_ms > ? AND m.start_ms < ?
+     ORDER BY m.start_ms`,
     userId,
     from,
     to,
@@ -64,6 +89,7 @@ export function plannerEvents(db: Db, userId: string, from: number, to: number):
       private_props: string;
       main: number;
       calendar_name: string;
+      own_visibility: string | null;
     }
   >(
     db,
@@ -91,7 +117,10 @@ export function plannerEvents(db: Db, userId: string, from: number, to: number):
     movable: true,
     sourceId: m.source_id,
     description: m.description,
+    calendarId: m.calendar_id,
+    private: isPrivate(m.own_visibility),
   }));
+  const allDay: AllDayBusy[] = [];
   const levels = new Map(
     all<{ calendar_id: string; target_id: string; level: number }>(
       db,
@@ -122,9 +151,18 @@ export function plannerEvents(db: Db, userId: string, from: number, to: number):
     copiedTo.set(k, [...(copiedTo.get(k) ?? []), { id: m.dest_id, name: m.dest }]);
   }
   for (const e of external) {
-    if (e.all_day) continue;
     const props = JSON.parse(e.private_props) as Record<string, string>;
     if (props[MANAGED_PROP] === "1") continue;
+    if (e.all_day) {
+      if (e.busy === 1)
+        allDay.push({
+          start: e.start_ms,
+          end: e.end_ms,
+          title: e.summary,
+          calendarId: e.calendar_id,
+        });
+      continue;
+    }
     const copies = copiedTo.get(`${e.calendar_id}:${e.event_id}`) ?? [];
     out.push({
       id: `ext:${e.calendar_id}:${e.event_id}`,
@@ -139,6 +177,8 @@ export function plannerEvents(db: Db, userId: string, from: number, to: number):
       movable: false,
       sourceId: null,
       description: e.description,
+      calendarId: e.calendar_id,
+      private: isPrivate(e.own_visibility),
       level:
         levels.get(`${e.calendar_id}:${e.event_id}`) ??
         (e.recurring_id ? levels.get(`${e.calendar_id}:${e.recurring_id}`) : undefined) ??
@@ -149,7 +189,7 @@ export function plannerEvents(db: Db, userId: string, from: number, to: number):
       copies,
     });
   }
-  return out.sort((a, b) => a.start - b.start || a.id.localeCompare(b.id));
+  return { events: out.sort((a, b) => a.start - b.start || a.id.localeCompare(b.id)), allDay };
 }
 
 /**
@@ -176,7 +216,7 @@ export function plannerRoutes(db: Db, sync: SyncService, now: () => number): Hon
     if (!q.success || q.data.to <= q.data.from || q.data.to - q.data.from > 62 * 86_400_000) {
       return c.json({ error: "invalid_range" }, 400);
     }
-    return c.json({ events: plannerEvents(db, c.get("user").id, q.data.from, q.data.to) });
+    return c.json(plannerView(db, c.get("user").id, q.data.from, q.data.to));
   });
 
   r.get("/report", (c) => {

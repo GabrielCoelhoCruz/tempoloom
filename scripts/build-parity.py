@@ -1175,8 +1175,8 @@ BLOCKED[770] = "Not needed: no legacy users (platform-current-version rule 11)"
 
 # Buildable rows that no unit has built yet. Rows that units U31 to U33 and PR #23 build now keep their text.
 PLANNED = "Buildable; not built yet (planned)"
-for n in [36, 40, 102, 118, 121, 122, 123, 128, 129, 140, 144,
-          201, 205, 232, 326, 327, 340, 361, 362, 365, 370, 375, 542, 543, 635, 636, 637, 775, 776, 783, 784]:
+for n in [36, 40, 102, 118,
+          201, 205, 232, 326, 327, 340, 361, 362, 365, 370, 375, 635, 636, 637, 775, 776, 783, 784]:
     BLOCKED[n] = PLANNED
 BLOCKED[92] = PLANNED + ": the reason for each move and skip, and a view per item; the change log of every calendar write is built (src/server/change-log.ts)"
 BLOCKED[507] = PLANNED + ": the link's events go to the calendar chosen on the link (\u201c" + T["u7_locations"] + "\u201d); the choice of an added account, whose primary calendar gets the events and sends the invitations, is not built"
@@ -1303,6 +1303,40 @@ BLOCKED[35] = ("Stop from " + VENDOR_STARTS + " (PRG-13) needs those vendor apps
                "with full UI E2E on CalDAV (E2E: \u201c" + T["pg_start"] + "\u201d; \u201c" + T["pg_planner"] + "\u201d; \u201c"
                + T["pg_edge"] + "\u201d; \u201c" + T["pg_twice"] + "\u201d)")
 # --- end U31 ---
+
+# --- U41: planner views and event content (planner-views.spec.ts, event-tips.spec.ts, support-guidance.spec.ts) ---
+T.update({
+    "u41_days": "the gear menu shows weekdays only or a rolling 9 days, and the choice stays after reload (PLN-3; AT 1)",
+    "u41_viewas": "view as others hides free events and the details of private events (PLN-6)",
+    "u41_viewas_panels": "view as others closes the open event details and the conflicts panel, and the now line shows a private meeting as busy (PLN-6)",
+    "u41_allday": "a day with a busy all-day event shows the dashed pattern and gets no managed event (PLN-5; AT 6)",
+    "u41_calendars": "the calendars panel hides a connected calendar from the planner; it still blocks time and stays connected (PLN-20; AT 5)",
+    "u41_modes": "the details panel has one mode at a time: tasks, priorities or event details (PLN-21)",
+    "u41_tips": "event tips sit between the notes and the planner link on task, habit, focus and meeting events, and turning them off removes them from future events (CNT-15; AT 3)",
+    "u41_tips_organizer": "turning tips off and on keeps the organizer's own description of a meeting occurrence; an occurrence with Tempoloom's text gets the change (CNT-15; MEET-02 rule 22)",
+    "u41_reset": "the account page lists the manual reset steps in order, each with a link to its page (planning-pause.md manual reset steps)",
+    "u41_invitee": "a booked invitee is not accepted for them: the answer stays needs-action (support rule 14; AT-5)",
+    "u41_antispam": "the help explains invitations hidden by anti-spam rules, without a Google account (support rules 13, 15, 16)",
+})
+E2E.update({
+    121: ["u41_days"],
+    122: ["u41_viewas", "u41_viewas_panels"],
+    123: ["u41_allday"],
+    128: ["u41_calendars"],
+    129: ["u41_modes"],
+    140: ["u41_tips", "u41_tips_organizer"],
+    144: ["u41_reset"],
+    542: ["u41_invitee"],
+    543: ["u41_antispam"],
+})
+E2E_NOTES.update({
+    121: "The rolling 9 days start on the first day of the shown week and run to Tuesday of the next week",
+    122: "\u201cOthers\u201d is anyone who sees the calendar without private details: free events are not drawn and private events show as \u201cBusy\u201d in the week and on the now line; the event details and the conflicts panel close; the choice is not kept after a reload. Each calendar is read in full once after the upgrade so that events read before it get their privacy. A Google event with \u201cdefault\u201d visibility counts as public",
+    129: "The Tasks and Priorities buttons on the now line and a click on an event switch the one open panel; the priorities view and the tasks panel have their own rows (64, 42)",
+    140: "Tips go on task, habit, focus time and flexible meeting events that the planner places, and say what a move, delete or decline does. Tips are on for new accounts and off for accounts made before the upgrade, so the upgrade rewrites no event. A tip change alone never writes over the organizer's own description of a meeting occurrence, and is not sent to a CalDAV server that mails the guests on each change (calendar-auto-schedule)",
+    144: "Tempoloom has no task integrations of its own, so that step points to the API keys that other tools use",
+})
+# --- end U41 ---
 
 # --- U40: habits part B (habit-extras.spec.ts) ---
 T.update({

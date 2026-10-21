@@ -163,8 +163,19 @@ export function nextMeeting(db: Db, userId: string, now: number) {
     .sort((a, b) => a.start - b.start || a.end - b.end);
   const e = events.find((x) => x.start <= now) ?? events[0];
   if (!e) return null;
+  // PLN-6: "view as others" hides the title of a private event.
+  const privacy = e.calendarId
+    ? one<{ own_visibility: string | null }>(
+        db,
+        "SELECT own_visibility FROM events WHERE calendar_id = ? AND event_id = ?",
+        e.calendarId,
+        e.id.slice(e.calendarId.length + 1),
+      )?.own_visibility
+    : null;
   return {
     title: e.title || "(busy)",
+    busy: e.busy,
+    private: privacy === "private" || privacy === "confidential",
     start: e.start,
     end: e.end,
     current: e.start <= now,
