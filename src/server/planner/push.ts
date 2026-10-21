@@ -123,6 +123,14 @@ export interface PushContext {
   now: number;
   /** Also compare the time and color of mirroring copies with the calendar (full reconcile). */
   fullCheck?: boolean;
+  /** Keys to repair (support-troubleshooting.md rule 10): compared in full, logged as restored. */
+  repair?: ReadonlySet<string>;
+  /** Filled with the repair keys that were compared in full and are now as the plan gives them. */
+  repaired?: Set<string>;
+  /** Keys of events that stay as they are: the events of waiting items (accounts rule 16). */
+  keep?: ReadonlySet<string>;
+  /** Filled with what the push wrote per key: the new times, or null for a delete (SCH-119 log). */
+  written?: Map<string, { start: number; end: number } | null>;
   /**
    * Ended events that go back to the plan (manual start mode, PRG-3): a new
    * event of the same item moves one of them instead of being created.
@@ -289,6 +297,7 @@ export async function pushSchedule(
 ): Promise<PushResult> {
   const { db, userId, now } = ctx;
   const result: PushResult = { created: 0, updated: 0, deleted: 0, conflicts: 0 };
+  const repaired = (key: string) => ctx.repair?.has(key) ?? false;
   // Calendars of a disconnected account are neither read nor written
   // (accounts-login-emails-permissions.md rule 16): their events stay as they are.
   const frozen = new Set(
@@ -312,7 +321,12 @@ export async function pushSchedule(
     "SELECT * FROM managed_events WHERE user_id = ? AND end_ms > ?",
     userId,
     now,
-  ).filter((r) => !frozen.has(r.calendar_id) && !(r.kind === "mirror" && paused.has(r.source_id)));
+  ).filter(
+    (r) =>
+      !frozen.has(r.calendar_id) &&
+      !ctx.keep?.has(r.key) &&
+      !(r.kind === "mirror" && paused.has(r.source_id)),
+  );
   const byKey = new Map(rows.map((r) => [r.key, r]));
   // Whether an edit of an event with guests mails them, per calendar (CNT-15).
   const mails = new Map<string, Promise<boolean>>();
@@ -332,6 +346,7 @@ export async function pushSchedule(
     if (wanted.has(row.key) || row.locked || row.start_ms <= now) continue;
     await deleteRemote(ctx, row);
     run(db, "DELETE FROM managed_events WHERE id = ?", row.id);
+    ctx.written?.set(row.key, null);
     if (row.event_id)
       logManaged(db, userId, managedRef(row, row.event_id), "delete", plain(row), now);
     result.deleted++;
@@ -365,8 +380,11 @@ export async function pushSchedule(
             d,
             tipOnly(row.description, d.description) && (await quiet(row.calendar_id)),
           )
-        : differs(row, cached, d, ctx.fullCheck ?? false);
-    if (!change) continue;
+        : differs(row, cached, d, (ctx.fullCheck ?? false) || repaired(row.key));
+    if (!change) {
+      if (repaired(row.key)) ctx.repaired?.add(row.key);
+      continue;
+    }
     const { provider, providerCalendarId } = ctx.target(row.calendar_id);
     const etag = cached?.etag ?? row.etag;
     try {
@@ -376,8 +394,12 @@ export async function pushSchedule(
           : await provider.editExternal(providerCalendarId, row.event_id, change, etag);
       cacheEvent(db, row.calendar_id, ev);
       saveRow(db, userId, d, ev.id, ev.etag, row.id);
+      ctx.written?.set(d.key, { start: d.start, end: d.end });
       const moved = row.start_ms !== d.start || row.end_ms !== d.end;
-      logManaged(db, userId, desiredRef(d, ev.id), "update", { ...d, moved }, now);
+      logManaged(db, userId, desiredRef(d, ev.id), "update", { ...d, moved }, now, {
+        restored: repaired(row.key),
+      });
+      if (repaired(row.key)) ctx.repaired?.add(row.key);
       result.updated++;
     } catch (err) {
       // precondition_failed: the user changed the event since our last read. The
@@ -388,6 +410,7 @@ export async function pushSchedule(
       }
       if (err instanceof ProviderError && err.kind === "not_found") {
         run(db, "DELETE FROM managed_events WHERE id = ?", row.id);
+        ctx.written?.set(row.key, null);
         result.conflicts++;
         continue;
       }
@@ -400,6 +423,7 @@ export async function pushSchedule(
     const row = byKey.get(d.key);
     if (row && (row.locked || row.start_ms <= now)) continue;
     if (!row && (await moveReopened(ctx, reopen, d))) {
+      ctx.written?.set(d.key, { start: d.start, end: d.end });
       result.updated++;
       continue;
     }
@@ -408,7 +432,9 @@ export async function pushSchedule(
     const ev = await provider.insertEvent(providerCalendarId, write(userId, d));
     cacheEvent(db, d.calendarId, ev);
     saveRow(db, userId, d, ev.id, ev.etag, row?.id);
+    ctx.written?.set(d.key, { start: d.start, end: d.end });
     logManaged(db, userId, desiredRef(d, ev.id), "create", d, now);
+    if (repaired(d.key)) ctx.repaired?.add(d.key);
     result.created++;
   }
   pruneChangeLog(db, now);

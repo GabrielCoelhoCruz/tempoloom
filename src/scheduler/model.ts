@@ -287,6 +287,13 @@ export interface Snapshot {
   buffers: BufferItem[];
   focus: FocusItem[];
   overloads?: OverloadItem[];
+  /**
+   * Accounts rule 16: the kept events of habits and flexible meetings that wait
+   * (their calendar's account is disconnected). The waiting items are not in
+   * the plan, but a habit dependency on them (rule 18) keeps its rule and uses
+   * the starts of these events as their placements.
+   */
+  waiting?: { kind: "habit" | "meeting"; id: string; starts: number[] }[];
   /** Tempoloom's own mirror copies, as their calendars show them; buffer anchors only. */
   mirrorCopies?: ExternalEvent[];
   /**
