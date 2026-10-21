@@ -1,29 +1,29 @@
-// Tasks, habits, buffer automations and focus goals.
+// Tasks, buffer automations and focus goals (habits: habits.ts).
 import { randomUUID } from "node:crypto";
 import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { z } from "zod";
 import { CATEGORIES } from "../../scheduler/categories.ts";
-import type { WeeklyHours } from "../../scheduler/hours.ts";
-import type { HabitFrequency } from "../../scheduler/model.ts";
 import {
   defaultEventSettings,
   ITEM_COLORS,
   readEventSettings,
 } from "../../shared/event-settings.ts";
-import { addLocalDays, utcToLocal } from "../../shared/time.ts";
+import { utcToLocal } from "../../shared/time.ts";
 import type { AppEnv } from "../app.ts";
 import { all, type Db, one, run, tx } from "../db.ts";
 import { editedEventSettings, eventSettingsInput, newEventSettings } from "../event-settings.ts";
 import { jsonBody, notFound } from "../http.ts";
 import { createItemHours, dropItemHours, itemHoursSchema, saveItemHours } from "../item-hours.ts";
 import { automationCount, limitRefusal } from "../limits.ts";
+import { taskDoneMinutes } from "../planner/progress.ts";
 import { getSettings } from "../settings.ts";
 import type { SyncService } from "../sync/service.ts";
-import { lastQueueRank, markTaskDone, taskOrderChanged } from "../task-order.ts";
+import { markTaskDone, taskOrderChanged } from "../task-order.ts";
+import { createTask, deleteTask } from "../tasks.ts";
 
-const level = z.number().int().min(1).max(4);
-const minutes = z
+export const level = z.number().int().min(1).max(4);
+export const minutes = z
   .number()
   .int()
   .min(15)
@@ -31,7 +31,7 @@ const minutes = z
   .multipleOf(15);
 export const hhmm = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/);
 
-const taskInput = z.object({
+export const taskInput = z.object({
   title: z.string().trim().min(1).max(255),
   notes: z.string().max(10_000).optional(),
   minutes: minutes.optional(),
@@ -45,80 +45,10 @@ const taskInput = z.object({
   nextUp: z.boolean().optional(),
   /** events-categories-and-colors.md rule 9: overrides the category color. */
   color: z.enum(ITEM_COLORS).optional(),
+  /** planning-event-content.md CNT-20. */
+  visibility: z.enum(["calendar_default", "private"]).optional(),
 });
-
-/**
- * habits-automation.md "Frequency". `interval` above 1 is the custom frequency;
- * the server sets its `anchor` (see withAnchor).
- */
-const cadence = { interval: z.number().int().min(1).max(52).optional() };
-const habitFrequency = z.union([
-  z.object({ period: z.literal("daily"), ...cadence }),
-  z.object({
-    period: z.literal("weekly"),
-    days: z.array(z.number().int().min(1).max(7)).min(1),
-    ...cadence,
-  }),
-  z.object({
-    period: z.literal("monthly"),
-    dayOfMonth: z.number().int().min(1).max(31),
-    ...cadence,
-  }),
-  z.object({
-    period: z.literal("monthly"),
-    nth: z.union([
-      z.literal(1),
-      z.literal(2),
-      z.literal(3),
-      z.literal(4),
-      z.literal(5),
-      z.literal("last"),
-    ]),
-    weekday: z.number().int().min(1).max(7),
-    ...cadence,
-  }),
-]);
-
-/**
- * Interval 1 is the plain frequency: no interval, no anchor. A new interval
- * gets the anchor of the stored frequency, else the start date, else today;
- * the anchor then stays, so a later start date (a snooze) keeps the cadence.
- */
-export function withAnchor(
-  next: z.infer<typeof habitFrequency>,
-  stored: HabitFrequency | null,
-  starting: string | null,
-  today: string,
-): HabitFrequency {
-  const { interval, ...base } = next;
-  if (!interval || interval <= 1) return base;
-  const anchor =
-    (stored?.interval ?? 1) > 1 && stored?.anchor ? stored.anchor : (starting ?? today);
-  return { ...base, interval, anchor };
-}
-
-const habitInput = z.object({
-  title: z.string().trim().min(1).max(255),
-  notes: z.string().max(10_000).optional(),
-  enabled: z.boolean().optional(),
-  level: level.optional(),
-  hoursSetId: z.string().optional(),
-  idealTime: hhmm,
-  /** The ideal start is the end of each day's hours minus the length (`ideal_at_end`). */
-  idealAtEnd: z.boolean().optional(),
-  minMinutes: minutes,
-  maxMinutes: minutes,
-  frequency: habitFrequency.optional(),
-  starting: z.iso.date().nullable().optional(),
-  defense: z.enum(["adaptive", "always-free", "always-busy"]).optional(),
-  whenUnplaceable: z.enum(["remove", "keep_as_conflict"]).optional(),
-  reservedWords: z.array(z.string().max(100)).max(20).optional(),
-  eventSettings: eventSettingsInput.optional(),
-  /** The library entry it came from (automations-library.md rule 4). */
-  templateId: z.string().max(100).optional(),
-  /** Item-specific hours instead of a named set (planning-hours.md). */
-  itemHours: itemHoursSchema.optional(),
-});
+export type TaskInput = z.infer<typeof taskInput>;
 
 export const bufferInput = z.object({
   title: z.string().trim().min(1).max(255),
@@ -257,18 +187,12 @@ export interface TaskRow {
   status: "open" | "done";
   created_at: number;
   color: string;
+  visibility: "calendar_default" | "private";
 }
 
 export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<AppEnv> {
   const r = new Hono<AppEnv>();
   const changed = (userId: string) => sync.request(userId);
-  const personalHours = (userId: string, hours: string) =>
-    one<{ kind: string }>(
-      db,
-      "SELECT kind FROM hours_sets WHERE id = ? AND user_id = ?",
-      hours,
-      userId,
-    )?.kind === "personal";
 
   // ---------------------------------------------------------------- tasks
   r.get("/tasks", (c) => {
@@ -280,22 +204,33 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
       user.id,
       status,
     );
-    const report = JSON.parse(
-      one<{ report: string }>(db, "SELECT report FROM plan_reports WHERE user_id = ?", user.id)
-        ?.report ?? "[]",
-    ) as { itemKind: string; itemId: string; status: string; reason: string }[];
+    const last = one<{ report: string; task_order: string }>(
+      db,
+      "SELECT report, task_order FROM plan_reports WHERE user_id = ?",
+      user.id,
+    );
+    const report = JSON.parse(last?.report ?? "[]") as {
+      itemKind: string;
+      itemId: string;
+      status: string;
+      reason: string;
+    }[];
+    // TSK-61: the order the last plan processed the tasks, urgency lifts included.
+    const ranks = new Map(
+      (JSON.parse(last?.task_order ?? "[]") as string[]).map((id, i) => [id, i]),
+    );
     const t = now();
+    const done = taskDoneMinutes(db, user.id, t);
+    const manual = getSettings(db, user.id).startMode === "manual";
     return c.json({
       tasks: tasks.map((task) => {
-        const chunks = all<{ start_ms: number; end_ms: number }>(
+        const chunks = all<{ start_ms: number; end_ms: number; started: number }>(
           db,
-          "SELECT start_ms, end_ms FROM managed_events WHERE user_id = ? AND kind = 'task' AND source_id = ?",
+          "SELECT start_ms, end_ms, started FROM managed_events WHERE user_id = ? AND kind = 'task' AND source_id = ?",
           user.id,
           task.id,
         );
-        const used = chunks
-          .filter((ch) => ch.end_ms <= t)
-          .reduce((a, ch) => a + (ch.end_ms - ch.start_ms) / 60_000, 0);
+        const used = done.get(task.id) ?? 0;
         const scheduled = chunks
           .filter((ch) => ch.end_ms > t)
           .reduce((a, ch) => a + (ch.end_ms - ch.start_ms) / 60_000, 0);
@@ -311,6 +246,12 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
                 : "time-used";
         return {
           ...task,
+          // PRG-10, PRG-11: a chunk is running now, so Stop applies.
+          // In manual start mode only a started chunk is in progress (PRG-3).
+          inProgress: chunks.some(
+            (ch) => ch.start_ms <= t && ch.end_ms > t && (!manual || ch.started === 1),
+          ),
+          schedulingRank: ranks.get(task.id) ?? null,
           scheduledMinutes: scheduled,
           remainingMinutes: remaining,
           state,
@@ -323,48 +264,7 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
   r.post("/tasks", async (c) => {
     const user = c.get("user");
     const body = await jsonBody(c, taskInput);
-    const d = getSettings(db, user.id).taskDefaults;
-    const t = now();
-    const total = body.minutes ?? d.minutes;
-    const split = body.splitUp ?? d.splitUp;
-    const min = split ? (body.minChunkMinutes ?? Math.min(d.minChunkMinutes, total)) : total;
-    const max = split
-      ? (body.maxChunkMinutes ?? Math.min(Math.max(d.maxChunkMinutes, min), total))
-      : total;
-    if (min > max) badRequest("minChunkMinutes", "Minimum chunk is longer than maximum chunk");
-    const startAfter = body.startAfter ?? t + d.startDelayMinutes * 60_000;
-    const dueAt =
-      body.dueAt === undefined
-        ? d.dueInDays === null
-          ? null
-          : addLocalDays(t, d.dueInDays, user.time_zone)
-        : body.dueAt;
-    if (dueAt !== null && dueAt <= startAfter)
-      badRequest("dueAt", "Due date must be after the start date");
-    const id = randomUUID();
-    const hours = hoursSetId(db, user.id, body.hoursSetId, "work");
-    const rank = body.nextUp ? lastQueueRank(db, user.id) + 1 : null;
-    run(
-      db,
-      `INSERT INTO tasks (id, user_id, title, notes, level, total_minutes, min_chunk_minutes, max_chunk_minutes,
-         start_after, due_at, hours_set_id, next_up_rank, created_at, rules_changed_at, color)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      id,
-      user.id,
-      body.title,
-      body.notes ?? "",
-      body.level ?? d.level,
-      total,
-      min,
-      max,
-      startAfter,
-      dueAt,
-      hours,
-      rank,
-      t,
-      t,
-      body.color ?? "category",
-    );
+    const id = createTask(db, user, body, now());
     changed(user.id);
     return c.json({ task: one<TaskRow>(db, "SELECT * FROM tasks WHERE id = ?", id) }, 201);
   });
@@ -394,7 +294,7 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
     run(
       db,
       `UPDATE tasks SET title = ?, notes = ?, level = ?, total_minutes = ?, min_chunk_minutes = ?, max_chunk_minutes = ?,
-         start_after = ?, due_at = ?, hours_set_id = ?, rules_changed_at = ?, color = ? WHERE id = ?`,
+         start_after = ?, due_at = ?, hours_set_id = ?, rules_changed_at = ?, color = ?, visibility = ? WHERE id = ?`,
       body.title ?? task.title,
       body.notes ?? task.notes,
       body.level ?? task.level,
@@ -406,6 +306,7 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
       body.hoursSetId ? hoursSetId(db, user.id, body.hoursSetId, "work") : task.hours_set_id,
       now(),
       body.color ?? task.color,
+      body.visibility ?? task.visibility,
       task.id,
     );
     changed(user.id);
@@ -450,273 +351,7 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
     const user = c.get("user");
     const id = c.req.param("id");
     if (!one(db, "SELECT 1 FROM tasks WHERE id = ? AND user_id = ?", id, user.id)) notFound("task");
-    // TSK-42: delete every chunk, past and future, then the task.
-    await sync.exclusive(user.id, async (pool) => {
-      const rows = all<{
-        id: string;
-        calendar_id: string;
-        event_id: string | null;
-        account_id: string;
-        provider_id: string;
-      }>(
-        db,
-        `SELECT m.id, m.calendar_id, m.event_id, c.account_id, c.provider_id FROM managed_events m
-         JOIN calendars c ON c.id = m.calendar_id WHERE m.user_id = ? AND m.kind = 'task' AND m.source_id = ?`,
-        user.id,
-        id,
-      );
-      for (const row of rows) {
-        if (row.event_id) await pool.get(row.account_id).deleteEvent(row.provider_id, row.event_id);
-        run(
-          db,
-          "DELETE FROM events WHERE calendar_id = ? AND event_id = ?",
-          row.calendar_id,
-          row.event_id,
-        );
-        run(db, "DELETE FROM managed_events WHERE id = ?", row.id);
-      }
-      tx(db, () => {
-        run(
-          db,
-          "DELETE FROM item_exclusions WHERE user_id = ? AND kind = 'task' AND item_id = ?",
-          user.id,
-          id,
-        );
-        run(db, "DELETE FROM tasks WHERE id = ?", id);
-      });
-    });
-    return c.body(null, 204);
-  });
-
-  // ---------------------------------------------------------------- habits
-  const habitRow = (id: string) =>
-    one<Record<string, unknown>>(db, "SELECT * FROM habits WHERE id = ?", id);
-
-  function checkHabit(
-    userId: string,
-    body: { idealTime: string; minMinutes: number; maxMinutes: number },
-    hours: string,
-  ): number {
-    if (body.minMinutes > body.maxMinutes)
-      badRequest("minMinutes", "Minimum is longer than maximum");
-    const [h, m] = body.idealTime.split(":").map(Number) as [number, number];
-    const ideal = h * 60 + m;
-    const weekly = JSON.parse(
-      one<{ weekly: string }>(
-        db,
-        "SELECT weekly FROM hours_sets WHERE id = ? AND user_id = ?",
-        hours,
-        userId,
-      )?.weekly ?? "{}",
-    ) as WeeklyHours;
-    const inside = Object.values(weekly).some((ranges) =>
-      ranges?.some(([s, e]) => ideal >= s && ideal < e),
-    );
-    if (!inside)
-      badRequest("idealTime", "The ideal time is outside the habit's hours on every day");
-    return ideal;
-  }
-
-  r.get("/habits", (c) =>
-    c.json({
-      habits: all(
-        db,
-        `SELECT h.*, CASE WHEN s.item_specific = 1 THEN s.weekly END AS item_hours
-         FROM habits h JOIN hours_sets s ON s.id = h.hours_set_id
-         WHERE h.user_id = ? ORDER BY h.level, h.rank, h.created_at`,
-        c.get("user").id,
-      ),
-    }),
-  );
-
-  r.post("/habits", async (c) => {
-    const user = c.get("user");
-    const full = limitRefusal(db, "max_automations_per_user", automationCount(db, user.id));
-    if (full) return c.json(full, 409);
-    const body = await jsonBody(c, habitInput);
-    const hours = body.itemHours
-      ? createItemHours(db, user.id, body.title, body.itemHours)
-      : hoursSetId(db, user.id, body.hoursSetId, "work");
-    let ideal: number;
-    try {
-      ideal = checkHabit(user.id, body, hours);
-    } catch (err) {
-      if (body.itemHours) dropItemHours(db, hours);
-      throw err;
-    }
-    const lvl = body.level ?? 3;
-    const id = randomUUID();
-    const t = now();
-    const es = newEventSettings(db, user.id, "habit", body.eventSettings, {
-      personal: personalHours(user.id, hours),
-    });
-    run(
-      db,
-      `INSERT INTO habits (id, user_id, title, notes, enabled, level, rank, hours_set_id, ideal_minute, min_minutes,
-         max_minutes, frequency, starting, defense, when_unplaceable, reserved_words, created_at, rules_changed_at,
-         event_settings, template_id, ideal_at_end)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      id,
-      user.id,
-      body.title,
-      body.notes ?? "",
-      body.enabled === false ? 0 : 1,
-      lvl,
-      nextRank(db, "habits", user.id, lvl),
-      hours,
-      ideal,
-      body.minMinutes,
-      body.maxMinutes,
-      JSON.stringify(
-        body.frequency
-          ? withAnchor(
-              body.frequency,
-              null,
-              body.starting ?? null,
-              utcToLocal(user.time_zone, t).date,
-            )
-          : { period: "daily" },
-      ),
-      body.starting ?? null,
-      body.defense ?? "adaptive",
-      body.whenUnplaceable ?? "keep_as_conflict",
-      JSON.stringify(body.reservedWords ?? []),
-      t,
-      t,
-      JSON.stringify(es),
-      body.templateId ?? null,
-      body.idealAtEnd ? 1 : 0,
-    );
-    changed(user.id);
-    return c.json({ habit: habitRow(id) }, 201);
-  });
-
-  r.patch("/habits/:id", async (c) => {
-    const user = c.get("user");
-    const id = c.req.param("id");
-    const cur = one<{
-      title: string;
-      notes: string;
-      enabled: number;
-      level: number;
-      rank: number;
-      hours_set_id: string;
-      ideal_minute: number;
-      min_minutes: number;
-      max_minutes: number;
-      frequency: string;
-      starting: string | null;
-      defense: string;
-      when_unplaceable: string;
-      reserved_words: string;
-      event_settings: string;
-      ideal_at_end: number;
-    }>(db, "SELECT * FROM habits WHERE id = ? AND user_id = ?", id, user.id);
-    if (!cur) notFound("habit");
-    const body = await jsonBody(c, habitInput.partial());
-    const hours = body.itemHours
-      ? saveItemHours(db, user.id, cur.hours_set_id, body.title ?? cur.title, body.itemHours)
-      : body.hoursSetId
-        ? hoursSetId(db, user.id, body.hoursSetId, "work")
-        : cur.hours_set_id;
-    const idealTime =
-      body.idealTime ??
-      `${String(Math.floor(cur.ideal_minute / 60)).padStart(2, "0")}:${String(cur.ideal_minute % 60).padStart(2, "0")}`;
-    const ideal = checkHabit(
-      user.id,
-      {
-        idealTime,
-        minMinutes: body.minMinutes ?? cur.min_minutes,
-        maxMinutes: body.maxMinutes ?? cur.max_minutes,
-      },
-      hours,
-    );
-    const es = editedEventSettings(
-      readEventSettings(
-        cur.event_settings,
-        defaultEventSettings("habit", { personal: personalHours(user.id, cur.hours_set_id) }),
-      ),
-      body.eventSettings,
-    );
-    run(
-      db,
-      `UPDATE habits SET title = ?, notes = ?, enabled = ?, level = ?, hours_set_id = ?, ideal_minute = ?, min_minutes = ?,
-         max_minutes = ?, frequency = ?, starting = ?, defense = ?, when_unplaceable = ?, reserved_words = ?,
-         rules_changed_at = ?, event_settings = ?, rank = ?, ideal_at_end = ? WHERE id = ?`,
-      body.title ?? cur.title,
-      body.notes ?? cur.notes,
-      body.enabled === undefined ? cur.enabled : body.enabled ? 1 : 0,
-      body.level ?? cur.level,
-      hours,
-      ideal,
-      body.minMinutes ?? cur.min_minutes,
-      body.maxMinutes ?? cur.max_minutes,
-      body.frequency
-        ? JSON.stringify(
-            withAnchor(
-              body.frequency,
-              JSON.parse(cur.frequency) as HabitFrequency,
-              body.starting === undefined ? cur.starting : body.starting,
-              utcToLocal(user.time_zone, now()).date,
-            ),
-          )
-        : cur.frequency,
-      body.starting === undefined ? cur.starting : body.starting,
-      body.defense ?? cur.defense,
-      body.whenUnplaceable ?? cur.when_unplaceable,
-      body.reservedWords ? JSON.stringify(body.reservedWords) : cur.reserved_words,
-      now(),
-      JSON.stringify(es),
-      // A new priority puts the habit at the end of its new group (automations-overview rule 7).
-      body.level !== undefined && body.level !== cur.level
-        ? nextRank(db, "habits", user.id, body.level)
-        : cur.rank,
-      body.idealAtEnd === undefined ? cur.ideal_at_end : body.idealAtEnd ? 1 : 0,
-      id,
-    );
-    if (hours !== cur.hours_set_id) dropItemHours(db, cur.hours_set_id);
-    changed(user.id);
-    return c.json({ habit: habitRow(id) });
-  });
-
-  r.post("/habits/:id/skip", async (c) => {
-    const user = c.get("user");
-    const id = c.req.param("id");
-    const { date } = await jsonBody(c, z.object({ date: z.iso.date() }));
-    if (!one(db, "SELECT 1 FROM habits WHERE id = ? AND user_id = ?", id, user.id))
-      notFound("habit");
-    run(
-      db,
-      "INSERT OR IGNORE INTO dismissed_keys (user_id, key) VALUES (?, ?)",
-      user.id,
-      `habit:${id}:${date}`,
-    );
-    changed(user.id);
-    return c.json({ ok: true });
-  });
-
-  r.delete("/habits/:id", (c) => {
-    const user = c.get("user");
-    const id = c.req.param("id");
-    const own = one<{ hours_set_id: string }>(
-      db,
-      "SELECT hours_set_id FROM habits WHERE id = ? AND user_id = ?",
-      id,
-      user.id,
-    );
-    if (!own) notFound("habit");
-    // Future events go with the next plan; past events stay (habit spec rule 36).
-    tx(db, () => {
-      run(
-        db,
-        "DELETE FROM item_exclusions WHERE user_id = ? AND kind = 'habit' AND item_id = ?",
-        user.id,
-        id,
-      );
-      run(db, "DELETE FROM habits WHERE id = ?", id);
-      dropItemHours(db, own.hours_set_id);
-    });
-    changed(user.id);
+    await deleteTask(db, sync, user.id, id);
     return c.body(null, 204);
   });
 

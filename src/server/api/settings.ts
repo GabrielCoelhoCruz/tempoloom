@@ -95,7 +95,13 @@ export function settingsRoutes(db: Db, sync: SyncService, now: () => number): Ho
     const before = getSettings(db, user.id).autoLock;
     const parsed = (() => {
       try {
-        return updateSettings(db, user.id, body);
+        // manualSince is the server's record of the switch to manual mode, never user input.
+        const { manualSince: _, ...input } = body;
+        const since =
+          body.startMode === "manual" && getSettings(db, user.id).startMode !== "manual"
+            ? { manualSince: now() }
+            : {};
+        return updateSettings(db, user.id, { ...input, ...since });
       } catch (err) {
         return err as Error;
       }

@@ -38,7 +38,23 @@ export interface PlannerEvent {
   sourceId: string | null;
   /** Markdown notes of the event (planning-event-content.md CNT-12). */
   description: string;
+  /** Another user's flexible meeting that this user joins; a 1:1 has guest actions (MEET-02 rule 26). */
+  guest?: { oneOnOne: boolean };
+  /** The calendar that holds the event (planning-planner.md PLN-20). */
+  calendarId: string;
+  /** Private or confidential: others see only busy time (PLN-6). */
+  private: boolean;
 }
+
+/** A busy all-day event: its day gets the busy pattern (planning-planner.md PLN-5). */
+export interface AllDayBusy {
+  start: number;
+  end: number;
+  title: string;
+  calendarId: string;
+}
+
+const isPrivate = (v: string | null) => v === "private" || v === "confidential";
 
 /** A calendar by id, with its name for when the client has no calendar list. */
 export interface CalendarRef {
@@ -49,10 +65,21 @@ export interface CalendarRef {
 const range = z.object({ from: z.coerce.number().int(), to: z.coerce.number().int() });
 
 export function plannerEvents(db: Db, userId: string, from: number, to: number): PlannerEvent[] {
-  const managed = all<ManagedRow>(
+  return plannerView(db, userId, from, to).events;
+}
+
+export function plannerView(
+  db: Db,
+  userId: string,
+  from: number,
+  to: number,
+): { events: PlannerEvent[]; allDay: AllDayBusy[] } {
+  const managed = all<ManagedRow & { own_visibility: string | null }>(
     db,
-    `SELECT * FROM managed_events WHERE user_id = ? AND kind <> 'mirror' AND end_ms > ? AND start_ms < ?
-     ORDER BY start_ms`,
+    `SELECT m.*, e.own_visibility FROM managed_events m
+       LEFT JOIN events e ON e.calendar_id = m.calendar_id AND e.event_id = m.event_id
+     WHERE m.user_id = ? AND m.kind <> 'mirror' AND m.end_ms > ? AND m.start_ms < ?
+     ORDER BY m.start_ms`,
     userId,
     from,
     to,
@@ -64,6 +91,7 @@ export function plannerEvents(db: Db, userId: string, from: number, to: number):
       private_props: string;
       main: number;
       calendar_name: string;
+      own_visibility: string | null;
     }
   >(
     db,
@@ -91,7 +119,10 @@ export function plannerEvents(db: Db, userId: string, from: number, to: number):
     movable: true,
     sourceId: m.source_id,
     description: m.description,
+    calendarId: m.calendar_id,
+    private: isPrivate(m.own_visibility),
   }));
+  const allDay: AllDayBusy[] = [];
   const levels = new Map(
     all<{ calendar_id: string; target_id: string; level: number }>(
       db,
@@ -122,9 +153,18 @@ export function plannerEvents(db: Db, userId: string, from: number, to: number):
     copiedTo.set(k, [...(copiedTo.get(k) ?? []), { id: m.dest_id, name: m.dest }]);
   }
   for (const e of external) {
-    if (e.all_day) continue;
     const props = JSON.parse(e.private_props) as Record<string, string>;
     if (props[MANAGED_PROP] === "1") continue;
+    if (e.all_day) {
+      if (e.busy === 1)
+        allDay.push({
+          start: e.start_ms,
+          end: e.end_ms,
+          title: e.summary,
+          calendarId: e.calendar_id,
+        });
+      continue;
+    }
     const copies = copiedTo.get(`${e.calendar_id}:${e.event_id}`) ?? [];
     out.push({
       id: `ext:${e.calendar_id}:${e.event_id}`,
@@ -139,6 +179,8 @@ export function plannerEvents(db: Db, userId: string, from: number, to: number):
       movable: false,
       sourceId: null,
       description: e.description,
+      calendarId: e.calendar_id,
+      private: isPrivate(e.own_visibility),
       level:
         levels.get(`${e.calendar_id}:${e.event_id}`) ??
         (e.recurring_id ? levels.get(`${e.calendar_id}:${e.recurring_id}`) : undefined) ??
@@ -149,7 +191,51 @@ export function plannerEvents(db: Db, userId: string, from: number, to: number):
       copies,
     });
   }
-  return out.sort((a, b) => a.start - b.start || a.id.localeCompare(b.id));
+  return { events: out.sort((a, b) => a.start - b.start || a.id.localeCompare(b.id)), allDay };
+}
+
+/**
+ * Occurrences of other users' flexible meetings that this user must join
+ * (meetings-flexible.md rule 27). The organizer's run places them; the guest of
+ * a 1:1 can reschedule or skip them (meetings-flexible-rescheduling.md rule 26).
+ */
+function guestOccurrences(db: Db, userId: string, from: number, to: number): PlannerEvent[] {
+  const email = one<{ email: string }>(db, "SELECT email FROM users WHERE id = ?", userId)?.email;
+  return all<{
+    id: string;
+    title: string;
+    start_ms: number;
+    end_ms: number;
+    calendar_id: string;
+    guests: number;
+  }>(
+    db,
+    `SELECT m.id, mt.title, m.start_ms, m.end_ms, m.calendar_id,
+       (SELECT count(*) FROM meeting_attendees x WHERE x.meeting_id = mt.id) AS guests
+     FROM managed_events m JOIN meetings mt ON mt.id = m.source_id AND m.kind = 'meeting'
+       JOIN meeting_attendees a ON a.meeting_id = mt.id
+     WHERE a.email = ? AND a.required = 1 AND m.user_id <> ? AND m.event_id IS NOT NULL
+       AND m.end_ms > ? AND m.start_ms < ?`,
+    (email ?? "").toLowerCase(),
+    userId,
+    from,
+    to,
+  ).map((m) => ({
+    id: m.id,
+    manualCategory: null,
+    start: m.start_ms,
+    end: m.end_ms,
+    title: m.title,
+    kind: "meeting",
+    busy: true,
+    locked: false,
+    movable: false,
+    sourceId: null,
+    description: "",
+    calendarId: m.calendar_id,
+    private: false,
+    guest: { oneOnOne: m.guests === 1 },
+  }));
 }
 
 /**
@@ -176,7 +262,19 @@ export function plannerRoutes(db: Db, sync: SyncService, now: () => number): Hon
     if (!q.success || q.data.to <= q.data.from || q.data.to - q.data.from > 62 * 86_400_000) {
       return c.json({ error: "invalid_range" }, 400);
     }
-    return c.json({ events: plannerEvents(db, c.get("user").id, q.data.from, q.data.to) });
+    const userId = c.get("user").id;
+    const guests = guestOccurrences(db, userId, q.data.from, q.data.to);
+    const view = plannerView(db, userId, q.data.from, q.data.to);
+    // The guest's own copy of an invitation shows once, as the meeting.
+    const own = view.events.filter(
+      (e) =>
+        e.kind !== "external" ||
+        !guests.some((g) => g.start === e.start && g.end === e.end && e.title.includes(g.title)),
+    );
+    const events = [...own, ...guests].sort(
+      (a, b) => a.start - b.start || a.id.localeCompare(b.id),
+    );
+    return c.json({ events, allDay: view.allDay });
   });
 
   r.get("/report", (c) => {
@@ -332,77 +430,10 @@ export function plannerRoutes(db: Db, sync: SyncService, now: () => number): Hon
 
   /** CED-50: a drag in the planner moves the event and locks it there. */
   r.post("/events/:id/move", async (c) => {
-    const user = c.get("user");
     const { start } = await jsonBody(c, z.object({ start: z.number().int() }));
-    const id = c.req.param("id");
-    const markers = getSettings(db, user.id).markers;
-    const result = await sync.exclusive(user.id, async (pool) => {
-      const row = one<ManagedRow & { account_id: string; provider_id: string }>(
-        db,
-        `SELECT m.*, c.account_id, c.provider_id FROM managed_events m JOIN calendars c ON c.id = m.calendar_id
-         WHERE m.id = ? AND m.user_id = ?`,
-        id,
-        user.id,
-      );
-      if (!row?.event_id) return null;
-      if (row.start_ms <= now()) return "started" as const;
-      const end = start + (row.end_ms - row.start_ms);
-      const title = row.user_edited ? row.title : withState(markers, row.title, "locked");
-      // A meeting occurrence keeps the organizer's calendar edits (MEET-02 rule 22).
-      const provider = pool.get(row.account_id);
-      const ev =
-        row.kind === "meeting"
-          ? await provider.editExternal(
-              row.provider_id,
-              row.event_id,
-              { start, end, summary: title, busy: true },
-              row.etag,
-            )
-          : await provider.updateEvent(
-              row.provider_id,
-              row.event_id,
-              rowWrite(user.id, row, { start, end, title, busy: true }),
-              row.etag,
-            );
-      cacheEvent(db, row.calendar_id, ev);
-      logChange(
-        db,
-        user.id,
-        {
-          calendarId: row.calendar_id,
-          eventId: row.event_id,
-          key: row.key,
-          action: "update",
-          item: `${row.kind}:${row.source_id}`,
-          reason: "moved in the planner",
-          title,
-          start,
-          end,
-          actor: c.get("actor")?.email ?? "",
-        },
-        now(),
-      );
-      if (row.kind === "task") {
-        run(
-          db,
-          "INSERT INTO item_exclusions (user_id, kind, item_id, start_ms, end_ms) VALUES (?, 'task', ?, ?, ?)",
-          user.id,
-          row.source_id,
-          row.start_ms,
-          row.end_ms,
-        );
-        moveTaskStart(db, user.id, row, start);
-      }
-      run(
-        db,
-        "UPDATE managed_events SET start_ms = ?, end_ms = ?, title = ?, busy = 1, locked = 1, etag = ? WHERE id = ?",
-        start,
-        end,
-        title,
-        ev.etag,
-        row.id,
-      );
-      return "moved" as const;
+    const result = await moveManaged(db, sync, now, c.get("user").id, c.req.param("id"), start, {
+      actor: c.get("actor")?.email ?? "",
+      reason: "moved in the planner",
     });
     if (result === null) notFound("event");
     if (result === "started") return c.json({ error: "event_started" }, 409);
@@ -410,4 +441,93 @@ export function plannerRoutes(db: Db, sync: SyncService, now: () => number): Hon
   });
 
   return r;
+}
+
+/**
+ * Moves a managed event to `to` with the same length and locks it there
+ * (CED-50; focus-time.md rules 20 and 22). `to` is a start, or a function that
+ * picks the start inside the user's exclusive section, so no plan run takes the
+ * time between the choice and the move. Null: no such event; "started": it has
+ * begun, so it does not move; "no_time": the function found no start.
+ */
+export function moveManaged(
+  db: Db,
+  sync: SyncService,
+  now: () => number,
+  userId: string,
+  id: string,
+  to: number | ((row: ManagedRow) => number | null),
+  { actor, reason }: { actor: string; reason: string },
+): Promise<"moved" | "started" | "no_time" | null> {
+  const markers = getSettings(db, userId).markers;
+  return sync.exclusive(userId, async (pool) => {
+    const row = one<ManagedRow & { account_id: string; provider_id: string }>(
+      db,
+      `SELECT m.*, c.account_id, c.provider_id FROM managed_events m JOIN calendars c ON c.id = m.calendar_id
+       WHERE m.id = ? AND m.user_id = ?`,
+      id,
+      userId,
+    );
+    if (!row?.event_id) return null;
+    if (row.start_ms <= now()) return "started" as const;
+    const start = typeof to === "number" ? to : to(row);
+    if (start === null) return "no_time" as const;
+    const end = start + (row.end_ms - row.start_ms);
+    const title = row.user_edited ? row.title : withState(markers, row.title, "locked");
+    // A meeting occurrence keeps the organizer's calendar edits (MEET-02 rule 22).
+    const provider = pool.get(row.account_id);
+    const ev =
+      row.kind === "meeting"
+        ? await provider.editExternal(
+            row.provider_id,
+            row.event_id,
+            { start, end, summary: title, busy: true },
+            row.etag,
+          )
+        : await provider.updateEvent(
+            row.provider_id,
+            row.event_id,
+            rowWrite(userId, row, { start, end, title, busy: true }),
+            row.etag,
+          );
+    cacheEvent(db, row.calendar_id, ev);
+    logChange(
+      db,
+      userId,
+      {
+        calendarId: row.calendar_id,
+        eventId: row.event_id,
+        key: row.key,
+        action: "update",
+        item: `${row.kind}:${row.source_id}`,
+        reason,
+        title,
+        start,
+        end,
+        actor: actor,
+      },
+      now(),
+    );
+    if (row.kind === "task") {
+      run(
+        db,
+        "INSERT INTO item_exclusions (user_id, kind, item_id, start_ms, end_ms) VALUES (?, 'task', ?, ?, ?)",
+        userId,
+        row.source_id,
+        row.start_ms,
+        row.end_ms,
+      );
+      moveTaskStart(db, userId, row, start);
+    }
+    run(
+      db,
+      "UPDATE managed_events SET start_ms = ?, end_ms = ?, title = ?, busy = 1, locked = 1, etag = ? WHERE id = ?",
+      start,
+      end,
+      title,
+      ev.etag,
+      row.id,
+    );
+    return "moved" as const;
+  });
 }

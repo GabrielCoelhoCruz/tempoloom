@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "preact/hooks";
 import type { HabitFrequency } from "../../scheduler/model.ts";
 import { defaultEventSettings, readEventSettings } from "../../shared/event-settings.ts";
+import { utcToLocal } from "../../shared/time.ts";
 import { api } from "../lib/api.ts";
 import { duration, hhmm } from "../lib/format.ts";
 import { frequencyText, readFrequency } from "../lib/frequency.ts";
@@ -8,11 +9,12 @@ import { lazyComponent } from "../lib/lazy.ts";
 import { freeName, templateFromUrl } from "../lib/library.ts";
 import { useLive } from "../lib/live.ts";
 import { loadPolicyMarks, PolicyMark, policyMarks } from "../lib/policy-marks.tsx";
-import { LEVEL_NAMES, planNow } from "../lib/state.ts";
+import { LEVEL_NAMES, planNow, zone } from "../lib/state.ts";
 import { EventSettingsFields, eventSettingsFrom } from "./event-settings.tsx";
 import {
   type EditorTarget,
   FrequencyFields,
+  guestsFrom,
   HabitEditor,
   IdealAtEndField,
 } from "./habit-editor.tsx";
@@ -38,6 +40,28 @@ interface Habit {
   event_settings: string;
   /** JSON weekly ranges when the habit has item-specific hours. */
   item_hours: string | null;
+  starting: string | null;
+}
+
+/** Rule 35: the habit places nothing before this date; its earlier future events go. */
+function SnoozeHabit({ habit, act }: { habit: Habit; act: (fn: () => Promise<unknown>) => void }) {
+  const [date, setDate] = useState(habit.starting ?? "");
+  return (
+    <form
+      class="inline"
+      data-testid="snooze-habit"
+      onSubmit={(e) => {
+        e.preventDefault();
+        act(() => api("PATCH", `/api/habits/${habit.id}`, { starting: date || null }));
+      }}
+    >
+      <label>
+        Snooze until
+        <input type="date" value={date} onInput={(e) => setDate(e.currentTarget.value)} />
+      </label>
+      <button type="submit">{date ? "Snooze" : "Clear snooze"}</button>
+    </form>
+  );
 }
 
 const TeamHabitTemplates = lazyComponent(() =>
@@ -59,6 +83,7 @@ export function Habits() {
   const [habits, setHabits] = useState<Habit[]>([]);
   const [hours, setHours] = useState<HoursChoice[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const today = utcToLocal(zone(), Date.now()).date;
   // A library entry fills the form (automations-library.md rule 5).
   const template = templateFromUrl();
   const preset = template?.kind === "habit" ? template.preset : null;
@@ -127,6 +152,7 @@ export function Habits() {
         ...(words.length ? { reservedWords: words } : {}),
         ...(text("starting") ? { starting: text("starting") } : {}),
         ...(text("notes") ? { notes: text("notes") } : {}),
+        ...(text("guests") ? { guests: guestsFrom(text("guests")) } : {}),
         ...(text("hoursSetId") === ITEM
           ? { itemHours: itemHoursFrom(f) }
           : text("hoursSetId")
@@ -252,6 +278,14 @@ export function Habits() {
           Notes
           <textarea name="notes" rows={2} />
         </label>
+        <label class="wide">
+          Guests (comma list)
+          <input name="guests" placeholder="ana@example.com" />
+          <span class="meta">
+            Added to each event. Tempoloom does not check their availability and sends them no
+            notice.
+          </span>
+        </label>
         <EventSettingsFields
           key={habits.length}
           kind="habit"
@@ -284,10 +318,12 @@ export function Habits() {
                   {h.item_hours
                     ? ` · Item-specific hours: ${describeWeekly(JSON.parse(h.item_hours))}`
                     : ""}
+                  {h.starting && h.starting > today ? ` · snoozed until ${h.starting}` : ""}
                   {h.enabled ? "" : " · off"} <PolicyMark id={h.id} />
                 </div>
               </div>
               <div class="actions">
+                <SnoozeHabit key={h.starting ?? ""} habit={h} act={(fn) => void act(fn)} />
                 <button type="button" onClick={() => setTarget({ edit: h.id })}>
                   Edit
                 </button>

@@ -19,6 +19,7 @@ import type {
   CurrentPlacement,
   ExternalEvent,
   FocusItem,
+  HabitDependency,
   HabitFrequency,
   HabitItem,
   Level,
@@ -71,6 +72,10 @@ interface Ctx {
   taskSeen: Map<string, TimeSet>;
   /** Free time in an occurrence's window, without the occurrence itself (for DEF-23). */
   habitSeen: Map<string, TimeSet>;
+  /** MEET-02 rules 9-11: the automatic moves each meeting has left in this run. */
+  meetingMoves: Map<string, number>;
+  /** Habit id -> the order rules this plan keeps (rule 18; see keptDependencies). */
+  deps: Map<string, HabitDependency[]>;
 }
 
 const ceilTo = (t: number, step: number) => Math.ceil(t / step) * step;
@@ -106,6 +111,18 @@ function occupy(ctx: Ctx, iv: Interval, kind: PlacementKind): void {
   ctx.freeTH.subtract({ start: iv.start - pad, end: iv.end + pad });
 }
 
+/**
+ * Rule 31: a snooze is a user action, so it moves an occurrence that has
+ * started (an exception to SCH-60a, as Start and Restart are) when its time is
+ * after the occurrence's start.
+ */
+function snoozedLater(s: Snapshot, c: CurrentPlacement): boolean {
+  if (kindOf(c.key) !== "habit") return false;
+  const date = c.key.split(":")[2] as LocalDate;
+  const minute = s.habits.find((h) => h.id === c.itemId)?.notBefore?.[date];
+  return minute !== undefined && localToUtc(s.zone, date, minute) > c.start;
+}
+
 function init(s: Snapshot): Ctx {
   const step = s.stepMinutes * MINUTE;
   const earliest = ceilTo(s.now, step);
@@ -122,7 +139,9 @@ function init(s: Snapshot): Ctx {
   const external = blockingIntervals(s.events);
   const fixedManaged = s.current.filter(
     (c) =>
-      c.end > s.now && (c.locked || c.start <= s.now) && items.has(`${kindOf(c.key)}:${c.itemId}`),
+      c.end > s.now &&
+      (c.locked || (c.start <= s.now && !snoozedLater(s, c))) &&
+      items.has(`${kindOf(c.key)}:${c.itemId}`),
   );
   const window = TimeSet.from(end > earliest ? [{ start: earliest, end }] : []);
   const fixed = TimeSet.from([...external, ...fixedManaged]);
@@ -150,6 +169,8 @@ function init(s: Snapshot): Ctx {
     current: new Map(s.current.map((c) => [c.key, c])),
     taskSeen: new Map(),
     habitSeen: new Map(),
+    meetingMoves: new Map(),
+    deps: new Map(),
   };
   for (const c of fixedManaged) {
     const kind = kindOf(c.key);
@@ -358,7 +379,7 @@ function placeTask(ctx: Ctx, t: TaskItem): void {
     .filter((c) => !ctx.fixedKeys.has(c.key) && !keptKeys.has(c.key))
     .map((c) => c.key)
     .sort((a, b) => index(a) - index(b));
-  let next = mine.reduce((m, c) => Math.max(m, index(c.key) + 1), 0);
+  let next = mine.reduce((m, c) => Math.max(m, index(c.key) + 1), t.nextIndex ?? 0);
   const freshKeys = result.fresh.map(() => dropped.shift() ?? `${prefix}${next++}`);
 
   const chunks = [
@@ -581,7 +602,8 @@ function searchHabit(
   date: LocalDate,
   window?: TimeSet,
 ): Interval | null {
-  const picked = h.rescheduled?.[date];
+  // A reschedule or a snooze wins over the end-of-hours start (`ideal_at_end`).
+  const picked = h.rescheduled?.[date] ?? h.notBefore?.[date];
   const dayEnd = h.idealAtEnd ? dayWindow(ctx, h.hours, date).intervals().at(-1)?.end : undefined;
   const ideal =
     picked === undefined && dayEnd !== undefined
@@ -638,6 +660,47 @@ function reservedWordHit(ctx: Ctx, h: HabitItem, window: TimeSet): boolean {
   );
 }
 
+/**
+ * Rule 18: the latest end that the habit's dependencies allow on `date`
+ * (Infinity: no limit), or null when they keep the habit off that day. The
+ * targets are placed before the habit (see plan), so their placements are known.
+ */
+function dependencyLimit(ctx: Ctx, h: HabitItem, date: LocalDate): number | null {
+  let limit = Number.POSITIVE_INFINITY;
+  const from = localToUtc(ctx.s.zone, date, 0);
+  const to = localToUtc(ctx.s.zone, addDays(date, 1), 0);
+  for (const d of ctx.deps.get(h.id) ?? []) {
+    let first = Number.POSITIVE_INFINITY;
+    for (const p of ctx.placements) {
+      if (p.kind === d.kind && p.itemId === d.id && p.start >= from && p.start < to)
+        first = Math.min(first, p.start);
+    }
+    if (first === Number.POSITIVE_INFINITY) {
+      if (d.rule === "before") return null;
+      continue;
+    }
+    if (d.rule === "not-same-day") return null;
+    limit = Math.min(limit, first);
+  }
+  return limit;
+}
+
+/**
+ * The time an occurrence may use on `date`: its hours that day, before the
+ * dependency limit, and from the snooze time on (rule 31).
+ */
+function habitWindow(
+  ctx: Ctx,
+  day: TimeSet,
+  date: LocalDate,
+  limit: number,
+  notBefore: number | undefined,
+): TimeSet {
+  if (limit === Number.POSITIVE_INFINITY && notBefore === undefined) return day;
+  const from = notBefore === undefined ? 0 : localToUtc(ctx.s.zone, date, notBefore);
+  return day.clip(from, Math.min(limit, ctx.end));
+}
+
 function placeHabit(ctx: Ctx, h: HabitItem): void {
   const { s } = ctx;
   const done = new Set((s.past ?? []).map((p) => p.key));
@@ -651,16 +714,36 @@ function placeHabit(ctx: Ctx, h: HabitItem): void {
     ) {
       continue;
     }
-    const fullWindow = dayWindow(ctx, h.hours, occ.date);
-    // Rule 30: a rescheduled occurrence stays on its day, nearest the chosen time.
-    const moved = h.rescheduled?.[occ.date] !== undefined;
-    const days = moved ? [occ.date] : [occ.date, ...occ.alternatives];
-    const windows = days.map((d) => dayWindow(ctx, h.hours, d));
-    if (windows.every((w) => w.total() === 0)) continue;
+    // Rules 30, 31: a rescheduled or snoozed occurrence stays on its day.
+    const notBefore = h.notBefore?.[occ.date];
+    const moved = h.rescheduled?.[occ.date] !== undefined || notBefore !== undefined;
+    const limits = new Map<LocalDate, number>();
+    const days = (moved ? [occ.date] : [occ.date, ...occ.alternatives]).filter((d) => {
+      const limit = dependencyLimit(ctx, h, d);
+      if (limit !== null) limits.set(d, limit);
+      return limit !== null;
+    });
+    if (days.length === 0) continue;
+    const dayWindows = days.map((d) => dayWindow(ctx, h.hours, d));
+    if (dayWindows.every((w) => w.total() === 0)) continue;
+    const windows = days.map((d, i) =>
+      habitWindow(
+        ctx,
+        dayWindows[i] as TimeSet,
+        d,
+        limits.get(d) ?? Number.POSITIVE_INFINITY,
+        d === occ.date ? notBefore : undefined,
+      ),
+    );
+    const own = days[0] === occ.date;
+    const fullWindow = own ? (windows[0] as TimeSet) : TimeSet.empty();
     const required = h.maxMinutes;
     const periodLower = Math.max(ctx.earliest, localToUtc(s.zone, occ.periodStart, 0));
     const periodUpper = localToUtc(s.zone, addDays(occ.periodEnd, 1), 0);
-    if (reservedWordHit(ctx, h, fullWindow)) {
+    if (
+      h.reservedWords.length > 0 &&
+      reservedWordHit(ctx, h, own ? (dayWindows[0] as TimeSet) : dayWindow(ctx, h.hours, occ.date))
+    ) {
       report(ctx, {
         itemKind: "habit",
         itemId: h.id,
@@ -685,6 +768,7 @@ function placeHabit(ctx: Ctx, h: HabitItem): void {
       const iv = searchHabit(ctx, h, frees[i] as TimeSet, days[i] as LocalDate, windows[i]);
       if (iv) chosen = { iv, dayIdx: i };
     }
+    chosen ??= takeRecovery(ctx, h, frees, days, windows);
     if (chosen) {
       ctx.habitSeen.set(key, minus(frees[chosen.dayIdx] as TimeSet, [chosen.iv]));
       occupy(ctx, chosen.iv, "habit");
@@ -714,8 +798,10 @@ function placeHabit(ctx: Ctx, h: HabitItem): void {
     // habit's hours that day but not the whole day, because rule 12 forbids any
     // managed item on away time and the habit has no other time that day.
     if (h.whenUnplaceable === "keep_as_conflict" && reason !== "away") {
+      // A dependency or a snooze is a hard rule: a kept conflict stays inside it too.
+      const bounded = (ctx.deps.get(h.id)?.length ?? 0) > 0 || notBefore !== undefined;
       const iv =
-        cur && !h.changed
+        cur && !h.changed && (!bounded || fullWindow.contains(cur))
           ? { start: cur.start, end: cur.end }
           : searchHabit(ctx, { ...h, defense: "always-busy" }, fullWindow, occ.date);
       if (iv) {
@@ -752,6 +838,61 @@ function placeHabit(ctx: Ctx, h: HabitItem): void {
       reason,
     });
   }
+}
+
+/**
+ * buffers-automation.md rule 18: a recovery buffer (the after side of a buffer
+ * that is not travel time) gives way to a habit occurrence that has no other
+ * slot on any of its days and turns busy there: an adaptive habit (DEF-23) or
+ * an always-busy one. An always-free habit never turns busy, so the buffer
+ * keeps its time. The buffers under the chosen time are removed.
+ */
+function takeRecovery(
+  ctx: Ctx,
+  h: HabitItem,
+  frees: TimeSet[],
+  days: LocalDate[],
+  windows: TimeSet[],
+): { iv: Interval; dayIdx: number } | null {
+  if (h.defense === "always-free") return null;
+  const recoveryIds = new Set(
+    ctx.s.buffers.filter((b) => !b.filter.travel && !b.filter.flight).map((b) => b.id),
+  );
+  const recovery = ctx.placements.filter(
+    (p) =>
+      p.kind === "buffer" &&
+      !p.conflict &&
+      p.key.endsWith(":after") &&
+      !ctx.fixedKeys.has(p.key) &&
+      recoveryIds.has(p.itemId),
+  );
+  if (recovery.length === 0) return null;
+  // Break gaps around tasks and habits stay out of the habit's reach.
+  const pads = ctx.placements
+    .filter((p) => (p.kind === "task" || p.kind === "habit") && !p.conflict)
+    .map((p) => ({ start: p.start - ctx.breakMs, end: p.end + ctx.breakMs }));
+  for (let i = 0; i < days.length; i++) {
+    const w = windows[i] as TimeSet;
+    const mine = recovery.filter((p) => w.overlaps(p));
+    if (mine.length === 0) continue;
+    const back = minus(TimeSet.from(mine), pads);
+    const free = minus(
+      TimeSet.from([...(frees[i] as TimeSet).intervals(), ...back.intervals()]).intersect(w),
+      h.exclusions,
+    );
+    const iv = searchHabit(ctx, h, free, days[i] as LocalDate, w);
+    if (!iv) continue;
+    const gone = new Set(mine.filter((p) => p.start < iv.end && p.end > iv.start));
+    ctx.placements = ctx.placements.filter((p) => !gone.has(p));
+    const freed = [...gone].map((p) => ({ start: p.start, end: p.end }));
+    ctx.freeOther = TimeSet.from([...ctx.freeOther.intervals(), ...freed]);
+    ctx.freeTH = TimeSet.from([
+      ...ctx.freeTH.intervals(),
+      ...minus(TimeSet.from(freed), pads).intervals(),
+    ]);
+    return { iv, dayIdx: i };
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------- meetings
@@ -935,17 +1076,74 @@ function suggestMeeting(
   return [];
 }
 
-function placeMeeting(ctx: Ctx, m: MeetingItem): void {
+/** Rule 18: half the length of the period that starts on `start`. */
+function halfPeriod(f: MeetingFrequency, start: LocalDate): number {
+  if (f.period === "daily") return ((f.everyDays ?? 1) * DAY) / 2;
+  if (f.period === "weekly") return (f.everyWeeks * 7 * DAY) / 2;
+  let end = start;
+  for (let i = 0; i < (f.everyMonths ?? 1); i++) end = `${addDays(end, 32).slice(0, 8)}01`;
+  return (dayDiff(end, start) * DAY) / 2;
+}
+
+/**
+ * True when `date` is an ideal day of its period: the period start for a daily
+ * meeting; for a monthly one, the ideal day of the period's first month.
+ */
+export function onIdealDay(
+  zone: string,
+  weekStart: 1 | 7,
+  m: MeetingItem,
+  date: LocalDate,
+): boolean {
+  const f = m.frequency;
+  if (f.period === "weekly") return f.idealDays.includes(weekdayOf(date));
+  const anchor = meetingAnchor(zone, m);
+  if (f.period === "daily") return meetingPeriodStart(f, date, weekStart, anchor) === date;
+  let month = `${date.slice(0, 8)}01`;
+  for (let i = 1; i < (f.everyMonths ?? 1) && !meetingPeriodStart(f, month, weekStart, anchor); i++)
+    month = `${addDays(month, -1).slice(0, 8)}01`;
+  return (
+    monthlyDate(
+      month,
+      "nth" in f
+        ? { period: "monthly", nth: f.nth, weekday: f.weekday }
+        : { period: "monthly", dayOfMonth: f.dayOfMonth },
+    ) === date
+  );
+}
+
+/**
+ * Rule 18 (Tempoloom decision on the Proposed rule): the latest start of an
+ * occurrence before the period, from an earlier plan or this one, when it
+ * moved away from its ideal day; null otherwise.
+ */
+function previousStart(ctx: Ctx, m: MeetingItem, key: string, periodStart: number): number | null {
+  let prev =
+    m.previousStart !== undefined && m.previousStart < periodStart ? m.previousStart : null;
+  for (const p of ctx.placements)
+    if (p.kind === "meeting" && p.itemId === m.id && p.key !== key && p.start < periodStart)
+      prev = Math.max(prev ?? p.start, p.start);
+  return prev === null ||
+    onIdealDay(ctx.s.zone, ctx.s.weekStart, m, utcToLocal(ctx.s.zone, prev).date)
+    ? null
+    : prev;
+}
+
+/** `boosted`: place only the boosted period (MEET-02 rule 16); else every other period. */
+function placeMeeting(ctx: Ctx, m: MeetingItem, boosted = false): void {
   const { s } = ctx;
   const done = new Set((s.past ?? []).map((p) => p.key));
   const attendeeWindow = m.attendeeWindow ? TimeSet.from(m.attendeeWindow) : null;
   const required = m.durationMinutes;
   const periods = m.periods ? new Set(m.periods) : null;
-  let movesLeft = m.movesLeft ?? Number.POSITIVE_INFINITY;
+  const manual = new Set(m.manualKeys ?? []);
+  // One budget for the boosted pass and the other periods of the run.
+  const movesLeft = () => ctx.meetingMoves.get(m.id) ?? m.movesLeft ?? Number.POSITIVE_INFINITY;
   for (const period of meetingPeriods(ctx, m)) {
     const key = `meeting:${m.id}:${period.start}`;
     if (done.has(key) || ctx.fixedKeys.has(key) || ctx.dismissed.has(key)) continue;
     if (periods && !periods.has(period.start)) continue;
+    if (boosted !== (m.boost?.period === period.start)) continue;
     const own = period.days.map((d) => dayWindow(ctx, m.hours, d));
     if (own.every((w) => w.total() === 0)) continue;
     const windows = attendeeWindow ? own.map((w) => w.intersect(attendeeWindow)) : own;
@@ -957,23 +1155,38 @@ function placeMeeting(ctx: Ctx, m: MeetingItem): void {
       free: minus((windows[i] as TimeSet).intersect(ctx.freeOther), blocked),
       window: windows[i] as TimeSet,
     }));
+    // MEET-02 rule 8: an automatic move keeps the lead time.
+    const lead = cur ? ctx.earliest + m.leadMinutes * MINUTE : ctx.earliest;
+    const open = frees.map((f) => ({ ...f, free: f.free.clip(lead, ctx.end) }));
+    // Rule 18: skip starts less than half a period after the previous occurrence,
+    // when another start exists.
+    const prev = previousStart(ctx, m, key, localToUtc(s.zone, period.start, 0));
+    const notBefore = prev === null ? null : prev + halfPeriod(m.frequency, period.start);
+    let spaced: Interval | null | undefined;
+    const spacedSlot = () => {
+      if (spaced === undefined)
+        spaced =
+          notBefore === null
+            ? null
+            : searchMeeting(
+                ctx,
+                m,
+                open.map((f) => ({ ...f, free: f.free.clip(notBefore, ctx.end) })),
+              );
+      return spaced;
+    };
     let chosen: Interval | null = null;
     if (cur && !m.changed) {
       const l = len(cur);
       const okLen = l >= m.shortestMinutes * MINUTE && l <= m.durationMinutes * MINUTE;
-      if (okLen && frees.some((f) => f.free.contains(cur)))
+      // An occurrence moved by hand keeps its time (MEET-02 rule 19).
+      const spacedOk =
+        notBefore === null || manual.has(key) || cur.start >= notBefore || !spacedSlot();
+      if (okLen && spacedOk && frees.some((f) => f.free.contains(cur)))
         chosen = { start: cur.start, end: cur.end };
     }
-    // MEET-02 rule 8: an automatic move keeps the lead time.
-    const lead = cur ? ctx.earliest + m.leadMinutes * MINUTE : ctx.earliest;
-    const found = chosen
-      ? null
-      : searchMeeting(
-          ctx,
-          m,
-          frees.map((f) => ({ ...f, free: f.free.clip(lead, ctx.end) })),
-        );
-    if (found && cur && !m.changed && movesLeft <= 0) {
+    const found = chosen ? null : (spacedSlot() ?? searchMeeting(ctx, m, open));
+    if (found && cur && !m.changed && movesLeft() <= 0) {
       // MEET-02 rules 9-11: a move is possible but none is left; keep the time, flag it, suggest others.
       occupy(ctx, cur, "meeting");
       ctx.placements.push({
@@ -1001,7 +1214,7 @@ function placeMeeting(ctx: Ctx, m: MeetingItem): void {
     }
     if (!chosen) chosen = found;
     if (chosen && cur && !m.changed && (chosen.start !== cur.start || chosen.end !== cur.end))
-      movesLeft--;
+      ctx.meetingMoves.set(m.id, movesLeft() - 1);
     if (chosen) {
       const day = frees.find((f) => f.free.contains(chosen))?.free ?? TimeSet.empty();
       ctx.habitSeen.set(key, minus(day, [chosen]));
@@ -1545,25 +1758,120 @@ const taskKey = (a: TaskItem, b: TaskItem) =>
   a.id.localeCompare(b.id);
 
 type Automation =
-  | { kind: "meeting"; item: MeetingItem }
+  | { kind: "meeting"; item: MeetingItem; boosted?: boolean }
   | { kind: "buffer"; item: BufferItem }
   | { kind: "habit"; item: HabitItem };
 // Inside one level and rank, meetings go first (meetings-flexible.md rule 23).
 const KIND_ORDER = { meeting: 0, buffer: 1, habit: 2 } as const;
 
+const automationOrder = (a: { rank: number; createdAt: number; id: string }, b: typeof a) =>
+  a.rank - b.rank || a.createdAt - b.createdAt || a.id.localeCompare(b.id);
+
+/**
+ * Rule 18: the order rules this plan keeps, per habit. A rule on a target that
+ * is not in this plan (off, deleted) adds nothing. A rule that closes a cycle of
+ * habit rules (the API refuses them, but older data can hold one) is dropped,
+ * so every habit of the cycle is placed: the walk goes in habit order (level,
+ * rank), and the rule that leads back to a habit on the current path is the
+ * one dropped. The kept rules form no cycle.
+ */
+function keptDependencies(s: Snapshot): Map<string, HabitDependency[]> {
+  const habits = new Map(s.habits.map((h) => [h.id, h]));
+  const meetings = new Set(s.meetings.map((m) => m.id));
+  const kept = new Map<string, HabitDependency[]>();
+  const onPath = new Set<string>();
+  const visit = (h: HabitItem) => {
+    if (kept.has(h.id) || onPath.has(h.id)) return;
+    onPath.add(h.id);
+    const rules: HabitDependency[] = [];
+    for (const d of h.dependencies ?? []) {
+      if (d.kind === "meeting") {
+        if (meetings.has(d.id)) rules.push(d);
+        continue;
+      }
+      const target = habits.get(d.id);
+      if (!target || onPath.has(d.id)) continue;
+      visit(target);
+      rules.push(d);
+    }
+    onPath.delete(h.id);
+    kept.set(h.id, rules);
+  };
+  for (const h of [...s.habits].sort((a, b) => a.level - b.level || automationOrder(a, b)))
+    visit(h);
+  return kept;
+}
+
+/**
+ * Rule 18 with rule 43: the level each habit and meeting is placed at
+ * ("habit:<id>" or "meeting:<id>"): its own, or the level of its highest-
+ * priority dependent, also through a chain of rules. The kept rules form no
+ * cycle, so the passes end.
+ */
+function liftedLevels(s: Snapshot, deps: Map<string, HabitDependency[]>): Map<string, Level> {
+  const level = new Map<string, Level>([
+    ...s.habits.map((h) => [`habit:${h.id}`, h.level] as const),
+    ...s.meetings.map((m) => [`meeting:${m.id}`, m.level] as const),
+  ]);
+  for (let changed = true; changed; ) {
+    changed = false;
+    for (const h of s.habits) {
+      const from = level.get(`habit:${h.id}`) as Level;
+      for (const d of deps.get(h.id) ?? []) {
+        const key = `${d.kind}:${d.id}`;
+        if (from < (level.get(key) as Level)) {
+          level.set(key, from);
+          changed = true;
+        }
+      }
+    }
+  }
+  return level;
+}
+
 export function plan(s: Snapshot): Plan {
   const ctx = init(s);
   const effective = new Map(s.tasks.map((t) => [t.id, effectiveLevel(ctx, t)]));
+  ctx.deps = keptDependencies(s);
+  // Rule 18: a target is placed before the habits that depend on it, at the
+  // level of its highest-priority dependent, so a dependent never waits for
+  // items of a lower priority than its own (rule 43).
+  const lifted = liftedLevels(s, ctx.deps);
+  const habitById = new Map(s.habits.map((h) => [h.id, h]));
+  const meetingById = new Map(s.meetings.map((m) => [m.id, m]));
+  const placed = new Set<string>();
+  const placeAutomation = (a: Automation) => {
+    const key = `${a.kind}:${a.item.id}${a.kind === "meeting" && a.boosted ? ":boost" : ""}`;
+    if (placed.has(key)) return;
+    placed.add(key);
+    if (a.kind === "meeting") return placeMeeting(ctx, a.item, a.boosted);
+    if (a.kind === "buffer") return placeBuffer(ctx, a.item);
+    for (const d of ctx.deps.get(a.item.id) ?? []) {
+      if (d.kind === "habit")
+        placeAutomation({ kind: "habit", item: habitById.get(d.id) as HabitItem });
+      else placeAutomation({ kind: "meeting", item: meetingById.get(d.id) as MeetingItem });
+    }
+    placeHabit(ctx, a.item);
+  };
+  const taskOrder: string[] = [];
+  const takeTask = (t: TaskItem) => {
+    taskOrder.push(t.id);
+    placeTask(ctx, t);
+  };
   for (const level of LEVELS) {
     const autos: Automation[] = [
       ...s.meetings
-        .filter((m) => m.level === level)
+        .filter((m) => lifted.get(`meeting:${m.id}`) === level)
         .map((item) => ({ kind: "meeting" as const, item })),
+      // MEET-02 rule 16: the boosted period of a meeting goes at the boosted level.
+      ...s.meetings
+        .filter((m) => m.boost?.level === level)
+        .map((item) => ({ kind: "meeting" as const, item, boosted: true })),
       ...s.buffers
         .filter((b) => b.level === level)
         .map((item) => ({ kind: "buffer" as const, item })),
       ...s.habits
-        .filter((h) => h.level === level)
+        .filter((h) => lifted.get(`habit:${h.id}`) === level)
         .map((item) => ({ kind: "habit" as const, item })),
     ].sort(
       (a, b) =>
@@ -1572,21 +1880,17 @@ export function plan(s: Snapshot): Plan {
         a.item.createdAt - b.item.createdAt ||
         a.item.id.localeCompare(b.item.id),
     );
-    for (const a of autos) {
-      if (a.kind === "meeting") placeMeeting(ctx, a.item);
-      else if (a.kind === "buffer") placeBuffer(ctx, a.item);
-      else placeHabit(ctx, a.item);
-    }
+    for (const a of autos) placeAutomation(a);
     if (level === 1) {
       const queue = s.tasks
         .filter((t) => t.nextUpRank !== null)
         .sort((a, b) => (a.nextUpRank ?? 0) - (b.nextUpRank ?? 0) || taskKey(a, b));
-      for (const t of queue) placeTask(ctx, t);
+      for (const t of queue) takeTask(t);
     }
     const band = s.tasks
       .filter((t) => t.nextUpRank === null && effective.get(t.id) === level)
       .sort(taskKey);
-    for (const t of band) placeTask(ctx, t);
+    for (const t of band) takeTask(t);
   }
   // Both focus automations come after every other item, in their P4 rank order;
   // at one rank the meeting overload goes first (focus edge case 5).
@@ -1612,5 +1916,6 @@ export function plan(s: Snapshot): Plan {
         a.itemId.localeCompare(b.itemId) ||
         a.demandKey.localeCompare(b.demandKey),
     ),
+    taskOrder,
   };
 }

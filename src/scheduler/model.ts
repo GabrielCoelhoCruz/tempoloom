@@ -64,6 +64,8 @@ export interface TaskItem {
   exclusions: Interval[];
   /** True when the user changed the task's rules since the last run (no stickiness). */
   changed: boolean;
+  /** The lowest chunk index a new chunk may take: ended chunks keep theirs. */
+  nextIndex?: number;
 }
 
 export interface HabitItem {
@@ -88,10 +90,30 @@ export interface HabitItem {
   changed: boolean;
   /** Occurrence date -> the time of day the user chose for it (habits rule 30). */
   rescheduled?: Partial<Record<LocalDate, number>>;
+  /** Occurrence date -> the snooze time of day: the first legal start at or after it (habits rule 31). */
+  notBefore?: Partial<Record<LocalDate, number>>;
+  /** Order rules relative to other habits and flexible meetings (habits rule 18). */
+  dependencies?: HabitDependency[];
   /** Category work or personal (habits concepts); missing: it counts as work when its hours are work hours. */
   work?: boolean;
   /** The ideal start is the end of the day's last range of `hours` minus `maxMinutes` (`ideal_at_end`). */
   idealAtEnd?: boolean;
+}
+
+/**
+ * Habits rule 18 and meetings-flexible.md rule 22. Tempoloom decision:
+ * `before`: the habit takes place only on days that hold an occurrence of the
+ * target, and ends at or before the target's start; `not-after`: on a day that
+ * holds the target, the habit ends at or before the target's start, other days
+ * are free; `not-same-day`: the habit never takes place on a day that holds
+ * the target. The target is placed first, at the level of its highest-priority
+ * dependent (rule 43); the rule never moves the target. A rule that closes a
+ * loop is refused at save time and dropped by the scheduler.
+ */
+export interface HabitDependency {
+  rule: "before" | "not-after" | "not-same-day";
+  kind: "habit" | "meeting";
+  id: string;
 }
 
 /**
@@ -154,6 +176,12 @@ export interface MeetingItem {
   startMinutes?: number[];
   /** An adopted series: only these periods (start dates) have an instance to place. */
   periods?: LocalDate[];
+  /** Rule 18: the start of the last occurrence before now. */
+  previousStart?: number;
+  /** MEET-02 rule 19: occurrences whose last change was a move by hand; the cadence keeps them. */
+  manualKeys?: string[];
+  /** MEET-02 rule 16: after missed periods, this period is placed at this higher level. */
+  boost?: { period: LocalDate; level: Level };
 }
 
 export type Comparison = ">=" | "<=" | "=" | ">" | "<";
@@ -314,4 +342,6 @@ export interface ReportEntry {
 export interface Plan {
   placements: Placement[];
   report: ReportEntry[];
+  /** Task ids in the order the scheduler processed them (planning-tasks.md TSK-61). */
+  taskOrder: string[];
 }

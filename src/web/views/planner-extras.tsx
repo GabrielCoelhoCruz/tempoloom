@@ -5,9 +5,10 @@ import { useCallback, useEffect, useState } from "preact/hooks";
 import type { PlannerEvent } from "../../server/api/planner.ts";
 import { utcToLocal } from "../../shared/time.ts";
 import { api } from "../lib/api.ts";
-import { hhmm } from "../lib/format.ts";
+import { fromLocalInput, hhmm, toLocalInput } from "../lib/format.ts";
 import { useLive } from "../lib/live.ts";
 import { navigate, onLinkClick } from "../lib/router.ts";
+import { zone } from "../lib/state.ts";
 import { type SearchTask, SearchTaskList, TaskSearchPicker } from "./task-search-picker.tsx";
 
 interface Actions {
@@ -16,9 +17,21 @@ interface Actions {
   sourceId?: string;
   date?: string | null;
   ended?: boolean;
+  started?: boolean;
   done?: boolean;
   search?: { kind: string; id: string; searchId: string | null } | null;
 }
+
+/** Minimum delays of the focus reschedule action (focus-time.md rule 22). */
+const DELAYS: [number, string][] = [
+  [15, "15 minutes"],
+  [30, "30 minutes"],
+  [60, "1 hour"],
+  [120, "2 hours"],
+  [180, "3 hours"],
+  [240, "4 hours"],
+  [1440, "1 day"],
+];
 
 function useSearchTasks(searchId: string | null) {
   const [tasks, setTasks] = useState<SearchTask[]>([]);
@@ -59,6 +72,7 @@ export function EventActions({
   const [info, setInfo] = useState<Actions | null>(null);
   const [searchId, setSearchId] = useState<string | null>(null);
   const [time, setTime] = useState(() => hhmm(utcToLocal(zone, event.start).minuteOfDay));
+  const [delay, setDelay] = useState(60);
   useEffect(() => {
     let live = true;
     void api<Actions>("GET", `/api/event-actions/${encodeURIComponent(event.id)}`).then((a) => {
@@ -137,6 +151,46 @@ export function EventActions({
           <button type="submit">Reschedule</button>
         </form>
       )}
+      {info.kind === "focus" && !info.started && (
+        <form
+          class="inline"
+          data-testid="focus-reschedule-form"
+          onSubmit={(e) => {
+            e.preventDefault();
+            close();
+            run(() =>
+              api("POST", `/api/focus/events/${encodeURIComponent(event.id)}/reschedule`, {
+                delayMinutes: delay,
+              }),
+            );
+          }}
+        >
+          <label>
+            At least
+            <select value={delay} onChange={(e) => setDelay(Number(e.currentTarget.value))}>
+              {DELAYS.map(([m, label]) => (
+                <option key={m} value={m}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <span class="meta">from now</span>
+          <button type="submit">Reschedule</button>
+        </form>
+      )}
+      {info.kind === "habit" && !info.ended && info.sourceId && info.date && (
+        <SnoozeForm
+          start={event.start}
+          zone={zone}
+          snooze={(time) => {
+            const id = info.sourceId;
+            const date = info.date;
+            close();
+            run(() => api("POST", `/api/habits/${id}/snooze`, { date, time }));
+          }}
+        />
+      )}
       {info.search && (
         <div data-testid="event-task-search">
           <TaskSearchPicker value={searchId} onChange={(id) => void assign(id)} />
@@ -144,6 +198,86 @@ export function EventActions({
         </div>
       )}
     </div>
+  );
+}
+
+const SNOOZES = [15, 30, 60, 120];
+
+/**
+ * Habits rule 31: the occurrence goes to the first legal start at or after
+ * the "not before" time, on the same day. Tempoloom decision: the quick
+ * choices count from the later of the occurrence's start and now, up to the
+ * next 15 minutes; a choice past the end of the day is not offered, and a
+ * typed time must be after that base (an earlier time is not a snooze). A
+ * snooze also moves an occurrence that has started.
+ */
+function SnoozeForm({
+  start,
+  zone,
+  snooze,
+}: {
+  start: number;
+  zone: string;
+  snooze: (time: string) => void;
+}) {
+  const base = utcToLocal(zone, Math.max(start, Date.now())).minuteOfDay;
+  const after = (minutes: number) => {
+    const t = Math.ceil((base + minutes) / 15) * 15;
+    return t < 24 * 60 ? hhmm(t) : null;
+  };
+  const [time, setTime] = useState(() => after(30) ?? "");
+  const [error, setError] = useState("");
+  return (
+    <form
+      class="inline"
+      data-testid="snooze-form"
+      onSubmit={(e) => {
+        e.preventDefault();
+        const [h, m] = time.split(":").map(Number) as [number, number];
+        if (h * 60 + m <= base) {
+          setError(`Pick a time after ${hhmm(base)}`);
+          return;
+        }
+        snooze(time);
+      }}
+    >
+      {SNOOZES.map((m) => {
+        const t = after(m);
+        return (
+          <button
+            type="button"
+            key={m}
+            disabled={t === null}
+            title={t ?? "Past the end of the day"}
+            onClick={() => {
+              if (t) setTime(t);
+              setError("");
+            }}
+          >
+            +{m < 60 ? `${m} min` : `${m / 60} h`}
+          </button>
+        );
+      })}
+      <label>
+        Not before
+        <input
+          type="time"
+          step={900}
+          required
+          value={time}
+          onInput={(e) => {
+            setTime(e.currentTarget.value);
+            setError("");
+          }}
+        />
+      </label>
+      <button type="submit">Snooze</button>
+      {error && (
+        <p class="error" role="alert">
+          {error}
+        </p>
+      )}
+    </form>
   );
 }
 
@@ -213,5 +347,102 @@ export function FocusProgress({ week }: { week: string }) {
         </div>
       ))}
     </div>
+  );
+}
+
+interface WorkItem {
+  value: string;
+  label: string;
+}
+
+/**
+ * Log work (planning-task-progress.md PRG-20 to PRG-22, habits-automation.md
+ * rule 32): minutes on a task or a habit from a past start time. Tempoloom
+ * writes a past event for it, and a task's remaining work goes down.
+ */
+export function LogWork({
+  start,
+  minutes = 30,
+  onClose,
+}: {
+  start: number;
+  minutes?: number | undefined;
+  onClose: (saved: boolean) => void;
+}) {
+  const z = zone();
+  const [items, setItems] = useState<WorkItem[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    void Promise.all([
+      api<{ tasks: { id: string; title: string }[] }>("GET", "/api/tasks?status=open"),
+      api<{ habits: { id: string; title: string }[] }>("GET", "/api/habits"),
+    ]).then(([t, h]) =>
+      setItems([
+        ...t.tasks.map((x) => ({ value: `task:${x.id}`, label: x.title })),
+        ...h.habits.map((x) => ({ value: `habit:${x.id}`, label: `${x.title} (habit)` })),
+      ]),
+    );
+  }, []);
+  return (
+    <form
+      class="form log-work"
+      data-testid="log-work"
+      onSubmit={(e) => {
+        e.preventDefault();
+        const f = new FormData(e.currentTarget as HTMLFormElement);
+        const [kind, itemId] = String(f.get("item")).split(":");
+        setError(null);
+        void api("POST", "/api/log-work", {
+          kind,
+          itemId,
+          start: fromLocalInput(z, String(f.get("start"))),
+          minutes: Number(f.get("minutes")),
+        })
+          .then(() => onClose(true))
+          .catch((err) =>
+            setError(
+              (err as { body?: { message?: string } }).body?.message ??
+                "That did not work. Try again.",
+            ),
+          );
+      }}
+    >
+      <label>
+        Start
+        <input type="datetime-local" name="start" required defaultValue={toLocalInput(z, start)} />
+      </label>
+      <label>
+        Work on
+        <select name="item" required>
+          {items.map((i) => (
+            <option value={i.value} key={i.value}>
+              {i.label}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label>
+        Minutes
+        <input
+          type="number"
+          name="minutes"
+          min={1}
+          max={1440}
+          required
+          defaultValue={String(minutes)}
+        />
+      </label>
+      <button type="submit" class="primary">
+        Log work
+      </button>
+      <button type="button" onClick={() => onClose(false)}>
+        Cancel
+      </button>
+      {error && (
+        <p class="error" data-testid="log-error">
+          {error}
+        </p>
+      )}
+    </form>
   );
 }
