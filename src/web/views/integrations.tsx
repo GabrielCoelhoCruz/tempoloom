@@ -92,7 +92,8 @@ const CATEGORIES: Category[] = [
 const ISSUE_FORM =
   "https://github.com/GabrielCoelhoCruz/tempoloom/issues/new?title=Integration%20request%3A%20";
 
-function Card({ tool, google }: { tool: Tool; google: boolean }) {
+/** `google` is null when the server's sign-in methods did not load. */
+function Card({ tool, google }: { tool: Tool; google: boolean | null }) {
   const accounts = (me.value?.accounts ?? []).filter((a) => a.provider === "google" && !a.viaGrant);
   let state: string;
   let detail: string | null = null;
@@ -127,7 +128,12 @@ function Card({ tool, google }: { tool: Tool; google: boolean }) {
       </a>
     );
   } else {
-    state = tool.name === "Google Calendar" ? "Not configured on this server" : "Not available yet";
+    state =
+      tool.name !== "Google Calendar"
+        ? "Not available yet"
+        : google === null
+          ? "Unknown"
+          : "Not configured on this server";
     action = (
       <button type="button" disabled>
         Connect
@@ -156,17 +162,20 @@ function Card({ tool, google }: { tool: Tool; google: boolean }) {
 
 export function Integrations() {
   const [google, setGoogle] = useState<boolean | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [support, setSupport] = useState<string | null>(null);
   useEffect(() => {
     void api<{ google: boolean }>("GET", "/auth/methods").then(
       (m) => setGoogle(m.google),
-      () => setGoogle(false),
+      (err) => setError(err instanceof Error ? err.message : String(err)),
     );
-    void api<{ supportUrl: string | null }>("GET", "/api/help").then((h) =>
-      setSupport(h.supportUrl),
+    // Without the support address the link goes to the issue form.
+    void api<{ supportUrl: string | null }>("GET", "/api/help").then(
+      (h) => setSupport(h.supportUrl),
+      () => {},
     );
   }, []);
-  if (google === null) return null;
+  if (google === null && error === null) return null;
   return (
     <div class="page" data-testid="integrations-page">
       <h1>Integrations</h1>
@@ -176,6 +185,11 @@ export function Integrations() {
         </a>{" "}
         › Integrations
       </p>
+      {error && (
+        <p class="error" role="alert" data-testid="integrations-error">
+          Could not check this server's Google client ({error}). Reload the page to try again.
+        </p>
+      )}
       {CATEGORIES.map((category) => (
         <section key={category} data-testid="integration-group" data-category={category}>
           <h2>{category}</h2>

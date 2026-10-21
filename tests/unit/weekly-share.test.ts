@@ -13,6 +13,10 @@
 //    429 for everyone, or the publish POST of one share has no limit.
 // 6. A directory login name (SCIM userName, when the directory sends no
 //    display name) shows.
+// 7. The publish limit counts per proxy, so all visitors behind it share one
+//    limit, or it trusts an X-Forwarded-For that an untrusted client sends.
+// 8. Rows are never removed: unshared and stopped shares stay, and shared
+//    pages stay for ever (pruned by the email worker's run).
 import { randomBytes, randomUUID } from "node:crypto";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -22,7 +26,8 @@ import { createSession, ensureUser } from "../../src/server/accounts.ts";
 import { createApp } from "../../src/server/app.ts";
 import { loadConfig } from "../../src/server/config.ts";
 import { SecretBox } from "../../src/server/crypto.ts";
-import { openDb, run } from "../../src/server/db.ts";
+import { DailyMailWorker } from "../../src/server/daily-mail.ts";
+import { all, openDb, run } from "../../src/server/db.ts";
 import type { Mailer } from "../../src/server/mail.ts";
 import type { SyncService } from "../../src/server/sync/service.ts";
 import type { WebhookWorker } from "../../src/server/webhooks.ts";
@@ -30,6 +35,7 @@ import { weeklyReport } from "../../src/server/weekly-report.ts";
 
 const T0 = Date.parse("2026-11-13T08:30:00Z");
 const BASE = "http://localhost:8787";
+const PROXY = "10.0.0.1";
 
 function setup(user: { email: string; name: string; caldavUser?: string; scimUser?: string }) {
   const key = randomBytes(32).toString("base64");
@@ -66,6 +72,7 @@ function setup(user: { email: string; name: string; caldavUser?: string; scimUse
     SECRET_KEY: key,
     DATA_DIR: mkdtempSync(join(tmpdir(), "tl-share-")),
     BASE_URL: BASE,
+    TRUSTED_PROXIES: PROXY,
   });
   const app = createApp({
     db,
@@ -152,6 +159,9 @@ describe("weekly report share page (rules 10-12)", () => {
     await s.share();
     const html = await (await s.app.request(s.pagePath)).text();
     expect(html).toContain("<h1>Ana Lima's week</h1>");
+    // A visitor reads the title: the owner's week, not "your week".
+    expect(html).toContain("<title>Ana Lima's week</title>");
+    expect(html.toLowerCase()).not.toContain("your week");
     expect(html).not.toContain("ana@example.com");
   });
 
@@ -259,5 +269,83 @@ describe("weekly report share page (rules 10-12)", () => {
     const res = await s.share(other);
     expect(res.status).toBe(303);
     expect((await s.app.request(other.replace(/\/share\?to=link$/, ""))).status).toBe(200);
+  });
+
+  it("limits the publish POSTs per client address: behind the trusted proxy each client has its own limit; a forged X-Forwarded-For does not give a new one", async () => {
+    const s = setup({ email: "ana@example.com", name: "Ana Lima" });
+    const post = (peer: string, forwarded?: string) =>
+      s.app.request(
+        new URL(s.direct, BASE).pathname,
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/x-www-form-urlencoded",
+            ...(forwarded ? { "x-forwarded-for": forwarded } : {}),
+          },
+          body: new URLSearchParams({ to: "link", csrf: "wrong" }),
+        },
+        { incoming: { socket: { remoteAddress: peer } } },
+      );
+    // Client A through the proxy uses up its limit.
+    for (let i = 0; i < 10; i++) expect((await post(PROXY, "203.0.113.5")).status).toBe(403);
+    expect((await post(PROXY, "203.0.113.5")).status).toBe(429);
+    // Client B through the same proxy has its own limit.
+    expect((await post(PROXY, "203.0.113.6")).status).toBe(403);
+    // A client that is not the proxy cannot pick a new address with the header.
+    for (let i = 0; i < 10; i++)
+      expect((await post("198.51.100.7", `192.0.2.${i}`)).status).toBe(403);
+    expect((await post("198.51.100.7", "192.0.2.99")).status).toBe(429);
+    expect((await post("198.51.100.7")).status).toBe(429);
+  });
+
+  it("prunes unshared and stopped shares 2 weeks after their week, and shared pages 13 weeks after it, in the email worker's run", async () => {
+    const s = setup({ email: "ana@example.com", name: "Ana Lima" });
+    const tick = (at: string) =>
+      new DailyMailWorker({
+        db: s.db,
+        mailer: { configured: false, send: async () => {} },
+        now: () => Date.parse(at),
+        baseUrl: BASE,
+        intervalMs: 60_000,
+      }).tick();
+    const status = async (path: string) => (await s.app.request(path)).status;
+    expect((await s.share()).status).toBe(303);
+    // Week 2026-11-16 to 11-20: never shared.
+    const unshared = s.another();
+    // Week 2026-11-23 to 11-27: shared, then stopped.
+    const stopped = weeklyReport(
+      s.db,
+      { id: s.u.id, email: "ana@example.com", time_zone: "Europe/Berlin" },
+      { from: "2026-11-23", to: "2026-11-27" },
+      BASE,
+      T0,
+    );
+    const stoppedPath = `${new URL(stopped.text.match(/^Direct link: (\S+)$/m)?.[1] ?? "").pathname}?to=link`;
+    expect((await s.share(stoppedPath)).status).toBe(303);
+    run(s.db, "UPDATE weekly_shares SET shared_at = NULL WHERE week_from = '2026-11-23'");
+    const weeks = () =>
+      all<{ week_from: string }>(
+        s.db,
+        "SELECT week_from FROM weekly_shares ORDER BY week_from",
+      ).map((r) => r.week_from);
+
+    // 13 days after 11-20: nothing is old enough.
+    await tick("2026-12-03T12:00:00Z");
+    expect(weeks()).toEqual(["2026-11-09", "2026-11-16", "2026-11-23"]);
+    // 15 days after 11-20: the unshared week goes; its share link is "not found".
+    await tick("2026-12-05T12:00:00Z");
+    expect(weeks()).toEqual(["2026-11-09", "2026-11-23"]);
+    expect(await status(unshared)).toBe(404);
+    // 15 days after 11-27: the stopped share goes; the shared page stays.
+    await tick("2026-12-12T12:00:00Z");
+    expect(weeks()).toEqual(["2026-11-09"]);
+    expect(await status(stoppedPath)).toBe(404);
+    expect(await status(s.pagePath)).toBe(200);
+    // 13 weeks after 11-13 the shared page stays; one day later it is "not found".
+    await tick("2027-02-12T12:00:00Z");
+    expect(await status(s.pagePath)).toBe(200);
+    await tick("2027-02-13T12:00:00Z");
+    expect(await status(s.pagePath)).toBe(404);
+    expect(weeks()).toEqual([]);
   });
 });

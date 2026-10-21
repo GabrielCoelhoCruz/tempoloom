@@ -9,6 +9,7 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import { Hono } from "hono";
 import { getCookie, setCookie } from "hono/cookie";
 import type { AppEnv } from "./app.ts";
+import { addressBucket, createLimiter, plainAddress, requestAddress } from "./client-address.ts";
 import { all, type Db, one, run } from "./db.ts";
 import { notFound } from "./http.ts";
 
@@ -134,23 +135,32 @@ function confirmPage(s: Share, to: string, csrf: string): string {
 </html>`;
 }
 
-const RATE_WINDOW = 60_000;
 /**
- * Publish POSTs per share and minute. The limit is per share token, so a flood
- * on one share does not block another user's; the pages themselves are cheap
- * reads of one row by a 192-bit token and have no limit.
+ * Publish POSTs per client and share in a minute. The client is its address
+ * (IPv6: its /64) read through the trusted proxies, so visitors behind one
+ * proxy keep their own limits and a client cannot pick a new address with a
+ * header; the share in the key keeps a flood on one share from blocking
+ * another. The pages themselves are cheap reads of one row by a 192-bit token
+ * and have no limit.
  */
 const POST_LIMIT = 10;
+const LIMITER_KEYS = 10_000;
 const CSRF_COOKIE = "tl_share";
 
 const same = (a: string, b: string) =>
   a.length === b.length && a.length > 0 && timingSafeEqual(Buffer.from(a), Buffer.from(b));
 
-export function weeklyShareRoutes(db: Db, baseUrl: string, now: () => number): Hono {
+export function weeklyShareRoutes(
+  db: Db,
+  baseUrl: string,
+  now: () => number,
+  trustedProxies: readonly string[] = [],
+): Hono {
   const r = new Hono();
   const origin = new URL(baseUrl).origin;
   const secure = baseUrl.startsWith("https://");
-  const hits = new Map<string, { start: number; count: number }>();
+  const trusted = new Set(trustedProxies.map(plainAddress));
+  const limiter = createLimiter({ perWindow: POST_LIMIT, windowMs: 60_000, maxKeys: LIMITER_KEYS });
   const find = (token: string) =>
     one<Share>(
       db,
@@ -160,18 +170,6 @@ export function weeklyShareRoutes(db: Db, baseUrl: string, now: () => number): H
   const pageUrl = (token: string) => new URL(`/r/${token}`, baseUrl).toString();
   const target = (token: string, to: string) =>
     to === "link" ? pageUrl(token) : (DIALOGS[to]?.(pageUrl(token)) ?? pageUrl(token));
-
-  /** Counts one publish POST of `token`; false when the share is over its limit. */
-  const allowPost = (token: string) => {
-    const t = now();
-    const hit = hits.get(token);
-    if (!hit || t - hit.start >= RATE_WINDOW) {
-      if (hits.size > 10_000) hits.clear();
-      hits.set(token, { start: t, count: 1 });
-      return true;
-    }
-    return ++hit.count <= POST_LIMIT;
-  };
 
   // Rule 11: a share link of the email asks before it makes the page public.
   r.get("/:token/share", (c) => {
@@ -196,7 +194,7 @@ export function weeklyShareRoutes(db: Db, baseUrl: string, now: () => number): H
     const form = await c.req.parseBody();
     const to = typeof form.to === "string" ? form.to : "";
     if (!share || !TARGET_NAMES[to]) return c.html(NOT_FOUND, 404, HEADERS);
-    if (!allowPost(share.token))
+    if (!limiter.hit(`${addressBucket(requestAddress(c, trusted))} ${share.token}`, now()))
       return c.text("Too many requests.", 429, { ...HEADERS, "retry-after": "60" });
     // With no-referrer the browser sends "null" as the origin; the SameSite
     // cookie that must match the form's token keeps other sites out.
@@ -217,6 +215,28 @@ export function weeklyShareRoutes(db: Db, baseUrl: string, now: () => number): H
   });
   r.notFound((c) => c.html(NOT_FOUND, 404, HEADERS));
   return r;
+}
+
+const DAY = 86_400_000;
+/** Rule 12 decision: a share link of the email works this long after the week unless shared. */
+export const UNSHARED_DAYS = 14;
+/** Rule 12 decision: a shared page stays this long after its week. */
+export const SHARED_DAYS = 13 * 7;
+
+/**
+ * Deletes the shares that are over their time: unshared (never shared, or
+ * stopped) ones UNSHARED_DAYS after the week's last day, shared ones
+ * SHARED_DAYS after it. Their links then answer "not found". The email
+ * worker runs it on each tick.
+ */
+export function pruneWeeklyShares(db: Db, now: number): void {
+  const before = (days: number) => new Date(now - days * DAY).toISOString().slice(0, 10);
+  run(
+    db,
+    `DELETE FROM weekly_shares WHERE week_to < ? AND (shared_at IS NULL OR week_to < ?)`,
+    before(UNSHARED_DAYS),
+    before(SHARED_DAYS),
+  );
 }
 
 /** Open question 4 decision: the owner lists the shared weeks and stops sharing any of them. */

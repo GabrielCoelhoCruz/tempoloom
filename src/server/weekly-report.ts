@@ -12,6 +12,7 @@ import { addDays, type LocalDate, localToUtc, utcToLocal, weekdayOf } from "../s
 import { personalInsights } from "./analytics/personal.ts";
 import { all, type Db, one, run } from "./db.ts";
 import type { Message } from "./mail.ts";
+import { planningZone } from "./travel.ts";
 import { publicName } from "./weekly-share.ts";
 
 /** Rule 7: the facts show as colored blocks under the totals. */
@@ -245,12 +246,14 @@ export function weeklyReport(
     href: url(`/r/${token}/share?to=${target}`),
   }));
 
-  const zone = user.time_zone;
+  // The planning zone, as the planner shows next week (a trip changes it).
+  const zone = planningZone(db, user.id, user.time_zone);
   const monday = addDays(from, 1 - weekdayOf(from));
   const nextMonday = addDays(monday, 7);
   const preview = nextWeekPreview(db, user.id, zone, nextMonday);
   const dayLabel = (d: PreviewDay) => `${DAY_NAMES[weekdayOf(d.date)]} ${d.date}`;
-  const planner = (d: PreviewDay) => url(`/?week=${d.date}`);
+  // Rule 8: the planner at that day (its week, with the day marked).
+  const planner = (d: PreviewDay) => url(`/?day=${d.date}`);
   const prio = reportPriorities(db, user.id, {
     from: localToUtc(zone, nextMonday, 0),
     to: localToUtc(zone, addDays(nextMonday, 7), 0),

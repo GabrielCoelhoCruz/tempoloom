@@ -36,6 +36,8 @@ interface Props {
    * start, rounded down to 15 minutes, and for a drag its length in minutes.
    */
   onPickPast?: (t: number, minutes?: number) => void;
+  /** A day to mark and scroll into view (a link to the planner at that day). */
+  focusDay?: LocalDate | null;
 }
 
 /** PLN-5: a grey dashed pattern across a day with a busy all-day event. */
@@ -120,6 +122,7 @@ export function WeekView({
   extraZone,
   busyDays,
   onPickPast,
+  focusDay,
 }: Props) {
   const boxes = useMemo(() => layout(days, zone, events), [days, zone, events]);
   const gridRef = useRef<HTMLDivElement>(null);
@@ -128,6 +131,11 @@ export function WeekView({
     // Open at 07:00, where the working day starts for most people.
     if (scrollRef.current) scrollRef.current.scrollTop = 7 * HOUR_PX;
   }, []);
+  // A narrow screen scrolls the linked day into view, once per linked day.
+  const focusRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    focusRef.current?.scrollIntoView({ block: "nearest", inline: "center" });
+  }, [focusDay]);
   const nowLocal = utcToLocal(zone, now);
   const todayIdx = days.indexOf(nowLocal.date);
   // The second column reads each hour of today (or the first day shown) in the other zone.
@@ -267,7 +275,12 @@ export function WeekView({
           <div />
         )}
         {days.map((d, i) => (
-          <div class={i === todayIdx ? "day-name today" : "day-name"} key={d} data-date={d}>
+          <div
+            class={`day-name${i === todayIdx ? " today" : ""}${d === focusDay ? " focus" : ""}`}
+            key={d}
+            data-date={d}
+            {...(d === focusDay ? { ref: focusRef } : {})}
+          >
             {new Date(`${d}T12:00:00Z`).toLocaleDateString(undefined, {
               weekday: "short",
               day: "numeric",

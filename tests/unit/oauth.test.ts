@@ -25,12 +25,12 @@ import { Hono } from "hono";
 import { describe, expect, it } from "vitest";
 import { ensureUser, type User } from "../../src/server/accounts.ts";
 import type { AppEnv } from "../../src/server/app.ts";
+import { createLimiter } from "../../src/server/client-address.ts";
 import { all, one, openDb, run } from "../../src/server/db.ts";
 import { blockedForDelegate } from "../../src/server/delegation.ts";
 import { setActive } from "../../src/server/directory.ts";
 import {
   CLIENT_CAP,
-  createLimiter,
   oauthConsentRoutes,
   oauthRoutes,
   oauthUser,

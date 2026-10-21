@@ -14,6 +14,7 @@ import { getPrefs } from "./meeting-prefs.ts";
 import { adoptableSeries } from "./meeting-series.ts";
 import { attendeesOf } from "./planner/meetings.ts";
 import { claimWeeklyReport, weeklyReport } from "./weekly-report.ts";
+import { pruneWeeklyShares } from "./weekly-share.ts";
 
 /** "weekly" rows are claimed in weekly-report.ts. */
 export type DailyKind = "checks" | "daily";
@@ -130,8 +131,9 @@ export class DailyMailWorker {
     }
   }
 
-  /** Sends the emails due now; returns how many weekly reports went out. */
+  /** Prunes old weekly shares, sends the emails due now; returns how many weekly reports went out. */
   async tick(): Promise<number> {
+    pruneWeeklyShares(this.#d.db, this.#d.now());
     if (!this.#d.mailer.configured) return 0;
     let reports = 0;
     await this.#guestUpdates();
