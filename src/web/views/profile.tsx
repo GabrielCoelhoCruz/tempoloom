@@ -6,6 +6,7 @@ import type { Settings } from "../../server/settings.ts";
 import { COMPANY_SIZES, USE_CASES } from "../../shared/profile.ts";
 import { api } from "../lib/api.ts";
 import { Avatar } from "../lib/avatar.tsx";
+import { useCommit } from "../lib/commit-input.ts";
 import { loadMe, me } from "../lib/state.ts";
 
 const DATE_FORMATS: Record<Settings["dateFormat"], string> = {
@@ -23,8 +24,6 @@ const USE_CASE_LABELS: Record<(typeof USE_CASES)[number], string> = {
 export function ProfilePage() {
   const m = me.value;
   const [message, setMessage] = useState<string | null>(null);
-  if (!m) return null;
-  const profile = m.settings.profile;
   const save = async (patch: Partial<Settings["profile"]>) => {
     setMessage(null);
     try {
@@ -35,6 +34,10 @@ export function ProfilePage() {
       setMessage("That did not save. Try again.");
     }
   };
+  const jobTitle = useCommit(m?.settings.profile.jobTitle ?? "", (v) => save({ jobTitle: v }));
+  const company = useCommit(m?.settings.profile.company ?? "", (v) => save({ company: v }));
+  if (!m) return null;
+  const profile = m.settings.profile;
   return (
     <div class="page" data-testid="profile-page">
       <h1>Profile</h1>
@@ -92,19 +95,11 @@ export function ProfilePage() {
         <div class="form">
           <label>
             Job title
-            <input
-              maxLength={100}
-              value={profile.jobTitle}
-              onChange={(e) => void save({ jobTitle: e.currentTarget.value })}
-            />
+            <input maxLength={100} {...jobTitle} />
           </label>
           <label>
             Company
-            <input
-              maxLength={100}
-              value={profile.company}
-              onChange={(e) => void save({ company: e.currentTarget.value })}
-            />
+            <input maxLength={100} {...company} />
           </label>
           <label>
             Company size

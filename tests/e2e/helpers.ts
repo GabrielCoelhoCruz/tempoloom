@@ -32,6 +32,30 @@ export const inHours = (t0: number, t1: number, from = "09:00", to = "17:00") =>
 
 export const allEvents = (cal: CalendarDriver) => cal.events(windowFrom(), windowTo());
 
+/**
+ * A change from another client: the live stream makes the open page read the
+ * account again (lib/live.ts). Resolves after the page had a turn to draw the
+ * answer that holds this change.
+ */
+export async function changeElsewhere(page: Page, breakMinutes: number): Promise<void> {
+  const reread = page.waitForResponse(
+    async (r) =>
+      new URL(r.url()).pathname === "/api/me" &&
+      r.request().method() === "GET" &&
+      ((await r.json()) as { settings?: { breakMinutes?: number } }).settings?.breakMinutes ===
+        breakMinutes,
+  );
+  const res = await page.request.patch("/api/settings", { data: { breakMinutes } });
+  expect(res.status()).toBe(200);
+  await reread;
+  // The page sets the signal after it parsed the answer; the redraw follows in
+  // the next frames.
+  await page.evaluate(
+    () =>
+      new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(r)))),
+  );
+}
+
 export interface TaskForm {
   title: string;
   minutes?: number;

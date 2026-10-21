@@ -2,7 +2,16 @@
 // breaks, focus credit, prep buffers and the time zone.
 import { addDays, localToUtc } from "../../src/shared/time.ts";
 import { at, BACKEND, blockUntil, eventually, expect, local, test } from "./fixtures.ts";
-import { addHabit, addTask, allEvents, inHours, MIN, titled, W } from "./helpers.ts";
+import {
+  addHabit,
+  addTask,
+  allEvents,
+  changeElsewhere,
+  inHours,
+  MIN,
+  titled,
+  W,
+} from "./helpers.ts";
 
 const day = (n: number) => addDays(W, n);
 const settings = (page: import("@playwright/test").Page) =>
@@ -75,6 +84,39 @@ test("a shorter planning window leaves later work unplaced, with the reason (WIN
     "planning window",
   );
   expect(titled(await cal.events(Date.now(), at(day(28), "00:00")), "AT-Far")).toHaveLength(0);
+});
+
+test("a planning window, task duration or chunk default typed while the page reads the account again is saved (WIN-1, TSK-1)", async ({
+  page,
+  signIn,
+}) => {
+  await signIn();
+  await settings(page);
+  const fields: [label: string, from: string, to: string, body: object, breakMinutes: number][] = [
+    ["Plan ahead (weeks)", "3", "5", { schedulingWindowWeeks: 5 }, 5],
+    ["Duration (minutes)", "60", "90", { taskDefaults: { minutes: 90 } }, 10],
+    ["Shortest chunk", "30", "45", { taskDefaults: { minChunkMinutes: 45 } }, 15],
+    ["Longest chunk", "120", "90", { taskDefaults: { maxChunkMinutes: 90 } }, 20],
+  ];
+  for (const [label, from, to, body, breakMinutes] of fields) {
+    const field = page.getByLabel(label);
+    await expect(field).toHaveValue(from);
+    await field.fill(to);
+    // The page draws again before the user leaves the field; the typed value stays.
+    await changeElsewhere(page, breakMinutes);
+    await expect(field).toHaveValue(to);
+    const saved = page.waitForResponse(
+      (r) => new URL(r.url()).pathname === "/api/settings" && r.request().method() === "PATCH",
+    );
+    await field.blur();
+    expect((await saved).request().postDataJSON()).toEqual(body);
+    await expect(page.getByTestId("settings-message")).toHaveText("Saved");
+  }
+  await page.reload();
+  await expect(page.getByLabel("Plan ahead (weeks)")).toHaveValue("5");
+  await expect(page.getByLabel("Duration (minutes)")).toHaveValue("90");
+  await expect(page.getByLabel("Shortest chunk")).toHaveValue("45");
+  await expect(page.getByLabel("Longest chunk")).toHaveValue("90");
 });
 
 test("pausing stops new placements; resuming plans again (pause spec)", async ({
