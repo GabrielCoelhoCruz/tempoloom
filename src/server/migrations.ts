@@ -1352,4 +1352,8 @@ export const MIGRATIONS: readonly string[] = [
   CREATE INDEX item_changes_item ON item_changes(user_id, kind, item_id);
   CREATE INDEX item_changes_time ON item_changes(at);
   `,
+  // 46: the profile picture from the main Google account (settings-profile.md PRF-2, PRF-5).
+  `
+  ALTER TABLE users ADD COLUMN avatar_url TEXT NOT NULL DEFAULT '';
+  `,
 ];

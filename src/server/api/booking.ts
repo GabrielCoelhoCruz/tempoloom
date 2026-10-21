@@ -44,6 +44,7 @@ import { createItemHours, dropItemHours, itemHoursSchema } from "../item-hours.t
 import { limitRefusal } from "../limits.ts";
 import type { Mailer } from "../mail.ts";
 import { getPrefs } from "../meeting-prefs.ts";
+import { OFF_MAIN_TASK_CHUNK } from "../planner/events.ts";
 import { MANAGED_PROP } from "../planner/push.ts";
 import { writeCalendar } from "../planner/replan.ts";
 import { waitingCalendars } from "../planner/write.ts";
@@ -451,16 +452,20 @@ export function calendarItems(db: Db, userId: string, from: number, to: number):
     busy: number;
     locked: number;
     title: string;
+    off_main: number;
   }>(
     db,
-    "SELECT kind, source_id, start_ms, end_ms, busy, locked, title FROM managed_events WHERE user_id = ? AND end_ms > ? AND start_ms < ?",
+    `SELECT kind, source_id, start_ms, end_ms, busy, locked, title, (${OFF_MAIN_TASK_CHUNK}) AS off_main
+     FROM managed_events m WHERE user_id = ? AND end_ms > ? AND start_ms < ?`,
     userId,
     from,
     to,
   )) {
     const span = { start: m.start_ms, end: m.end_ms, title: m.title };
+    // A locked chunk never moves (LCK-2), so it blocks links also off the main calendar.
     if (m.locked || (m.kind === "focus" && hidden.has(m.source_id)))
       items.push({ ...span, cls: "fixed" });
+    else if (m.off_main) items.push({ ...span, cls: "free" });
     else if (!m.busy) items.push({ ...span, cls: "free" });
     else {
       // Placed focus time counts as P2 for booking links.
@@ -493,6 +498,10 @@ function rulesFor(db: Db, link: LinkRow, duration: number): TeamRules {
 const zoneOf = (db: Db, userId: string) =>
   one<{ time_zone: string }>(db, "SELECT time_zone FROM users WHERE id = ?", userId)?.time_zone ??
   "UTC";
+/** The owner's Google profile picture for booking pages; '' for none (settings-profile.md PRF-5). */
+const pictureOf = (db: Db, userId: string) =>
+  one<{ avatar_url: string }>(db, "SELECT avatar_url FROM users WHERE id = ?", userId)
+    ?.avatar_url ?? "";
 const nameOf = (db: Db, userId: string) =>
   one<{ name: string }>(db, "SELECT name FROM users WHERE id = ?", userId)?.name ?? "";
 
@@ -1434,6 +1443,7 @@ export function publicBookingRoutes(
         );
     return c.json({
       name: owner?.name ?? "",
+      picture: pictureOf(db, page.user_id),
       title: group?.title ?? null,
       slug: page.slug,
       links: links.map(publicLink),
@@ -1444,9 +1454,14 @@ export function publicBookingRoutes(
   r.get("/pages/:page/:link", (c) => {
     const link = findLink(c.req.param("page"), c.req.param("link"));
     if (!link) notFound("link");
+    // A round-robin link names nobody before confirmation (rule 17): no owner picture or name.
+    const anonymous = linkPeople(db, link.id).some((p) => p.kind === "pool");
     return c.json({
       link: publicLink(link),
       organizers: organizerNames(db, link),
+      owner: anonymous
+        ? null
+        : { name: nameOf(db, link.user_id), picture: pictureOf(db, link.user_id) },
       timeZone: zoneOf(db, link.user_id),
       branding: brandingFor(db, link.user_id, resolveLinkBranding(db, link)),
       oneOff: link.source_id ? { expiresAt: expiryOf(link), expired: expired(link) } : null,

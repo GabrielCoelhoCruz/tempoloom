@@ -441,7 +441,12 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
     const user = c.get("user");
     const actor = c.get("actor");
     return c.json({
-      user,
+      user: {
+        ...user,
+        avatarUrl:
+          one<{ avatar_url: string }>(db, "SELECT avatar_url FROM users WHERE id = ?", user.id)
+            ?.avatar_url ?? "",
+      },
       actor: actor ?? null,
       live: live.mark(user.id),
       owners: ownersOf(db, (actor ?? user).id),

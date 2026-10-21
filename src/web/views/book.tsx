@@ -1,8 +1,10 @@
 // Public booking pages: no sign-in. Times show in the zone the booker picks,
 // in a 12- or 24-hour format (docs/specs/booking-links-booking-page.md).
+
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { isValidTimeZone, localToUtc } from "../../shared/time.ts";
 import { ApiError, api } from "../lib/api.ts";
+import { Avatar } from "../lib/avatar.tsx";
 import { lazyComponent } from "../lib/lazy.ts";
 import {
   addPages,
@@ -334,6 +336,8 @@ function Times({
 interface LinkInfo {
   link: PublicLink;
   organizers: string[];
+  /** The owner, with the Google profile picture ('' for none: initials); null on a round-robin link. */
+  owner: { name: string; picture: string } | null;
   branding: Branding;
   oneOff: { expiresAt: number; expired: boolean } | null;
   /** The link takes no new bookings: its account for booked events is lost. */
@@ -646,6 +650,9 @@ function BookingPage({ page, link }: { page: string; link: string }) {
   return (
     <div data-testid="booking-page">
       <Brand b={info.branding} />
+      {info.owner && (
+        <Avatar url={info.owner.picture} name={info.owner.name} testId="owner-picture" />
+      )}
       <h1>{info.link.title}</h1>
       {info.organizers.length > 0 && <p class="status">{withWhom(info.organizers)}</p>}
       {info.link.description && <p>{info.link.description}</p>}
@@ -762,6 +769,7 @@ function BookingPage({ page, link }: { page: string; link: string }) {
 function PageLinks({ page }: { page: string }) {
   const [data, setData] = useState<{
     name: string;
+    picture: string;
     /** A link group's title; null for a main booking page. */
     title: string | null;
     links: PublicLink[];
@@ -778,6 +786,7 @@ function PageLinks({ page }: { page: string }) {
   return (
     <div data-testid="public-page">
       <Brand b={data.branding} />
+      <Avatar url={data.picture} name={data.name} testId="owner-picture" />
       <h1>{data.title ?? `Book time with ${data.name}`}</h1>
       {data.links.length === 0 && <p>This page has no links yet.</p>}
       <div class="list">
