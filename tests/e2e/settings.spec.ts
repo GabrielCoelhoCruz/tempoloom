@@ -86,7 +86,7 @@ test("a shorter planning window leaves later work unplaced, with the reason (WIN
   expect(titled(await cal.events(Date.now(), at(day(28), "00:00")), "AT-Far")).toHaveLength(0);
 });
 
-test("a planning window or task default typed while the page reads the account again is saved (WIN-1, TSK-1)", async ({
+test("a planning window, task duration or chunk default typed while the page reads the account again is saved (WIN-1, TSK-1)", async ({
   page,
   signIn,
 }) => {
@@ -95,6 +95,8 @@ test("a planning window or task default typed while the page reads the account a
   const fields: [label: string, from: string, to: string, body: object, breakMinutes: number][] = [
     ["Plan ahead (weeks)", "3", "5", { schedulingWindowWeeks: 5 }, 5],
     ["Duration (minutes)", "60", "90", { taskDefaults: { minutes: 90 } }, 10],
+    ["Shortest chunk", "30", "45", { taskDefaults: { minChunkMinutes: 45 } }, 15],
+    ["Longest chunk", "120", "90", { taskDefaults: { maxChunkMinutes: 90 } }, 20],
   ];
   for (const [label, from, to, body, breakMinutes] of fields) {
     const field = page.getByLabel(label);
@@ -113,6 +115,8 @@ test("a planning window or task default typed while the page reads the account a
   await page.reload();
   await expect(page.getByLabel("Plan ahead (weeks)")).toHaveValue("5");
   await expect(page.getByLabel("Duration (minutes)")).toHaveValue("90");
+  await expect(page.getByLabel("Shortest chunk")).toHaveValue("45");
+  await expect(page.getByLabel("Longest chunk")).toHaveValue("90");
 });
 
 test("pausing stops new placements; resuming plans again (pause spec)", async ({
