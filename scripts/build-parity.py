@@ -633,9 +633,6 @@ E2E_NOTES.update({
     774: "A planner hint with a help page, until the user dismisses it",
     606: "Totals per meeting category over the range, with the busiest and lightest weekday",
 })
-PARTIAL.update({
-    700: "The account page gives the server URL and the API key steps for any MCP client (E2E: \u201can MCP client with an API key reads\u2026\u201d checks the URL); no guide per product (ChatGPT, Claude, Cursor), which integrations-ai-tools.md owns",
-})
 # --- end s7 ---
 
 # --- s8: automation types ---
@@ -1294,7 +1291,6 @@ E2E_NOTES.update({
 })
 _SERVER = "the server side it uses (OAuth 2.1 with dynamic client registration and PKCE, the consent page, the MCP URL) passes E2E with the MCP SDK client (\u201c" + T["u34_flow"] + "\u201d)"
 BLOCKED[948] = "Needs a paid ChatGPT plan and a listing in the ChatGPT app directory, or a ChatGPT plan with custom connectors; " + _SERVER
-BLOCKED[949] = "Needs a Claude account (Claude Desktop or the Claude web app) to add a custom connector; " + _SERVER + ". The troubleshooting text of rule 15 is not built"
 BLOCKED[950] = "Needs Claude Code and an Anthropic account to run claude mcp add with an HTTP URL and the browser sign-in; " + _SERVER
 BLOCKED[952] = "Needs the Cursor app and a Cursor account to add the mcp.json entry and connect; " + _SERVER
 # --- end U34 ---
@@ -1562,6 +1558,18 @@ BLOCKED[322] = (GOOGLE_CONSENT + " and a second Google account that is not a Tem
                 "keeps away from their busy time but not from its own invitation, and a guest with no data or a failed or slow query "
                 "is unknown. The availability of attendees who are users here is E2E-proven (rows 321, 339)")
 # --- end U56 ---
+
+# --- U57: setup guides per AI tool on the Account page ---
+T["u57_guides"] = "the Account page has a setup guide for ChatGPT, Claude, Claude Code and Cursor with this server's MCP URL, the sign-in steps and troubleshooting, and the URL connects (integrations-ai-tools rules 10-13, 15-20)"
+E2E[700] = ["u57_guides"]
+E2E_NOTES[700] = ("The MCP URL with Copy (a visible fallback when the browser gives no clipboard), and a tab per client (ChatGPT, Claude, "
+                  "Claude Code, Cursor, other MCP clients) with the claude mcp add command, the Cursor mcp.json entry, the OAuth steps, "
+                  "troubleshooting and disconnect. The E2E opens every tab, checks the clipboard, "
+                  "that the URL leads to this server's OAuth metadata and consent page, and connects a client with it. The vendor apps "
+                  "themselves are rows 948 to 952")
+BLOCKED[949] = ("Needs a Claude account (Claude Desktop or the Claude web app) to add a custom connector; " + _SERVER
+                + ". The Claude guide on the Account page, with the connector steps and the troubleshooting text of rule 15, passes E2E (\u201c" + T["u57_guides"] + "\u201d)")
+# --- end U57 ---
 
 # Google Calendar proof. docs/e2e-google-run.tsv records a full E2E run on Google
 # (a "# commit <sha>" line, then status, test id, title per line; docs/e2e-google-run.md
