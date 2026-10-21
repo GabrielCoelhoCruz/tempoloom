@@ -38,6 +38,8 @@ export interface PlannerEvent {
   sourceId: string | null;
   /** Markdown notes of the event (planning-event-content.md CNT-12). */
   description: string;
+  /** Another user's flexible meeting that this user joins; a 1:1 has guest actions (MEET-02 rule 26). */
+  guest?: { oneOnOne: boolean };
   /** The calendar that holds the event (planning-planner.md PLN-20). */
   calendarId: string;
   /** Private or confidential: others see only busy time (PLN-6). */
@@ -193,6 +195,50 @@ export function plannerView(
 }
 
 /**
+ * Occurrences of other users' flexible meetings that this user must join
+ * (meetings-flexible.md rule 27). The organizer's run places them; the guest of
+ * a 1:1 can reschedule or skip them (meetings-flexible-rescheduling.md rule 26).
+ */
+function guestOccurrences(db: Db, userId: string, from: number, to: number): PlannerEvent[] {
+  const email = one<{ email: string }>(db, "SELECT email FROM users WHERE id = ?", userId)?.email;
+  return all<{
+    id: string;
+    title: string;
+    start_ms: number;
+    end_ms: number;
+    calendar_id: string;
+    guests: number;
+  }>(
+    db,
+    `SELECT m.id, mt.title, m.start_ms, m.end_ms, m.calendar_id,
+       (SELECT count(*) FROM meeting_attendees x WHERE x.meeting_id = mt.id) AS guests
+     FROM managed_events m JOIN meetings mt ON mt.id = m.source_id AND m.kind = 'meeting'
+       JOIN meeting_attendees a ON a.meeting_id = mt.id
+     WHERE a.email = ? AND a.required = 1 AND m.user_id <> ? AND m.event_id IS NOT NULL
+       AND m.end_ms > ? AND m.start_ms < ?`,
+    (email ?? "").toLowerCase(),
+    userId,
+    from,
+    to,
+  ).map((m) => ({
+    id: m.id,
+    manualCategory: null,
+    start: m.start_ms,
+    end: m.end_ms,
+    title: m.title,
+    kind: "meeting",
+    busy: true,
+    locked: false,
+    movable: false,
+    sourceId: null,
+    description: "",
+    calendarId: m.calendar_id,
+    private: false,
+    guest: { oneOnOne: m.guests === 1 },
+  }));
+}
+
+/**
  * External priority rule 4, booking rule 11 and mirroring rule 34: why the level
  * of an external event cannot change. A mirrored event is one item with its
  * copies (mirroring rule 33), and the copies stay P1, so its time stays P1.
@@ -216,7 +262,19 @@ export function plannerRoutes(db: Db, sync: SyncService, now: () => number): Hon
     if (!q.success || q.data.to <= q.data.from || q.data.to - q.data.from > 62 * 86_400_000) {
       return c.json({ error: "invalid_range" }, 400);
     }
-    return c.json(plannerView(db, c.get("user").id, q.data.from, q.data.to));
+    const userId = c.get("user").id;
+    const guests = guestOccurrences(db, userId, q.data.from, q.data.to);
+    const view = plannerView(db, userId, q.data.from, q.data.to);
+    // The guest's own copy of an invitation shows once, as the meeting.
+    const own = view.events.filter(
+      (e) =>
+        e.kind !== "external" ||
+        !guests.some((g) => g.start === e.start && g.end === e.end && e.title.includes(g.title)),
+    );
+    const events = [...own, ...guests].sort(
+      (a, b) => a.start - b.start || a.id.localeCompare(b.id),
+    );
+    return c.json({ events, allDay: view.allDay });
   });
 
   r.get("/report", (c) => {

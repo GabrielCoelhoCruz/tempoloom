@@ -72,6 +72,8 @@ interface Ctx {
   taskSeen: Map<string, TimeSet>;
   /** Free time in an occurrence's window, without the occurrence itself (for DEF-23). */
   habitSeen: Map<string, TimeSet>;
+  /** MEET-02 rules 9-11: the automatic moves each meeting has left in this run. */
+  meetingMoves: Map<string, number>;
   /** Habit id -> the order rules this plan keeps (rule 18; see keptDependencies). */
   deps: Map<string, HabitDependency[]>;
 }
@@ -167,6 +169,7 @@ function init(s: Snapshot): Ctx {
     current: new Map(s.current.map((c) => [c.key, c])),
     taskSeen: new Map(),
     habitSeen: new Map(),
+    meetingMoves: new Map(),
     deps: new Map(),
   };
   for (const c of fixedManaged) {
@@ -1015,17 +1018,74 @@ function suggestMeeting(
   return [];
 }
 
-function placeMeeting(ctx: Ctx, m: MeetingItem): void {
+/** Rule 18: half the length of the period that starts on `start`. */
+function halfPeriod(f: MeetingFrequency, start: LocalDate): number {
+  if (f.period === "daily") return ((f.everyDays ?? 1) * DAY) / 2;
+  if (f.period === "weekly") return (f.everyWeeks * 7 * DAY) / 2;
+  let end = start;
+  for (let i = 0; i < (f.everyMonths ?? 1); i++) end = `${addDays(end, 32).slice(0, 8)}01`;
+  return (dayDiff(end, start) * DAY) / 2;
+}
+
+/**
+ * True when `date` is an ideal day of its period: the period start for a daily
+ * meeting; for a monthly one, the ideal day of the period's first month.
+ */
+export function onIdealDay(
+  zone: string,
+  weekStart: 1 | 7,
+  m: MeetingItem,
+  date: LocalDate,
+): boolean {
+  const f = m.frequency;
+  if (f.period === "weekly") return f.idealDays.includes(weekdayOf(date));
+  const anchor = meetingAnchor(zone, m);
+  if (f.period === "daily") return meetingPeriodStart(f, date, weekStart, anchor) === date;
+  let month = `${date.slice(0, 8)}01`;
+  for (let i = 1; i < (f.everyMonths ?? 1) && !meetingPeriodStart(f, month, weekStart, anchor); i++)
+    month = `${addDays(month, -1).slice(0, 8)}01`;
+  return (
+    monthlyDate(
+      month,
+      "nth" in f
+        ? { period: "monthly", nth: f.nth, weekday: f.weekday }
+        : { period: "monthly", dayOfMonth: f.dayOfMonth },
+    ) === date
+  );
+}
+
+/**
+ * Rule 18 (Tempoloom decision on the Proposed rule): the latest start of an
+ * occurrence before the period, from an earlier plan or this one, when it
+ * moved away from its ideal day; null otherwise.
+ */
+function previousStart(ctx: Ctx, m: MeetingItem, key: string, periodStart: number): number | null {
+  let prev =
+    m.previousStart !== undefined && m.previousStart < periodStart ? m.previousStart : null;
+  for (const p of ctx.placements)
+    if (p.kind === "meeting" && p.itemId === m.id && p.key !== key && p.start < periodStart)
+      prev = Math.max(prev ?? p.start, p.start);
+  return prev === null ||
+    onIdealDay(ctx.s.zone, ctx.s.weekStart, m, utcToLocal(ctx.s.zone, prev).date)
+    ? null
+    : prev;
+}
+
+/** `boosted`: place only the boosted period (MEET-02 rule 16); else every other period. */
+function placeMeeting(ctx: Ctx, m: MeetingItem, boosted = false): void {
   const { s } = ctx;
   const done = new Set((s.past ?? []).map((p) => p.key));
   const attendeeWindow = m.attendeeWindow ? TimeSet.from(m.attendeeWindow) : null;
   const required = m.durationMinutes;
   const periods = m.periods ? new Set(m.periods) : null;
-  let movesLeft = m.movesLeft ?? Number.POSITIVE_INFINITY;
+  const manual = new Set(m.manualKeys ?? []);
+  // One budget for the boosted pass and the other periods of the run.
+  const movesLeft = () => ctx.meetingMoves.get(m.id) ?? m.movesLeft ?? Number.POSITIVE_INFINITY;
   for (const period of meetingPeriods(ctx, m)) {
     const key = `meeting:${m.id}:${period.start}`;
     if (done.has(key) || ctx.fixedKeys.has(key) || ctx.dismissed.has(key)) continue;
     if (periods && !periods.has(period.start)) continue;
+    if (boosted !== (m.boost?.period === period.start)) continue;
     const own = period.days.map((d) => dayWindow(ctx, m.hours, d));
     if (own.every((w) => w.total() === 0)) continue;
     const windows = attendeeWindow ? own.map((w) => w.intersect(attendeeWindow)) : own;
@@ -1037,23 +1097,38 @@ function placeMeeting(ctx: Ctx, m: MeetingItem): void {
       free: minus((windows[i] as TimeSet).intersect(ctx.freeOther), blocked),
       window: windows[i] as TimeSet,
     }));
+    // MEET-02 rule 8: an automatic move keeps the lead time.
+    const lead = cur ? ctx.earliest + m.leadMinutes * MINUTE : ctx.earliest;
+    const open = frees.map((f) => ({ ...f, free: f.free.clip(lead, ctx.end) }));
+    // Rule 18: skip starts less than half a period after the previous occurrence,
+    // when another start exists.
+    const prev = previousStart(ctx, m, key, localToUtc(s.zone, period.start, 0));
+    const notBefore = prev === null ? null : prev + halfPeriod(m.frequency, period.start);
+    let spaced: Interval | null | undefined;
+    const spacedSlot = () => {
+      if (spaced === undefined)
+        spaced =
+          notBefore === null
+            ? null
+            : searchMeeting(
+                ctx,
+                m,
+                open.map((f) => ({ ...f, free: f.free.clip(notBefore, ctx.end) })),
+              );
+      return spaced;
+    };
     let chosen: Interval | null = null;
     if (cur && !m.changed) {
       const l = len(cur);
       const okLen = l >= m.shortestMinutes * MINUTE && l <= m.durationMinutes * MINUTE;
-      if (okLen && frees.some((f) => f.free.contains(cur)))
+      // An occurrence moved by hand keeps its time (MEET-02 rule 19).
+      const spacedOk =
+        notBefore === null || manual.has(key) || cur.start >= notBefore || !spacedSlot();
+      if (okLen && spacedOk && frees.some((f) => f.free.contains(cur)))
         chosen = { start: cur.start, end: cur.end };
     }
-    // MEET-02 rule 8: an automatic move keeps the lead time.
-    const lead = cur ? ctx.earliest + m.leadMinutes * MINUTE : ctx.earliest;
-    const found = chosen
-      ? null
-      : searchMeeting(
-          ctx,
-          m,
-          frees.map((f) => ({ ...f, free: f.free.clip(lead, ctx.end) })),
-        );
-    if (found && cur && !m.changed && movesLeft <= 0) {
+    const found = chosen ? null : (spacedSlot() ?? searchMeeting(ctx, m, open));
+    if (found && cur && !m.changed && movesLeft() <= 0) {
       // MEET-02 rules 9-11: a move is possible but none is left; keep the time, flag it, suggest others.
       occupy(ctx, cur, "meeting");
       ctx.placements.push({
@@ -1081,7 +1156,7 @@ function placeMeeting(ctx: Ctx, m: MeetingItem): void {
     }
     if (!chosen) chosen = found;
     if (chosen && cur && !m.changed && (chosen.start !== cur.start || chosen.end !== cur.end))
-      movesLeft--;
+      ctx.meetingMoves.set(m.id, movesLeft() - 1);
     if (chosen) {
       const day = frees.find((f) => f.free.contains(chosen))?.free ?? TimeSet.empty();
       ctx.habitSeen.set(key, minus(day, [chosen]));
@@ -1611,7 +1686,7 @@ const taskKey = (a: TaskItem, b: TaskItem) =>
   a.id.localeCompare(b.id);
 
 type Automation =
-  | { kind: "meeting"; item: MeetingItem }
+  | { kind: "meeting"; item: MeetingItem; boosted?: boolean }
   | { kind: "buffer"; item: BufferItem }
   | { kind: "habit"; item: HabitItem };
 // Inside one level and rank, meetings go first (meetings-flexible.md rule 23).
@@ -1694,10 +1769,10 @@ export function plan(s: Snapshot): Plan {
   const meetingById = new Map(s.meetings.map((m) => [m.id, m]));
   const placed = new Set<string>();
   const placeAutomation = (a: Automation) => {
-    const key = `${a.kind}:${a.item.id}`;
+    const key = `${a.kind}:${a.item.id}${a.kind === "meeting" && a.boosted ? ":boost" : ""}`;
     if (placed.has(key)) return;
     placed.add(key);
-    if (a.kind === "meeting") return placeMeeting(ctx, a.item);
+    if (a.kind === "meeting") return placeMeeting(ctx, a.item, a.boosted);
     if (a.kind === "buffer") return placeBuffer(ctx, a.item);
     for (const d of ctx.deps.get(a.item.id) ?? []) {
       if (d.kind === "habit")
@@ -1716,6 +1791,10 @@ export function plan(s: Snapshot): Plan {
       ...s.meetings
         .filter((m) => lifted.get(`meeting:${m.id}`) === level)
         .map((item) => ({ kind: "meeting" as const, item })),
+      // MEET-02 rule 16: the boosted period of a meeting goes at the boosted level.
+      ...s.meetings
+        .filter((m) => m.boost?.level === level)
+        .map((item) => ({ kind: "meeting" as const, item, boosted: true })),
       ...s.buffers
         .filter((b) => b.level === level)
         .map((item) => ({ kind: "buffer" as const, item })),

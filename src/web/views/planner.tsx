@@ -80,6 +80,11 @@ const EventActions = lazyComponent<{
   run: (fn: () => Promise<unknown>) => void;
   close: () => void;
 }>(() => import("./planner-extras.tsx").then((m) => m.EventActions));
+const MeetingActions = lazyComponent<{
+  event: PlannerEvent;
+  run: (fn: () => Promise<unknown>) => void;
+  close: () => void;
+}>(() => import("./planner-meeting.tsx").then((m) => m.MeetingActions));
 const CurrentTasks = lazyComponent(() =>
   import("./planner-extras.tsx").then((m) => m.CurrentTasks),
 );
@@ -420,30 +425,32 @@ export function Planner() {
               Copied to: {selected.copies.map(calendarName).join(", ")}
             </div>
           )}
-          <EventExtras event={selected} onDone={() => setSelected(null)} />
-          <label class="inline">
-            Category
-            <select
-              data-testid="event-category"
-              onChange={(e) => {
-                const id = selected.id;
-                const value = e.currentTarget.value;
-                setSelected(null);
-                void run(() =>
-                  api("POST", "/api/planner/events/category", { id, category: value || null }),
-                );
-              }}
-            >
-              <option value="" selected={!selected.manualCategory}>
-                Automatic
-              </option>
-              {CATEGORIES.map((c) => (
-                <option value={c} key={c} selected={selected.manualCategory === c}>
-                  {CATEGORY_LABELS[c]}
+          {!selected.guest && <EventExtras event={selected} onDone={() => setSelected(null)} />}
+          {!selected.guest && (
+            <label class="inline">
+              Category
+              <select
+                data-testid="event-category"
+                onChange={(e) => {
+                  const id = selected.id;
+                  const value = e.currentTarget.value;
+                  setSelected(null);
+                  void run(() =>
+                    api("POST", "/api/planner/events/category", { id, category: value || null }),
+                  );
+                }}
+              >
+                <option value="" selected={!selected.manualCategory}>
+                  Automatic
                 </option>
-              ))}
-            </select>
-          </label>
+                {CATEGORIES.map((c) => (
+                  <option value={c} key={c} selected={selected.manualCategory === c}>
+                    {CATEGORY_LABELS[c]}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
           {selected.kind === "external" && !selected.levelFixed && (
             <form
               class="form"
@@ -501,7 +508,7 @@ export function Planner() {
               <p class="status wide">{LEVEL_FIXED_NOTES[selected.levelFixed]}</p>
             </div>
           )}
-          {selected.kind !== "external" && (
+          {selected.kind !== "external" && !selected.guest && (
             <div class="actions">
               <button
                 type="button"
@@ -539,28 +546,24 @@ export function Planner() {
                   Skip this day
                 </button>
               )}
-              {selected.kind === "meeting" && selected.sourceId && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    const id = selected.sourceId;
-                    const eventId = selected.id;
-                    setSelected(null);
-                    void run(() => api("POST", `/api/meetings/${id}/skip`, { eventId }));
-                  }}
-                >
-                  Skip this time
-                </button>
-              )}
             </div>
           )}
-          <EventActions
-            key={selected.id}
-            event={selected}
-            zone={z}
-            run={(fn) => void run(fn)}
-            close={() => setSelected(null)}
-          />
+          {selected.kind === "meeting" && (
+            <MeetingActions
+              event={selected}
+              run={(fn) => void run(fn)}
+              close={() => setSelected(null)}
+            />
+          )}
+          {!selected.guest && (
+            <EventActions
+              key={selected.id}
+              event={selected}
+              zone={z}
+              run={(fn) => void run(fn)}
+              close={() => setSelected(null)}
+            />
+          )}
           <button
             type="button"
             onClick={() => {
