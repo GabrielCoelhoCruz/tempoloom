@@ -174,11 +174,16 @@ function upgrade(before: (db: DatabaseSync) => void): Db {
   const dir = mkdtempSync(join(tmpdir(), "tl-tips-"));
   const path = join(dir, "db.sqlite");
   const old = new DatabaseSync(path);
+  // One transaction, as migrate() in db.ts does. In autocommit mode each
+  // statement syncs the file to disk: about 1 s on a real disk (CI) against
+  // 0.1 s on tmpfs, and over 5 s when CI test files run in parallel.
+  old.exec("BEGIN");
   for (const [i, sql] of MIGRATIONS.slice(0, 39).entries()) {
     old.exec(sql);
     old.exec(`PRAGMA user_version = ${i + 1}`);
   }
   before(old);
+  old.exec("COMMIT");
   old.close();
   const db = openDb(path);
   rmSync(dir, { recursive: true, force: true });
