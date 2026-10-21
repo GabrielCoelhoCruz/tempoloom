@@ -2,6 +2,7 @@
 import { randomUUID } from "node:crypto";
 import { Hono } from "hono";
 import { z } from "zod";
+import type { WeeklyHours } from "../../scheduler/hours.ts";
 import { plan } from "../../scheduler/plan.ts";
 import { defaultEventSettings, readEventSettings } from "../../shared/event-settings.ts";
 import { addDays, type LocalDate, weekdayOf } from "../../shared/time.ts";
@@ -11,10 +12,13 @@ import { editedEventSettings, eventSettingsInput, newEventSettings } from "../ev
 import { jsonBody, notFound } from "../http.ts";
 import { createItemHours, dropItemHours, itemHoursSchema, saveItemHours } from "../item-hours.ts";
 import type { Mailer } from "../mail.ts";
+import { isPublicMailDomain } from "../mail-domains.ts";
+import { availabilityMap } from "../meeting-availability.ts";
 import { notifyMeetingCancelled } from "../meeting-mail.ts";
 import { adoptableSeries, type Series } from "../meeting-series.ts";
 import { withState } from "../planner/markers.ts";
-import { logChange } from "../planner/meeting-log.ts";
+import { logChange, meetingBoost, skippedPeriods } from "../planner/meeting-log.ts";
+import { rescheduleSlot } from "../planner/meeting-reschedule.ts";
 import {
   type Attendee,
   attendeesOf,
@@ -25,10 +29,12 @@ import {
 } from "../planner/meetings.ts";
 import { KEY_PROP, MANAGED_PROP, type ManagedRow } from "../planner/push.ts";
 import { loadSnapshot, meetingGuests } from "../planner/replan.ts";
+import { waitingCalendars } from "../planner/write.ts";
 import type { ProviderPool } from "../providers/index.ts";
 import { getSettings } from "../settings.ts";
 import { cacheEvent } from "../sync/pull.ts";
 import type { SyncService } from "../sync/service.ts";
+import { domainOf, membership } from "../teams.ts";
 import { homeZone } from "../travel.ts";
 import { endRank, insertRank } from "./automations.ts";
 import { badRequest, hhmm, hoursSetId } from "./items.ts";
@@ -39,7 +45,14 @@ const meetingInput = z.object({
   description: z.string().max(8000).default(""),
   location: z.string().max(500).default(""),
   attendees: z
-    .array(z.object({ email: z.email(), required: z.boolean().default(true) }))
+    .array(
+      z.object({
+        email: z.email(),
+        required: z.boolean().default(true),
+        /** Rule 7: the organizer's hours for this guest, in the guest's time zone. */
+        hoursOverride: itemHoursSchema.nullable().default(null),
+      }),
+    )
     .min(1)
     .max(50),
   // Every N days, weeks or months, N 1 to 52 (meetings-flexible.md `frequency`).
@@ -88,8 +101,51 @@ const meetingInput = z.object({
   eventSettings: eventSettingsInput.optional(),
   /** Attach the rules to this recurring series (meetings-flexible.md rule 1). */
   series: z.object({ calendarId: z.string(), seriesId: z.string() }).optional(),
+  /**
+   * Guests from outside only (automations-library.md entry 32): no guest on the
+   * user's own mail domain and no user of this instance. Checked on create.
+   */
+  externalOnly: z.boolean().optional(),
 });
 type MeetingInput = z.infer<typeof meetingInput>;
+
+/**
+ * Refuses a guest on the user's own domain or a person of the user's team
+ * (library entry 32). Own domains come from the user's mail addresses: the
+ * main email and the added calendar accounts, not ICS feeds (their name is a
+ * feed title), and not public mail services. Only the user's team is checked,
+ * so the refusal tells nothing about users of other teams.
+ */
+function checkExternal(db: Db, userId: string, attendees: { email: string }[]) {
+  const own = new Set(
+    all<{ email: string }>(
+      db,
+      `SELECT email FROM users WHERE id = ?
+       UNION SELECT email FROM accounts WHERE user_id = ? AND provider <> 'ics'`,
+      userId,
+      userId,
+    )
+      .map((r) => domainOf(r.email))
+      .filter((d) => d !== "" && !isPublicMailDomain(d)),
+  );
+  const why = "Recurring client meetings take external guests only.";
+  for (const { email } of attendees) {
+    const d = domainOf(email);
+    // A subdomain counts too: eu.acme.com for a user at acme.com.
+    if ([...own].some((o) => d === o || d.endsWith(`.${o}`)))
+      badRequest("attendees", `${email.toLowerCase()} is on your own domain. ${why}`);
+    if (
+      one(
+        db,
+        `SELECT 1 FROM users u JOIN team_members m ON m.user_id = u.id
+         WHERE u.email = ? COLLATE NOCASE AND m.team_id = ?`,
+        email,
+        membership(db, userId).team.id,
+      )
+    )
+      badRequest("attendees", `${email.toLowerCase()} is in your team. ${why}`);
+  }
+}
 
 function rowFrom(
   db: Db,
@@ -101,7 +157,11 @@ function rowFrom(
 ): { row: MeetingRow; attendees: Attendee[] } {
   const email = one<{ email: string }>(db, "SELECT email FROM users WHERE id = ?", userId)?.email;
   const attendees = b.attendees
-    .map((a) => ({ email: a.email.toLowerCase(), required: a.required }))
+    .map((a) => ({
+      email: a.email.toLowerCase(),
+      required: a.required,
+      hoursOverride: a.required ? (a.hoursOverride as WeeklyHours | null) : null,
+    }))
     .filter((a, i, list) => a.email !== email && list.findIndex((x) => x.email === a.email) === i);
   if (attendees.length === 0) badRequest("attendees", "Invite at least one other person");
   const shortest = b.shortestMinutes ?? b.durationMinutes;
@@ -189,10 +249,11 @@ function save(db: Db, row: MeetingRow, attendees: Attendee[], insert: boolean): 
   for (const a of attendees) {
     run(
       db,
-      "INSERT INTO meeting_attendees (meeting_id, email, required) VALUES (?, ?, ?)",
+      "INSERT INTO meeting_attendees (meeting_id, email, required, hours_override) VALUES (?, ?, ?, ?)",
       row.id,
       a.email,
       a.required ? 1 : 0,
+      a.hoursOverride ? JSON.stringify(a.hoursOverride) : null,
     );
   }
 }
@@ -218,7 +279,9 @@ function placementKey(row: MeetingRow, attendees: Attendee[], itemHours: string 
     row.level,
     row.when_unplaceable,
     row.lead_minutes,
-    [...attendees].sort((a, b) => (a.email < b.email ? -1 : 1)).map((a) => [a.email, a.required]),
+    [...attendees]
+      .sort((a, b) => (a.email < b.email ? -1 : 1))
+      .map((a) => [a.email, a.required, a.hoursOverride ?? null]),
   ]);
 }
 
@@ -360,6 +423,8 @@ export function meetingRoutes(
       one<{ report: string }>(db, "SELECT report FROM plan_reports WHERE user_id = ?", user.id)
         ?.report ?? "[]",
     ) as { itemKind: string; itemId: string; demandKey: string; status: string; reason: string }[];
+    // Accounts rule 16: the meeting's calendar is on a disconnected account.
+    const waiting = waitingCalendars(db, user.id);
     const meetings = all<MeetingRow>(
       db,
       "SELECT * FROM meetings WHERE user_id = ? ORDER BY level, rank, created_at",
@@ -368,8 +433,14 @@ export function meetingRoutes(
       ...m,
       frequency: JSON.parse(m.frequency) as unknown,
       item_hours: itemWeekly(db, m.hours_set_id),
-      event_settings: readEventSettings(m.event_settings, defaultEventSettings("meeting")),
+      ...((es) => ({ event_settings: es, disconnected: waiting(es.calendarId) }))(
+        readEventSettings(m.event_settings, defaultEventSettings("meeting")),
+      ),
       attendees: attendeesOf(db, m.id).map((a) => ({ ...a, ...person(db, a.email) })),
+      // Rules 6-7 of MEET-01, rules 16 and 34 of MEET-02.
+      availability: availabilityMap(db, user.id, m.hours_set_id, attendeesOf(db, m.id), now()),
+      skipped: skippedPeriods(db, m.id),
+      boost: m.enabled ? (meetingBoost(db, user.id, m, now()) ?? null) : null,
       occurrences: all<{
         id: string;
         key: string;
@@ -421,6 +492,22 @@ export function meetingRoutes(
   r.get("/meetings/series", (c) =>
     c.json({ series: adoptableSeries(db, c.get("user").id, now()) }),
   );
+
+  /** Rules 6-7: the availability map of the guests in the form, before save. */
+  r.post("/meetings/availability", async (c) => {
+    const user = c.get("user");
+    const body = await jsonBody(
+      c,
+      z.object({ attendees: meetingInput.shape.attendees, hoursSetId: z.string().optional() }),
+    );
+    const attendees = body.attendees.map((a) => ({
+      email: a.email.toLowerCase(),
+      required: a.required,
+      hoursOverride: a.hoursOverride as WeeklyHours | null,
+    }));
+    const set = hoursSetId(db, user.id, body.hoursSetId, "meeting");
+    return c.json(availabilityMap(db, user.id, set, attendees, now()));
+  });
 
   r.get("/meetings/person", (c) => {
     const email = z.email().safeParse(c.req.query("email"));
@@ -485,6 +572,7 @@ export function meetingRoutes(
   r.post("/meetings", async (c) => {
     const user = c.get("user");
     const body = await jsonBody(c, meetingInput);
+    if (body.externalOnly) checkExternal(db, user.id, body.attendees);
     const id = randomUUID();
     const series = body.series
       ? adoptableSeries(db, user.id, now()).find(
@@ -646,21 +734,131 @@ export function meetingRoutes(
     return c.json({ ok: true });
   });
 
-  /** MEET-02 rule 20: skip one period; nothing else is placed in it. */
-  r.post("/meetings/:id/skip", async (c) => {
-    const user = c.get("user");
-    const m = own(c.req.param("id"), user.id);
-    const { eventId } = await jsonBody(c, z.object({ eventId: z.string() }));
-    const key = one<{ key: string }>(
+  /**
+   * An occurrence and who acts on it: its organizer, or the one guest of a 1:1
+   * who is a user here (MEET-02 rule 26). Others get 404.
+   */
+  const occurrence = (eventId: string, user: { id: string; email: string }) => {
+    const row = one<ManagedRow & { account_id: string; provider_id: string }>(
       db,
-      "SELECT key FROM managed_events WHERE id = ? AND user_id = ? AND kind = 'meeting' AND source_id = ?",
+      `SELECT m.*, c.account_id, c.provider_id FROM managed_events m JOIN calendars c ON c.id = m.calendar_id
+       WHERE m.id = ? AND m.kind = 'meeting'`,
       eventId,
-      user.id,
-      m.id,
-    )?.key;
-    if (!key) notFound("occurrence");
-    run(db, "INSERT OR IGNORE INTO dismissed_keys (user_id, key) VALUES (?, ?)", user.id, key);
-    changed(user.id);
+    );
+    const m =
+      row &&
+      one<MeetingRow>(
+        db,
+        "SELECT * FROM meetings WHERE id = ? AND user_id = ?",
+        row.source_id,
+        row.user_id,
+      );
+    if (!row?.event_id || !m) notFound("occurrence");
+    if (m.user_id === user.id) return { row, m, guest: null };
+    const [only, ...more] = attendeesOf(db, m.id);
+    if (more.length > 0 || !only?.required || only.email !== user.email.toLowerCase())
+      notFound("occurrence");
+    return { row, m, guest: only.email };
+  };
+
+  /** MEET-02 rules 19 and 26: the best other time on the same day, or on another day of the period. */
+  r.post("/meetings/occurrences/:eventId/reschedule", async (c) => {
+    const user = c.get("user");
+    const { option } = await jsonBody(c, z.object({ option: z.enum(["sameDay", "otherDay"]) }));
+    const { row: found, m, guest } = occurrence(c.req.param("eventId"), user);
+    const markers = getSettings(db, m.user_id).markers;
+    const result = await sync.exclusive(m.user_id, async (pool) => {
+      // Read in the queue, so a plan run cannot move it in between.
+      const row = one<ManagedRow>(db, "SELECT * FROM managed_events WHERE id = ?", found.id);
+      if (!row?.event_id) return "missing" as const;
+      if (row.start_ms <= now()) return "started" as const;
+      const slot = rescheduleSlot(db, m.user_id, row, option, now());
+      if (!slot) return "none" as const;
+      const busy = row.busy === 1;
+      // Rule 19: the result stays unlocked; the next plan sets free or busy.
+      const title = row.user_edited
+        ? row.title
+        : withState(markers, m.title, busy ? "busy" : "free");
+      const ev = await pool
+        .get(found.account_id)
+        .editExternal(
+          found.provider_id,
+          row.event_id,
+          { summary: title, start: slot.start, end: slot.end, busy },
+          row.etag,
+        );
+      cacheEvent(db, row.calendar_id, ev);
+      run(
+        db,
+        "UPDATE managed_events SET start_ms = ?, end_ms = ?, title = ?, locked = 0, etag = ? WHERE id = ?",
+        slot.start,
+        slot.end,
+        title,
+        ev.etag,
+        row.id,
+      );
+      logChange(
+        db,
+        m.user_id,
+        {
+          meetingId: m.id,
+          key: row.key,
+          oldStart: row.start_ms,
+          oldEnd: row.end_ms,
+          newStart: slot.start,
+          newEnd: slot.end,
+          actor: guest ? "attendee" : "organizer",
+          reason: "manualMove",
+          detail: guest ?? "",
+          written: true,
+        },
+        now(),
+      );
+      return "ok" as const;
+    });
+    if (result === "missing") notFound("occurrence");
+    if (result === "started") return c.json({ error: "started" }, 409);
+    if (result === "none")
+      return c.json({ error: "no_time", message: "No other time fits in this period." }, 409);
+    changed(m.user_id);
+    return c.json({ ok: true });
+  });
+
+  /**
+   * MEET-02 rules 20 and 26: the organizer, or the guest of a 1:1, skips one
+   * period; nothing else is placed in it. An occurrence that started stays.
+   */
+  r.post("/meetings/occurrences/:eventId/skip", (c) => {
+    const user = c.get("user");
+    const { row, m, guest } = occurrence(c.req.param("eventId"), user);
+    if (row.start_ms <= now()) return c.json({ error: "started" }, 409);
+    tx(db, () => {
+      run(
+        db,
+        "INSERT OR IGNORE INTO dismissed_keys (user_id, key) VALUES (?, ?)",
+        m.user_id,
+        row.key,
+      );
+      if (guest)
+        logChange(
+          db,
+          m.user_id,
+          {
+            meetingId: m.id,
+            key: row.key,
+            oldStart: row.start_ms,
+            oldEnd: row.end_ms,
+            newStart: null,
+            newEnd: null,
+            actor: "attendee",
+            reason: "manualSkip",
+            detail: guest,
+            written: true,
+          },
+          now(),
+        );
+    });
+    changed(m.user_id);
     return c.json({ ok: true });
   });
 

@@ -2,6 +2,8 @@
 // exactly one team; sign-up creates a team with the user as its admin.
 import { randomUUID } from "node:crypto";
 import { all, type Db, one, run, tx } from "./db.ts";
+import { dropItemHours } from "./item-hours.ts";
+import { isPublicMailDomain } from "./mail-domains.ts";
 import { applyTeamDefaults } from "./team-defaults.ts";
 
 export type Role = "admin" | "member";
@@ -31,28 +33,8 @@ export class TeamError extends Error {
   }
 }
 
-/** Mail domains shared by unrelated people: their users are never grouped by domain. */
-const PUBLIC_DOMAINS = new Set([
-  "gmail.com",
-  "googlemail.com",
-  "outlook.com",
-  "hotmail.com",
-  "live.com",
-  "msn.com",
-  "yahoo.com",
-  "icloud.com",
-  "me.com",
-  "aol.com",
-  "proton.me",
-  "protonmail.com",
-  "gmx.com",
-  "gmx.de",
-  "web.de",
-  "fastmail.com",
-]);
-
 export const domainOf = (email: string) => email.slice(email.lastIndexOf("@") + 1).toLowerCase();
-export const isCompanyDomain = (domain: string) => domain !== "" && !PUBLIC_DOMAINS.has(domain);
+export const isCompanyDomain = (domain: string) => domain !== "" && !isPublicMailDomain(domain);
 
 /** Creates a team with the user as its only member and admin (rule 1). */
 export function createOwnTeam(
@@ -143,16 +125,19 @@ function memberLeft(db: Db, teamId: string, userId: string): void {
   // Round-robin pools keep only people of one team (booking-links-team.md edge case 3);
   // existing bookings stay. The team's webhook endpoints leave the user's links
   // (integrations-webhooks.md edge case 5).
-  run(
-    db,
-    `DELETE FROM booking_link_people WHERE kind = 'pool' AND (
+  const leaving = `kind = 'pool' AND (
        (user_id = ? AND link_id IN (SELECT id FROM booking_links WHERE user_id <> ?))
-       OR (user_id <> ? AND link_id IN (SELECT id FROM booking_links WHERE user_id = ?)))`,
+       OR (user_id <> ? AND link_id IN (SELECT id FROM booking_links WHERE user_id = ?)))`;
+  const sets = all<{ id: string }>(
+    db,
+    `SELECT hours_set_id AS id FROM booking_link_people WHERE hours_set_id IS NOT NULL AND ${leaving}`,
     userId,
     userId,
     userId,
     userId,
   );
+  run(db, `DELETE FROM booking_link_people WHERE ${leaving}`, userId, userId, userId, userId);
+  for (const { id } of sets) dropItemHours(db, id);
   run(
     db,
     `DELETE FROM booking_link_webhooks WHERE link_id IN (SELECT id FROM booking_links WHERE user_id = ?)

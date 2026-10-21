@@ -25,6 +25,7 @@ the routine is at risk.
 | `color` | event color id or `category` | `category` | One of the 12 calendar event colors, or follow the color rule. See `events-categories-and-colors.md`. |
 | `hours` | hours set id or one-off window | work hours if `category=work`, personal hours if `personal` (Proposed default) | The days and time ranges where the habit may be placed. A one-off window is a set of weekday time ranges that belongs to this habit only (E-0172). |
 | `ideal_time` | local time (HH:MM) | Proposed default: start of the first range of `hours` | Must fall inside `hours` on at least one allowed day. Save fails otherwise (E-0082). |
+| `ideal_at_end` | bool | `false` | Tempoloom decision, see below. |
 | `duration_max` | minutes | Proposed default: 60 | The ideal length. 15 to 720, step 15 (Proposed range). |
 | `duration_min` | minutes | equal to `duration_max` | The shortest length Tempoloom may use on a busy day. 15 to `duration_max`, step 15 (Proposed range). |
 | `frequency` | object | daily | See "Frequency" below. |
@@ -50,6 +51,15 @@ Tempoloom decisions for the event fields:
 - `color`: "Category color" follows the color rule; "Calendar color" or one of the 11 colors overrides it.
 - `target_calendar`: the form offers the main calendar and every writable calendar. If the chosen calendar is gone or read-only, new events go to the main calendar.
 - `reminders`: the form offers the calendar default, none, or one custom alert ("Remind me (minutes)").
+
+Tempoloom decision (library entry 11, "the last 30 min of work hours"): when
+`ideal_at_end` is true, the ideal start on each date is the end of the last
+range of `hours` on that weekday minus `duration_max`. A day whose hours end
+earlier gets an earlier ideal start, and a change of the hours moves it.
+`ideal_time` is then only the value the form shows; the save check of
+`ideal_time` (field table, E-0082) still applies; rule 12 uses the
+end-of-hours start instead of `ideal_time`. A time the user picks for one date
+(rule 30) or a snooze (rule 31) wins over it.
 
 Defense modes (E-0196, E-0081):
 
@@ -109,6 +119,8 @@ a fifth such weekday; `last` always selects the month's last such weekday.
     - `keep_as_conflict`: Tempoloom keeps or creates the event at the best slot inside the window, even though it overlaps another event, and prefixes the title with "⚠️" (E-0082).
     - `remove`: Tempoloom deletes the occurrence from the calendar and shows it as unplaced in the planner (E-0082, E-0081).
 18. Dependencies (legacy evidence, E-0082): a habit may require that it comes before, or never after, another habit or a flexible meeting on the same day, or that it never shares a day with another habit. Tempoloom treats each dependency as a hard placement constraint.
+
+    Tempoloom decision: when the target waits because its calendar is on a disconnected account (`accounts-login-emails-permissions.md` rule 16), the dependency stays. The target gets no new events, and its kept events count as its occurrences: a `before` habit takes place only on days that hold a kept event of the target, and a target with no kept events leaves it no day.
 
 ### Defense (free or busy)
 

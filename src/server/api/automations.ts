@@ -11,6 +11,7 @@ import { jsonBody } from "../http.ts";
 import { companyChecks } from "../meeting-checks.ts";
 import { CHECK_IDS, getPrefs } from "../meeting-prefs.ts";
 import { meetingPeers } from "../planner/meetings.ts";
+import { waitingCalendars } from "../planner/write.ts";
 import type { SyncService } from "../sync/service.ts";
 import { badRequest } from "./items.ts";
 import { adminTeam } from "./meeting-checks.ts";
@@ -57,7 +58,12 @@ export const LISTED_TYPES: ListedType[] = [
   { type: "focus_time", table: "focus_goals", fixedLevel: 4, settings: true },
 ];
 
+/** The automation types whose events go to a calendar chosen in their event settings. */
+const PLANNED = new Set<AutomationType>(["flexible_meeting", "buffer", "habit", "focus_time"]);
+
 export interface ListedAutomation {
+  /** The email of the disconnected account that holds the automation's calendar (accounts rule 16). */
+  disconnected?: string;
   type: AutomationType;
   id: string;
   name: string;
@@ -163,6 +169,7 @@ export function listAutomationsPage(
 /** All automations in list order (listKey); meeting checks, without priority, last. */
 export function listAutomations(db: Db, userId: string): ListedAutomation[] {
   const out: ListedAutomation[] = [];
+  const waiting = waitingCalendars(db, userId);
   for (const t of LISTED_TYPES) {
     const rows = all<{
       id: string;
@@ -176,13 +183,22 @@ export function listAutomations(db: Db, userId: string): ListedAutomation[] {
     }>(
       db,
       `SELECT id, title, enabled, ${levelOf(t)} AS level, rank, created_at,
-         ${t.settings ? "event_settings, template_id" : "NULL AS event_settings, NULL AS template_id"}
+         ${
+           t.settings
+             ? "event_settings, template_id"
+             : t.type === "flexible_meeting"
+               ? "event_settings, NULL AS template_id"
+               : "NULL AS event_settings, NULL AS template_id"
+         }
        FROM ${t.table} WHERE user_id = ?`,
       userId,
     );
     for (const r of rows) {
-      const es = JSON.parse(r.event_settings ?? "{}") as { emoji?: string };
+      const es = JSON.parse(r.event_settings ?? "{}") as { emoji?: string; calendarId?: string };
+      // Accounts rule 16: the calendar of a planned automation is on a disconnected account.
+      const disconnected = PLANNED.has(t.type) ? waiting(es.calendarId) : null;
       out.push({
+        ...(disconnected ? { disconnected } : {}),
         type: t.type,
         id: r.id,
         name: r.title,

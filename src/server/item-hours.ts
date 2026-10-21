@@ -1,5 +1,6 @@
-// Item-specific hours (docs/specs/planning-hours.md): a habit's own ranges,
+// Item-specific hours (docs/specs/planning-hours.md): an item's own ranges,
 // stored as a hidden hours set that no other item may use. Tasks cannot have them.
+// A booking link keeps one per person on the link (booking_link_people).
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { type Db, one, run } from "./db.ts";
@@ -44,7 +45,7 @@ export function saveItemHours(
 
 /** Removes an item's private set once nothing uses it. */
 export function dropItemHours(db: Db, setId: string): void {
-  const used = ["tasks", "habits", "focus_goals", "meetings"].some((t) =>
+  const used = ["tasks", "habits", "focus_goals", "meetings", "booking_link_people"].some((t) =>
     one(db, `SELECT 1 FROM ${t} WHERE hours_set_id = ?`, setId),
   );
   if (!used) run(db, "DELETE FROM hours_sets WHERE id = ? AND item_specific = 1", setId);

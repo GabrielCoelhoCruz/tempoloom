@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { Hono } from "hono";
 import { z } from "zod";
 import type { AppEnv } from "../app.ts";
-import { all, type Db, one, run } from "../db.ts";
+import { all, type Db, one, run, tx } from "../db.ts";
 import { jsonBody, notFound } from "../http.ts";
 import { connectedCount, instanceLimit, limitMessage, limitRefusal } from "../limits.ts";
 import type { SyncService } from "../sync/service.ts";
@@ -26,6 +26,11 @@ const policyInput = z.object({
   templateId: z.string().max(100).optional(),
 });
 type PolicyInput = z.infer<typeof policyInput>;
+
+/** Library entries 38 and 39: one policy per ordered pair of these calendars. */
+const meshInput = policyInput.omit({ sourceCalendarId: true, destCalendarId: true }).extend({
+  calendarIds: z.array(z.string()).max(6),
+});
 
 export function mirrorRoutes(db: Db, sync: SyncService, now: () => number): Hono<AppEnv> {
   const r = new Hono<AppEnv>();
@@ -79,6 +84,30 @@ export function mirrorRoutes(db: Db, sync: SyncService, now: () => number): Hono
     return null;
   };
 
+  const insert = (userId: string, b: PolicyInput) => {
+    const id = randomUUID();
+    run(
+      db,
+      `INSERT INTO mirror_policies (id, user_id, source_calendar_id, dest_calendar_id, calendar_type, visibility,
+         all_day_mode, copy_outside_work_hours, color_override, created_at, template_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      id,
+      userId,
+      b.sourceCalendarId,
+      b.destCalendarId,
+      b.calendarType,
+      b.visibility,
+      b.allDayMode,
+      b.copyOutsideWorkHours ? 1 : 0,
+      b.colorOverride,
+      now(),
+      b.templateId ?? null,
+    );
+    // Calendars in a policy count for availability (connected calendars rule 3).
+    connect(b);
+    return id;
+  };
+
   const connect = (b: PolicyInput) =>
     run(
       db,
@@ -120,28 +149,47 @@ export function mirrorRoutes(db: Db, sync: SyncService, now: () => number): Hono
     if (refused) return c.json(refused, 409);
     const no = problem(user.id, b, null);
     if (no) return c.json(no, 400);
-    const id = randomUUID();
-    run(
-      db,
-      `INSERT INTO mirror_policies (id, user_id, source_calendar_id, dest_calendar_id, calendar_type, visibility,
-         all_day_mode, copy_outside_work_hours, color_override, created_at, template_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      id,
-      user.id,
-      b.sourceCalendarId,
-      b.destCalendarId,
-      b.calendarType,
-      b.visibility,
-      b.allDayMode,
-      b.copyOutsideWorkHours ? 1 : 0,
-      b.colorOverride,
-      now(),
-      b.templateId ?? null,
-    );
-    // Calendars in a policy count for availability (connected calendars rule 3).
-    connect(b);
+    const id = insert(user.id, b);
     sync.request(user.id, 0);
     return c.json({ id }, 201);
+  });
+
+  /**
+   * Mirrors each calendar into each other one (library entries 38 and 39): one
+   * policy per ordered pair, all in one save. A refused pair saves nothing.
+   */
+  r.post("/mirrors/mesh", async (c) => {
+    const user = c.get("user");
+    const { calendarIds: given, ...rest } = await jsonBody(c, meshInput);
+    const calendarIds = [...new Set(given)];
+    if (calendarIds.length < 2)
+      return c.json({ error: "same_calendar", message: "Choose two different calendars." }, 400);
+    const pairs = calendarIds.flatMap((from) =>
+      calendarIds
+        .filter((to) => to !== from)
+        .map((to): PolicyInput => ({ ...rest, sourceCalendarId: from, destCalendarId: to })),
+    );
+    const count =
+      one<{ n: number }>(db, "SELECT COUNT(*) AS n FROM mirror_policies WHERE user_id = ?", user.id)
+        ?.n ?? 0;
+    const refused = limitRefusal(db, "max_mirrors", count + pairs.length - 1);
+    if (refused) return c.json(refused, 409);
+    const limit = instanceLimit(db, "max_connected_calendars");
+    const added = listedCalendars(db, user.id).filter(
+      (x) => calendarIds.includes(x.id) && !x.check_availability,
+    ).length;
+    if (limit !== null && added > 0 && connectedCount(db, user.id) + added > limit)
+      return c.json(
+        { error: "limit_reached", message: limitMessage("max_connected_calendars", limit) },
+        400,
+      );
+    for (const b of pairs) {
+      const no = problem(user.id, b, null);
+      if (no) return c.json(no, 400);
+    }
+    const ids = tx(db, () => pairs.map((b) => insert(user.id, b)));
+    sync.request(user.id, 0);
+    return c.json({ ids }, 201);
   });
 
   /**

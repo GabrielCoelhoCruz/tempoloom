@@ -10,7 +10,7 @@ import { autoLock, turnedOn } from "../planner/auto-lock.ts";
 import { wakeOrganizers } from "../planner/meetings.ts";
 import { requestRepaint } from "../planner/repaint.ts";
 import { writeCalendar } from "../planner/replan.ts";
-import { writableCalendar, writableCalendars } from "../planner/write.ts";
+import { waitingCalendars, writableCalendar, writableCalendars } from "../planner/write.ts";
 import { getSettings, updateSettings } from "../settings.ts";
 import type { SyncService } from "../sync/service.ts";
 import { badRequest } from "./items.ts";
@@ -95,7 +95,13 @@ export function settingsRoutes(db: Db, sync: SyncService, now: () => number): Ho
     const before = getSettings(db, user.id).autoLock;
     const parsed = (() => {
       try {
-        return updateSettings(db, user.id, body);
+        // manualSince is the server's record of the switch to manual mode, never user input.
+        const { manualSince: _, ...input } = body;
+        const since =
+          body.startMode === "manual" && getSettings(db, user.id).startMode !== "manual"
+            ? { manualSince: now() }
+            : {};
+        return updateSettings(db, user.id, { ...input, ...since });
       } catch (err) {
         return err as Error;
       }
@@ -112,6 +118,7 @@ export function settingsRoutes(db: Db, sync: SyncService, now: () => number): Ho
   r.get("/hours", (c) => {
     const userId = c.get("user").id;
     const main = writeCalendar(db, userId)?.id;
+    const waiting = waitingCalendars(db, userId);
     return c.json({
       hours: all<{
         id: string;
@@ -123,7 +130,12 @@ export function settingsRoutes(db: Db, sync: SyncService, now: () => number): Ho
         db,
         "SELECT id, kind, name, weekly, task_calendar_id FROM hours_sets WHERE user_id = ? AND item_specific = 0 ORDER BY created_at",
         userId,
-      ).map((h) => ({ ...h, weekly: JSON.parse(h.weekly) })),
+      ).map((h) => ({
+        ...h,
+        weekly: JSON.parse(h.weekly),
+        // Accounts rule 16: task chunks wait while this calendar's account is disconnected.
+        disconnected: waiting(h.task_calendar_id),
+      })),
       // HRS-12: the calendars that can take task chunks, besides the main one.
       taskCalendars: writableCalendars(db, userId).filter((cal) => cal.id !== main),
     });

@@ -9,6 +9,7 @@ import { LEVEL_NAMES, zone as myZone } from "../lib/state.ts";
 import { dayText, savedFormat, timeText, type View } from "../lib/zoned.ts";
 import {
   type EditableLink,
+  hoursBody,
   type LocationOption,
   LocationsEditor,
   type Organizer,
@@ -80,11 +81,11 @@ export function OneOffForm({
             hoursBefore: Number(f.get("reminderHours")),
             message: text("reminderMessage"),
           },
-          organizers: organizers.map(({ userId, hoursSetId, required, isHost }) => ({
-            userId,
-            hoursSetId,
-            required,
-            isHost,
+          organizers: organizers.map((o) => ({
+            userId: o.userId,
+            ...hoursBody(o),
+            required: o.required,
+            isHost: o.isHost,
           })),
           ...(text("slug") ? { slug: text("slug") } : {}),
         };
