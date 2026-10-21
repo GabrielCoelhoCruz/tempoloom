@@ -18,6 +18,7 @@ import { Hono } from "hono";
 import { describe, expect, it } from "vitest";
 import { ensureUser } from "../../src/server/accounts.ts";
 import { automationRoutes } from "../../src/server/api/automations.ts";
+import { habitRoutes } from "../../src/server/api/habits.ts";
 import { itemRoutes } from "../../src/server/api/items.ts";
 import { priorityRoutes } from "../../src/server/api/priorities.ts";
 import { taskTimeRoutes } from "../../src/server/api/task-time.ts";
@@ -71,6 +72,7 @@ function setup() {
     await next();
   });
   app.route("/api", itemRoutes(db, sync, now));
+  app.route("/api", habitRoutes(db, sync, now));
   app.route("/api", priorityRoutes(db, sync, now));
   app.route("/api", automationRoutes(db, sync, now));
   app.route("/api", taskTimeRoutes(db, sync, "http://localhost", now));

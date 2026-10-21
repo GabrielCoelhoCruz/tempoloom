@@ -1197,8 +1197,9 @@ export const MIGRATIONS: readonly string[] = [
   `,
   // 34: the visibility of Tempoloom's own events as the calendar has it, so a
   // privacy edit of a meeting occurrence is written back (MEET-02 rule 22).
-  // Other events keep NULL. NULL also means "not read since this migration":
-  // no write-back until the next read of that event, so no burst of writes.
+  // Since migration 40 every event keeps its privacy (PLN-6). NULL means "not
+  // read since this migration": no write-back until the next read of that
+  // event, so no burst of writes.
   `
   ALTER TABLE events ADD COLUMN own_visibility TEXT
     CHECK (own_visibility IN ('default', 'public', 'private', 'confidential'));
@@ -1212,5 +1213,112 @@ export const MIGRATIONS: readonly string[] = [
     period TEXT NOT NULL,
     PRIMARY KEY (user_id, kind)
   ) STRICT;
+  `,
+  // 36: task visibility (planning-event-content.md CNT-20, CNT-24) and the scheduling order.
+  `
+  ALTER TABLE tasks ADD COLUMN visibility TEXT NOT NULL DEFAULT 'calendar_default'
+    CHECK (visibility IN ('calendar_default', 'private'));
+  -- The task ids in the order the last plan processed them (planning-tasks.md TSK-61).
+  ALTER TABLE plan_reports ADD COLUMN task_order TEXT NOT NULL DEFAULT '[]';
+  `,
+  // 37: OAuth 2.1 for MCP clients (integrations-ai-tools.md): clients that
+  // registered themselves, one-time authorization codes, the user's grants
+  // (one per client) and the tokens of each grant. Revoking a grant deletes it.
+  `
+  CREATE TABLE oauth_clients (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    redirect_uris TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  ) STRICT;
+  CREATE TABLE oauth_grants (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    client_id TEXT NOT NULL REFERENCES oauth_clients(id) ON DELETE CASCADE,
+    scope TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    last_used_at INTEGER,
+    UNIQUE (user_id, client_id)
+  ) STRICT;
+  CREATE TABLE oauth_codes (
+    code_hash TEXT PRIMARY KEY,
+    grant_id TEXT NOT NULL REFERENCES oauth_grants(id) ON DELETE CASCADE,
+    redirect_uri TEXT NOT NULL,
+    code_challenge TEXT NOT NULL,
+    expires_at INTEGER NOT NULL
+  ) STRICT;
+  CREATE TABLE oauth_tokens (
+    token_hash TEXT PRIMARY KEY,
+    grant_id TEXT NOT NULL REFERENCES oauth_grants(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL CHECK (kind IN ('access', 'refresh')),
+    expires_at INTEGER NOT NULL
+  ) STRICT;
+  CREATE INDEX oauth_tokens_grant ON oauth_tokens(grant_id);
+  `,
+  `
+  ALTER TABLE oauth_tokens ADD COLUMN used_at INTEGER;
+  ALTER TABLE oauth_states ADD COLUMN return_to TEXT;
+  `,
+  // 39: the user started this task chunk or habit event, or logged it as work
+  // (planning-task-progress.md PRG-3, PRG-4, PRG-20). In manual start mode only
+  // a started event counts as done work; a lock or a drag does not start it.
+  `
+  ALTER TABLE managed_events ADD COLUMN started INTEGER NOT NULL DEFAULT 0;
+  UPDATE managed_events SET started = 1 WHERE key LIKE '%:log-%';
+  `,
+  // 40: the planner's "view as" reads the privacy of every event
+  // (planning-planner.md PLN-6), so each calendar is read in full once to
+  // fill it for events read before. Event tips
+  // (planning-event-content.md CNT-15) stay off for existing users, so the
+  // upgrade rewrites no event; new users get them on.
+  `
+  UPDATE calendars SET sync_token = NULL;
+  UPDATE users SET settings = json_set(settings, '$.eventTips', json('false'))
+    WHERE json_valid(settings) AND json_type(settings, '$.eventTips') IS NULL;
+  `,
+  // 41: habit guests, auto-decline and dependencies (habits-automation.md
+  // concepts, rules 18, 37-39), and the snooze of one occurrence (rule 31).
+  `
+  ALTER TABLE habits ADD COLUMN guests TEXT NOT NULL DEFAULT '[]';
+  ALTER TABLE habits ADD COLUMN decline_enabled INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE habits ADD COLUMN decline_message TEXT NOT NULL DEFAULT '';
+  -- [{rule, kind, id}]: see HabitDependency in src/scheduler/model.ts.
+  ALTER TABLE habits ADD COLUMN dependencies TEXT NOT NULL DEFAULT '[]';
+  -- 1: the minute is a snooze time (first legal start at or after it), not a reschedule.
+  ALTER TABLE habit_reschedules ADD COLUMN not_before INTEGER NOT NULL DEFAULT 0;
+  `,
+  // 42: the organizer's hours for one guest (meetings-flexible.md rule 7), as weekly
+  // ranges in the guest's time zone; NULL: the guest's own meeting hours. And the
+  // periods of a meeting that had no time (meetings-flexible-rescheduling.md rules
+  // 16, 34): status 'unplaced' (removed) or 'conflict' (kept in conflict).
+  `
+  ALTER TABLE meeting_attendees ADD COLUMN hours_override TEXT;
+  CREATE TABLE meeting_missed (
+    meeting_id TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+    period TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('unplaced', 'conflict')),
+    reason TEXT NOT NULL,
+    at INTEGER NOT NULL,
+    PRIMARY KEY (meeting_id, period)
+  ) STRICT;
+  `,
+  // 43: focus time hidden from booking links (focus-time.md offer_to_booking_links),
+  // and the share pages of weekly reports (analytics-weekly-reports.md rules 10-12):
+  // the top part and the display name (null: none to show) as sent, public
+  // while shared_at is set: the user confirmed a share and did not stop it.
+  `
+  ALTER TABLE focus_goals ADD COLUMN offer_to_links INTEGER NOT NULL DEFAULT 1;
+  CREATE TABLE weekly_shares (
+    token TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name TEXT,
+    week_from TEXT NOT NULL,
+    week_to TEXT NOT NULL,
+    totals TEXT NOT NULL,
+    facts TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    shared_at INTEGER
+  ) STRICT;
+  CREATE INDEX weekly_shares_user ON weekly_shares(user_id);
   `,
 ];

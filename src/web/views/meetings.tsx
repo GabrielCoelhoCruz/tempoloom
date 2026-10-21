@@ -1,22 +1,27 @@
 import { useCallback, useEffect, useState } from "preact/hooks";
 import { defaultEventSettings, type EventSettings } from "../../shared/event-settings.ts";
-import { itemRangeOf } from "../../shared/item-hours.ts";
+import { itemRangeOf, type Weekly } from "../../shared/item-hours.ts";
 import { api } from "../lib/api.ts";
 import { duration, formatWhen, hhmm } from "../lib/format.ts";
 import { freeName, templateFromUrl } from "../lib/library.ts";
 import { useLive } from "../lib/live.ts";
 import { LEVEL_NAMES, planNow, zone } from "../lib/state.ts";
 import { EventSettingsFields, eventSettingsFrom } from "./event-settings.tsx";
+import { MeetingHabitDependencies } from "./habit-dependencies.tsx";
 import { describeWeekly, ItemHoursFields, itemHoursFrom } from "./hours-field.tsx";
+import {
+  AvailabilityMap,
+  DAY_NAMES,
+  emails,
+  GuestHours,
+  type Missed,
+  MissedPeriods,
+  type Person,
+  PersonLine,
+  useGuestHours,
+} from "./meetings-availability.tsx";
 
-interface Person {
-  email: string;
-  class: "user" | "none";
-  name: string | null;
-  timeZone: string | null;
-}
-
-interface Meeting {
+interface Meeting extends Missed {
   id: string;
   title: string;
   level: number;
@@ -35,7 +40,7 @@ interface Meeting {
   frequency: Frequency;
   item_hours: string | null;
   event_settings: EventSettings;
-  attendees: (Person & { required: boolean })[];
+  attendees: (Person & { required: boolean; hoursOverride: Weekly | null })[];
   occurrences: { id: string; key: string; start_ms: number; end_ms: number; locked: number }[];
   problems: {
     demandKey: string;
@@ -152,8 +157,8 @@ const CHANGE_REASONS: Record<string, string> = {
   declined: "declined",
   ruleChanged: "rules changed",
   noFreeSlot: "cancelled, no free time",
-  manualMove: "moved by you",
-  manualSkip: "skipped by you",
+  manualMove: "moved by hand",
+  manualSkip: "skipped",
 };
 const MOVES: [string, string][] = [
   ["none", "No automatic moves"],
@@ -182,7 +187,6 @@ interface Preview {
   moved: number;
 }
 
-const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const DEFENSE: Record<string, string> = {
   adaptive: "Free until time gets short",
   busy: "Always busy",
@@ -200,24 +204,6 @@ const REASONS: Record<string, string> = {
   "outside-window": "outside the planning window",
   "too-long-for-hours": "longer than any range of the meeting hours",
 };
-
-const emails = (text: string) =>
-  text
-    .split(/[,\s]+/)
-    .map((e) => e.trim().toLowerCase())
-    .filter(Boolean);
-
-function PersonLine({ p }: { p: Person }) {
-  return p.class === "user" ? (
-    <span>
-      {p.email}: Tempoloom user, {p.timeZone}
-    </span>
-  ) : (
-    <span class="warning">
-      {p.email}: Tempoloom cannot see this person's availability or time zone.
-    </span>
-  );
-}
 
 /** MEET-02 rule 33: every unplaced or conflicting occurrence of all meetings, with its reason. */
 function Attention({ meetings, zone: z }: { meetings: Meeting[]; zone: string }) {
@@ -257,6 +243,7 @@ export function Meetings() {
   const z = zone();
   const [meetings, setMeetings] = useState<Meeting[]>([]);
   const [people, setPeople] = useState<Person[]>([]);
+  const guestHours = useGuestHours(people);
   const [preview, setPreview] = useState<Preview | null>(null);
   const [error, setError] = useState<string | null>(null);
   const template = templateFromUrl();
@@ -308,6 +295,7 @@ export function Meetings() {
     setEvery(init.every);
     setUnit(init.unit);
     setHoursMode(m.item_hours ? "itemSpecific" : m.hours_mode);
+    guestHours.load(m.attendees);
     setPreview(null);
     void lookup(
       m.attendees
@@ -323,6 +311,7 @@ export function Meetings() {
     setEvery("1");
     setHoursMode("everyone");
     setPeople([]);
+    guestHours.setOverrides({});
   };
   const everyInit = ed
     ? everyOf(ed.frequency).every
@@ -400,7 +389,11 @@ export function Meetings() {
     return {
       title: text("title"),
       attendees: [
-        ...emails(text("guests")).map((email) => ({ email, required: true })),
+        ...emails(text("guests")).map((email) => ({
+          email,
+          required: true,
+          hoursOverride: guestHours.hoursFor(email),
+        })),
         ...emails(text("optional")).map((email) => ({ email, required: false })),
       ],
       frequency,
@@ -450,6 +443,7 @@ export function Meetings() {
             await api("POST", "/api/meetings", body(form));
             setSaved((n) => n + 1);
             setPeople([]);
+            guestHours.setOverrides({});
             setPreview(null);
             setSeed(null);
             setEvery("1");
@@ -459,6 +453,7 @@ export function Meetings() {
         }}
       >
         {ed && <p class="wide status">Editing “{ed.title}”</p>}
+        {ed && <MeetingHabitDependencies meetingId={ed.id} />}
         <label class="wide" hidden={ed !== null}>
           From an existing meeting
           <select
@@ -518,10 +513,12 @@ export function Meetings() {
             {people.map((p) => (
               <li key={p.email}>
                 <PersonLine p={p} />
+                {p.class === "user" && <GuestHours person={p} state={guestHours} />}
               </li>
             ))}
           </ul>
         )}
+        {guestHours.map && <AvailabilityMap map={guestHours.map} />}
         <label class="wide">
           Optional guests (comma list)
           <input
@@ -872,6 +869,9 @@ export function Meetings() {
                       {m.attendees.map((a) => (
                         <li key={a.email}>
                           <PersonLine p={a} />
+                          {a.hoursOverride
+                            ? ` · hours set by you: ${describeWeekly(a.hoursOverride)}`
+                            : ""}
                           {a.required ? "" : " (optional)"}
                         </li>
                       ))}
@@ -923,6 +923,7 @@ export function Meetings() {
                           </div>
                         );
                       })}
+                    <MissedPeriods m={m} reason={(r) => REASONS[r] ?? r} />
                     {m.changes.length > 0 && (
                       <details class="meta" open>
                         <summary>Changes</summary>

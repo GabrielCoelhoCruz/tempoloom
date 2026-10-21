@@ -96,6 +96,7 @@ export function setActive(
       if (isDeactivated(db, userId)) return;
       run(db, "UPDATE users SET deactivated_at = ? WHERE id = ?", now, userId);
       run(db, "DELETE FROM sessions WHERE user_id = ?", userId);
+      run(db, "DELETE FROM oauth_grants WHERE user_id = ?", userId);
       const m = membership(db, userId);
       if (m.team.id === teamId && !isSoleAdmin(db, userId)) {
         const user = one<{ id: string; name: string; email: string }>(

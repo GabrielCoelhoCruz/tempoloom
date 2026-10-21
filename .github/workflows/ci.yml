@@ -24,6 +24,8 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm run lint
+      - name: Tests of the test() call reader in scripts/build-parity.py
+        run: python3 -B -m unittest discover -s scripts -p "test_*.py"
       - name: Parity table matches scripts/build-parity.py
         run: python3 scripts/build-parity.py && git diff --exit-code docs/parity.md
       - run: npm test
@@ -52,7 +54,8 @@ jobs:
           npm run test:integration
           scripts/caldav-server.sh stop
       - name: E2E tests (Radicale, Chrome)
-        run: npx playwright test
+        # The self-host job runs the @self-host test in parallel.
+        run: npx playwright test --grep-invert @self-host
       - name: Upload report and screenshots
         if: always()
         uses: actions/upload-artifact@v4
@@ -63,4 +66,47 @@ jobs:
             .e2e/results.json
             .e2e/test-results
             .e2e/radicale.log
+          retention-days: 14
+
+  self-host:
+    # Builds the Docker image and runs it with docker compose (compose.yaml, a
+    # .env file, the image defaults, one named SQLite volume) against the
+    # loopback Radicale: sign in, add a task, restart and replace the container,
+    # check that the data is kept (tests/e2e/self-host.spec.ts). The image stays
+    # on the runner; it is not pushed.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: docker build -t tempoloom:ci .
+      - name: Self-host E2E (Docker image, Radicale, Chrome)
+        run: npx playwright test --grep @self-host
+        # Below the job timeout, so a hang fails this step and the log steps still run.
+        timeout-minutes: 20
+        env:
+          TEMPOLOOM_SELFHOST_IMAGE: tempoloom:ci
+      - name: Upload report and screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: self-host-report
+          path: |
+            .e2e/report
+            .e2e/results.json
+            .e2e/test-results
+          retention-days: 14
+      - name: Upload server logs
+        if: failure() || cancelled()
+        uses: actions/upload-artifact@v4
+        with:
+          name: self-host-logs
+          path: |
+            .e2e/radicale.log
+            .e2e/self-host-container.log
+          if-no-files-found: warn
           retention-days: 14

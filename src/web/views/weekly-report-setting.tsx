@@ -1,9 +1,66 @@
 // The weekly report email switch (docs/specs/analytics-weekly-reports.md rules 1-2),
 // with the other emails of settings. It is one of the user's email preferences.
+// Below it, the weeks the user shared (rules 10-12), each with Stop sharing.
 import { useEffect, useState } from "preact/hooks";
 import type { MeetingPrefs } from "../../server/meeting-prefs.ts";
 import { api } from "../lib/api.ts";
 import { messageOf } from "../lib/save.ts";
+
+interface SharedWeek {
+  id: string;
+  weekFrom: string;
+  weekTo: string;
+  url: string;
+}
+
+function SharedWeeks() {
+  const [shares, setShares] = useState<SharedWeek[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const load = () =>
+    api<{ shares: SharedWeek[] }>("GET", "/api/weekly-shares").then(
+      (r) => setShares(r.shares),
+      (err) => setError(messageOf(err)),
+    );
+  useEffect(() => {
+    void load();
+  }, []);
+  if (!shares?.length && !error) return null;
+  return (
+    <div data-testid="shared-weeks">
+      <h3>Shared weeks</h3>
+      <div class="list">
+        {(shares ?? []).map((s) => (
+          <div class="row" key={s.id} data-testid="shared-week">
+            <span>
+              <a href={s.url} target="_blank" rel="noopener noreferrer">
+                {s.weekFrom} to {s.weekTo}
+              </a>
+            </span>
+            <div class="actions">
+              <button
+                type="button"
+                onClick={() => {
+                  setError(null);
+                  api("POST", `/api/weekly-shares/${encodeURIComponent(s.id)}/stop`).then(
+                    () => void load(),
+                    (err) => setError(messageOf(err)),
+                  );
+                }}
+              >
+                Stop sharing
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+      {error && (
+        <p class="error" role="alert">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
 
 export function WeeklyReportSetting() {
   const [enabled, setEnabled] = useState<boolean | null>(null);
@@ -63,6 +120,7 @@ export function WeeklyReportSetting() {
           {state.error}
         </p>
       )}
+      <SharedWeeks />
     </section>
   );
 }

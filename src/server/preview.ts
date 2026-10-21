@@ -53,7 +53,12 @@ export interface EventValues {
   location: string;
 }
 
-export type ChangeKind = "request" | "event_create" | "event_update" | "event_delete";
+export type ChangeKind =
+  | "request"
+  | "event_create"
+  | "event_update"
+  | "event_delete"
+  | "event_rsvp";
 
 export interface StagedChange {
   id: string;
@@ -700,6 +705,31 @@ export function createPreview(deps: PreviewDeps) {
     if (cur.start_ms !== before.start || cur.end_ms !== before.end || cur.summary !== before.title)
       throw new Stale("The event changed after it was staged");
     const attendees = JSON.parse(cur.attendees) as string[];
+    if (ch.kind === "event_rsvp") {
+      const { response } = ch.after as { response: "accepted" | "declined" | "tentative" };
+      const ev = await deps.sync.exclusive(userId, (pool) =>
+        pool
+          .get(cur.account_id)
+          .editExternal(cur.provider_id, cur.event_id, { selfResponse: response }, cur.etag),
+      );
+      cacheEvent(db, cur.calendar_id, ev);
+      logChange(
+        db,
+        userId,
+        {
+          calendarId: cur.calendar_id,
+          eventId: cur.event_id,
+          action: "update",
+          item: `preview:${ch.id}`,
+          reason: `answered ${response} from preview mode`,
+          title: cur.summary,
+          start: cur.start_ms,
+          end: cur.end_ms,
+        },
+        now(),
+      );
+      return;
+    }
     if (ch.kind === "event_delete") {
       await deps.sync.exclusive(userId, (pool) =>
         pool.get(cur.account_id).deleteEvent(cur.provider_id, cur.event_id),

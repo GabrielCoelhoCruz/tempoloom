@@ -8,6 +8,13 @@ import { DAY_NAMES, MAX_INTERVAL, ORDINALS, readFrequency, WEEKDAYS } from "../l
 import { LEVEL_NAMES, planNow } from "../lib/state.ts";
 import { TaskSearchPicker } from "./task-search-picker.tsx";
 
+/** Guests from a comma list (habits concepts `guests`). */
+export const guestsFrom = (text: string) =>
+  text
+    .split(",")
+    .map((g) => g.trim())
+    .filter(Boolean);
+
 const DEFENSE: Record<string, string> = {
   adaptive: "Free until time gets short",
   "always-free": "Always free",

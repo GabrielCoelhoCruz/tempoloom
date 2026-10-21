@@ -433,6 +433,14 @@ export function calendarItems(db: Db, userId: string, from: number, to: number):
   )) {
     levels.set(`buffer:${b.id}`, b.level);
   }
+  // offer_to_booking_links=false: no link offers that focus time (focus-time.md rule 32).
+  const hidden = new Set(
+    all<{ id: string }>(
+      db,
+      "SELECT id FROM focus_goals WHERE user_id = ? AND offer_to_links = 0",
+      userId,
+    ).map((f) => f.id),
+  );
   for (const m of all<{
     kind: string;
     source_id: string;
@@ -449,7 +457,8 @@ export function calendarItems(db: Db, userId: string, from: number, to: number):
     to,
   )) {
     const span = { start: m.start_ms, end: m.end_ms, title: m.title };
-    if (m.locked) items.push({ ...span, cls: "fixed" });
+    if (m.locked || (m.kind === "focus" && hidden.has(m.source_id)))
+      items.push({ ...span, cls: "fixed" });
     else if (!m.busy) items.push({ ...span, cls: "free" });
     else {
       // Placed focus time counts as P2 for booking links.
