@@ -29,6 +29,7 @@ import {
 } from "../planner/meetings.ts";
 import { KEY_PROP, MANAGED_PROP, type ManagedRow } from "../planner/push.ts";
 import { loadSnapshot, meetingGuests } from "../planner/replan.ts";
+import { waitingCalendars } from "../planner/write.ts";
 import type { ProviderPool } from "../providers/index.ts";
 import { getSettings } from "../settings.ts";
 import { cacheEvent } from "../sync/pull.ts";
@@ -421,6 +422,8 @@ export function meetingRoutes(
       one<{ report: string }>(db, "SELECT report FROM plan_reports WHERE user_id = ?", user.id)
         ?.report ?? "[]",
     ) as { itemKind: string; itemId: string; demandKey: string; status: string; reason: string }[];
+    // Accounts rule 16: the meeting's calendar is on a disconnected account.
+    const waiting = waitingCalendars(db, user.id);
     const meetings = all<MeetingRow>(
       db,
       "SELECT * FROM meetings WHERE user_id = ? ORDER BY level, rank, created_at",
@@ -429,7 +432,9 @@ export function meetingRoutes(
       ...m,
       frequency: JSON.parse(m.frequency) as unknown,
       item_hours: itemWeekly(db, m.hours_set_id),
-      event_settings: readEventSettings(m.event_settings, defaultEventSettings("meeting")),
+      ...((es) => ({ event_settings: es, disconnected: waiting(es.calendarId) }))(
+        readEventSettings(m.event_settings, defaultEventSettings("meeting")),
+      ),
       attendees: attendeesOf(db, m.id).map((a) => ({ ...a, ...person(db, a.email) })),
       // Rules 6-7 of MEET-01, rules 16 and 34 of MEET-02.
       availability: availabilityMap(db, user.id, m.hours_set_id, attendeesOf(db, m.id), now()),

@@ -70,6 +70,8 @@ interface QuestionDraft extends Omit<Question, "options"> {
 
 export interface EditableLink {
   id: string;
+  /** The email of the disconnected account that holds the link's calendar. */
+  disconnected?: string | null;
   slug: string;
   title: string;
   durations: number[];

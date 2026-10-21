@@ -34,6 +34,28 @@ export function writableCalendar(db: Db, userId: string, calendarId: string) {
   );
 }
 
+/**
+ * For the user's items: the email of the disconnected account that holds a
+ * chosen calendar, or the main calendar when none is chosen, else null
+ * (accounts rule 16). One read for a whole list.
+ */
+export function waitingCalendars(db: Db, userId: string) {
+  const rows = all<{ id: string; email: string; ok: number; main: number }>(
+    db,
+    `SELECT c.id, a.email, a.status = 'ok' AS ok, a.is_main AS main FROM calendars c
+       JOIN accounts a ON a.id = c.account_id
+     WHERE a.user_id = ? AND c.writable = 1
+     ORDER BY a.is_main DESC, c.is_primary DESC, a.created_at, c.name`,
+    userId,
+  );
+  const main = rows[0];
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  return (calendarId: string | null | undefined): string | null => {
+    const cal = (calendarId ? byId.get(calendarId) : undefined) ?? main;
+    return cal && cal.ok !== 1 ? cal.email : null;
+  };
+}
+
 export function writableCalendars(db: Db, userId: string) {
   return all<{ id: string; name: string }>(
     db,

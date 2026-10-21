@@ -16,7 +16,9 @@ import { editedEventSettings, eventSettingsInput, newEventSettings } from "../ev
 import { jsonBody, notFound } from "../http.ts";
 import { createItemHours, dropItemHours, itemHoursSchema, saveItemHours } from "../item-hours.ts";
 import { automationCount, limitRefusal } from "../limits.ts";
+import { itemChanges } from "../planner/item-log.ts";
 import { taskDoneMinutes } from "../planner/progress.ts";
+import { when, zoneOf } from "../preview.ts";
 import { getSettings } from "../settings.ts";
 import type { SyncService } from "../sync/service.ts";
 import { markTaskDone, taskOrderChanged } from "../task-order.ts";
@@ -353,6 +355,27 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
     if (!one(db, "SELECT 1 FROM tasks WHERE id = ? AND user_id = ?", id, user.id)) notFound("task");
     await deleteTask(db, sync, user.id, id);
     return c.body(null, 204);
+  });
+
+  /** SCH-119: the change log of one item, newest first, with times in the user's zone. */
+  r.get("/items/:kind/:id/changes", (c) => {
+    const kind = c.req.param("kind");
+    if (!["task", "habit", "focus", "buffer", "meeting"].includes(kind)) notFound("item kind");
+    const userId = c.get("user").id;
+    const zone = zoneOf(db, userId);
+    const range = (s: number | null, e: number | null) =>
+      s !== null && e !== null ? when(zone, s, e) : "";
+    return c.json({
+      changes: itemChanges(db, userId, kind, c.req.param("id"), now()).map((x) => ({
+        at: when(zone, x.at),
+        action: x.action,
+        from: range(x.old_start, x.old_end),
+        to: range(x.new_start, x.new_end),
+        // A skipped period is named by the first day in its demand key (also of a chunk key).
+        period: /\d{4}-\d{2}-\d{2}/.exec(x.demand_key)?.[0] ?? "",
+        reason: x.reason,
+      })),
+    });
   });
 
   // ---------------------------------------------------------------- buffers

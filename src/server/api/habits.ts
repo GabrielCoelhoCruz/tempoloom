@@ -14,6 +14,7 @@ import { editedEventSettings, eventSettingsInput, newEventSettings } from "../ev
 import { jsonBody, notFound } from "../http.ts";
 import { createItemHours, dropItemHours, itemHoursSchema, saveItemHours } from "../item-hours.ts";
 import { automationCount, limitRefusal } from "../limits.ts";
+import { waitingCalendars } from "../planner/write.ts";
 import type { SyncService } from "../sync/service.ts";
 import { badRequest, hhmm, hoursSetId, level, minutes, nextRank } from "./items.ts";
 
@@ -186,17 +187,25 @@ export function habitRoutes(db: Db, sync: SyncService, now: () => number): Hono<
     return JSON.stringify(kept);
   }
 
-  r.get("/habits", (c) =>
-    c.json({
-      habits: all(
+  r.get("/habits", (c) => {
+    const userId = c.get("user").id;
+    // Accounts rule 16: the habit's calendar is on a disconnected account.
+    const waiting = waitingCalendars(db, userId);
+    return c.json({
+      habits: all<{ event_settings: string }>(
         db,
         `SELECT h.*, CASE WHEN s.item_specific = 1 THEN s.weekly END AS item_hours
          FROM habits h JOIN hours_sets s ON s.id = h.hours_set_id
          WHERE h.user_id = ? ORDER BY h.level, h.rank, h.created_at`,
-        c.get("user").id,
-      ),
-    }),
-  );
+        userId,
+      ).map((h) => ({
+        ...h,
+        disconnected: waiting(
+          readEventSettings(h.event_settings, defaultEventSettings("habit")).calendarId,
+        ),
+      })),
+    });
+  });
 
   r.post("/habits", async (c) => {
     const user = c.get("user");

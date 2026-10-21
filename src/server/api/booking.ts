@@ -29,6 +29,7 @@ import { type Answer, type BookingChange, notifyBooking } from "../booking-mail.
 import {
   assign,
   bookingHolds,
+  CalendarDisconnected,
   hoursOf,
   type LinkPerson,
   linkPeople,
@@ -45,6 +46,7 @@ import type { Mailer } from "../mail.ts";
 import { getPrefs } from "../meeting-prefs.ts";
 import { MANAGED_PROP } from "../planner/push.ts";
 import { writeCalendar } from "../planner/replan.ts";
+import { waitingCalendars } from "../planner/write.ts";
 import { getSettings } from "../settings.ts";
 import type { SyncService } from "../sync/service.ts";
 import { membership, sameTeam } from "../teams.ts";
@@ -702,6 +704,9 @@ function linkView(db: Db, link: LinkRow, oneOffDays: number) {
     page: link.group_id ?? (link.hidden ? "hidden" : "main"),
     pageSlug: linkPageSlug(db, link),
     expiresAt: oneOffExpiry(link, oneOffDays, zoneOf(db, link.user_id)),
+    // Accounts rule 16: the owner's calendar for the link is on a disconnected
+    // account; bookings that the owner hosts wait.
+    disconnected: waitingCalendars(db, link.user_id)(link.calendar_id),
     targetError: targetProblem(db, link),
     organizers: people
       .filter((p) => p.kind === "organizer")
@@ -1562,6 +1567,8 @@ export function publicBookingRoutes(
     });
 
   const noCalendar = (err: unknown) => err instanceof Error && err.message === "no_calendar";
+  /** Accounts rule 16: the host's calendar is on a disconnected account; the booker tries later. */
+  const disconnected = { error: "calendar_disconnected" as const };
 
   r.post("/pages/:page/:link/book", async (c) => {
     const link = findLink(c.req.param("page"), c.req.param("link"));
@@ -1642,6 +1649,7 @@ export function publicBookingRoutes(
       } catch (err) {
         run(db, "DELETE FROM bookings WHERE id = ?", id);
         if (noCalendar(err)) return { error: "no_calendar" as const };
+        if (err instanceof CalendarDisconnected) return disconnected;
         throw err;
       }
       run(
@@ -1701,7 +1709,11 @@ export function publicBookingRoutes(
     if ("error" in result)
       return c.json(
         result,
-        result.error === "slot_taken" || result.error === "no_travel_time" ? 409 : 500,
+        result.error === "slot_taken" || result.error === "no_travel_time"
+          ? 409
+          : result.error === "calendar_disconnected"
+            ? 503
+            : 500,
       );
     return c.json(result, 201);
   });
@@ -1799,7 +1811,12 @@ export function publicBookingRoutes(
         );
       } catch (err) {
         if (noCalendar(err)) return { error: "no_event" as const };
-        if (err instanceof Error && err.message === "account_disconnected")
+        // Accounts rules 16, 19, 22: the old or new host calendar is on a
+        // disconnected account, so the move waits for the reconnect.
+        if (
+          err instanceof CalendarDisconnected ||
+          (err instanceof Error && err.message === "account_disconnected")
+        )
           return { error: "account_disconnected" as const };
         throw err;
       }
@@ -1859,7 +1876,7 @@ export function publicBookingRoutes(
   r.post("/bookings/:token/cancel", async (c) => {
     const b = byToken(c.req.param("token"));
     if (!b || b.status !== "booked") notFound("booking");
-    await sync.exclusive(b.user_id, async () => {
+    const result = await sync.exclusive(b.user_id, async () => {
       const link = b.link_id
         ? one<LinkRow>(db, "SELECT * FROM booking_links WHERE id = ?", b.link_id)
         : undefined;
@@ -1867,13 +1884,18 @@ export function publicBookingRoutes(
         ? eventTitle(link, organizerName(db, link, b.assignee_id), b.name)
         : b.name;
       const before = facts(b, link, title);
-      await writeBookingEvents(
-        db,
-        sync,
-        b.id,
-        { hostId: b.host_id ?? b.user_id, calendarId: b.calendar_id, eventId: b.event_id },
-        null,
-      );
+      try {
+        await writeBookingEvents(
+          db,
+          sync,
+          b.id,
+          { hostId: b.host_id ?? b.user_id, calendarId: b.calendar_id, eventId: b.event_id },
+          null,
+        );
+      } catch (err) {
+        if (err instanceof CalendarDisconnected) return disconnected;
+        throw err;
+      }
       run(db, "UPDATE bookings SET status = 'cancelled', updated_at = ? WHERE id = ?", now(), b.id);
       if (link) {
         event(link.id, "booking_link.meeting.cancelled", {
@@ -1898,7 +1920,9 @@ export function publicBookingRoutes(
           cc: before.cc,
         });
       }
+      return null;
     });
+    if (result) return c.json(result, 503);
     return c.json({ ok: true });
   });
 

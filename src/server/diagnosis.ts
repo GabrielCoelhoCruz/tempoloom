@@ -5,7 +5,7 @@ import { hasTag, tagText } from "../scheduler/blocking.ts";
 import { hoursToTimeSet, type WeeklyHours } from "../scheduler/hours.ts";
 import { changesOf } from "./change-log.ts";
 import { all, type Db, one } from "./db.ts";
-import { mirrorKey, TAG_NOSYNC } from "./planner/mirror.ts";
+import { ACTIVE, mirrorKey, TAG_NOSYNC } from "./planner/mirror.ts";
 import { MANAGED_PROP } from "./planner/push.ts";
 import { when, zoneOf } from "./preview.ts";
 
@@ -296,9 +296,28 @@ export function lookupEvent(db: Db, userId: string, q: string, now: number) {
           name: policyName(p),
           decision: copied ? "copied" : "skipped",
           reason: copied ? "" : skipReason(db, userId, p, e, now),
+          key: p.enabled ? mirrorKey(p.id, e.event_id) : null,
         };
       });
+  // Rule 10: repair runs the copy decision again for a copy, or for each policy
+  // of a source. It is offered only where the push can write: a copy that has
+  // not started, of an enabled policy whose accounts are connected.
+  const repair = [
+    ...(managed?.kind === "mirror" ? [managed.key] : []),
+    ...policies.flatMap((p) => (p.key ? [p.key] : [])),
+  ].filter((key) =>
+    one(
+      db,
+      `SELECT 1 FROM managed_events m JOIN mirror_policies p ON p.id = m.source_id
+       WHERE m.user_id = ? AND m.key = ? AND m.kind = 'mirror' AND m.event_id IS NOT NULL
+         AND m.locked = 0 AND m.start_ms > ? AND p.enabled = 1 AND ${ACTIVE}`,
+      userId,
+      key,
+      now,
+    ),
+  );
   return {
+    repair,
     event: {
       title: e.summary,
       when: e.all_day ? "all day" : when(zone, e.start_ms, e.end_ms),
@@ -312,7 +331,7 @@ export function lookupEvent(db: Db, userId: string, q: string, now: number) {
     },
     item,
     copy,
-    policies,
+    policies: policies.map(({ key: _, ...p }) => p),
     changes: changesOf(db, userId, e.calendar_id, e.event_id, managed?.key ?? null).map((c) => ({
       at: when(zone, c.at),
       action: c.action,

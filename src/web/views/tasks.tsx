@@ -9,6 +9,7 @@ import { useLive } from "../lib/live.ts";
 import { LEVEL_NAMES, me, planNow, zone } from "../lib/state.ts";
 import { Select } from "./event-settings.tsx";
 import { type HoursChoice, HoursField } from "./hours-field.tsx";
+import { ItemChanges } from "./item-changes.tsx";
 
 const TimerDialog = lazyComponent<{ onClose: () => void }>(() =>
   import("./timer-dialog.tsx").then((m) => m.TimerDialog),
@@ -675,6 +676,7 @@ export function Tasks() {
           )}
         </div>
         <TaskMore task={t} act={act} />
+        <ItemChanges kind="task" id={t.id} />
       </div>
       <div class="actions">
         {filter === "open" &&
