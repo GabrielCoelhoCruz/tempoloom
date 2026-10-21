@@ -324,14 +324,16 @@ test("a new automation goes after the last one of its level whose kind comes fir
   const [mon, tue, wed] = [W, day(1), day(2)];
   await onlyFree(cal, mon);
   await onlyFree(cal, tue);
-  await cal.addEvent({ title: "E2E busy", start: at(wed, "09:00"), end: at(wed, "12:00") });
+  // A buffer before the call: buffers-automation rule 18 lets a habit with no
+  // other slot take the time of a recovery buffer (after side) only.
+  await cal.addEvent({ title: "E2E busy", start: at(wed, "09:00"), end: at(wed, "13:00") });
   await cal.addEvent({
     title: "AT-Call",
-    start: at(wed, "12:00"),
-    end: at(wed, "13:00"),
+    start: at(wed, "14:00"),
+    end: at(wed, "15:00"),
     attendees: ["ana@example.com"],
   });
-  await cal.addEvent({ title: "E2E busy", start: at(wed, "14:00"), end: at(wed, "17:00") });
+  await cal.addEvent({ title: "E2E busy", start: at(wed, "15:00"), end: at(wed, "17:00") });
   // Thursday and Friday are full, so the habit has no other day in the week.
   for (const d of [day(3), day(4)])
     await cal.addEvent({ title: "E2E busy", start: at(d, "09:00"), end: at(d, "17:00") });
@@ -372,7 +374,7 @@ test("a new automation goes after the last one of its level whose kind comes fir
       expect(inWeek(l, "AT-Habit")).toEqual([`${wed} 13:00-14:00`]);
     },
   );
-  await addBuffer(page, "AT-Recovery", 2);
+  await addBuffer(page, "AT-Recovery", 2, "Before");
   const check = (l: Evs) => {
     expect(inWeek(l, "AT-First")).toEqual([`${mon} 13:00-14:00`]);
     expect(inWeek(l, "AT-Second")).toEqual([`${tue} 13:00-14:00`]);
