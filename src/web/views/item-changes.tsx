@@ -40,6 +40,7 @@ const REASONS: Record<string, string> = {
   "after-due": "some work ends after the due date",
   "rules-changed": "its settings changed",
   rearranged: "the plan changed around it",
+  snoozed: "you snoozed it",
 };
 
 export function ItemChanges({ kind, id }: { kind: string; id: string }) {

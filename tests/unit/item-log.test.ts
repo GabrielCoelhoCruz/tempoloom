@@ -193,6 +193,29 @@ describe("recordItemChanges", () => {
     expect(itemChanges(db, userId, "mirror", "h1", NOW)).toEqual([]);
   });
 
+  it("logs a snooze of a started habit event as a move (SCH-60a)", () => {
+    const { db, userId } = setup();
+    put(db, userId, "habit:h1:2026-11-02", "habit", NOW - H, NOW + H);
+    const before = rows(db, userId);
+    log(
+      db,
+      userId,
+      before,
+      new Map([moved("habit:h1:2026-11-02", NOW + 2 * H, NOW + 4 * H)]),
+      snapshot(),
+      { placements: [], report: [], taskOrder: [] },
+      NOW,
+    );
+    expect(
+      itemChanges(db, userId, "habit", "h1", NOW).map((c) => [
+        c.action,
+        c.old_start,
+        c.new_start,
+        c.reason,
+      ]),
+    ).toEqual([["moved", NOW - H, NOW + 2 * H, "snoozed"]]);
+  });
+
   it("logs a new event as placed, and a kept conflict and a status change with the event's time", () => {
     const { db, userId } = setup();
     const t = NOW + 24 * H;

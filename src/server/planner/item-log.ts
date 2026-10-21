@@ -4,7 +4,8 @@
 // Tempoloom decision: a move that the report does not explain gets
 // "no-space-fixed" (another event now covers the old time), "no-space-priority"
 // (another item of this run took it), "rules-changed" (the item's settings
-// changed) or "rearranged" (the plan changed around it).
+// changed) or "rearranged" (the plan changed around it); a snooze that moves a
+// started event gets "snoozed".
 import type { Plan, ReportEntry, Snapshot } from "../../scheduler/model.ts";
 import { all, type Db, run as dbRun } from "../db.ts";
 import type { ManagedRow } from "./push.ts";
@@ -100,8 +101,11 @@ export function recordItemChanges(
       const e = demandOf(byDemand, b.key);
       if (e && !placedAt.has(e.demandKey)) placedAt.set(e.demandKey, after);
     }
-    // Started events never change; their end is no move.
-    if (w === undefined || b.start_ms <= now) continue;
+    if (w === undefined) continue;
+    // A started event changes only when a snooze moves it to a later start
+    // (SCH-60a); a new end of a started event is no move.
+    const snoozed = b.start_ms <= now;
+    if (snoozed && (w === null || w.start <= now)) continue;
     const old = { start: b.start_ms, end: b.end_ms };
     if (w === null) {
       const e = demandOf(byDemand, b.key);
@@ -123,7 +127,7 @@ export function recordItemChanges(
         action: "moved",
         old,
         now: w,
-        reason: moveReason(b),
+        reason: snoozed ? "snoozed" : moveReason(b),
       });
     }
   }
