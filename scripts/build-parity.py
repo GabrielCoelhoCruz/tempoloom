@@ -440,9 +440,6 @@ E2E_NOTES.update({
     710: "The E2E browser has no Document Picture-in-Picture, so the test proves the popup window that Tempoloom opens instead; the picture-in-picture path is not under E2E",
     124: "Join uses the first link in the event's location or description; no conference vendor app",
 })
-PARTIAL.update({
-    76: "Habits have item-specific hours (E2E on CalDAV: \u201ca habit with item-specific hours is placed in them\u2026\u201d); focus time, flexible meetings and booking links do not offer them yet",
-})
 # --- end s3 ---
 
 # --- s4: mirroring, accounts and instance limits ---
@@ -668,7 +665,6 @@ T.update({
     "u9_lib_buffers": "library buffer entries 1, 10, 19 add buffers after large meetings, around flights and after long meetings only",
     "u9_lib_external": "library buffer entries 28, 29, 30 anchor on external meetings: travel only at an address, prep before, debrief after",
     "u9_lib_meetings": "library entries 32, 34 and 37: flexible meetings repeat at their period with the guests, and the priority link offers time over P3 and P4 habits",
-    "u9_lib_mirror": "library mirroring entries 38 and 39 copy busy time only between job calendars, both ways, never copying a copy",
     "u9_timer": "the pomodoro timer plays the chosen alarm, resets a running session without counting it, and shows the stats view with streak, completion rate and a chart (rules 7, 9, 17; T3)",
     "u9_planned": "planned time is the calendar when the day began and actual time is what stayed; only ended days count",
     "u9_weekly": "the weekly report goes out once in the first work hour of the last workday, with the week's totals and the calendar facts of the stats page; the user can turn it off",
@@ -700,9 +696,6 @@ E2E_NOTES.update({
 })
 # Rows whose entry covers only part of its preset (review of PR 10).
 PARTIAL.update({
-    750: "The entry fills a flexible meeting every 2 weeks, 30 min, P2, that needs at least one guest (E2E: \u201clibrary entries 32, 34 and 37: flexible meetings repeat at their period with the guests, and the priority link offers time over P3 and P4 habits\u201d). It does not check that the guests are external",
-    756: "The entry fills the mirroring form with busy-only copies (E2E: \u201clibrary mirroring entries 38 and 39 copy busy time only between job calendars, both ways, never copying a copy\u201d). It adds no two-way behavior: the user adds one policy in each direction",
-    757: "The entry fills the mirroring form with busy-only copies (E2E: \u201clibrary mirroring entries 38 and 39 copy busy time only between job calendars, both ways, never copying a copy\u201d). It adds no mesh of calendars: the user adds one policy for each pair",
 })
 # --- end U09 ---
 
@@ -815,8 +808,6 @@ E2E_NOTES.update({
 })
 # Row 90 stays partial: E2E does not cover buffers inside a level.
 PARTIAL[90] = "E2E on CalDAV covers flexible meetings, habits, tasks, next-up tasks and focus time in the order (\u201cinside one level meetings go first, then habits, then tasks\u2026\u201d, \u201ca next-up task goes before other tasks of any level\u201d, \u201cfocus time goes after a P4 task\u2026\u201d); buffers inside a level have unit tests only"
-# Row 76 stays partial: planning-hours.md says focus time, flexible meetings and
-# booking links do not offer item-specific hours "yet", so only habits are built.
 # --- end U03 ---
 
 # --- U07: flexible meeting limits and actions, booking link settings ---
@@ -1147,7 +1138,6 @@ PLANNED = "Buildable; not built yet (planned)"
 for n in [36, 40, 102, 361]:
     BLOCKED[n] = PLANNED
 BLOCKED[92] = PLANNED + ": the reason for each move and skip, and a view per item; the change log of every calendar write is built (src/server/change-log.ts)"
-BLOCKED[507] = PLANNED + ": the link's events go to the calendar chosen on the link (\u201c" + T["u7_locations"] + "\u201d); the choice of an added account, whose primary calendar gets the events and sends the invitations, is not built"
 BLOCKED[540] = PLANNED + ": the Repair action; looking up one event with its change log is built (src/server/diagnosis.ts)"
 BLOCKED[322] = (PLANNED + ": the Google free/busy query for attendees who are not users here (the Google client has a freeBusy method that no code calls); "
                 "its proof needs a Google account. The availability of attendees who are users here is E2E-proven (rows 321, 339)")
@@ -1482,6 +1472,33 @@ BLOCKED[783] = ("Needs a Google OAuth client and a Google test account to prove 
                 "needs the same to prove, so the card offers no Connect there. The built part has E2E on CalDAV: Not configured on this server "
                 "without a Google client, and Not connected with no Connect that would sign in as another user (\u201c" + T["u46_int_calendar"] + "\u201d)")
 # --- end U46 ---
+
+# --- U50: library presets, booking-link item hours, booking account ---
+T.update({
+    "u50_link_hours": "a booking link offers times only inside its item-specific hours, and on a team link each organizer's own item-specific hours count (planning-hours item-specific hours; booking-links-team rule 2)",
+    "u50_focus_hours": "focus time keeps item-specific hours of several ranges when the form saves other fields",
+    "u50_lib32": "library entry 32 takes external guests only: a guest on the user's own domain or a person of the user's team is refused with the reason; an outside guest, also a user of another team, saves (entry 32 preset)",
+    "u50_lib38": "library entry 38 saves a two-way busy-only mirror between the old and the new calendar in one save, and copies never chain (entry 38 preset)",
+    "u50_lib39": "library entry 39 saves one busy-only policy per ordered pair of the chosen job calendars in one save; each event gets one copy on every other calendar; a set with a pair that exists saves nothing (entry 39 preset)",
+    "u50_account": "a booking link writes its events to the primary calendar of the added account chosen on the link, with that account as organizer; the main calendar is the default (accounts rule 22)",
+    "u50_account_lost": "a link whose account for booked events is disconnected shows the error, keeps showing that account, and takes no bookings until the user picks another account; a booking on that account moves only after the reconnect, and stays one event (accounts rules 19, 22)",
+    "u50_account_removed": "a link whose account for booked events is removed shows the error and the removed account; a booking on that account can still be moved (accounts rules 19, 22)",
+})
+E2E.update({
+    76: ["s3_item_hours", "u50_focus_hours", "mr_hours", "u50_link_hours"],
+    750: ["u9_lib_meetings", "u50_lib32"],
+    756: ["u50_lib38"],
+    757: ["u50_lib39"],
+    507: ["acct_add", "u50_account", "u50_account_lost", "u50_account_removed"],
+})
+E2E_NOTES.update({
+    76: "Habits, focus time, flexible meetings and booking links offer item-specific hours: weekdays with one range; on a booking link each organizer and pool member has their own",
+    750: "The entry refuses a guest on one of the user's own mail domains or their subdomains (the main email and added calendar accounts; ICS feeds and public mail services excepted) or a person of the user's team, and names the guest; users of other teams are not checked, so the refusal reveals no account",
+    756: "The entry asks for an old and a new calendar and saves both busy-only policies in one save",
+    757: "The entry asks for the job calendars and saves one busy-only policy per ordered pair in one save; a refused pair saves nothing",
+    507: "The link's \u201cAccount for booked events\u201d sets its calendar to that account's primary calendar; the account of that calendar is the event organizer. When that account is disconnected or removed, the link shows the error and takes no new bookings until the user picks another account; a booking on a removed account can still be moved, to the main calendar; a booking on a disconnected account moves only after the reconnect, and stays one event",
+})
+# --- end U50 ---
 
 # Google Calendar proof. docs/e2e-google-run.tsv records a full E2E run on Google
 # (a "# commit <sha>" line, then status, test id, title per line; docs/e2e-google-run.md
