@@ -72,12 +72,19 @@ const withEmoji = (h: Habit) => {
   return emoji ? `${emoji} ${h.title}` : h.title;
 };
 
+function errorText(err: unknown): string {
+  const body = (err as { body?: { issues?: { message: string }[] } }).body;
+  return body?.issues?.[0]?.message ?? (err instanceof Error ? err.message : String(err));
+}
+
 export function Habits() {
   const [habits, setHabits] = useState<Habit[]>([]);
   const [hours, setHours] = useState<HoursChoice[]>([]);
   const [error, setError] = useState<string | null>(null);
-  // The form's defaults come from the habits and hours. It shows after the first load and
-  // remounts only after a save, never on a later load: a remount drops what the user changed.
+  // The form's defaults come from the habits and hours, so the form shows after the first
+  // load. No later load remounts it (a remount drops what the user changed): a template form
+  // goes to the blank form after its save, and the blank form resets its title and event
+  // settings after a save.
   const [loaded, setLoaded] = useState(false);
   const [saved, setSaved] = useState(0);
   const today = utcToLocal(zone(), Date.now()).date;
@@ -112,7 +119,9 @@ export function Habits() {
     setLoaded(true);
     await loadPolicyMarks();
   }, []);
-  useEffect(() => void load(), [load]);
+  useEffect(() => {
+    load().catch((err: unknown) => setError(errorText(err)));
+  }, [load]);
   useLive(load);
 
   const act = async (fn: () => Promise<unknown>) => {
@@ -122,8 +131,7 @@ export function Habits() {
       await planNow();
       await load();
     } catch (err) {
-      const body = (err as { body?: { issues?: { message: string }[] } }).body;
-      setError(body?.issues?.[0]?.message ?? (err instanceof Error ? err.message : String(err)));
+      setError(errorText(err));
     }
   };
 
