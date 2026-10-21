@@ -101,6 +101,13 @@ non-calendar integrations support Google Calendar and Outlook Calendar.
     instance operator registers with the provider. When the operator has not
     configured them, the card shows "Not configured on this server" and
     Connect is disabled. (Proposed default.)
+    Tempoloom decision: a tool that Tempoloom does not build yet (no server
+    setting can turn it on) shows "Not available yet" with Connect disabled;
+    "Not configured on this server" is for a built tool without the
+    operator's client, today Google Calendar. The Google Calendar card offers
+    no Connect to a user without a Google account: Google sign-in would sign
+    in as another Tempoloom user, and adding a Google account to a user who
+    signed in another way is not built yet.
 
 Calendar provider cards (Google Calendar, Outlook Calendar) appear in the
 directory. Their behavior belongs to `accounts-connected-calendars.md`,
