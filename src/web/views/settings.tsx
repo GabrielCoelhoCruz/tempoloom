@@ -8,6 +8,7 @@ import { CATEGORY_LABELS, COLORS } from "../lib/categories.ts";
 import { hhmm, parseHhmm } from "../lib/format.ts";
 import { lazyComponent } from "../lib/lazy.ts";
 import { loadPolicyMarks, PolicyMark, policyMarks } from "../lib/policy-marks.tsx";
+import { onLinkClick } from "../lib/router.ts";
 import { loadMe, me, planNow } from "../lib/state.ts";
 import { BufferEditor } from "./buffer-editor.tsx";
 import { FocusOptionsList, MeetingOverloadSection } from "./focus-options.tsx";
@@ -16,9 +17,11 @@ import {
   AlertSettings,
   AutoLockSettings,
   DeleteHoursSet,
+  EventTipsSetting,
   FocusNotes,
   HoursZoneNote,
   PlacementSetting,
+  StartModeSetting,
   TravelSettings,
 } from "./settings-extra.tsx";
 import { TaskDefaults } from "./task-defaults.tsx";
@@ -268,6 +271,11 @@ export function Settings() {
   return (
     <div class="page" data-testid="settings-page">
       <h1>Settings</h1>
+      <p>
+        <a href="/settings/integrations" onClick={onLinkClick}>
+          Integrations
+        </a>
+      </p>
       {message && (
         <p class="status" data-testid="settings-message">
           {message}
@@ -378,6 +386,7 @@ export function Settings() {
             </select>
           </label>
           <PlacementSetting settings={settings} act={act} />
+          <StartModeSetting settings={settings} act={act} />
         </div>
       </section>
 
@@ -385,6 +394,7 @@ export function Settings() {
       <AutoLockSettings settings={settings} act={act} />
 
       <AlertSettings settings={settings} act={act} />
+      <EventTipsSetting settings={settings} act={act} />
 
       <section id="hours">
         <h2>Hours</h2>

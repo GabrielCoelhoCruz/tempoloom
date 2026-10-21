@@ -67,12 +67,16 @@ export interface FocusPreset {
   minBlockMinutes?: number;
   /** The ideal window, as item-specific hours (focus-time.md `hours`: a one-off window). */
   window?: ItemRange;
+  /** A time of day that focus fills first (focus-time.md `preferred_window`). */
+  preferredWindow?: { from: string; to: string };
 }
 
 export interface MeetingPreset {
   everyWeeks: number;
   durationMinutes: number;
   level: 1 | 2 | 3 | 4;
+  /** Guests from outside only: not on the user's domain, not users here (entry 32). */
+  externalOnly?: boolean;
 }
 
 export interface MeetingCheckPreset {
@@ -101,7 +105,8 @@ export type LibraryEntry = {
   | { kind: "focus_time"; preset: FocusPreset }
   | { kind: "flexible_meeting"; preset: MeetingPreset }
   | { kind: "booking_link"; preset: LinkPreset }
-  | { kind: "calendar_mirroring"; preset: { visibility: "busy_only" } }
+  /** `both`: two calendars, both ways (entry 38); `mesh`: each into each other one (entry 39). */
+  | { kind: "calendar_mirroring"; preset: { visibility: "busy_only"; pairs: "both" | "mesh" } }
   | { kind: "meeting_check"; preset: MeetingCheckPreset }
   | { kind: "no_meeting_day"; preset: { weekday: number } }
   /** Kinds Tempoloom does not have yet; the reason says what is missing. */
@@ -172,9 +177,9 @@ export const LIBRARY: LibraryEntry[] = [
     name: "Executive weekly focus",
     emoji: "🎯",
     group: "focus_time",
-    summary: "8 h of focus time each week, in the mornings (09:00 to 12:00).",
+    summary: "8 h of focus time each week, in the mornings (09:00 to 12:00) first.",
     kind: "focus_time",
-    preset: { weeklyGoalMinutes: 480, window: { days: WORKDAYS, from: "09:00", to: "12:00" } },
+    preset: { weeklyGoalMinutes: 480, preferredWindow: { from: "09:00", to: "12:00" } },
   },
   {
     slug: "recovery-day",
@@ -263,9 +268,9 @@ export const LIBRARY: LibraryEntry[] = [
     name: "Peak-energy focus",
     emoji: "⚡",
     group: "focus_time",
-    summary: "10 h of focus time each week, from 09:00 to 12:00.",
+    summary: "10 h of focus time each week, from 09:00 to 12:00 first.",
     kind: "focus_time",
-    preset: { weeklyGoalMinutes: 600, window: { days: WORKDAYS, from: "09:00", to: "12:00" } },
+    preset: { weeklyGoalMinutes: 600, preferredWindow: { from: "09:00", to: "12:00" } },
   },
   prompt("task-reranking", "Task re-ranking", "Re-rank open tasks by due date and work left."),
   {
@@ -343,9 +348,9 @@ export const LIBRARY: LibraryEntry[] = [
     slug: "client-meetings",
     name: "Recurring client meetings",
     group: "flexible_meetings",
-    summary: "Every 2 weeks, 30 min. P2.",
+    summary: "Every 2 weeks, 30 min, with external guests. P2.",
     kind: "flexible_meeting",
-    preset: { everyWeeks: 2, durationMinutes: 30, level: 2 },
+    preset: { everyWeeks: 2, durationMinutes: 30, level: 2, externalOnly: true },
   },
   {
     slug: "no-meeting-day",
@@ -395,7 +400,7 @@ export const LIBRARY: LibraryEntry[] = [
     group: "other",
     summary: "Copy busy time between the old and the new work calendar, both ways.",
     kind: "calendar_mirroring",
-    preset: { visibility: "busy_only" },
+    preset: { visibility: "busy_only", pairs: "both" },
   },
   {
     slug: "mirror-jobs",
@@ -403,7 +408,7 @@ export const LIBRARY: LibraryEntry[] = [
     group: "other",
     summary: "Copy busy time from each job calendar into each other one.",
     kind: "calendar_mirroring",
-    preset: { visibility: "busy_only" },
+    preset: { visibility: "busy_only", pairs: "mesh" },
   },
   {
     slug: "daily-walk",

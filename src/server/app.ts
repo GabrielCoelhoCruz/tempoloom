@@ -31,6 +31,7 @@ import { calendarRoutes } from "./api/calendars.ts";
 import { delegationGuard, delegationRoutes } from "./api/delegation.ts";
 import { eventActionRoutes } from "./api/event-actions.ts";
 import { focusExtraRoutes } from "./api/focus-extras.ts";
+import { habitRoutes } from "./api/habits.ts";
 import { helpRoutes } from "./api/help.ts";
 import { hoursExtraRoutes } from "./api/hours-extra.ts";
 import { insightRoutes } from "./api/insights.ts";
@@ -50,6 +51,7 @@ import { settingsRoutes } from "./api/settings.ts";
 import { ssoAdminRoutes, ssoAuthRoutes } from "./api/sso.ts";
 import { statsRoutes } from "./api/stats.ts";
 import { taskActionRoutes } from "./api/task-actions.ts";
+import { taskProgressRoutes } from "./api/task-progress.ts";
 import { taskSearchRoutes } from "./api/task-searches.ts";
 import { taskTimeRoutes } from "./api/task-time.ts";
 import { publicInviteRoutes, teamRoutes } from "./api/team.ts";
@@ -83,6 +85,7 @@ import { getSettings } from "./settings.ts";
 import { otherSignIn } from "./sso/policy.ts";
 import type { SyncService } from "./sync/service.ts";
 import { enqueueBookingEvent, type WebhookWorker } from "./webhooks.ts";
+import { weeklyShareApi, weeklyShareRoutes } from "./weekly-share.ts";
 
 export interface AppDeps {
   db: Db;
@@ -368,6 +371,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   app.route("/", embedRoutes());
   app.route("/pub", publicBrandingRoutes(db));
   app.route("/scim/v2", scimRoutes(db, config.BASE_URL, now));
+  app.route("/r", weeklyShareRoutes(db, config.BASE_URL, now));
   const ssoDeps = {
     db,
     box,
@@ -465,6 +469,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
 
   app.route("/api", settingsRoutes(db, sync, now));
   app.route("/api", itemRoutes(db, sync, now));
+  app.route("/api", habitRoutes(db, sync, now));
   app.route("/api", taskActionRoutes(db, sync, now));
   app.route("/api", meetingRoutes(db, sync, now, deps.mailer));
   app.route("/api/planner", plannerRoutes(db, sync, now));
@@ -517,6 +522,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   app.route("/api", eventActionRoutes(db, sync, now));
   app.route("/api", taskSearchRoutes(db, now));
   app.route("/api", focusExtraRoutes(db, sync, now));
+  app.route("/api", weeklyShareApi(db, config.BASE_URL));
   app.route("/api", bufferFilterRoutes(db, now));
   app.route("/api", meetingCheckRoutes(db, sync, now));
   app.route("/api", automationRoutes(db, sync, now));
@@ -533,6 +539,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   // r3 s3: planner now line, task time, travel time zones, hours deletion.
   app.route("/api", nowRoutes(db, now));
   app.route("/api", taskTimeRoutes(db, sync, config.BASE_URL, now));
+  app.route("/api", taskProgressRoutes(db, sync, config.BASE_URL, now));
   app.route("/api", travelRoutes(db, sync, now));
   app.route("/api", hoursExtraRoutes(db, sync, now));
 

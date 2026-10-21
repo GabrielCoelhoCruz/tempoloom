@@ -8,6 +8,13 @@ import { DAY_NAMES, MAX_INTERVAL, ORDINALS, readFrequency, WEEKDAYS } from "../l
 import { LEVEL_NAMES, planNow } from "../lib/state.ts";
 import { TaskSearchPicker } from "./task-search-picker.tsx";
 
+/** Guests from a comma list (habits concepts `guests`). */
+export const guestsFrom = (text: string) =>
+  text
+    .split(",")
+    .map((g) => g.trim())
+    .filter(Boolean);
+
 const DEFENSE: Record<string, string> = {
   adaptive: "Free until time gets short",
   "always-free": "Always free",
@@ -15,6 +22,16 @@ const DEFENSE: Record<string, string> = {
 };
 
 /** Day checkboxes, the repeat choice with the fields of a monthly habit, and the interval. */
+/** habits-automation.md `ideal_at_end`: the ideal start is the end of each day's hours. */
+export function IdealAtEndField({ checked }: { checked: boolean }) {
+  return (
+    <label class="inline">
+      <input type="checkbox" name="idealAtEnd" defaultChecked={checked} />
+      Place at the end of each day
+    </label>
+  );
+}
+
 export function FrequencyFields({ preset }: { preset?: HabitFrequency | undefined }) {
   const monthly = preset?.period === "monthly" ? preset : null;
   const days = preset?.period === "weekly" ? preset.days : [];
@@ -116,6 +133,7 @@ interface HabitRow {
   notes: string;
   level: number;
   ideal_minute: number;
+  ideal_at_end: number;
   min_minutes: number;
   max_minutes: number;
   frequency: string;
@@ -129,6 +147,7 @@ interface Draft {
   notes: string;
   level: number;
   idealTime: string;
+  idealAtEnd: boolean;
   min: number;
   max: number;
   frequency: HabitFrequency;
@@ -160,6 +179,7 @@ export function HabitEditor({ target, onClose }: { target: EditorTarget; onClose
             notes: h.notes,
             level: h.level,
             idealTime: hhmm(h.ideal_minute),
+            idealAtEnd: h.ideal_at_end === 1,
             min: h.min_minutes,
             max: h.max_minutes,
             frequency: JSON.parse(h.frequency) as HabitFrequency,
@@ -177,6 +197,7 @@ export function HabitEditor({ target, onClose }: { target: EditorTarget; onClose
             notes: "",
             level: 3,
             idealTime: series.idealTime,
+            idealAtEnd: false,
             min: series.minutes,
             max: series.minutes,
             frequency: series.days.length
@@ -202,6 +223,7 @@ export function HabitEditor({ target, onClose }: { target: EditorTarget; onClose
       notes: text("notes"),
       level: Number(f.get("level")),
       idealTime: text("idealTime"),
+      idealAtEnd: f.has("idealAtEnd"),
       minMinutes: Number(f.get("minMinutes")),
       maxMinutes: Number(f.get("maxMinutes")),
       frequency: readFrequency(f),
@@ -248,6 +270,7 @@ export function HabitEditor({ target, onClose }: { target: EditorTarget; onClose
             Ideal time
             <input name="idealTime" type="time" step={900} defaultValue={draft.idealTime} />
           </label>
+          <IdealAtEndField checked={draft.idealAtEnd} />
           <label>
             Shortest (minutes)
             <input

@@ -12,7 +12,8 @@
 // - a habit that keeps conflicts gets a conflict on time away, as it does on
 //   plain busy time (rules 2, 12: away occurrences are skipped);
 // - an accepted or maybe busy holiday invitation does not block, or an
-//   unanswered one or a free holiday does.
+//   unanswered one or a free holiday does;
+// - a holiday sent only to a mailing list blocks before the user answers.
 import type { Page } from "@playwright/test";
 import { addDays } from "../../src/shared/time.ts";
 import {
@@ -218,4 +219,51 @@ test("a company holiday blocks the day once the user answers yes or maybe to its
   await openWeek(page);
   await page.reload();
   await expect(page.locator(".ev:not(.ev-external)", { hasText: "Lunch" })).toHaveCount(2);
+});
+
+test("a company holiday sent only to a mailing list does not block until the user answers yes; then it blocks the day (events-out-of-office rule 10)", async ({
+  page,
+  cal,
+  signIn,
+}) => {
+  await blockUntil(cal, W);
+  const holiday = {
+    title: "Company holiday",
+    description: "Office closed.",
+    span: { from: day(1), to: day(2) },
+    organizer: "hr@tempoloom.test",
+  };
+  // The invitation lists only the mailing list, not the user.
+  const id = await invitation(cal.calendarId, {
+    ...holiday,
+    attendees: [{ email: "all@tempoloom.test", answer: "NEEDS-ACTION" }],
+  });
+  await signIn();
+  await addHabit(page, { title: "Lunch", ideal: "12:00", min: 60, max: 60 });
+  const before = await eventually(
+    () => week(cal),
+    (l) => expect(titled(l, "Lunch")).toHaveLength(5),
+  );
+  expect(lunchDays(before)).toContain(`${day(1)} 12:00`);
+
+  // The user says yes in their calendar app, which adds the user's own attendee line.
+  await invitation(
+    cal.calendarId,
+    {
+      ...holiday,
+      attendees: [
+        { email: "all@tempoloom.test", answer: "NEEDS-ACTION" },
+        { email: EMAIL, answer: "ACCEPTED" },
+      ],
+    },
+    id,
+  );
+  const after = await eventually(
+    () => week(cal),
+    (l) => expect(titled(l, "Lunch")).toHaveLength(4),
+  );
+  expect(lunchDays(after)).not.toContain(`${day(1)} 12:00`);
+  await openWeek(page);
+  await page.reload();
+  await expect(page.locator(".ev:not(.ev-external)", { hasText: "Lunch" })).toHaveCount(4);
 });

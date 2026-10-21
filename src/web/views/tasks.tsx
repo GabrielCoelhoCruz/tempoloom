@@ -20,6 +20,7 @@ interface Task extends TaskFields {
   state: string;
   scheduledMinutes: number;
   remainingMinutes: number;
+  inProgress: boolean;
   issue: { status: string; reason: string } | null;
 }
 
@@ -697,6 +698,28 @@ export function Tasks() {
               Start timer
             </button>
           ))}
+        {filter === "open" && (
+          <button
+            type="button"
+            onClick={() => void act(() => api("POST", `/api/tasks/${t.id}/start`))}
+          >
+            Start now
+          </button>
+        )}
+        {filter === "open" && t.inProgress && (
+          <>
+            <span class="badge" data-testid="task-started">
+              In progress
+            </span>
+            <button
+              type="button"
+              title="Stop: the running chunk ends now"
+              onClick={() => void act(() => api("POST", `/api/tasks/${t.id}/stop`))}
+            >
+              End now
+            </button>
+          </>
+        )}
         {filter === "open" &&
           (queued ? (
             <button

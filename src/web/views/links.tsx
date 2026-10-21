@@ -238,6 +238,11 @@ export function Links() {
             </a>
           </div>
           {peopleLine(l) && <div class="meta">{peopleLine(l)}</div>}
+          {l.targetError && (
+            <p class="error" role="alert" data-testid="link-target-error">
+              {l.targetError}
+            </p>
+          )}
           {endpoints.length > 0 && (
             <div class="meta" data-testid="link-webhooks">
               Send webhooks to:{" "}

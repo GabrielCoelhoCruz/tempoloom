@@ -41,11 +41,19 @@ function tagPattern(tag: string): RegExp {
   return re;
 }
 
-/** True when the user takes part: organizer, own event, or answered yes or maybe. */
-export function attends(e: ExternalEvent): boolean {
+/**
+ * True when the user takes part: organizer, own event, or answered yes or maybe.
+ * Someone else's event with guests that does not list the user (an invitation
+ * sent only to a mailing list) is unanswered until the user's own answer
+ * appears (events-out-of-office rule 10).
+ */
+export function attends(
+  e: Pick<ExternalEvent, "selfResponse" | "organizerSelf" | "attendeeCount">,
+): boolean {
   if (e.selfResponse === "declined") return false;
-  if (e.selfResponse === "needsAction" && !e.organizerSelf) return false;
-  return true;
+  if (e.organizerSelf) return true;
+  if (e.selfResponse === "needsAction") return false;
+  return e.selfResponse !== null || e.attendeeCount === 0;
 }
 
 /** True when the event blocks tasks, habits, focus time and buffers. */

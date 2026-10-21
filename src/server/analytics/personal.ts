@@ -71,6 +71,7 @@ export function personalInsights(
     event_type: string;
     self_response: "needsAction" | "declined" | "tentative" | "accepted" | null;
     organizer_self: number;
+    attendee_count: number;
     attendees: string;
     recurring_id: string | null;
     private_props: string;
@@ -88,7 +89,8 @@ export function personalInsights(
     const attended = attends({
       selfResponse: e.self_response,
       organizerSelf: e.organizer_self === 1,
-    } as Parameters<typeof attends>[0]);
+      attendeeCount: e.attendee_count,
+    });
     if (!attended || e.event_type === "workingLocation") continue;
     const key = e.recurring_id ?? e.summary.trim().toLowerCase();
     if (key) {
