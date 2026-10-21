@@ -156,7 +156,7 @@ describe("series edits", () => {
       );
     run(
       s.db,
-      "UPDATE meetings SET series_calendar_id = 'cal', series_event_id = 'ser', starting = '2026-10-19' WHERE id = ?",
+      "UPDATE meetings SET series_calendar_id = 'cal', series_event_id = 'ser', series_owned = 0, starting = '2026-10-19' WHERE id = ?",
       id,
     );
     const saved = () =>

@@ -8,9 +8,15 @@ import {
   type EventWrite,
   type ExternalChange,
   ProviderError,
+  type ProviderEvent,
 } from "../providers/types.ts";
+import { getSettings } from "../settings.ts";
 import { cacheEvent } from "../sync/pull.ts";
+import { planningZone } from "../travel.ts";
+import { periodOf } from "./meeting-log.ts";
+import type { MeetingRow } from "./meetings.ts";
 import { ACTIVE } from "./mirror.ts";
+import { instanceDate, planSeries } from "./series.ts";
 
 export interface DesiredEvent {
   key: string;
@@ -341,6 +347,14 @@ export async function pushSchedule(
   };
   const wanted = new Set(allDesired.map((d) => d.key));
   const desired = allDesired.filter((d) => !frozen.has(d.calendarId));
+  for (const m of all<MeetingRow>(
+    db,
+    "SELECT * FROM meetings WHERE user_id = ? AND enabled = 1 AND series_owned = 1 AND series_event_id IS NULL",
+    userId,
+  )) {
+    const own = desired.filter((d) => d.kind === "meeting" && d.sourceId === m.id);
+    result.created += await writeSeries(ctx, m, own, byKey);
+  }
 
   for (const row of rows) {
     if (wanted.has(row.key) || row.locked || row.start_ms <= now) continue;
@@ -429,7 +443,21 @@ export async function pushSchedule(
     }
     if (row?.event_id) await deleteRemote(ctx, row);
     const { provider, providerCalendarId } = ctx.target(d.calendarId);
-    const ev = await provider.insertEvent(providerCalendarId, write(userId, d));
+    // A period of Tempoloom's own series with no instance gets one in the series.
+    const series =
+      d.kind === "meeting"
+        ? one<{ series_event_id: string }>(
+            db,
+            `SELECT series_event_id FROM meetings WHERE id = ? AND series_owned = 1
+               AND series_event_id IS NOT NULL AND series_calendar_id = ?`,
+            d.sourceId,
+            d.calendarId,
+          )?.series_event_id
+        : undefined;
+    const ev =
+      series && provider.addInstance
+        ? await provider.addInstance(providerCalendarId, series, write(userId, d))
+        : await provider.insertEvent(providerCalendarId, write(userId, d));
     cacheEvent(db, d.calendarId, ev);
     saveRow(db, userId, d, ev.id, ev.etag, row?.id);
     ctx.written?.set(d.key, { start: d.start, end: d.end });
@@ -440,6 +468,102 @@ export async function pushSchedule(
   pruneChangeLog(db, now);
   return result;
 }
+
+/**
+ * Writes the series of a meeting made from the form (meetings-flexible.md
+ * rule 2) and makes its instances the managed rows of the planned periods;
+ * the push then moves each instance that the plan placed elsewhere (an
+ * override). A period that already has an event of its own (a single event
+ * from before series, a locked occurrence of an ended series) gets an EXDATE,
+ * so it is never there twice. Returns the number of instances made.
+ */
+async function writeSeries(
+  ctx: PushContext,
+  m: MeetingRow,
+  own: DesiredEvent[],
+  byKey: Map<string, ManagedRow>,
+): Promise<number> {
+  const { db, userId, now } = ctx;
+  const sorted = [...own].sort((a, b) => (a.key < b.key ? -1 : 1));
+  const [first] = sorted;
+  if (!first) return 0;
+  const { provider, providerCalendarId } = ctx.target(first.calendarId);
+  if (!provider.seriesInstances) return 0;
+  const period = (key: string) => key.slice(key.lastIndexOf(":") + 1);
+  const mine = sorted.filter((d) => d.calendarId === first.calendarId);
+  const plan = planSeries(
+    db,
+    m,
+    period(first.key),
+    mine.map((d) => period(d.key)),
+  );
+  if (!plan) return 0;
+  const taken = mine.filter((d) => byKey.get(d.key)?.event_id);
+  // The master takes the fields of the last occurrence: as the instances past
+  // the planning window will be (rule 20), so most instances need no override.
+  const model = mine.at(-1) ?? first;
+  const master: EventWrite = {
+    ...write(userId, model),
+    start: plan.start,
+    end: plan.end,
+    recurrence: plan.rrule,
+    timeZone: plan.timeZone,
+    exdates: taken.flatMap((d) => plan.ruleStarts.get(period(d.key)) ?? []),
+    privateProps: { [MANAGED_PROP]: "1", tl_user: userId, tl_meeting: m.id },
+  };
+  const ev = await provider.insertEvent(providerCalendarId, master);
+  const seriesId = ev.recurringId ?? ev.id;
+  // From the first rule start: an instance whose rule time passed in the current period is its row.
+  const from = Math.min(plan.start, ...mine.map((d) => d.start));
+  const last = Math.max(...mine.map((d) => d.end));
+  const instances = await provider.seriesInstances(
+    providerCalendarId,
+    seriesId,
+    from,
+    last + 86_400_000,
+  );
+  const { weekStart } = getSettings(db, userId);
+  const zone = planningZone(db, userId);
+  const wantedByKey = new Map(mine.map((d) => [d.key, d]));
+  let made = 0;
+  for (const inst of instances) {
+    cacheEvent(db, first.calendarId, inst);
+    const p = periodOf(m, instanceDate(db, userId, inst.id, inst.start), weekStart, zone);
+    const d = p ? wantedByKey.get(`meeting:${m.id}:${p}`) : undefined;
+    if (!d || byKey.get(d.key)?.event_id) continue;
+    // The row holds what the master wrote; the push writes what differs.
+    saveRow(
+      db,
+      userId,
+      { ...model, key: d.key, start: inst.start, end: inst.end },
+      inst.id,
+      inst.etag,
+      byKey.get(d.key)?.id,
+    );
+    const row = one<ManagedRow>(
+      db,
+      "SELECT * FROM managed_events WHERE user_id = ? AND key = ?",
+      userId,
+      d.key,
+    );
+    if (row) byKey.set(d.key, row);
+    ctx.written?.set(d.key, { start: inst.start, end: inst.end });
+    logManaged(db, userId, desiredRef(d, inst.id), "create", { ...d, ...inst }, now);
+    made++;
+  }
+  run(
+    db,
+    "UPDATE meetings SET series_calendar_id = ?, series_event_id = ?, series_rule = ? WHERE id = ?",
+    first.calendarId,
+    seriesId,
+    JSON.stringify(ruleOf(instances[0]?.series)),
+    m.id,
+  );
+  return made;
+}
+
+/** The master facts that a series edit compares (meeting-log readSeriesEdits). */
+export const ruleOf = (f: ProviderEvent["series"]) => (f ? { ...f, own: false } : null);
 
 /** PRG-3: moves an ended, unstarted event of the same item to the new time. */
 async function moveReopened(

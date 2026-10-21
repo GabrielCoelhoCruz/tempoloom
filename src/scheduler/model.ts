@@ -182,6 +182,8 @@ export interface MeetingItem {
   manualKeys?: string[];
   /** MEET-02 rule 16: after missed periods, this period is placed at this higher level. */
   boost?: { period: LocalDate; level: Level };
+  /** MEET-02 rule 18: occurrences (by key) that keep this length, not `durationMinutes`. */
+  keptMinutes?: Record<string, number>;
 }
 
 export type Comparison = ">=" | "<=" | "=" | ">" | "<";

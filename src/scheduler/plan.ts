@@ -1134,17 +1134,24 @@ function previousStart(ctx: Ctx, m: MeetingItem, key: string, periodStart: numbe
 }
 
 /** `boosted`: place only the boosted period (MEET-02 rule 16); else every other period. */
-function placeMeeting(ctx: Ctx, m: MeetingItem, boosted = false): void {
+function placeMeeting(ctx: Ctx, item: MeetingItem, boosted = false): void {
   const { s } = ctx;
   const done = new Set((s.past ?? []).map((p) => p.key));
-  const attendeeWindow = m.attendeeWindow ? TimeSet.from(m.attendeeWindow) : null;
-  const required = m.durationMinutes;
-  const periods = m.periods ? new Set(m.periods) : null;
-  const manual = new Set(m.manualKeys ?? []);
+  const attendeeWindow = item.attendeeWindow ? TimeSet.from(item.attendeeWindow) : null;
+  const periods = item.periods ? new Set(item.periods) : null;
+  const manual = new Set(item.manualKeys ?? []);
   // One budget for the boosted pass and the other periods of the run.
-  const movesLeft = () => ctx.meetingMoves.get(m.id) ?? m.movesLeft ?? Number.POSITIVE_INFINITY;
-  for (const period of meetingPeriods(ctx, m)) {
-    const key = `meeting:${m.id}:${period.start}`;
+  const movesLeft = () =>
+    ctx.meetingMoves.get(item.id) ?? item.movesLeft ?? Number.POSITIVE_INFINITY;
+  for (const period of meetingPeriods(ctx, item)) {
+    const key = `meeting:${item.id}:${period.start}`;
+    // MEET-02 rule 18: an occurrence before a "this and following" resize keeps its length.
+    const kept = item.keptMinutes?.[key];
+    const m =
+      kept === undefined
+        ? item
+        : { ...item, durationMinutes: kept, shortestMinutes: Math.min(item.shortestMinutes, kept) };
+    const required = m.durationMinutes;
     if (done.has(key) || ctx.fixedKeys.has(key) || ctx.dismissed.has(key)) continue;
     if (periods && !periods.has(period.start)) continue;
     if (boosted !== (m.boost?.period === period.start)) continue;

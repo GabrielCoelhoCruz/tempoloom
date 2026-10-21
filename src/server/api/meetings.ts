@@ -197,6 +197,9 @@ function rowFrom(
       auto_reschedule: b.autoReschedule,
       series_calendar_id: b.series?.calendarId ?? null,
       series_event_id: b.series?.seriesId ?? null,
+      // A meeting from the form gets its own series at the next plan run (rule 2).
+      series_owned: b.series ? 0 : 1,
+      series_rule: "",
       // Set by POST (with the calendar check) and PUT (calendar kept).
       event_settings: "{}",
       attendee_hours: "",
@@ -225,6 +228,8 @@ function save(db: Db, row: MeetingRow, attendees: Attendee[], insert: boolean): 
     "auto_reschedule",
     "series_calendar_id",
     "series_event_id",
+    "series_owned",
+    "series_rule",
     "event_settings",
   ] as const;
   const values = cols.map((k) => row[k]);
@@ -356,6 +361,64 @@ function keepSeriesFrequency(old: MeetingRow, f: Frequency): LocalDate | null {
     badRequest("frequency", "A recurring meeting keeps the frequency of its calendar series");
   return old.starting;
 }
+
+/** An adopted series: the user's own recurring meeting with rules attached (rule 1). */
+export const adopted = (m: MeetingRow) => m.series_event_id !== null && !m.series_owned;
+
+/**
+ * Ends Tempoloom's own series at `now` (MEET-02 rules 27-29): the past
+ * instances stay, later ones go except the ids in `keep`, and the meeting
+ * forgets the series, so the next plan run writes a new one when it places.
+ */
+export async function endOwnSeries(
+  db: Db,
+  pool: ProviderPool,
+  m: MeetingRow,
+  now: number,
+  keep: string[],
+): Promise<void> {
+  if (!m.series_owned || !m.series_event_id) return;
+  const cal = seriesTarget(db, m);
+  const provider = cal && pool.get(cal.account_id);
+  if (cal && provider?.endSeries)
+    await provider.endSeries(cal.provider_id, m.series_event_id, now, keep);
+  const instances = `SELECT event_id FROM events WHERE calendar_id = ? AND recurring_id = ? AND start_ms > ?`;
+  const kept = keep.length > 0 ? `AND event_id NOT IN (${keep.map(() => "?").join(", ")})` : "";
+  run(
+    db,
+    `DELETE FROM managed_events WHERE kind = 'meeting' AND source_id = ? AND start_ms > ?
+       AND event_id IN (${instances}) ${kept}`,
+    m.id,
+    now,
+    m.series_calendar_id,
+    m.series_event_id,
+    now,
+    ...keep,
+  );
+  run(
+    db,
+    `DELETE FROM events WHERE calendar_id = ? AND recurring_id = ? AND start_ms > ? ${kept}`,
+    m.series_calendar_id,
+    m.series_event_id,
+    now,
+    ...keep,
+  );
+  run(
+    db,
+    "UPDATE meetings SET series_calendar_id = NULL, series_event_id = NULL, series_rule = '' WHERE id = ?",
+    m.id,
+  );
+}
+
+/** Locked future occurrences: they stay when the series ends (LCK-2). */
+const lockedIds = (db: Db, m: MeetingRow, now: number) =>
+  all<{ event_id: string }>(
+    db,
+    `SELECT event_id FROM managed_events WHERE kind = 'meeting' AND source_id = ? AND locked = 1
+       AND start_ms > ? AND event_id IS NOT NULL`,
+    m.id,
+    now,
+  ).map((r) => r.event_id);
 
 function seriesTarget(db: Db, m: MeetingRow) {
   return one<{ account_id: string; provider_id: string }>(
@@ -530,7 +593,8 @@ export function meetingRoutes(
       row.rules_changed_at = rulesChangedAt(db, old, row, attendees, body, t);
       row.series_event_id = old.series_event_id;
       row.series_calendar_id = old.series_calendar_id;
-      if (old.series_event_id) row.starting = keepSeriesFrequency(old, body.frequency);
+      row.series_owned = old.series_owned;
+      if (adopted(old)) row.starting = keepSeriesFrequency(old, body.frequency);
     }
     const zone =
       one<{ time_zone: string }>(db, "SELECT time_zone FROM users WHERE id = ?", user.id)
@@ -612,8 +676,26 @@ export function meetingRoutes(
     const body = await jsonBody(c, meetingInput);
     const t = now();
     const { row, attendees } = rowFrom(db, user.id, old.id, body, t, old.rank);
-    if (old.series_event_id) row.starting = keepSeriesFrequency(old, body.frequency);
+    if (adopted(old)) row.starting = keepSeriesFrequency(old, body.frequency);
     const rulesChanged = rulesChangedAt(db, old, row, attendees, body, t);
+    // Tempoloom's own series repeats by the frequency: a new frequency or start
+    // date ends it, and the next run writes a series with the new rule.
+    const restart =
+      old.series_owned === 1 &&
+      old.series_event_id !== null &&
+      (old.frequency !== row.frequency || old.starting !== row.starting);
+    const series = {
+      calendar: old.series_calendar_id,
+      id: old.series_event_id,
+      rule: old.series_rule,
+    };
+    if (restart)
+      await sync.exclusive(user.id, async (pool) => {
+        await endOwnSeries(db, pool, old, t, lockedIds(db, old, t));
+        series.calendar = null;
+        series.id = null;
+        series.rule = "";
+      });
     tx(db, () => {
       if (body.hoursMode === "itemSpecific" && body.itemHours)
         row.hours_set_id = saveItemHours(db, user.id, old.hours_set_id, row.title, body.itemHours);
@@ -625,8 +707,10 @@ export function meetingRoutes(
           ...row,
           rules_changed_at: rulesChanged,
           created_at: old.created_at,
-          series_calendar_id: old.series_calendar_id,
-          series_event_id: old.series_event_id,
+          series_calendar_id: series.calendar,
+          series_event_id: series.id,
+          series_owned: old.series_owned,
+          series_rule: series.rule,
           // The calendar is set at creation only (`targetCalendar`).
           event_settings: JSON.stringify(
             editedEventSettings(
@@ -660,10 +744,10 @@ export function meetingRoutes(
         now(),
         m.id,
       );
-      if (m.series_event_id) {
+      if (adopted(m)) {
         if (enabled) await markSeries(db, pool, m, user.id);
         else await releaseSeries(db, pool, m);
-      }
+      } else if (!enabled) await endOwnSeries(db, pool, m, now(), lockedIds(db, m, now()));
     });
     changed(user.id);
     return c.json({ ok: true });
@@ -868,7 +952,7 @@ export function meetingRoutes(
     const m = own(c.req.param("id"), user.id);
     const peers = meetingPeers(db, user.id).attendees;
     // Rules on an adopted series leave the series on the calendar: nothing to cancel.
-    const notify = c.req.query("notify") === "1" && !m.series_event_id;
+    const notify = c.req.query("notify") === "1" && !adopted(m);
     const guests = attendeesOf(db, m.id)
       .map((a) => a.email)
       .filter((e) => e !== user.email);
@@ -883,7 +967,8 @@ export function meetingRoutes(
         m.id,
         now(),
       );
-      if (m.series_event_id) await releaseSeries(db, pool, m);
+      if (adopted(m)) await releaseSeries(db, pool, m);
+      else await endOwnSeries(db, pool, m, now(), []);
       run(db, "DELETE FROM meetings WHERE id = ?", m.id);
       dropItemHours(db, m.hours_set_id);
       return future.map((o) => ({ start: o.start_ms, end: o.end_ms }));

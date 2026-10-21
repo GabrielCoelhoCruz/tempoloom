@@ -36,6 +36,10 @@ export interface MeetingRow {
   auto_reschedule: AutoReschedule;
   series_calendar_id: string | null;
   series_event_id: string | null;
+  /** 1: Tempoloom writes the series (a meeting from the form, rule 2); 0: an adopted series. */
+  series_owned: number;
+  /** JSON SeriesFacts of the series master last seen (MEET-02 rules 18, 22); '' before. */
+  series_rule: string;
   /** JSON event settings: visibility, reminders, calendar (src/shared/event-settings.ts). */
   event_settings: string;
   /** The attendees' hours the last plan used (attendeeHoursKey); '' before the first plan. */
@@ -321,8 +325,10 @@ export function meetingItem(
     ...lastStart(db, userId, m.id, now),
     ...manualKeys(db, m.id, now),
     ...(boost ? { boost: { period: boost.period, level: boost.level } } : {}),
-    // An adopted series: only periods that have an instance of it.
-    ...(m.series_event_id
+    ...keptLengths(db, userId, m.id, now),
+    // An adopted series: only periods that have an instance of it. Tempoloom's
+    // own series gets an instance in each period the plan places.
+    ...(m.series_event_id && !m.series_owned
       ? {
           periods: all<{ key: string }>(
             db,
@@ -333,6 +339,21 @@ export function meetingItem(
         }
       : {}),
   };
+}
+
+/** MEET-02 rule 18: future occurrences that keep their length after a "following" resize. */
+function keptLengths(db: Db, userId: string, meetingId: string, now: number) {
+  const rows = all<{ key: string; kept_minutes: number }>(
+    db,
+    `SELECT key, kept_minutes FROM managed_events WHERE user_id = ? AND kind = 'meeting'
+       AND source_id = ? AND kept_minutes IS NOT NULL AND end_ms > ?`,
+    userId,
+    meetingId,
+    now,
+  );
+  return rows.length > 0
+    ? { keptMinutes: Object.fromEntries(rows.map((r) => [r.key, r.kept_minutes])) }
+    : {};
 }
 
 /** MEET-02 rule 19: future occurrences whose last logged change is a move by hand. */

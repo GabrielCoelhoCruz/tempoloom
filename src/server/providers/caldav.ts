@@ -2,7 +2,7 @@
 import { randomUUID } from "node:crypto";
 import ICAL from "ical.js";
 import { type DAVCalendar, DAVClient } from "tsdav";
-import { isValidTimeZone, localToUtc } from "../../shared/time.ts";
+import { isValidTimeZone, localToUtc, utcToLocal } from "../../shared/time.ts";
 import {
   type CalendarProvider,
   type EventChanges,
@@ -12,7 +12,9 @@ import {
   ProviderError,
   type ProviderEvent,
   type ResponseStatus,
+  type SeriesFacts,
 } from "./types.ts";
+import { vtimezone } from "./vtimezone.ts";
 
 export interface CalDavCredentials {
   serverUrl: string;
@@ -316,6 +318,7 @@ export function eventsFromObject(
     return out;
   }
 
+  const facts = seriesFacts(master, event, zone);
   const it = event.iterator();
   for (let n = 0, next = it.next(); next && n < MAX_OCCURRENCES; n++, next = it.next()) {
     const details = event.getOccurrenceDetails(next);
@@ -330,9 +333,52 @@ export function eventsFromObject(
       start,
       end,
       allDay: details.startDate.isDate,
+      series: { ...facts, own: comp !== master },
     });
   }
   return out;
+}
+
+/** What the master of a series says (types.ts SeriesFacts), for each of its instances. */
+function seriesFacts(master: ICAL.Component, event: ICAL.Event, zone: string): SeriesFacts {
+  const start = instantOf(event.startDate, zone);
+  const guests = master.getAllProperties("attendee");
+  const optional = (a: ICAL.Property) =>
+    String(a.getParameter("role") ?? "").toUpperCase() === "OPT-PARTICIPANT";
+  return {
+    start,
+    end: event.endDate ? instantOf(event.endDate, zone) : start,
+    rrule: String(master.getFirstPropertyValue("rrule") ?? ""),
+    summary: String(master.getFirstPropertyValue("summary") ?? ""),
+    attendees: guests.filter((a) => !optional(a)).map((a) => mailto(a.getFirstValue())),
+    optional: guests.filter(optional).map((a) => mailto(a.getFirstValue())),
+    own: false,
+  };
+}
+
+/** A local time of `zone` (no zone of its own: the caller sets the TZID parameter). */
+function localTime(zone: string, ms: number): ICAL.Time {
+  const l = utcToLocal(zone, ms);
+  const [year, month, day] = l.date.split("-").map(Number) as [number, number, number];
+  return ICAL.Time.fromData({
+    year,
+    month,
+    day,
+    hour: Math.floor(l.minuteOfDay / 60),
+    minute: l.minuteOfDay % 60,
+    second: 0,
+    isDate: false,
+  });
+}
+
+/** Adds a date-time property: local with a TZID when `zone` is set, else UTC. */
+function addTime(ev: ICAL.Component, name: string, ms: number, zone: string | undefined) {
+  if (!zone) return ev.addPropertyWithValue(name, toUtcTime(ms));
+  const p = new ICAL.Property(name);
+  p.setValue(localTime(zone, ms));
+  p.setParameter("tzid", zone);
+  ev.addProperty(p);
+  return p;
 }
 
 function toUtcTime(ms: number): ICAL.Time {
@@ -379,8 +425,15 @@ export function objectFromWrite(uid: string, w: EventWrite, now: number): string
     ev.addPropertyWithValue("dtstart", ICAL.Time.fromDateString(w.allDayDates.start));
     ev.addPropertyWithValue("dtend", ICAL.Time.fromDateString(w.allDayDates.end));
   } else {
-    ev.addPropertyWithValue("dtstart", toUtcTime(w.start));
-    ev.addPropertyWithValue("dtend", toUtcTime(w.end));
+    // A series keeps its local time across DST changes (TZID and VTIMEZONE).
+    const zone = w.recurrence && w.timeZone && isValidTimeZone(w.timeZone) ? w.timeZone : undefined;
+    if (zone)
+      cal.addSubcomponent(
+        new ICAL.Component(ICAL.parse(vtimezone(zone, new Date(w.start).getUTCFullYear()))),
+      );
+    addTime(ev, "dtstart", w.start, zone);
+    addTime(ev, "dtend", w.end, zone);
+    for (const t of w.exdates ?? []) addTime(ev, "exdate", t, zone);
   }
   if (w.recurrence) ev.addPropertyWithValue("rrule", ICAL.Recur.fromString(w.recurrence));
   ev.addPropertyWithValue("summary", w.summary);
@@ -1177,6 +1230,142 @@ export class CalDavProvider implements CalendarProvider {
       if (Object.keys(props).length > 0) ev.addPropertyWithValue(PROPS_PROPERTY, value);
     }
     await this.#putSeries(seriesId, root, obj.etag ?? null);
+  }
+
+  /** The series object at `url`, parsed, with its master. */
+  async #seriesObject(calendarId: string, url: string) {
+    const client = await this.#connect();
+    const cal = await this.#calendar(calendarId);
+    const [obj] = await retryRead(() =>
+      client.fetchCalendarObjects({ calendar: cal, objectUrls: [url] }),
+    );
+    if (typeof obj?.data !== "string") throw new ProviderError("not_found", 404, "Event not found");
+    const root = new ICAL.Component(ICAL.parse(obj.data));
+    for (const tz of root.getAllSubcomponents("vtimezone")) {
+      ICAL.TimezoneService.register(new ICAL.Timezone(tz));
+    }
+    const master = root.getAllSubcomponents("vevent").find((v) => !v.hasProperty("recurrence-id"));
+    if (!master) throw new ProviderError("not_found", 404, "Event not found");
+    return { client, root, master, etag: obj.etag ?? null, data: obj.data };
+  }
+
+  async seriesInstances(
+    calendarId: string,
+    seriesId: string,
+    from: number,
+    to: number,
+  ): Promise<ProviderEvent[]> {
+    const { data, etag } = await this.#seriesObject(calendarId, seriesId);
+    return eventsFromObject(data, seriesId, etag, from, to, this.#zone, await this.#self()).filter(
+      (e) => e.recurringId === seriesId,
+    );
+  }
+
+  /** A time of the series' own kind: local in the master's TZID, else UTC. */
+  #seriesTime(master: ICAL.Component, ms: number): { time: ICAL.Time; tzid: string | null } {
+    const tzid = master.getFirstProperty("dtstart")?.getParameter("tzid");
+    const zone = typeof tzid === "string" && isValidTimeZone(tzid) ? tzid : null;
+    return { time: zone ? localTime(zone, ms) : toUtcTime(ms), tzid: zone };
+  }
+
+  async addInstance(calendarId: string, seriesId: string, w: EventWrite): Promise<ProviderEvent> {
+    const { root, master, etag } = await this.#seriesObject(calendarId, seriesId);
+    const { time, tzid } = this.#seriesTime(master, w.start);
+    // An EXDATE of the same time would hide the new instance.
+    for (const p of master.getAllProperties("exdate"))
+      if ((p.getFirstValue() as ICAL.Time | null)?.toString() === time.toString())
+        master.removeProperty(p);
+    const rdate = new ICAL.Property("rdate");
+    rdate.setValue(time);
+    if (tzid) rdate.setParameter("tzid", tzid);
+    master.addProperty(rdate);
+    const tag = await this.#putSeries(seriesId, root, etag);
+    return this.#updateInstance(calendarId, `${seriesId}#${time.toString()}`, w, tag);
+  }
+
+  async endSeries(calendarId: string, seriesId: string, at: number, keep: string[]): Promise<void> {
+    const found = await this.#seriesObject(calendarId, seriesId).catch((err: unknown) => {
+      if (err instanceof ProviderError && err.kind === "not_found") return null;
+      throw err;
+    });
+    if (!found) return;
+    const { client, root, master, etag } = found;
+    const kept = new Set(keep);
+    const idOf = (t: ICAL.Time) => `${seriesId}#${t.toString()}`;
+    const later = (t: unknown) => t instanceof ICAL.Time && instantOf(t, this.#zone) >= at;
+    const start = master.getFirstPropertyValue("dtstart");
+    const rdates = new Set<string>();
+    for (const p of master.getAllProperties("rdate")) {
+      const t = p.getFirstValue();
+      if (!later(t)) continue;
+      if (kept.has(idOf(t as ICAL.Time))) rdates.add((t as ICAL.Time).toString());
+      else master.removeProperty(p);
+    }
+    const tzid = master.getFirstProperty("dtstart")?.getParameter("tzid");
+    // A kept later instance stays as an RDATE of its own rule time (its id).
+    const keepAt = (t: ICAL.Time) => {
+      if (rdates.has(t.toString()) || (start instanceof ICAL.Time && t.compare(start) === 0))
+        return;
+      const p = new ICAL.Property("rdate");
+      p.setValue(t);
+      if (typeof tzid === "string" && !t.zone?.tzid?.startsWith("UTC"))
+        p.setParameter("tzid", tzid);
+      master.addProperty(p);
+      rdates.add(t.toString());
+    };
+    for (const ov of root.getAllSubcomponents("vevent")) {
+      if (ov === master) continue;
+      const rid = ov.getFirstPropertyValue("recurrence-id");
+      if (!later(rid)) continue;
+      if (kept.has(idOf(rid as ICAL.Time))) keepAt(rid as ICAL.Time);
+      else root.removeSubcomponent(ov);
+    }
+    // Kept instances without an override are kept at their rule time.
+    for (const id of kept) {
+      if (!id.startsWith(`${seriesId}#`)) continue;
+      const rid = id.slice(seriesId.length + 1);
+      const ov = root
+        .getAllSubcomponents("vevent")
+        .some(
+          (v) => (v.getFirstPropertyValue("recurrence-id") as ICAL.Time | null)?.toString() === rid,
+        );
+      if (!ov && start instanceof ICAL.Time) {
+        const t = start.clone();
+        const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})/.exec(rid);
+        if (!m) continue;
+        t.year = Number(m[1]);
+        t.month = Number(m[2]);
+        t.day = Number(m[3]);
+        t.hour = Number(m[4]);
+        t.minute = Number(m[5]);
+        t.second = Number(m[6]);
+        if (later(t)) keepAt(t);
+      }
+    }
+    const rule = master.getFirstPropertyValue("rrule");
+    if (later(start)) {
+      // The series had not started: only kept instances stay, as RDATEs.
+      master.removeAllProperties("rrule");
+      const startKept = start instanceof ICAL.Time && kept.has(idOf(start));
+      if (!startKept && rdates.size === 0) {
+        const res = await client.deleteCalendarObject({ calendarObject: { url: seriesId } });
+        if (!res.ok && res.status !== 404 && res.status !== 410)
+          throw new ProviderError("other", res.status, `Delete failed: ${res.status}`);
+        return;
+      }
+      if (!startKept && start instanceof ICAL.Time) {
+        const ex = new ICAL.Property("exdate");
+        ex.setValue(start);
+        if (typeof tzid === "string") ex.setParameter("tzid", tzid);
+        master.addProperty(ex);
+      }
+    } else if (rule instanceof ICAL.Recur) {
+      rule.count = null as unknown as number;
+      rule.until = toUtcTime(at - 1000);
+      master.removeAllProperties("rrule");
+      master.addPropertyWithValue("rrule", rule);
+    }
+    await this.#putSeries(seriesId, root, etag);
   }
 
   async deleteEvent(calendarId: string, eventId: string): Promise<void> {
