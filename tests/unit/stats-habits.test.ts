@@ -8,6 +8,7 @@
 // 3. A deleted habit's past occurrences vanish from the stats.
 import { describe, expect, it } from "vitest";
 import { ensureUser } from "../../src/server/accounts.ts";
+import { personalInsights } from "../../src/server/analytics/personal.ts";
 import { computeStats } from "../../src/server/api/stats.ts";
 import { one, openDb, run } from "../../src/server/db.ts";
 
@@ -82,5 +83,35 @@ describe("habit progress", () => {
       { id: "lunch", title: "Lunch", events: 3, done: 2, minutes: 210 },
       { id: "gone", title: "Stretch", events: 1, done: 1, minutes: 30 },
     ]);
+  });
+});
+
+// attends() needs the guest count: an event that another person organized but
+// that has no guests (an ORGANIZER line and no ATTENDEE, or an ICS feed event)
+// blocks in the planner, so the stats count it too. An invitation sent only to
+// a mailing list (guests, but not the user) does not count until the user answers.
+describe("events from another organizer", () => {
+  it("count with no guests and not when only a mailing list is invited", () => {
+    const { db, user } = setup();
+    const ext = (id: string, title: string, start: number, attendees: string[]) =>
+      run(
+        db,
+        `INSERT INTO events (calendar_id, event_id, summary, start_ms, end_ms, busy, self_response,
+           attendee_count, organizer_self, attendees) VALUES ('cal', ?, ?, ?, ?, 1, NULL, ?, 0, ?)`,
+        id,
+        title,
+        start,
+        start + HOUR,
+        attendees.length,
+        JSON.stringify(attendees),
+      );
+    for (const d of [0, 1]) {
+      ext(`solo-${d}`, "Dentist", MON + d * 24 * HOUR + 9 * HOUR, []);
+      ext(`list-${d}`, "All hands", MON + d * 24 * HOUR + 14 * HOUR, ["all@example.com"]);
+    }
+    const now = MON + 7 * 24 * HOUR;
+    expect(computeStats(db, user.id, "2031-03-03", "2031-03-09", now).totals.soloEvents).toBe(120);
+    const { insights } = personalInsights(db, user.id, "2031-03-03", "2031-03-09", now);
+    expect(insights.repeats.map((r) => r.title)).toEqual(["Dentist"]);
   });
 });

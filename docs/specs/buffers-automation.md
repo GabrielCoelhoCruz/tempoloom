@@ -126,6 +126,7 @@ recovery and prep templates are not in the evidence.
     - `keep_as_conflict`: Tempoloom keeps the buffer in place, overlapping, and marks it with "⚠️" in the title.
 17. When a flexible managed item (habit, task chunk, flexible meeting, focus event) and a buffer need the same time, the item with the higher priority wins; equal priority uses rank. If the buffer wins, the item moves by its own rules. If the item wins, rule 16 applies to the buffer (E-0051, E-0141).
 18. Legacy recovery behavior (legacy evidence, E-0069): a recovery buffer may overlap a habit or task event that is still free. When that habit or task event has no other slot and switches to busy, Tempoloom deletes the recovery buffer. The current version may replace this with rule 17 (open question 4).
+    Tempoloom decision: both rules apply. Rule 17 decides while the habit has room. Rule 18 applies only when a habit occurrence has no other slot on any of its allowed days and turns busy there (an adaptive or an always-busy habit), whatever the buffer's priority: the scheduler removes the recovery buffer (the after side of a buffer that is not travel time) under the habit's time; a locked buffer stays. An always-free habit never turns busy, so the buffer keeps its time. Task events follow rule 17 only; rule 18 for tasks is not built.
 
 ### Company buffer policy (marketing evidence)
 

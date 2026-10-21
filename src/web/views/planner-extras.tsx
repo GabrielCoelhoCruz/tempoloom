@@ -17,9 +17,21 @@ interface Actions {
   sourceId?: string;
   date?: string | null;
   ended?: boolean;
+  started?: boolean;
   done?: boolean;
   search?: { kind: string; id: string; searchId: string | null } | null;
 }
+
+/** Minimum delays of the focus reschedule action (focus-time.md rule 22). */
+const DELAYS: [number, string][] = [
+  [15, "15 minutes"],
+  [30, "30 minutes"],
+  [60, "1 hour"],
+  [120, "2 hours"],
+  [180, "3 hours"],
+  [240, "4 hours"],
+  [1440, "1 day"],
+];
 
 function useSearchTasks(searchId: string | null) {
   const [tasks, setTasks] = useState<SearchTask[]>([]);
@@ -60,6 +72,7 @@ export function EventActions({
   const [info, setInfo] = useState<Actions | null>(null);
   const [searchId, setSearchId] = useState<string | null>(null);
   const [time, setTime] = useState(() => hhmm(utcToLocal(zone, event.start).minuteOfDay));
+  const [delay, setDelay] = useState(60);
   useEffect(() => {
     let live = true;
     void api<Actions>("GET", `/api/event-actions/${encodeURIComponent(event.id)}`).then((a) => {
@@ -135,6 +148,34 @@ export function EventActions({
               onInput={(e) => setTime(e.currentTarget.value)}
             />
           </label>
+          <button type="submit">Reschedule</button>
+        </form>
+      )}
+      {info.kind === "focus" && !info.started && (
+        <form
+          class="inline"
+          data-testid="focus-reschedule-form"
+          onSubmit={(e) => {
+            e.preventDefault();
+            close();
+            run(() =>
+              api("POST", `/api/focus/events/${encodeURIComponent(event.id)}/reschedule`, {
+                delayMinutes: delay,
+              }),
+            );
+          }}
+        >
+          <label>
+            At least
+            <select value={delay} onChange={(e) => setDelay(Number(e.currentTarget.value))}>
+              {DELAYS.map(([m, label]) => (
+                <option key={m} value={m}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <span class="meta">from now</span>
           <button type="submit">Reschedule</button>
         </form>
       )}
