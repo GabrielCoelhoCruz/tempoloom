@@ -53,6 +53,8 @@ const event = fc.record({
   lenQ: fc.integer({ min: 1, max: 12 }),
   busy: fc.boolean(),
   response: fc.constantFrom(null, "accepted", "declined", "needsAction", "tentative"),
+  // With no answer: the user's own event, or an invitation sent only to a mailing list.
+  listOnly: fc.boolean(),
   tag: fc.constantFrom("", " #tl_free", " #tl_busy"),
 });
 const toEvent = (e: ValueOf<typeof event>, i: number): ExternalEvent => ({
@@ -64,8 +66,8 @@ const toEvent = (e: ValueOf<typeof event>, i: number): ExternalEvent => ({
   title: `Event${e.tag}`,
   description: "",
   selfResponse: e.response as ExternalEvent["selfResponse"],
-  organizerSelf: e.response === null,
-  attendeeCount: e.response === null ? 0 : 2,
+  organizerSelf: e.response === null && !e.listOnly,
+  attendeeCount: e.response === null && !e.listOnly ? 0 : 2,
   location: "",
   eventType: "default",
   bookedViaLink: false,
