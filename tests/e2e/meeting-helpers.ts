@@ -51,8 +51,8 @@ export const putMeeting = (calendarUrl: string, m: RawMeeting, id?: string) =>
     id,
   );
 
-/** The stored iCalendar text of an event. */
-export async function rawEvent(calendarUrl: string, id: string): Promise<string> {
+/** The stored iCalendar text of a whole calendar object (a series: master and overrides). */
+export async function rawObject(calendarUrl: string, id: string): Promise<string> {
   const res = await fetch(id.split("#")[0] ?? id, {
     headers: { authorization: credentials(calendarUrl) },
   });
@@ -60,12 +60,26 @@ export async function rawEvent(calendarUrl: string, id: string): Promise<string>
   return (await res.text()).replace(/\r?\n[ \t]/g, "");
 }
 
-/** Replaces lines of a stored event, as another calendar app edits it. */
+/**
+ * The stored iCalendar text of an event. For an instance of a series
+ * (`<object url>#<recurrence id>`): its own VEVENT, the override, else the master.
+ */
+export async function rawEvent(calendarUrl: string, id: string): Promise<string> {
+  const text = await rawObject(calendarUrl, id);
+  if (!id.includes("#")) return text;
+  return overrideOf(text.replace(/\r\n/g, "\n"), id) ?? masterOf(text.replace(/\r\n/g, "\n"));
+}
+
+/**
+ * Replaces lines of a stored event, as another calendar app edits it. An
+ * instance of a series gets the edit in its override ("this event").
+ */
 export async function editRaw(
   calendarUrl: string,
   id: string,
   edit: (lines: string[]) => string[],
 ): Promise<void> {
+  if (id.includes("#")) return editInstance(calendarUrl, { id }, edit);
   const url = id.split("#")[0] ?? id;
   const auth = { authorization: credentials(calendarUrl) };
   const res = await fetch(url, { headers: auth });
@@ -90,6 +104,17 @@ export async function answerAs(
   email: string,
   answer: Answer,
 ): Promise<void> {
+  // One instance of a series: the answer goes in its override.
+  if (id.includes("#"))
+    return editInstance(calendarUrl, { id }, (lines) =>
+      lines.map((l) => {
+        if (!/^ATTENDEE[;:]/i.test(l) || !l.toLowerCase().endsWith(`mailto:${email.toLowerCase()}`))
+          return l;
+        const [head, ...rest] = l.split(/:(?=mailto:)/i);
+        const params = (head ?? "").split(";").filter((p) => !/^PARTSTAT=/i.test(p));
+        return `${[...params, `PARTSTAT=${answer}`].join(";")}:${rest.join(":")}`;
+      }),
+    );
   const url = id.split("#")[0] ?? id;
   const res = await fetch(url, { headers: { authorization: credentials(calendarUrl) } });
   if (!res.ok) throw new Error(`GET ${url} failed: ${res.status}`);
@@ -258,13 +283,26 @@ async function editObject(calendarUrl: string, id: string, edit: (ics: string) =
 /** "This event": edits the instance's override, made from the master when it has none. */
 export async function editInstance(
   calendarUrl: string,
-  e: { id: string; start: number; end: number },
+  e: { id: string; start?: number; end?: number },
   edit: (lines: string[]) => string[],
 ): Promise<void> {
   await editObject(calendarUrl, e.id, (ics) => {
     const own = overrideOf(ics, e.id);
     const master = masterOf(ics);
     const tzid = /^DTSTART;TZID=([^:;]+)/m.exec(master)?.[1];
+    // The instance's rule time and the series length, when the caller gives no times.
+    const at = (v: string) => {
+      const m = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})(Z?)$/.exec(v);
+      if (!m) throw new Error(`Bad time ${v}`);
+      const [, y, mo, d, h, mi, , z] = m;
+      return z || !tzid
+        ? Date.UTC(Number(y), Number(mo) - 1, Number(d), Number(h), Number(mi))
+        : localToUtc(tzid, `${y}-${mo}-${d}`, Number(h) * 60 + Number(mi));
+    };
+    const value = (name: string) =>
+      new RegExp(`^${name}[^:\\n]*:(\\S+)$`, "m").exec(master)?.[1] ?? "";
+    const start = e.start ?? at(ridOf(e.id));
+    const end = e.end ?? start + (at(value("DTEND")) - at(value("DTSTART")));
     const block =
       own ??
       master
@@ -275,8 +313,8 @@ export async function editInstance(
             ? [
                 l,
                 `RECURRENCE-ID${tzid ? `;TZID=${tzid}` : ""}:${ridOf(e.id)}`,
-                `DTSTART:${icsUtc(e.start)}`,
-                `DTEND:${icsUtc(e.end)}`,
+                `DTSTART:${icsUtc(start)}`,
+                `DTEND:${icsUtc(end)}`,
               ]
             : [l],
         )

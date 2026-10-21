@@ -245,6 +245,20 @@ async function caldavCalendar(
       return ev.id;
     },
     async update(id, change) {
+      // One instance of a series, as a calendar app changes "this event": its override.
+      if (id.includes("#")) {
+        await provider.editExternal(
+          calendarId,
+          id,
+          {
+            start: change.start,
+            end: change.end,
+            ...(change.summary ? { summary: change.summary } : {}),
+          },
+          null,
+        );
+        return;
+      }
       const ev = await byId(id);
       const attendees = attendeesOf.get(id);
       await provider.updateEvent(
@@ -293,12 +307,16 @@ async function caldavCalendar(
         (c) => c.url === calendarId,
       );
       if (!cal) throw new Error("calendar missing");
+      const [url, rid] = id.split("#");
       const [obj] = await retryRead(() =>
-        client.fetchCalendarObjects({ calendar: cal, objectUrls: [id] }),
+        client.fetchCalendarObjects({ calendar: cal, objectUrls: [url ?? id] }),
       );
-      const lines = String(obj?.data ?? "")
-        .replace(/\r?\n[ \t]/g, "")
-        .split(/\r?\n/);
+      const text = String(obj?.data ?? "").replace(/\r?\n[ \t]/g, "");
+      // An instance of a series: its override, else the master.
+      const blocks = [...text.matchAll(/BEGIN:VEVENT\r?\n[\s\S]*?END:VEVENT/g)].map((m) => m[0]);
+      const ridOf = (b: string) => /^RECURRENCE-ID[^:\r\n]*:(\S+)/m.exec(b)?.[1];
+      const own = rid ? blocks.find((b) => ridOf(b) === rid.replace(/[-:]/g, "")) : undefined;
+      const lines = (own ?? blocks.find((b) => !ridOf(b)) ?? text).split(/\r?\n/);
       return lines
         .filter((l) => l.startsWith("ATTENDEE"))
         .map((l) => ({

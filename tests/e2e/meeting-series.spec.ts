@@ -40,7 +40,7 @@ import {
   instanceRaw,
   masterOf,
   overrideOf,
-  rawEvent,
+  rawObject,
   splitSeries,
   vevents,
 } from "./meeting-helpers.ts";
@@ -92,7 +92,7 @@ test("a meeting from the form is one recurring series on the calendar: one event
   expect(objects(list, "Series sync").size).toBe(1);
 
   const series = async () => {
-    const ics = await rawEvent(cal.calendarId, first.id);
+    const ics = await rawObject(cal.calendarId, first.id);
     const master = masterOf(ics);
     return {
       // Overrides from the test week on (an earlier, ended one may carry the done marker).
@@ -187,7 +187,7 @@ test("a calendar resize of this and the following occurrences sets the meeting l
   expect(times(after, "Plan review")).toEqual(expected);
   expect([...objects(after, "Plan review")].sort()).toHaveLength(2);
   expect(titled(after, "Plan review")[1]?.id.split("#")[0]).toBe(added);
-  expect(blockProp(masterOf(await rawEvent(cal.calendarId, added)), "DTEND")).toContain("T103000");
+  expect(blockProp(masterOf(await rawObject(cal.calendarId, added)), "DTEND")).toContain("T103000");
 });
 
 test("a calendar resize of all occurrences sets the meeting length for every occurrence, also the one Tempoloom moved, and nothing locks (MEET-02 rule 18)", async ({

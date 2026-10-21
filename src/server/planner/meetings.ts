@@ -327,8 +327,9 @@ export function meetingItem(
     ...(boost ? { boost: { period: boost.period, level: boost.level } } : {}),
     ...keptLengths(db, userId, m.id, now),
     // An adopted series: only periods that have an instance of it. Tempoloom's
-    // own series gets an instance in each period the plan places.
-    ...(m.series_event_id && !m.series_owned
+    // own series gets an instance in each period the plan places, until the
+    // organizer gives it an end in the calendar (UNTIL or COUNT).
+    ...(m.series_event_id && (!m.series_owned || /\b(UNTIL|COUNT)=/.test(m.series_rule))
       ? {
           periods: all<{ key: string }>(
             db,

@@ -247,6 +247,7 @@ function readOne(
   );
 
   // The occurrences: each instance the series edit changed is kept as the calendar has it.
+  const ends = /\b(UNTIL|COUNT)=/.test(facts.rrule);
   const rows = all<ManagedRow>(
     db,
     `SELECT * FROM managed_events WHERE user_id = ? AND kind = 'meeting' AND source_id = ?
@@ -290,7 +291,10 @@ function readOne(
       // The instance left with the edit: the instance of the same period in the series, if any.
       const moved = free.get(row.key);
       if (!moved) {
-        if (row.calendar_id === calendarId)
+        // A series the organizer ended (UNTIL, COUNT): a later occurrence is
+        // deleted, as a delete in the calendar (MEET-02 rule 20). Another rule
+        // just has no instance in this period: the plan places it again.
+        if (!ends && row.calendar_id === calendarId)
           run(db, "DELETE FROM managed_events WHERE id = ?", row.id);
         continue;
       }
