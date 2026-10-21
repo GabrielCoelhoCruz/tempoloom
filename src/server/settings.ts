@@ -22,6 +22,8 @@ import { COMPANY_SIZES, USE_CASES } from "../shared/profile.ts";
 import { type Db, one, run } from "./db.ts";
 import { instanceLimit } from "./limits.ts";
 
+const autoLockMode = z.enum(["off", "day", "week"]);
+
 export const settingsSchema = z.object({
   schedulingWindowWeeks: z.number().int().min(1).max(12).default(3),
   weekStart: z.union([z.literal(1), z.literal(7)]).default(1),
@@ -33,6 +35,15 @@ export const settingsSchema = z.object({
     .union([z.literal(0), z.literal(5), z.literal(10), z.literal(15), z.literal(20), z.literal(30)])
     .default(0),
   paused: z.boolean().default(false),
+  // planning-locks.md LCK-30: lock each kind's events of the current day or week.
+  autoLock: z
+    .object({
+      meeting: autoLockMode.default("day"),
+      habit: autoLockMode.default("off"),
+      task: autoLockMode.default("off"),
+      focus: autoLockMode.default("off"),
+    })
+    .prefault({}),
   taskDefaults: z
     .object({
       level: z.number().int().min(1).max(4).default(2),
@@ -42,6 +53,11 @@ export const settingsSchema = z.object({
       maxChunkMinutes: z.number().int().min(15).default(120),
       dueInDays: z.number().int().min(0).nullable().default(3),
       startDelayMinutes: z.number().int().min(0).default(0),
+      // planning-tasks.md user task defaults: defaultNextUp, defaultHoursSet
+      // (null: work hours), defaultVisibility.
+      nextUp: z.boolean().default(false),
+      hoursSetId: z.string().nullable().default(null),
+      visibility: z.enum(["calendar_default", "private"]).default("calendar_default"),
     })
     .prefault({}),
   markers: z
@@ -72,11 +88,20 @@ export const settingsSchema = z.object({
   // r3 s3: task placement (planning-tasks.md TSK-70), in-app alerts
   // (planning-notifications.md), first-run hours review (HRS-15), profile fields.
   taskPlacement: z.enum(["chunks", "suggestions"]).default("chunks"),
+  // planning-task-progress.md PRG-1 to PRG-5: count a chunk when its time passes,
+  // or only after Start. manualSince: when manual mode began; older chunks keep counting.
+  startMode: z.enum(["auto", "manual"]).default("auto"),
+  manualSince: z.number().int().nullable().default(null),
   // sync-calendar-mirroring.md account-level setting: copies of events with no reply.
   noReplyCopies: z.enum(["free", "busy"]).default("free"),
   tabAlert: z.boolean().default(true),
   startChime: z.boolean().default(false),
   hoursReviewed: z.boolean().default(false),
+  // planning-planner.md: the days the planner shows (PLN-3) and calendars it hides (PLN-20).
+  plannerDays: z.enum(["all-days", "weekdays", "rolling-9-days"]).default("all-days"),
+  hiddenCalendars: z.array(z.string().max(200)).max(500).default([]),
+  // planning-event-content.md CNT-15: a short tip in managed event descriptions.
+  eventTips: z.boolean().default(true),
   profile: z
     .object({
       jobTitle: z.string().trim().max(100).default(""),
@@ -127,12 +152,17 @@ export function updateSettings(db: Db, userId: string, patch: unknown): Settings
       ...((patch as { taskDefaults?: object }).taskDefaults ?? {}),
     },
     markers: { ...current.markers, ...((patch as { markers?: object }).markers ?? {}) },
+    autoLock: { ...current.autoLock, ...((patch as { autoLock?: object }).autoLock ?? {}) },
     categoryColors: {
       ...current.categoryColors,
       ...((patch as { categoryColors?: object }).categoryColors ?? {}),
     },
     profile: { ...current.profile, ...((patch as { profile?: object }).profile ?? {}) },
   });
+  // planning-tasks.md edge case 6: a new task's default due date must come after its start.
+  const td = merged.taskDefaults;
+  if (td.dueInDays !== null && td.dueInDays * 24 * 60 <= td.startDelayMinutes)
+    throw new Error("Due in must be longer than the start delay");
   run(db, "UPDATE users SET settings = ? WHERE id = ?", JSON.stringify(merged), userId);
   return merged;
 }

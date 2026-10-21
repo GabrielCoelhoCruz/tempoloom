@@ -144,6 +144,9 @@ export function blockedForDelegate(
     return `Delegates cannot add or remove accounts or calendars. Ask ${owner} to do it.`;
   if (/^\/api\/keys(\/|$)/.test(path))
     return `Delegates cannot create or change API keys. Ask ${owner} to do it.`;
+  // A grant outlives the session that approves it, as a key does.
+  if (/^\/api\/oauth(\/|$)/.test(path))
+    return `Delegates cannot connect or revoke AI tools. Ask ${owner} to do it.`;
   if (method === "DELETE" && path === "/api/me")
     return `Delegates cannot delete ${owner}'s account.`;
   if (/^\/api\/delegates(\/|$)/.test(path)) return `Only ${owner} can change delegated access.`;

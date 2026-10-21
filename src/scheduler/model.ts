@@ -64,6 +64,8 @@ export interface TaskItem {
   exclusions: Interval[];
   /** True when the user changed the task's rules since the last run (no stickiness). */
   changed: boolean;
+  /** The lowest chunk index a new chunk may take: ended chunks keep theirs. */
+  nextIndex?: number;
 }
 
 export interface HabitItem {
@@ -316,4 +318,6 @@ export interface ReportEntry {
 export interface Plan {
   placements: Placement[];
   report: ReportEntry[];
+  /** Task ids in the order the scheduler processed them (planning-tasks.md TSK-61). */
+  taskOrder: string[];
 }

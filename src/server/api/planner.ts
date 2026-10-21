@@ -10,6 +10,7 @@ import { stripMarker, withState } from "../planner/markers.ts";
 import { mirrorKey, mirrorSource } from "../planner/mirror.ts";
 import { MANAGED_PROP, type ManagedRow, rowWrite } from "../planner/push.ts";
 import { getSettings } from "../settings.ts";
+import { moveTaskStart } from "../sync/edits.ts";
 import { cacheEvent } from "../sync/pull.ts";
 import type { SyncService } from "../sync/service.ts";
 
@@ -39,7 +40,21 @@ export interface PlannerEvent {
   description: string;
   /** Another user's flexible meeting that this user joins; a 1:1 has guest actions (MEET-02 rule 26). */
   guest?: { oneOnOne: boolean };
+  /** The calendar that holds the event (planning-planner.md PLN-20). */
+  calendarId: string;
+  /** Private or confidential: others see only busy time (PLN-6). */
+  private: boolean;
 }
+
+/** A busy all-day event: its day gets the busy pattern (planning-planner.md PLN-5). */
+export interface AllDayBusy {
+  start: number;
+  end: number;
+  title: string;
+  calendarId: string;
+}
+
+const isPrivate = (v: string | null) => v === "private" || v === "confidential";
 
 /** A calendar by id, with its name for when the client has no calendar list. */
 export interface CalendarRef {
@@ -50,10 +65,21 @@ export interface CalendarRef {
 const range = z.object({ from: z.coerce.number().int(), to: z.coerce.number().int() });
 
 export function plannerEvents(db: Db, userId: string, from: number, to: number): PlannerEvent[] {
-  const managed = all<ManagedRow>(
+  return plannerView(db, userId, from, to).events;
+}
+
+export function plannerView(
+  db: Db,
+  userId: string,
+  from: number,
+  to: number,
+): { events: PlannerEvent[]; allDay: AllDayBusy[] } {
+  const managed = all<ManagedRow & { own_visibility: string | null }>(
     db,
-    `SELECT * FROM managed_events WHERE user_id = ? AND kind <> 'mirror' AND end_ms > ? AND start_ms < ?
-     ORDER BY start_ms`,
+    `SELECT m.*, e.own_visibility FROM managed_events m
+       LEFT JOIN events e ON e.calendar_id = m.calendar_id AND e.event_id = m.event_id
+     WHERE m.user_id = ? AND m.kind <> 'mirror' AND m.end_ms > ? AND m.start_ms < ?
+     ORDER BY m.start_ms`,
     userId,
     from,
     to,
@@ -65,6 +91,7 @@ export function plannerEvents(db: Db, userId: string, from: number, to: number):
       private_props: string;
       main: number;
       calendar_name: string;
+      own_visibility: string | null;
     }
   >(
     db,
@@ -92,7 +119,10 @@ export function plannerEvents(db: Db, userId: string, from: number, to: number):
     movable: true,
     sourceId: m.source_id,
     description: m.description,
+    calendarId: m.calendar_id,
+    private: isPrivate(m.own_visibility),
   }));
+  const allDay: AllDayBusy[] = [];
   const levels = new Map(
     all<{ calendar_id: string; target_id: string; level: number }>(
       db,
@@ -123,9 +153,18 @@ export function plannerEvents(db: Db, userId: string, from: number, to: number):
     copiedTo.set(k, [...(copiedTo.get(k) ?? []), { id: m.dest_id, name: m.dest }]);
   }
   for (const e of external) {
-    if (e.all_day) continue;
     const props = JSON.parse(e.private_props) as Record<string, string>;
     if (props[MANAGED_PROP] === "1") continue;
+    if (e.all_day) {
+      if (e.busy === 1)
+        allDay.push({
+          start: e.start_ms,
+          end: e.end_ms,
+          title: e.summary,
+          calendarId: e.calendar_id,
+        });
+      continue;
+    }
     const copies = copiedTo.get(`${e.calendar_id}:${e.event_id}`) ?? [];
     out.push({
       id: `ext:${e.calendar_id}:${e.event_id}`,
@@ -140,6 +179,8 @@ export function plannerEvents(db: Db, userId: string, from: number, to: number):
       movable: false,
       sourceId: null,
       description: e.description,
+      calendarId: e.calendar_id,
+      private: isPrivate(e.own_visibility),
       level:
         levels.get(`${e.calendar_id}:${e.event_id}`) ??
         (e.recurring_id ? levels.get(`${e.calendar_id}:${e.recurring_id}`) : undefined) ??
@@ -150,7 +191,7 @@ export function plannerEvents(db: Db, userId: string, from: number, to: number):
       copies,
     });
   }
-  return out.sort((a, b) => a.start - b.start || a.id.localeCompare(b.id));
+  return { events: out.sort((a, b) => a.start - b.start || a.id.localeCompare(b.id)), allDay };
 }
 
 /**
@@ -160,9 +201,16 @@ export function plannerEvents(db: Db, userId: string, from: number, to: number):
  */
 function guestOccurrences(db: Db, userId: string, from: number, to: number): PlannerEvent[] {
   const email = one<{ email: string }>(db, "SELECT email FROM users WHERE id = ?", userId)?.email;
-  return all<{ id: string; title: string; start_ms: number; end_ms: number; guests: number }>(
+  return all<{
+    id: string;
+    title: string;
+    start_ms: number;
+    end_ms: number;
+    calendar_id: string;
+    guests: number;
+  }>(
     db,
-    `SELECT m.id, mt.title, m.start_ms, m.end_ms,
+    `SELECT m.id, mt.title, m.start_ms, m.end_ms, m.calendar_id,
        (SELECT count(*) FROM meeting_attendees x WHERE x.meeting_id = mt.id) AS guests
      FROM managed_events m JOIN meetings mt ON mt.id = m.source_id AND m.kind = 'meeting'
        JOIN meeting_attendees a ON a.meeting_id = mt.id
@@ -184,6 +232,8 @@ function guestOccurrences(db: Db, userId: string, from: number, to: number): Pla
     movable: false,
     sourceId: null,
     description: "",
+    calendarId: m.calendar_id,
+    private: false,
     guest: { oneOnOne: m.guests === 1 },
   }));
 }
@@ -214,8 +264,9 @@ export function plannerRoutes(db: Db, sync: SyncService, now: () => number): Hon
     }
     const userId = c.get("user").id;
     const guests = guestOccurrences(db, userId, q.data.from, q.data.to);
+    const view = plannerView(db, userId, q.data.from, q.data.to);
     // The guest's own copy of an invitation shows once, as the meeting.
-    const own = plannerEvents(db, userId, q.data.from, q.data.to).filter(
+    const own = view.events.filter(
       (e) =>
         e.kind !== "external" ||
         !guests.some((g) => g.start === e.start && g.end === e.end && e.title.includes(g.title)),
@@ -223,7 +274,7 @@ export function plannerRoutes(db: Db, sync: SyncService, now: () => number): Hon
     const events = [...own, ...guests].sort(
       (a, b) => a.start - b.start || a.id.localeCompare(b.id),
     );
-    return c.json({ events });
+    return c.json({ events, allDay: view.allDay });
   });
 
   r.get("/report", (c) => {
@@ -438,6 +489,7 @@ export function plannerRoutes(db: Db, sync: SyncService, now: () => number): Hon
           row.start_ms,
           row.end_ms,
         );
+        moveTaskStart(db, user.id, row, start);
       }
       run(
         db,

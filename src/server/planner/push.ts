@@ -52,6 +52,8 @@ export interface ManagedRow {
   extra: string;
   /** Buffers: the length the user gave this event in the calendar (buffers rule 14). */
   kept_minutes: number | null;
+  /** 1 when the user started the event or logged it as work (PRG-3, PRG-20). */
+  started: number;
 }
 
 /** Guests, location, reminders and visibility as stored in `managed_events.extra`. */
@@ -116,6 +118,11 @@ export interface PushContext {
   now: number;
   /** Also compare the time and color of mirroring copies with the calendar (full reconcile). */
   fullCheck?: boolean;
+  /**
+   * Ended events that go back to the plan (manual start mode, PRG-3): a new
+   * event of the same item moves one of them instead of being created.
+   */
+  reopen?: ManagedRow[];
 }
 
 export interface PushResult {
@@ -200,6 +207,16 @@ function differs(
   );
 }
 
+/** The paragraph that holds an event tip (planning-event-content.md CNT-15). */
+export const TIP_PREFIX = "Tempoloom tip: ";
+const withoutTip = (description: string) =>
+  description
+    .split("\n\n")
+    .filter((p) => !p.startsWith(TIP_PREFIX))
+    .join("\n\n");
+/** Two descriptions that differ only in their tip. */
+export const tipOnly = (a: string, b: string) => a !== b && withoutTip(a) === withoutTip(b);
+
 /**
  * The change of a meeting occurrence after its creation
  * (meetings-flexible-rescheduling.md rule 22): only the fields whose
@@ -210,8 +227,9 @@ function differs(
  */
 export function meetingChange(
   row: ManagedRow,
-  cached: Pick<Cached, "busy" | "own_visibility"> | undefined,
+  cached: Pick<Cached, "busy" | "own_visibility" | "description"> | undefined,
   d: DesiredEvent,
+  quiet = false,
 ): ExternalChange | null {
   const was = extraFrom(row);
   const change: ExternalChange = {};
@@ -220,7 +238,13 @@ export function meetingChange(
     change.end = d.end;
   }
   if (row.title !== d.title) change.summary = d.title;
-  if (row.description !== d.description) change.description = d.description;
+  // CNT-15: a tip change alone (tips on or off) never writes over the
+  // organizer's own description, and goes only where it mails no guest.
+  if (
+    row.description !== d.description &&
+    (!tipOnly(row.description, d.description) || (quiet && cached?.description === row.description))
+  )
+    change.description = d.description;
   if (Boolean(row.busy) !== d.busy || (cached && Boolean(cached.busy) !== d.busy))
     change.busy = d.busy;
   const visibility = d.visibility ?? "default";
@@ -284,6 +308,17 @@ export async function pushSchedule(
     now,
   ).filter((r) => !frozen.has(r.calendar_id) && !(r.kind === "mirror" && paused.has(r.source_id)));
   const byKey = new Map(rows.map((r) => [r.key, r]));
+  // Whether an edit of an event with guests mails them, per calendar (CNT-15).
+  const mails = new Map<string, Promise<boolean>>();
+  const quiet = async (calendarId: string) => {
+    const { provider, providerCalendarId } = ctx.target(calendarId);
+    if (!mails.has(calendarId))
+      mails.set(
+        calendarId,
+        Promise.resolve(provider.notifiesGuests?.(providerCalendarId) ?? true).catch(() => true),
+      );
+    return (await mails.get(calendarId)) === false;
+  };
   const wanted = new Set(allDesired.map((d) => d.key));
   const desired = allDesired.filter((d) => !frozen.has(d.calendarId));
 
@@ -317,7 +352,12 @@ export async function pushSchedule(
     // A meeting occurrence is never written whole after its creation (rule 22).
     const change =
       row.kind === "meeting"
-        ? meetingChange(row, cached, d)
+        ? meetingChange(
+            row,
+            cached,
+            d,
+            tipOnly(row.description, d.description) && (await quiet(row.calendar_id)),
+          )
         : differs(row, cached, d, ctx.fullCheck ?? false);
     if (!change) continue;
     const { provider, providerCalendarId } = ctx.target(row.calendar_id);
@@ -348,9 +388,14 @@ export async function pushSchedule(
     }
   }
 
+  const reopen = (ctx.reopen ?? []).filter((r) => !frozen.has(r.calendar_id));
   for (const d of creates) {
     const row = byKey.get(d.key);
     if (row && (row.locked || row.start_ms <= now)) continue;
+    if (!row && (await moveReopened(ctx, reopen, d))) {
+      result.updated++;
+      continue;
+    }
     if (row?.event_id) await deleteRemote(ctx, row);
     const { provider, providerCalendarId } = ctx.target(d.calendarId);
     const ev = await provider.insertEvent(providerCalendarId, write(userId, d));
@@ -361,6 +406,48 @@ export async function pushSchedule(
   }
   pruneChangeLog(db, now);
   return result;
+}
+
+/** PRG-3: moves an ended, unstarted event of the same item to the new time. */
+async function moveReopened(
+  ctx: PushContext,
+  reopen: ManagedRow[],
+  d: DesiredEvent,
+): Promise<boolean> {
+  const i = reopen.findIndex(
+    (r) =>
+      r.kind === d.kind &&
+      r.source_id === d.sourceId &&
+      r.calendar_id === d.calendarId &&
+      (d.kind !== "habit" || r.key === d.key),
+  );
+  const old = reopen[i];
+  if (!old?.event_id) return false;
+  reopen.splice(i, 1);
+  const { db, userId, now } = ctx;
+  const cached = one<{ etag: string | null }>(
+    db,
+    "SELECT etag FROM events WHERE calendar_id = ? AND event_id = ?",
+    old.calendar_id,
+    old.event_id,
+  );
+  const { provider, providerCalendarId } = ctx.target(old.calendar_id);
+  try {
+    const ev = await provider.updateEvent(
+      providerCalendarId,
+      old.event_id,
+      write(userId, d),
+      cached?.etag ?? old.etag,
+    );
+    cacheEvent(db, old.calendar_id, ev);
+    run(db, "UPDATE managed_events SET key = ? WHERE id = ?", d.key, old.id);
+    saveRow(db, userId, d, ev.id, ev.etag, old.id);
+    logManaged(db, userId, desiredRef(d, ev.id), "update", { ...d, moved: true }, now);
+    return true;
+  } catch (err) {
+    if (err instanceof ProviderError) return false;
+    throw err;
+  }
 }
 
 // Change log references (docs/specs/support-troubleshooting.md rule 12).
