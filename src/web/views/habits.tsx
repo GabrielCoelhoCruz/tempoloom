@@ -72,10 +72,21 @@ const withEmoji = (h: Habit) => {
   return emoji ? `${emoji} ${h.title}` : h.title;
 };
 
+function errorText(err: unknown): string {
+  const body = (err as { body?: { issues?: { message: string }[] } }).body;
+  return body?.issues?.[0]?.message ?? (err instanceof Error ? err.message : String(err));
+}
+
 export function Habits() {
   const [habits, setHabits] = useState<Habit[]>([]);
   const [hours, setHours] = useState<HoursChoice[]>([]);
   const [error, setError] = useState<string | null>(null);
+  // The form's defaults come from the habits and hours, so the form shows after the first
+  // load. No later load remounts it (a remount drops what the user changed): a template form
+  // goes to the blank form after its save, and the blank form resets its title and event
+  // settings after a save.
+  const [loaded, setLoaded] = useState(false);
+  const [saved, setSaved] = useState(0);
   const today = utcToLocal(zone(), Date.now()).date;
   // A library entry fills the form (automations-library.md rule 5).
   const template = templateFromUrl();
@@ -105,9 +116,12 @@ export function Habits() {
     ]);
     setHabits(h.habits);
     setHours(hs.hours);
+    setLoaded(true);
     await loadPolicyMarks();
   }, []);
-  useEffect(() => void load(), [load]);
+  useEffect(() => {
+    load().catch((err: unknown) => setError(errorText(err)));
+  }, [load]);
   useLive(load);
 
   const act = async (fn: () => Promise<unknown>) => {
@@ -117,8 +131,7 @@ export function Habits() {
       await planNow();
       await load();
     } catch (err) {
-      const body = (err as { body?: { issues?: { message: string }[] } }).body;
-      setError(body?.issues?.[0]?.message ?? (err instanceof Error ? err.message : String(err)));
+      setError(errorText(err));
     }
   };
 
@@ -155,6 +168,7 @@ export function Habits() {
       });
       const title = formEl.elements.namedItem("title") as HTMLInputElement | null;
       if (title) title.value = "";
+      setSaved((n) => n + 1);
       // The template is used: the next habit starts from a blank form.
       if (template) history.replaceState(null, "", "/habits");
     });
@@ -175,120 +189,124 @@ export function Habits() {
           }}
         />
       )}
-      <form
-        class="form"
-        onSubmit={create}
-        data-testid="habit-form"
-        key={template ? `${template.slug}-${habits.length}-${hours.length}` : "new"}
-      >
-        <label class="wide">
-          Title
-          <input
-            name="title"
-            required
-            maxLength={255}
-            defaultValue={
-              template
-                ? freeName(
-                    template.name,
-                    habits.map((h) => h.title),
-                  )
-                : ""
+      {loaded && (
+        <form
+          class="form"
+          onSubmit={create}
+          data-testid="habit-form"
+          key={template ? `${template.slug}-${saved}` : "new"}
+        >
+          <label class="wide">
+            Title
+            <input
+              name="title"
+              required
+              maxLength={255}
+              defaultValue={
+                template
+                  ? freeName(
+                      template.name,
+                      habits.map((h) => h.title),
+                    )
+                  : ""
+              }
+            />
+          </label>
+          <label>
+            Ideal time
+            <input name="idealTime" type="time" step={900} defaultValue={idealTime ?? "12:00"} />
+          </label>
+          <label>
+            Shortest (minutes)
+            <input
+              name="minMinutes"
+              type="number"
+              min={15}
+              step={15}
+              defaultValue={String(preset?.minutes ?? 30)}
+            />
+          </label>
+          <label>
+            Longest (minutes)
+            <input
+              name="maxMinutes"
+              type="number"
+              min={15}
+              step={15}
+              defaultValue={String(preset?.minutes ?? 60)}
+            />
+          </label>
+          <label>
+            Priority
+            <select name="level">
+              {[1, 2, 3, 4].map((l) => (
+                <option value={l} key={l} selected={l === (preset?.level ?? 3)}>
+                  {LEVEL_NAMES[l]}
+                </option>
+              ))}
+            </select>
+          </label>
+          <HoursField
+            sets={hours}
+            allowItem
+            initial={
+              preset?.window ? ITEM : preset?.hours === "personal" && personal ? personal : ""
             }
+            {...(preset?.window ? { item: preset.window } : {})}
           />
-        </label>
-        <label>
-          Ideal time
-          <input name="idealTime" type="time" step={900} defaultValue={idealTime ?? "12:00"} />
-        </label>
-        <label>
-          Shortest (minutes)
-          <input
-            name="minMinutes"
-            type="number"
-            min={15}
-            step={15}
-            defaultValue={String(preset?.minutes ?? 30)}
+          <label>
+            Show as
+            <select name="defense">
+              {Object.entries(DEFENSE).map(([v, l]) => (
+                <option value={v} key={v}>
+                  {l}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            When there is no room
+            <select name="whenUnplaceable">
+              <option value="keep_as_conflict">Keep and mark the conflict</option>
+              <option value="remove">Remove that day</option>
+            </select>
+          </label>
+          <label>
+            Starting
+            <input name="starting" type="date" />
+          </label>
+          <label>
+            Skip days with events named (comma list)
+            <input name="reservedWords" placeholder="lunch, offsite" />
+          </label>
+          <FrequencyFields
+            preset={preset?.days ? { period: "weekly", days: preset.days } : undefined}
           />
-        </label>
-        <label>
-          Longest (minutes)
-          <input
-            name="maxMinutes"
-            type="number"
-            min={15}
-            step={15}
-            defaultValue={String(preset?.minutes ?? 60)}
+          <label class="wide">
+            Notes
+            <textarea name="notes" rows={2} />
+          </label>
+          <label class="wide">
+            Guests (comma list)
+            <input name="guests" placeholder="ana@example.com" />
+            <span class="meta">
+              Added to each event. Tempoloom does not check their availability and sends them no
+              notice.
+            </span>
+          </label>
+          <EventSettingsFields
+            key={saved}
+            kind="habit"
+            initial={{
+              ...defaultEventSettings("habit", { personal: preset?.hours === "personal" }),
+              emoji: template?.emoji ?? "",
+            }}
           />
-        </label>
-        <label>
-          Priority
-          <select name="level">
-            {[1, 2, 3, 4].map((l) => (
-              <option value={l} key={l} selected={l === (preset?.level ?? 3)}>
-                {LEVEL_NAMES[l]}
-              </option>
-            ))}
-          </select>
-        </label>
-        <HoursField
-          sets={hours}
-          allowItem
-          initial={preset?.window ? ITEM : preset?.hours === "personal" && personal ? personal : ""}
-          {...(preset?.window ? { item: preset.window } : {})}
-        />
-        <label>
-          Show as
-          <select name="defense">
-            {Object.entries(DEFENSE).map(([v, l]) => (
-              <option value={v} key={v}>
-                {l}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          When there is no room
-          <select name="whenUnplaceable">
-            <option value="keep_as_conflict">Keep and mark the conflict</option>
-            <option value="remove">Remove that day</option>
-          </select>
-        </label>
-        <label>
-          Starting
-          <input name="starting" type="date" />
-        </label>
-        <label>
-          Skip days with events named (comma list)
-          <input name="reservedWords" placeholder="lunch, offsite" />
-        </label>
-        <FrequencyFields
-          preset={preset?.days ? { period: "weekly", days: preset.days } : undefined}
-        />
-        <label class="wide">
-          Notes
-          <textarea name="notes" rows={2} />
-        </label>
-        <label class="wide">
-          Guests (comma list)
-          <input name="guests" placeholder="ana@example.com" />
-          <span class="meta">
-            Added to each event. Tempoloom does not check their availability and sends them no
-            notice.
-          </span>
-        </label>
-        <EventSettingsFields
-          key={habits.length}
-          kind="habit"
-          initial={{
-            ...defaultEventSettings("habit", { personal: preset?.hours === "personal" }),
-            emoji: template?.emoji ?? "",
-          }}
-        />
-        <button type="submit" class="primary">
-          Add habit
-        </button>
-      </form>
+          <button type="submit" class="primary">
+            Add habit
+          </button>
+        </form>
+      )}
       {error && (
         <p class="error" role="alert">
           {error}
