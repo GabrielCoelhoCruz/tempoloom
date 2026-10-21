@@ -28,16 +28,24 @@ import { addMeeting, editRaw, rawEvent } from "./meeting-helpers.ts";
 const TIP = "Tempoloom tip:";
 const tipsBox = (page: Page) => page.getByLabel("Add tips to event descriptions");
 
-/** Turns tips on or off in Settings and waits for the save. */
+/**
+ * Turns tips on or off in Settings and waits for the whole save: the PATCH,
+ * the plan run and the reload of the settings. Until the reload, a render
+ * can show the old value again, and a click then sends the old value.
+ */
 async function setTips(page: Page, on: boolean): Promise<void> {
   await openSettings(page);
   await expect(tipsBox(page)).toBeChecked({ checked: !on });
-  const saved = page.waitForResponse(
-    (r) => r.url().endsWith("/api/settings") && r.request().method() === "PATCH" && r.ok(),
-  );
+  let patched = false;
+  const reloaded = page.waitForResponse((r) => {
+    const method = r.request().method();
+    if (r.url().endsWith("/api/settings") && method === "PATCH" && r.ok()) patched = true;
+    return patched && r.url().endsWith("/api/settings") && method === "GET" && r.ok();
+  });
   // A click, not setChecked: the box shows the saved value again while the save runs.
   await tipsBox(page).click();
-  await saved;
+  await reloaded;
+  await expect(page.getByTestId("settings-message")).toHaveText("Saved");
   await expect(tipsBox(page)).toBeChecked({ checked: on });
 }
 
