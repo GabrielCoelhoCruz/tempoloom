@@ -101,6 +101,9 @@ export const settingsSchema = z.object({
   // or only after Start. manualSince: when manual mode began; older chunks keep counting.
   startMode: z.enum(["auto", "manual"]).default("auto"),
   manualSince: z.number().int().nullable().default(null),
+  // PRG-40 to PRG-44: what happens to a task after its time was used for the wait days.
+  timeUsedAction: z.enum(["nothing", "re-add", "mark-done"]).default("nothing"),
+  timeUsedWaitDays: z.number().int().min(1).max(30).default(3),
   // sync-calendar-mirroring.md account-level setting: copies of events with no reply.
   noReplyCopies: z.enum(["free", "busy"]).default("free"),
   tabAlert: z.boolean().default(true),

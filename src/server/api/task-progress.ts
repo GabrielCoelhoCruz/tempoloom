@@ -1,5 +1,5 @@
-// Task progress by hand (planning-task-progress.md): Start and Stop (PRG-4,
-// PRG-10, PRG-11, edge cases 1 to 4) and logged work (PRG-20 to PRG-22,
+// Task progress by hand (planning-task-progress.md): Start, Stop and Restart
+// (PRG-4, PRG-10 to PRG-12, edge cases 1 to 4) and logged work (PRG-20 to PRG-22,
 // habits-automation.md rule 32).
 import { randomUUID } from "node:crypto";
 import { Hono } from "hono";
@@ -213,6 +213,33 @@ export function taskProgressRoutes(
       return true;
     });
     if (!stopped)
+      return c.json({ error: "not_running", message: "No chunk of this task is running." }, 409);
+    sync.request(user.id, 0);
+    return c.json({ ok: true });
+  });
+
+  /**
+   * PRG-12: the running chunk starts again now, rounded down to 5 minutes, and
+   * keeps its length (up to the first busy event, edge case 3). In auto and
+   * manual mode alike; the chunk is started and gets the lock.
+   */
+  r.post("/tasks/:id/restart", async (c) => {
+    const user = c.get("user");
+    const id = c.req.param("id");
+    const restarted = await sync.exclusive(user.id, async (pool) => {
+      const t = now();
+      const row = chunks(user.id, id).find((ch) => ch.start_ms <= t);
+      if (!row?.event_id) return false;
+      const at = Math.floor(t / FIVE) * FIVE;
+      if (at <= row.start_ms) {
+        run(db, "UPDATE managed_events SET locked = 1, started = 1 WHERE id = ?", row.id);
+        return true;
+      }
+      const end = firstConflict(user.id, at, at + (row.end_ms - row.start_ms));
+      await retime(pool, user.id, row, at, end, "restarted");
+      return true;
+    });
+    if (!restarted)
       return c.json({ error: "not_running", message: "No chunk of this task is running." }, 409);
     sync.request(user.id, 0);
     return c.json({ ok: true });

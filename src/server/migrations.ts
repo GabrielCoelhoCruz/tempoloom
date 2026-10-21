@@ -1365,4 +1365,9 @@ export const MIGRATIONS: readonly string[] = [
   ALTER TABLE events ADD COLUMN organizer_email TEXT NOT NULL DEFAULT '';
   UPDATE calendars SET sync_token = NULL;
   `,
+  // 48: the total that the time-used action "re-add" adds again
+  // (planning-task-progress.md PRG-41). NULL: total_minutes is that total.
+  `
+  ALTER TABLE tasks ADD COLUMN base_minutes INTEGER;
+  `,
 ];

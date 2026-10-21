@@ -291,7 +291,8 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
     run(
       db,
       `UPDATE tasks SET title = ?, notes = ?, level = ?, total_minutes = ?, min_chunk_minutes = ?, max_chunk_minutes = ?,
-         start_after = ?, due_at = ?, hours_set_id = ?, rules_changed_at = ?, color = ?, visibility = ? WHERE id = ?`,
+         start_after = ?, due_at = ?, hours_set_id = ?, rules_changed_at = ?, color = ?, visibility = ?,
+         base_minutes = CASE WHEN ? THEN NULL ELSE base_minutes END WHERE id = ?`,
       body.title ?? task.title,
       body.notes ?? task.notes,
       body.level ?? task.level,
@@ -304,6 +305,8 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
       now(),
       body.color ?? task.color,
       body.visibility ?? task.visibility,
+      // PRG-41: a total the user sets is the one "re-add" adds again.
+      body.minutes !== undefined ? 1 : 0,
       task.id,
     );
     changed(user.id);
