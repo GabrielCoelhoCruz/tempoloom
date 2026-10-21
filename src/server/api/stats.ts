@@ -59,12 +59,15 @@ export function computeStats(db: Db, userId: string, from: string, to: string, n
   )) {
     const props = JSON.parse(e.private_props) as Record<string, string>;
     if (props[MANAGED_PROP] === "1" || e.all_day || !e.busy) continue;
-    const ev = {
-      ...tagText(e),
-      selfResponse: e.self_response,
-      organizerSelf: e.organizer_self === 1,
-    } as Parameters<typeof attends>[0];
-    if (!attends(ev)) continue;
+    const ev = tagText(e);
+    if (
+      !attends({
+        selfResponse: e.self_response,
+        organizerSelf: e.organizer_self === 1,
+        attendeeCount: e.attendee_count,
+      })
+    )
+      continue;
     let cat: Category;
     if (props.tl_booking === "1") {
       cat = "bookedMeetings";
