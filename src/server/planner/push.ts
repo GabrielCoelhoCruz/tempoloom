@@ -207,6 +207,16 @@ function differs(
   );
 }
 
+/** The paragraph that holds an event tip (planning-event-content.md CNT-15). */
+export const TIP_PREFIX = "Tempoloom tip: ";
+const withoutTip = (description: string) =>
+  description
+    .split("\n\n")
+    .filter((p) => !p.startsWith(TIP_PREFIX))
+    .join("\n\n");
+/** Two descriptions that differ only in their tip. */
+export const tipOnly = (a: string, b: string) => a !== b && withoutTip(a) === withoutTip(b);
+
 /**
  * The change of a meeting occurrence after its creation
  * (meetings-flexible-rescheduling.md rule 22): only the fields whose
@@ -217,8 +227,9 @@ function differs(
  */
 export function meetingChange(
   row: ManagedRow,
-  cached: Pick<Cached, "busy" | "own_visibility"> | undefined,
+  cached: Pick<Cached, "busy" | "own_visibility" | "description"> | undefined,
   d: DesiredEvent,
+  quiet = false,
 ): ExternalChange | null {
   const was = extraFrom(row);
   const change: ExternalChange = {};
@@ -227,7 +238,13 @@ export function meetingChange(
     change.end = d.end;
   }
   if (row.title !== d.title) change.summary = d.title;
-  if (row.description !== d.description) change.description = d.description;
+  // CNT-15: a tip change alone (tips on or off) never writes over the
+  // organizer's own description, and goes only where it mails no guest.
+  if (
+    row.description !== d.description &&
+    (!tipOnly(row.description, d.description) || (quiet && cached?.description === row.description))
+  )
+    change.description = d.description;
   if (Boolean(row.busy) !== d.busy || (cached && Boolean(cached.busy) !== d.busy))
     change.busy = d.busy;
   const visibility = d.visibility ?? "default";
@@ -291,6 +308,17 @@ export async function pushSchedule(
     now,
   ).filter((r) => !frozen.has(r.calendar_id) && !(r.kind === "mirror" && paused.has(r.source_id)));
   const byKey = new Map(rows.map((r) => [r.key, r]));
+  // Whether an edit of an event with guests mails them, per calendar (CNT-15).
+  const mails = new Map<string, Promise<boolean>>();
+  const quiet = async (calendarId: string) => {
+    const { provider, providerCalendarId } = ctx.target(calendarId);
+    if (!mails.has(calendarId))
+      mails.set(
+        calendarId,
+        Promise.resolve(provider.notifiesGuests?.(providerCalendarId) ?? true).catch(() => true),
+      );
+    return (await mails.get(calendarId)) === false;
+  };
   const wanted = new Set(allDesired.map((d) => d.key));
   const desired = allDesired.filter((d) => !frozen.has(d.calendarId));
 
@@ -324,7 +352,12 @@ export async function pushSchedule(
     // A meeting occurrence is never written whole after its creation (rule 22).
     const change =
       row.kind === "meeting"
-        ? meetingChange(row, cached, d)
+        ? meetingChange(
+            row,
+            cached,
+            d,
+            tipOnly(row.description, d.description) && (await quiet(row.calendar_id)),
+          )
         : differs(row, cached, d, ctx.fullCheck ?? false);
     if (!change) continue;
     const { provider, providerCalendarId } = ctx.target(row.calendar_id);

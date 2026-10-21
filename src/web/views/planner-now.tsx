@@ -14,7 +14,14 @@ import { formatWhen, hhmm } from "../lib/format.ts";
 import { lazyComponent } from "../lib/lazy.ts";
 import { useLive } from "../lib/live.ts";
 import { Markdown } from "../lib/markdown.tsx";
-import { blockPreview, conflictIds, extraZone, plannerReload } from "../lib/planner-signals.ts";
+import {
+  blockPreview,
+  conflictIds,
+  extraZone,
+  plannerReload,
+  sidePanel,
+  viewAs,
+} from "../lib/planner-signals.ts";
 import { LEVEL_NAMES, loadMe, me, planNow, zone } from "../lib/state.ts";
 import "./parts.css";
 
@@ -44,6 +51,8 @@ interface Now {
     end: number;
     current: boolean;
     joinUrl: string | null;
+    busy: boolean;
+    private: boolean;
   } | null;
   timer: { kind: string; itemId: string; title: string; startedAt: number } | null;
 }
@@ -184,7 +193,9 @@ export function NowBar({ from, to }: { from: number; to: number }) {
   const z = zone();
   const [now, setNow] = useState<Now | null>(null);
   const [conflicts, setConflicts] = useState<Conflict[]>([]);
-  const [open, setOpen] = useState<"tasks" | "priorities" | "conflicts" | null>(null);
+  // PLN-21: one panel at a time; opening one closes the event details.
+  const open = sidePanel.value;
+  const setOpen = (v: typeof open) => (sidePanel.value = v);
   const [stopping, setStopping] = useState(false);
   const [reviewing, setReviewing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -242,7 +253,10 @@ export function NowBar({ from, to }: { from: number; to: number }) {
     </span>
   );
   if (!now) return review || null;
-  const m = now.meeting;
+  // PLN-6: as others see it, a free meeting looks open and a private one is only busy.
+  const others = viewAs.value === "others";
+  const m = others && !now.meeting?.busy ? null : now.meeting;
+  const masked = others && m?.private;
   return (
     <>
       {review}
@@ -286,16 +300,16 @@ export function NowBar({ from, to }: { from: number; to: number }) {
       <span class="spacer" />
       {m && (
         <span data-testid="next-meeting">
-          {m.current ? "Now" : "Next"}: <strong>{m.title}</strong>{" "}
+          {m.current ? "Now" : "Next"}: <strong>{masked ? "Busy" : m.title}</strong>{" "}
           <span class="meta">{span(z, m.start, m.end)}</span>
-          {m.joinUrl && (
+          {m.joinUrl && !masked && (
             <a class="button" href={m.joinUrl} target="_blank" rel="noopener noreferrer">
               Join
             </a>
           )}
         </span>
       )}
-      {conflicts.length > 0 && (
+      {conflicts.length > 0 && !others && (
         <button
           type="button"
           class="danger"
@@ -307,7 +321,7 @@ export function NowBar({ from, to }: { from: number; to: number }) {
       )}
       {open === "tasks" && <TasksPanel onClose={() => setOpen(null)} />}
       {open === "priorities" && <PrioritiesPanel />}
-      {open === "conflicts" && (
+      {open === "conflicts" && !others && (
         <div class="popover" data-testid="conflicts">
           {conflicts.map((c) => (
             <p key={c.ids.join()}>

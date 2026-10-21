@@ -173,6 +173,11 @@ export interface CalendarProvider {
     etag: string | null,
   ): Promise<ProviderEvent>;
   /**
+   * Whether a change of an event with guests mails the guests (a CalDAV server
+   * with scheduling, RFC 6638). Unknown counts as yes.
+   */
+  notifiesGuests?(calendarId: string): Promise<boolean>;
+  /**
    * Sets the private properties of a whole recurring series, the series and
    * every changed instance; other fields stay as they are (meetings-flexible.md
    * rule 1: an adopted series). Instance ids of a series work with updateEvent

@@ -29,12 +29,20 @@ interface Props {
   flagged?: ReadonlySet<string>;
   /** A second time column in this zone (timezones-home-and-travel.md rule 10). */
   extraZone?: string | null;
+  /** Days that a busy all-day event uses, with its title (planning-planner.md PLN-5). */
+  busyDays?: ReadonlyMap<string, string>;
   /**
    * A click or a drag on a past time (planning-task-progress.md PRG-21): the
    * start, rounded down to 15 minutes, and for a drag its length in minutes.
    */
   onPickPast?: (t: number, minutes?: number) => void;
 }
+
+/** PLN-5: a grey dashed pattern across a day with a busy all-day event. */
+const BUSY_DAY = {
+  backgroundImage:
+    "repeating-linear-gradient(135deg, rgba(128,128,128,0.18) 0 6px, transparent 6px 14px)",
+};
 
 const city = (z: string) => (z.split("/").at(-1) ?? z).replace(/_/g, " ");
 
@@ -110,6 +118,7 @@ export function WeekView({
   onCreate,
   flagged,
   extraZone,
+  busyDays,
   onPickPast,
 }: Props) {
   const boxes = useMemo(() => layout(days, zone, events), [days, zone, events]);
@@ -258,7 +267,7 @@ export function WeekView({
           <div />
         )}
         {days.map((d, i) => (
-          <div class={i === todayIdx ? "day-name today" : "day-name"} key={d}>
+          <div class={i === todayIdx ? "day-name today" : "day-name"} key={d} data-date={d}>
             {new Date(`${d}T12:00:00Z`).toLocaleDateString(undefined, {
               weekday: "short",
               day: "numeric",
@@ -301,18 +310,23 @@ export function WeekView({
             ref={gridRef}
             style={{ gridTemplateColumns: `repeat(${days.length}, 1fr)` }}
           >
-            {days.map((d, i) => (
-              <div
-                class="day-col"
-                key={d}
-                data-date={d}
-                // A past time logs work (PRG-21), a future time makes a task (TSK-7).
-                // The toolbar's "Log work" button is the keyboard path.
-                onPointerDown={(e) =>
-                  onPickPast && isPast(e, d) ? pickPast(e, d, onPickPast) : startPick(e, i)
-                }
-              />
-            ))}
+            {days.map((d, i) => {
+              const busyTitle = busyDays?.get(d);
+              return (
+                <div
+                  class={busyTitle === undefined ? "day-col" : "day-col day-busy"}
+                  key={d}
+                  data-date={d}
+                  title={busyTitle}
+                  style={busyTitle === undefined ? undefined : BUSY_DAY}
+                  // A past time logs work (PRG-21), a future time makes a task (TSK-7).
+                  // The toolbar's "Log work" button is the keyboard path.
+                  onPointerDown={(e) =>
+                    onPickPast && isPast(e, d) ? pickPast(e, d, onPickPast) : startPick(e, i)
+                  }
+                />
+              );
+            })}
             {picked && (
               <div
                 class="ev ev-pick"

@@ -16,6 +16,7 @@ import {
   AlertSettings,
   AutoLockSettings,
   DeleteHoursSet,
+  EventTipsSetting,
   FocusNotes,
   HoursZoneNote,
   PlacementSetting,
@@ -387,6 +388,7 @@ export function Settings() {
       <AutoLockSettings settings={settings} act={act} />
 
       <AlertSettings settings={settings} act={act} />
+      <EventTipsSetting settings={settings} act={act} />
 
       <section id="hours">
         <h2>Hours</h2>
