@@ -13,6 +13,7 @@ import { Hono } from "hono";
 import { describe, expect, it } from "vitest";
 import { ensureUser } from "../../src/server/accounts.ts";
 import { automationRoutes, listAutomations } from "../../src/server/api/automations.ts";
+import { habitRoutes } from "../../src/server/api/habits.ts";
 import { itemRoutes } from "../../src/server/api/items.ts";
 import { meetingRoutes } from "../../src/server/api/meetings.ts";
 import type { AppEnv } from "../../src/server/app.ts";
@@ -37,6 +38,7 @@ function setup() {
     await next();
   });
   app.route("/api", itemRoutes(db, sync, now));
+  app.route("/api", habitRoutes(db, sync, now));
   app.route("/api", meetingRoutes(db, sync, now));
   app.route("/api", automationRoutes(db, sync, now));
   const send = async (method: string, url: string, body: unknown) => {
