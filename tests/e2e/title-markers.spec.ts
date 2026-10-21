@@ -10,8 +10,9 @@
 //   markers test).
 // - A mirrored copy with the personal commitment label has no house marker, or
 //   gets reminders (type markers test).
-// - A template's emoji cannot be removed in the form; the user's own emoji is
-//   lost or put before the marker when the state changes (emoji test).
+// - A template's emoji cannot be removed in the form, or comes back when the
+//   habits page's data loads after the removal; the user's own emoji is lost or
+//   put before the marker when the state changes (emoji test).
 import { addDays } from "../../src/shared/time.ts";
 import { alarms, create, fillEventSettings, rawEvent, save } from "./automation-list-helpers.ts";
 import {
@@ -164,9 +165,21 @@ test("a template's emoji shows in the form and can be removed; the user's own em
     await page.locator(`[data-entry="${name}"]`).getByRole("button", { name: "Use" }).click();
   };
   const form = page.getByTestId("habit-form");
+  // A slow hours answer, as on a busy CI runner: data that comes in after the user removed
+  // the emoji must not reset the form and bring the template's emoji back.
+  await page.route("**/api/hours", async (route) => {
+    await new Promise((r) => setTimeout(r, 1000));
+    await route.continue();
+  });
+  const hoursAnswer = page.waitForResponse((r) => r.url().endsWith("/api/hours"));
   await library("Lunch");
   await expect(form.getByLabel("Emoji")).toHaveValue("🍱");
   await form.getByRole("button", { name: "Remove emoji" }).click();
+  await hoursAnswer;
+  await page.evaluate(
+    () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))),
+  );
+  await page.unrouteAll();
   await expect(form.getByLabel("Emoji")).toHaveValue("");
   await form.getByRole("button", { name: "Add habit" }).click();
   await expect(page.locator('[data-habit-title="Lunch"]')).toBeVisible();
