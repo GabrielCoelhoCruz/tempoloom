@@ -11,9 +11,10 @@ import { type Db, one, run } from "../db.ts";
 import { jsonBody, notFound } from "../http.ts";
 import { eventTitle, placementState } from "../planner/markers.ts";
 import { openTasks } from "../planner/now.ts";
-import { eventDescription, loadSnapshot, writeCalendar } from "../planner/replan.ts";
+import { eventDescription, planningSnapshot, writeCalendar } from "../planner/replan.ts";
 import {
   type LockedEvent,
+  waitingCalendars,
   writableCalendar,
   writableCalendars,
   writeLocked,
@@ -212,7 +213,7 @@ export function taskTimeRoutes(
         "SELECT planned_at FROM plan_reports WHERE user_id = ?",
         user.id,
       )?.planned_at ?? 0;
-    const { snapshot } = loadSnapshot(
+    const { snapshot } = planningSnapshot(
       db,
       user.id,
       planningZone(db, user.id),
@@ -223,11 +224,23 @@ export function taskTimeRoutes(
     snapshot.tasks = snapshot.tasks.map((t) =>
       t.id === id ? { ...t, remainingMinutes: task.remaining, changed: true } : t,
     );
+    // Accounts rule 16: the task calendar of its hours is on a disconnected
+    // account, so the task waits and gets no blocks; the answer says why.
+    const waiting = waitingCalendars(
+      db,
+      user.id,
+    )(
+      one<{ c: string | null }>(
+        db,
+        "SELECT h.task_calendar_id AS c FROM tasks t JOIN hours_sets h ON h.id = t.hours_set_id WHERE t.id = ?",
+        id,
+      )?.c,
+    );
     const fixed = new Set(snapshot.current.filter((p) => p.locked).map((p) => p.key));
     const blocks = plan(snapshot)
       .placements.filter((p) => p.kind === "task" && p.itemId === id && !fixed.has(p.key))
       .map((p) => ({ start: p.start, end: p.end }));
-    return c.json({ title: task.title, blocks });
+    return c.json({ title: task.title, blocks, waiting });
   });
 
   /** TSK-7: a task from a range selected in the planner, with one locked chunk there. */

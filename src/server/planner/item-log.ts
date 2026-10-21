@@ -85,6 +85,7 @@ export function recordItemChanges(
         ...snapshot.meetings.map((m) => ["meeting", m.id, m.changed] as const),
         ...snapshot.buffers.map((x) => ["buffer", x.id, x.changed] as const),
         ...snapshot.focus.map((f) => ["focus", f.id, f.changed] as const),
+        ...(snapshot.overloads ?? []).map((o) => ["focus", o.id, o.changed] as const),
       ]
         .filter(([, , c]) => c)
         .map(([k, id]) => `${k}:${id}`),
