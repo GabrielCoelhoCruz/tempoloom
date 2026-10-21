@@ -293,6 +293,7 @@ export function loadSnapshot(
     created_at: number;
     rules_changed_at: number;
     dependencies: string;
+    ideal_at_end: number;
   }>(db, "SELECT * FROM habits WHERE user_id = ? AND enabled = 1", userId).map((h): HabitItem => {
     notes.set(`habit:${h.id}`, h.notes);
     titles.set(`habit:${h.id}`, h.title);
@@ -330,6 +331,7 @@ export function loadSnapshot(
         ? { dependencies: JSON.parse(h.dependencies) as HabitDependency[] }
         : {}),
       ...(chosen ? { work: es.category === "work" } : {}),
+      ...(h.ideal_at_end ? { idealAtEnd: true } : {}),
     };
   });
 
@@ -391,6 +393,8 @@ export function loadSnapshot(
     created_at: number;
     rules_changed_at: number;
     notes: string;
+    preferred_from: number | null;
+    preferred_to: number | null;
   }>(db, "SELECT * FROM focus_goals WHERE user_id = ? AND enabled = 1", userId).map((f) => {
     titles.set(`focus:${f.id}`, f.title);
     const es = readEventSettings(f.event_settings, defaultEventSettings("focus_time"));
@@ -411,6 +415,9 @@ export function loadSnapshot(
       exclusions: exclusions.get(`focus:${f.id}`) ?? [],
       changed: f.rules_changed_at > lastPlannedAt,
       mode: f.mode,
+      ...(f.preferred_from !== null && f.preferred_to !== null
+        ? { preferred: { from: f.preferred_from, to: f.preferred_to } }
+        : {}),
     };
   });
   const overloads = overloadRows.map((o): OverloadItem => {
