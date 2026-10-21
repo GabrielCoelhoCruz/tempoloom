@@ -3,6 +3,7 @@
 // applies to tasks created after it. The time between chunks is in Scheduling.
 import type { Settings as UserSettings } from "../../server/settings.ts";
 import { api } from "../lib/api.ts";
+import { useCommit } from "../lib/commit-input.ts";
 import { LEVEL_NAMES } from "../lib/state.ts";
 
 type Defaults = UserSettings["taskDefaults"];
@@ -18,8 +19,17 @@ export function TaskDefaults({
 }) {
   const d = settings.taskDefaults;
   const save = (patch: Partial<Defaults>) =>
-    void act(() => api("PATCH", "/api/settings", { taskDefaults: patch }));
+    act(() => api("PATCH", "/api/settings", { taskDefaults: patch }));
   const minutes = (value: string) => Math.max(15, Math.round(Number(value) / 15) * 15);
+  const duration = useCommit(d.minutes, (v) => save({ minutes: minutes(v) }));
+  const minChunk = useCommit(d.minChunkMinutes, (v) => save({ minChunkMinutes: minutes(v) }));
+  const maxChunk = useCommit(d.maxChunkMinutes, (v) => save({ maxChunkMinutes: minutes(v) }));
+  const startDelay = useCommit(d.startDelayMinutes, (v) =>
+    save({ startDelayMinutes: Math.max(0, Math.round(Number(v))) }),
+  );
+  const dueIn = useCommit(d.dueInDays ?? "", (v) =>
+    save({ dueInDays: v === "" ? null : Math.max(1, Math.round(Number(v))) }),
+  );
   return (
     <section data-testid="task-defaults">
       <h2>Task defaults</h2>
@@ -37,13 +47,7 @@ export function TaskDefaults({
         </label>
         <label>
           Duration (minutes)
-          <input
-            type="number"
-            min={15}
-            step={15}
-            value={d.minutes}
-            onChange={(e) => save({ minutes: minutes(e.currentTarget.value) })}
-          />
+          <input type="number" min={15} step={15} {...duration} />
         </label>
         <label>
           Split into chunks
@@ -59,23 +63,11 @@ export function TaskDefaults({
           <>
             <label>
               Shortest chunk
-              <input
-                type="number"
-                min={15}
-                step={15}
-                value={d.minChunkMinutes}
-                onChange={(e) => save({ minChunkMinutes: minutes(e.currentTarget.value) })}
-              />
+              <input type="number" min={15} step={15} {...minChunk} />
             </label>
             <label>
               Longest chunk
-              <input
-                type="number"
-                min={15}
-                step={15}
-                value={d.maxChunkMinutes}
-                onChange={(e) => save({ maxChunkMinutes: minutes(e.currentTarget.value) })}
-              />
+              <input type="number" min={15} step={15} {...maxChunk} />
             </label>
           </>
         )}
@@ -97,28 +89,11 @@ export function TaskDefaults({
         </label>
         <label>
           Start delay (minutes)
-          <input
-            type="number"
-            min={0}
-            step={15}
-            value={d.startDelayMinutes}
-            onChange={(e) =>
-              save({ startDelayMinutes: Math.max(0, Math.round(Number(e.currentTarget.value))) })
-            }
-          />
+          <input type="number" min={0} step={15} {...startDelay} />
         </label>
         <label>
           Due in (days)
-          <input
-            type="number"
-            min={1}
-            placeholder="No due date"
-            value={d.dueInDays ?? ""}
-            onChange={(e) => {
-              const v = e.currentTarget.value;
-              save({ dueInDays: v === "" ? null : Math.max(1, Math.round(Number(v))) });
-            }}
-          />
+          <input type="number" min={1} placeholder="No due date" {...dueIn} />
         </label>
         <label>
           Visibility
