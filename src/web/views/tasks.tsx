@@ -214,8 +214,7 @@ export function TaskForm({
           Start after
           <input name="startAfter" type="datetime-local" defaultValue={initial.startAfter ?? ""} />
         </label>
-        {/* Remount when the sets load: the menu needs them to show the task's set. */}
-        <HoursField key={hours.length} sets={hours} initial={hoursSet} allowItem={false} />
+        <HoursField sets={hours} initial={hoursSet} allowItem={false} />
         <label>
           Split into chunks
           <select

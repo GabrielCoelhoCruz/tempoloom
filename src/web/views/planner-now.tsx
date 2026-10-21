@@ -8,6 +8,7 @@
 import type { ComponentChildren } from "preact";
 import { useCallback, useEffect, useState } from "preact/hooks";
 import type { PlannerEvent } from "../../server/api/planner.ts";
+import { waitingNote } from "../../shared/event-settings.ts";
 import { addDays, utcToLocal } from "../../shared/time.ts";
 import { api } from "../lib/api.ts";
 import { formatWhen, hhmm } from "../lib/format.ts";
@@ -100,10 +101,12 @@ function TasksPanel({ onClose }: { onClose: () => void }) {
   const blockTime = async (t: TaskLite) => {
     setMessage(null);
     try {
-      const r = await api<{ title: string; blocks: { start: number; end: number }[] }>(
-        "POST",
-        `/api/tasks/${t.id}/blocks/preview`,
-      );
+      const r = await api<{
+        title: string;
+        blocks: { start: number; end: number }[];
+        waiting: string | null;
+      }>("POST", `/api/tasks/${t.id}/blocks/preview`);
+      if (r.waiting) return setMessage(waitingNote(r.waiting));
       if (r.blocks.length === 0) return setMessage("No free time for this task in the window.");
       blockPreview.value = {
         taskId: t.id,

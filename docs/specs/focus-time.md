@@ -65,7 +65,7 @@ mode ignores the window. The window must start before it ends.
 | `min_block_minutes` | minutes | Proposed default: 30 | E-0070. |
 | `hours` | hours set id or one-off window | work hours | E-0070. |
 | `auto_decline` | `{enabled, message}` | off | E-0070. |
-| Other event fields | as above | as above | Title, description, visibility, reminders, target calendar. |
+| Other event fields | as above | as above | Title, description, visibility, reminders, target calendar. Tempoloom decision: no calendar choice yet; its focus time goes to the main calendar, so it waits while the main account is disconnected (accounts rule 16). |
 
 Its priority is also fixed at P4 (E-0070, E-0141).
 

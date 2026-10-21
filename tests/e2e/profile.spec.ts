@@ -6,12 +6,15 @@
 // - no way to the profile from the user menu               -> menu item
 // - the name or time zone can be edited here                -> no inputs for them
 // - an edited field is not saved, or only until reload      -> reload
+// - a field typed while the page reads the account again
+//   loses the typed text and saves nothing, or text typed
+//   back to the stored value hides later changes            -> live reread
 // - the saved values do not survive a server restart        -> restart
 // - choices for size and use case are free text             -> select options
 // - without a picture nothing shows instead of initials     -> initials on profile and booking page
 import type { Page } from "@playwright/test";
 import { EMAIL, expect, test, ZONE } from "./fixtures.ts";
-import { claimPage, visitor } from "./helpers.ts";
+import { changeElsewhere, claimPage, visitor } from "./helpers.ts";
 
 async function openProfile(page: Page) {
   await page.getByRole("button", { name: "Account menu" }).click();
@@ -53,6 +56,38 @@ test("the profile shows account fields read-only and saves job title, company, s
   await page.goto("/");
   await openProfile(page);
   await check();
+});
+
+test("a job title typed while the page reads the account again is saved (PRF-4)", async ({
+  page,
+  signIn,
+}) => {
+  await signIn();
+  await openProfile(page);
+  const title = page.getByLabel("Job title");
+  await title.fill("Tester");
+  // The page draws again before the user leaves the field; the typed value stays.
+  await changeElsewhere(page, 5);
+  await expect(title).toHaveValue("Tester");
+  const saved = page.waitForResponse(
+    (r) => new URL(r.url()).pathname === "/api/settings" && r.request().method() === "PATCH",
+  );
+  await title.blur();
+  expect((await saved).request().postDataJSON()).toEqual({ profile: { jobTitle: "Tester" } });
+  await expect(page.getByTestId("profile-message")).toHaveText("Saved");
+  await page.reload();
+  await expect(page.getByLabel("Job title")).toHaveValue("Tester");
+
+  // Text typed back to the stored value is no change: the field follows a
+  // value that another client saves next.
+  await title.fill("Testers");
+  await title.fill("Tester");
+  await title.blur();
+  const other = await page.request.patch("/api/settings", {
+    data: { profile: { jobTitle: "Lead" } },
+  });
+  expect(other.status()).toBe(200);
+  await expect(title).toHaveValue("Lead");
 });
 
 test("without a picture from the calendar account the profile and booking pages show initials (edge case 1)", async ({

@@ -6,6 +6,7 @@ import { defaultEventSettings, readEventSettings } from "../../shared/event-sett
 import { api } from "../lib/api.ts";
 import { CalendarDisconnected } from "../lib/calendars.tsx";
 import { CATEGORY_LABELS, COLORS } from "../lib/categories.ts";
+import { useCommit } from "../lib/commit-input.ts";
 import { hhmm, parseHhmm } from "../lib/format.ts";
 import { lazyComponent } from "../lib/lazy.ts";
 import { loadPolicyMarks, PolicyMark, policyMarks } from "../lib/policy-marks.tsx";
@@ -271,6 +272,10 @@ export function Settings() {
     }
   };
 
+  const windowWeeks = useCommit(settings?.schedulingWindowWeeks ?? "", (v) =>
+    act(() => api("PATCH", "/api/settings", { schedulingWindowWeeks: Number(v) })),
+  );
+
   if (!settings) return null;
   return (
     <div class="page" data-testid="settings-page">
@@ -296,14 +301,7 @@ export function Settings() {
               type="number"
               min={1}
               max={windowLimit ?? 12}
-              value={settings.schedulingWindowWeeks}
-              onChange={(e) =>
-                void act(() =>
-                  api("PATCH", "/api/settings", {
-                    schedulingWindowWeeks: Number(e.currentTarget.value),
-                  }),
-                )
-              }
+              {...windowWeeks}
             />
           </label>
           {windowLimit !== null && (

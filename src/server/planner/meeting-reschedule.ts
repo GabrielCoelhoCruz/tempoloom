@@ -10,7 +10,7 @@ import { type Db, one } from "../db.ts";
 import { getSettings } from "../settings.ts";
 import { planningZone } from "../travel.ts";
 import type { ManagedRow } from "./push.ts";
-import { loadSnapshot } from "./replan.ts";
+import { planningSnapshot } from "./replan.ts";
 
 /** "a different time, same day" or "another day in the same period". */
 export type RescheduleOption = "sameDay" | "otherDay";
@@ -29,7 +29,14 @@ export function rescheduleSlot(
       "SELECT planned_at FROM plan_reports WHERE user_id = ?",
       organizerId,
     )?.planned_at ?? 0;
-  const { snapshot } = loadSnapshot(db, organizerId, zone, getSettings(db, organizerId), now, last);
+  const { snapshot } = planningSnapshot(
+    db,
+    organizerId,
+    zone,
+    getSettings(db, organizerId),
+    now,
+    last,
+  );
   const item = snapshot.meetings.find((m) => m.id === row.source_id);
   if (!item) return null;
   const date = utcToLocal(zone, row.start_ms).date;
