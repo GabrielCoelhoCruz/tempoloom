@@ -238,14 +238,7 @@ function FocusHours({
   const initial = item ? ITEM : !row || row.hours_set_id === work ? "" : String(row.hours_set_id);
   return (
     <>
-      <HoursField
-        // Keyed by the list, so the choice shows once the hours sets load.
-        key={hours.length}
-        sets={hours}
-        allowItem
-        initial={initial}
-        {...(item ? { item } : {})}
-      />
+      <HoursField sets={hours} allowItem initial={initial} {...(item ? { item } : {})} />
       {stored && !fitsOneRange(stored) && (
         <p class="meta wide" data-testid="item-hours-note">
           These hours have more than one range: the fields show the first. Saving keeps them all

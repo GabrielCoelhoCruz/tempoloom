@@ -7,7 +7,8 @@
 // - the name or time zone can be edited here                -> no inputs for them
 // - an edited field is not saved, or only until reload      -> reload
 // - a field typed while the page reads the account again
-//   loses the typed text and saves nothing                  -> live reread
+//   loses the typed text and saves nothing, or text typed
+//   back to the stored value hides later changes            -> live reread
 // - the saved values do not survive a server restart        -> restart
 // - choices for size and use case are free text             -> select options
 // - without a picture nothing shows instead of initials     -> initials on profile and booking page
@@ -76,6 +77,17 @@ test("a job title typed while the page reads the account again is saved (PRF-4)"
   await expect(page.getByTestId("profile-message")).toHaveText("Saved");
   await page.reload();
   await expect(page.getByLabel("Job title")).toHaveValue("Tester");
+
+  // Text typed back to the stored value is no change: the field follows a
+  // value that another client saves next.
+  await title.fill("Testers");
+  await title.fill("Tester");
+  await title.blur();
+  const other = await page.request.patch("/api/settings", {
+    data: { profile: { jobTitle: "Lead" } },
+  });
+  expect(other.status()).toBe(200);
+  await expect(title).toHaveValue("Lead");
 });
 
 test("without a picture from the calendar account the profile and booking pages show initials (edge case 1)", async ({
