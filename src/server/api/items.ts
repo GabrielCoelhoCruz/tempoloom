@@ -23,6 +23,7 @@ import { getSettings } from "../settings.ts";
 import type { SyncService } from "../sync/service.ts";
 import { markTaskDone, taskOrderChanged } from "../task-order.ts";
 import { createTask, deleteTask } from "../tasks.ts";
+import { endRank, insertRank } from "./automations.ts";
 
 export const level = z.number().int().min(1).max(4);
 export const minutes = z
@@ -69,10 +70,16 @@ export const bufferInput = z.object({
         })
         .optional(),
       participants: z
-        .object({ op: z.enum([">=", "<=", "=", ">", "<"]), value: z.number().int().min(1) })
+        .object({
+          op: z.enum([">=", "<=", "=", ">", "<"]),
+          value: z.number().int().min(1),
+        })
         .optional(),
       length: z
-        .object({ op: z.enum([">=", "<=", "=", ">", "<"]), minutes: z.number().int().min(1) })
+        .object({
+          op: z.enum([">=", "<=", "=", ">", "<"]),
+          minutes: z.number().int().min(1),
+        })
         .optional(),
       exactTitle: z.string().optional(),
       tags: z.array(z.string().min(1)).optional(),
@@ -157,22 +164,6 @@ export function hoursSetId(
   return id;
 }
 
-export function nextRank(
-  db: Db,
-  table: "habits" | "buffers" | "meetings",
-  userId: string,
-  lvl: number,
-): number {
-  return (
-    (one<{ r: number | null }>(
-      db,
-      `SELECT MAX(rank) AS r FROM ${table} WHERE user_id = ? AND level = ?`,
-      userId,
-      lvl,
-    )?.r ?? -1) + 1
-  );
-}
-
 export interface TaskRow {
   id: string;
   title: string;
@@ -226,7 +217,11 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
     const manual = getSettings(db, user.id).startMode === "manual";
     return c.json({
       tasks: tasks.map((task) => {
-        const chunks = all<{ start_ms: number; end_ms: number; started: number }>(
+        const chunks = all<{
+          start_ms: number;
+          end_ms: number;
+          started: number;
+        }>(
           db,
           "SELECT start_ms, end_ms, started FROM managed_events WHERE user_id = ? AND kind = 'task' AND source_id = ?",
           user.id,
@@ -312,7 +307,9 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
       task.id,
     );
     changed(user.id);
-    return c.json({ task: one<TaskRow>(db, "SELECT * FROM tasks WHERE id = ?", task.id) });
+    return c.json({
+      task: one<TaskRow>(db, "SELECT * FROM tasks WHERE id = ?", task.id),
+    });
   });
 
   r.post("/tasks/:id/done", (c) => {
@@ -411,27 +408,29 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
     const es = newEventSettings(db, user.id, "buffer", b.eventSettings, {
       travel: Boolean(b.filter?.travel || b.filter?.flight),
     });
-    run(
-      db,
-      `INSERT INTO buffers (id, user_id, title, enabled, level, rank, side, minutes_before, minutes_after, busy, filter,
+    tx(db, () =>
+      run(
+        db,
+        `INSERT INTO buffers (id, user_id, title, enabled, level, rank, side, minutes_before, minutes_after, busy, filter,
          on_conflict, created_at, rules_changed_at, event_settings, template_id)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      id,
-      user.id,
-      b.title,
-      b.enabled === false ? 0 : 1,
-      lvl,
-      nextRank(db, "buffers", user.id, lvl),
-      b.side,
-      b.minutesBefore ?? (b.side === "after" ? 0 : 15),
-      b.minutesAfter ?? (b.side === "before" ? 0 : 15),
-      b.busy === false ? 0 : 1,
-      JSON.stringify(b.filter ?? {}),
-      b.onConflict ?? "remove",
-      t,
-      t,
-      JSON.stringify(es),
-      b.templateId ?? null,
+        id,
+        user.id,
+        b.title,
+        b.enabled === false ? 0 : 1,
+        lvl,
+        insertRank(db, "buffer", user.id, lvl),
+        b.side,
+        b.minutesBefore ?? (b.side === "after" ? 0 : 15),
+        b.minutesAfter ?? (b.side === "before" ? 0 : 15),
+        b.busy === false ? 0 : 1,
+        JSON.stringify(b.filter ?? {}),
+        b.onConflict ?? "remove",
+        t,
+        t,
+        JSON.stringify(es),
+        b.templateId ?? null,
+      ),
     );
     if (b.calendarScope) {
       run(db, "UPDATE buffers SET calendar_scope = ? WHERE id = ?", b.calendarScope, id);
@@ -454,7 +453,9 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
     const es = editedEventSettings(
       readEventSettings(
         cur.event_settings,
-        defaultEventSettings("buffer", { travel: Boolean(filter.travel || filter.flight) }),
+        defaultEventSettings("buffer", {
+          travel: Boolean(filter.travel || filter.flight),
+        }),
       ),
       b.eventSettings,
     );
@@ -466,9 +467,7 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
       b.title ?? cur.title,
       b.enabled === undefined ? cur.enabled : b.enabled ? 1 : 0,
       b.level ?? cur.level,
-      b.level !== undefined && b.level !== cur.level
-        ? nextRank(db, "buffers", user.id, b.level)
-        : cur.rank,
+      b.level !== undefined && b.level !== cur.level ? endRank(db, user.id, b.level) : cur.rank,
       side,
       side === "after" ? 0 : (b.minutesBefore ?? (cur.minutes_before || 15)),
       side === "before" ? 0 : (b.minutesAfter ?? (cur.minutes_after || 15)),
@@ -480,7 +479,9 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
       cur.id,
     );
     changed(user.id);
-    return c.json({ buffer: one(db, "SELECT * FROM buffers WHERE id = ?", cur.id) });
+    return c.json({
+      buffer: one(db, "SELECT * FROM buffers WHERE id = ?", cur.id),
+    });
   });
 
   r.delete("/buffers/:id", (c) => {
@@ -598,7 +599,9 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
     );
     if (hours !== cur.hours_set_id) dropItemHours(db, cur.hours_set_id);
     changed(user.id);
-    return c.json({ focus: one(db, "SELECT * FROM focus_goals WHERE id = ?", cur.id) });
+    return c.json({
+      focus: one(db, "SELECT * FROM focus_goals WHERE id = ?", cur.id),
+    });
   });
 
   r.delete("/focus/:id", (c) => {

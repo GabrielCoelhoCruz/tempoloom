@@ -36,7 +36,8 @@ import { cacheEvent } from "../sync/pull.ts";
 import type { SyncService } from "../sync/service.ts";
 import { domainOf, membership } from "../teams.ts";
 import { homeZone } from "../travel.ts";
-import { badRequest, hhmm, hoursSetId, nextRank } from "./items.ts";
+import { endRank, insertRank } from "./automations.ts";
+import { badRequest, hhmm, hoursSetId } from "./items.ts";
 
 const fiveMinutes = z.number().int().min(5).max(480).multipleOf(5);
 const meetingInput = z.object({
@@ -579,20 +580,16 @@ export function meetingRoutes(
         )
       : undefined;
     if (body.series && !series) badRequest("series", "Pick a recurring meeting you organize");
-    const { row, attendees } = rowFrom(
-      db,
-      user.id,
-      id,
-      body,
-      now(),
-      nextRank(db, "meetings", user.id, body.level),
-    );
+    const { row, attendees } = rowFrom(db, user.id, id, body, now(), 0);
     row.event_settings = JSON.stringify(
       newEventSettings(db, user.id, "meeting", body.eventSettings),
     );
+    // Called in a transaction, after any wait for the series: the rank shift
+    // and the insert are one change (SCH-71).
     const create = () => {
       if (body.hoursMode === "itemSpecific" && body.itemHours)
         row.hours_set_id = createItemHours(db, user.id, row.title, body.itemHours);
+      row.rank = insertRank(db, "flexible_meeting", user.id, row.level);
       save(db, row, attendees, true);
     };
     if (series) {
@@ -620,6 +617,8 @@ export function meetingRoutes(
     tx(db, () => {
       if (body.hoursMode === "itemSpecific" && body.itemHours)
         row.hours_set_id = saveItemHours(db, user.id, old.hours_set_id, row.title, body.itemHours);
+      // Rule 7: a new priority puts the meeting at the end of its new group.
+      if (row.level !== old.level) row.rank = endRank(db, user.id, row.level);
       save(
         db,
         {
