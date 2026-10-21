@@ -10,8 +10,9 @@
 //   markers test).
 // - A mirrored copy with the personal commitment label has no house marker, or
 //   gets reminders (type markers test).
-// - A template's emoji cannot be removed in the form; the user's own emoji is
-//   lost or put before the marker when the state changes (emoji test).
+// - A template's emoji cannot be removed in the form, or comes back when the
+//   habits page's data loads after the removal; the user's own emoji is lost or
+//   put before the marker when the state changes (emoji test).
 import { addDays } from "../../src/shared/time.ts";
 import { alarms, create, fillEventSettings, rawEvent, save } from "./automation-list-helpers.ts";
 import {
@@ -164,9 +165,25 @@ test("a template's emoji shows in the form and can be removed; the user's own em
     await page.locator(`[data-entry="${name}"]`).getByRole("button", { name: "Use" }).click();
   };
   const form = page.getByTestId("habit-form");
+  // A slow hours answer, as on a busy CI runner, and a later load while the form is open:
+  // data that comes in after the user removed the emoji must not bring it back.
+  await page.route("**/api/hours", async (route) => {
+    await new Promise((r) => setTimeout(r, 1000));
+    await route.continue();
+  });
   await library("Lunch");
   await expect(form.getByLabel("Emoji")).toHaveValue("🍱");
   await form.getByRole("button", { name: "Remove emoji" }).click();
+  const hoursField = form.getByRole("combobox", { name: "Hours", exact: true });
+  await expect(hoursField).toContainText("Personal hours");
+  await page.unroute("**/api/hours");
+  await expect(form.getByLabel("Emoji")).toHaveValue("");
+  // A change from another client: the open page loads its habits and hours again.
+  const added = await page.request.post("/api/hours", {
+    data: { name: "Spare hours", weekly: { "6": [[600, 660]] } },
+  });
+  expect(added.status()).toBe(201);
+  await expect(hoursField).toContainText("Spare hours");
   await expect(form.getByLabel("Emoji")).toHaveValue("");
   await form.getByRole("button", { name: "Add habit" }).click();
   await expect(page.locator('[data-habit-title="Lunch"]')).toBeVisible();

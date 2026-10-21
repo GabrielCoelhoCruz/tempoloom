@@ -9,6 +9,7 @@ import { useLive } from "../lib/live.ts";
 import { LEVEL_NAMES, me, planNow, zone } from "../lib/state.ts";
 import { Select } from "./event-settings.tsx";
 import { type HoursChoice, HoursField } from "./hours-field.tsx";
+import { ItemChanges } from "./item-changes.tsx";
 
 const TimerDialog = lazyComponent<{ onClose: () => void }>(() =>
   import("./timer-dialog.tsx").then((m) => m.TimerDialog),
@@ -20,6 +21,7 @@ interface Task extends TaskFields {
   state: string;
   scheduledMinutes: number;
   remainingMinutes: number;
+  inProgress: boolean;
   issue: { status: string; reason: string } | null;
 }
 
@@ -674,6 +676,7 @@ export function Tasks() {
           )}
         </div>
         <TaskMore task={t} act={act} />
+        <ItemChanges kind="task" id={t.id} />
       </div>
       <div class="actions">
         {filter === "open" &&
@@ -697,6 +700,28 @@ export function Tasks() {
               Start timer
             </button>
           ))}
+        {filter === "open" && (
+          <button
+            type="button"
+            onClick={() => void act(() => api("POST", `/api/tasks/${t.id}/start`))}
+          >
+            Start now
+          </button>
+        )}
+        {filter === "open" && t.inProgress && (
+          <>
+            <span class="badge" data-testid="task-started">
+              In progress
+            </span>
+            <button
+              type="button"
+              title="Stop: the running chunk ends now"
+              onClick={() => void act(() => api("POST", `/api/tasks/${t.id}/stop`))}
+            >
+              End now
+            </button>
+          </>
+        )}
         {filter === "open" &&
           (queued ? (
             <button

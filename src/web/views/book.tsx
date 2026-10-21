@@ -1,8 +1,10 @@
 // Public booking pages: no sign-in. Times show in the zone the booker picks,
 // in a 12- or 24-hour format (docs/specs/booking-links-booking-page.md).
+
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { isValidTimeZone, localToUtc } from "../../shared/time.ts";
 import { ApiError, api } from "../lib/api.ts";
+import { Avatar } from "../lib/avatar.tsx";
 import { lazyComponent } from "../lib/lazy.ts";
 import {
   addPages,
@@ -13,6 +15,9 @@ import {
   timeText,
   type View,
 } from "../lib/zoned.ts";
+
+/** Accounts rule 16: the booking's calendar is on a disconnected account. */
+const NOT_NOW = "This booking link cannot take bookings right now. Please try again later.";
 
 interface Question {
   label: string;
@@ -331,8 +336,12 @@ function Times({
 interface LinkInfo {
   link: PublicLink;
   organizers: string[];
+  /** The owner, with the Google profile picture ('' for none: initials); null on a round-robin link. */
+  owner: { name: string; picture: string } | null;
   branding: Branding;
   oneOff: { expiresAt: number; expired: boolean } | null;
+  /** The link takes no new bookings: its account for booked events is lost. */
+  paused?: boolean;
 }
 
 const LOCATION_KINDS = { address: "Address", phone: "Phone", custom: "Other" } as const;
@@ -470,6 +479,8 @@ function DetailsForm({
               setError(
                 "This time leaves no travel time for that location. Pick another location or time.",
               );
+            } else if (err instanceof ApiError && err.status === 503) {
+              setError(NOT_NOW);
             } else if (err instanceof ApiError && err.status === 409) {
               onTaken();
             } else if (err instanceof ApiError && err.status === 400) {
@@ -614,6 +625,17 @@ function BookingPage({ page, link }: { page: string; link: string }) {
       </div>
     );
   }
+  if (info.paused) {
+    return (
+      <div data-testid="booking-page">
+        <Brand b={info.branding} />
+        <h1>{info.link.title}</h1>
+        <p data-testid="paused">
+          This link takes no bookings right now. Ask the organizer for another way to meet.
+        </p>
+      </div>
+    );
+  }
   const preselect =
     params.day && params.time
       ? {
@@ -628,6 +650,9 @@ function BookingPage({ page, link }: { page: string; link: string }) {
   return (
     <div data-testid="booking-page">
       <Brand b={info.branding} />
+      {info.owner && (
+        <Avatar url={info.owner.picture} name={info.owner.name} testId="owner-picture" />
+      )}
       <h1>{info.link.title}</h1>
       {info.organizers.length > 0 && <p class="status">{withWhom(info.organizers)}</p>}
       {info.link.description && <p>{info.link.description}</p>}
@@ -744,6 +769,7 @@ function BookingPage({ page, link }: { page: string; link: string }) {
 function PageLinks({ page }: { page: string }) {
   const [data, setData] = useState<{
     name: string;
+    picture: string;
     /** A link group's title; null for a main booking page. */
     title: string | null;
     links: PublicLink[];
@@ -760,6 +786,7 @@ function PageLinks({ page }: { page: string }) {
   return (
     <div data-testid="public-page">
       <Brand b={data.branding} />
+      <Avatar url={data.picture} name={data.name} testId="owner-picture" />
       <h1>{data.title ?? `Book time with ${data.name}`}</h1>
       {data.links.length === 0 && <p>This page has no links yet.</p>}
       <div class="list">
@@ -796,6 +823,12 @@ function Manage({ token }: { token: string }) {
     format: savedFormat(),
   };
   const booked = booking.status === "booked";
+  // Accounts rule 16: the host's calendar is on a disconnected account.
+  const notNow = (text: string) => (err: unknown) => {
+    if (!(err instanceof ApiError && err.status === 503)) throw err;
+    setMode("view");
+    setMessage(text);
+  };
   return (
     <div data-testid="manage-page">
       <h1>{link?.title ?? "Booking"}</h1>
@@ -826,10 +859,14 @@ function Manage({ token }: { token: string }) {
             type="button"
             class="danger"
             onClick={() =>
-              void api("POST", `/pub/bookings/${token}/cancel`).then(() => {
-                setMessage("Your booking is cancelled.");
-                load();
-              })
+              void api("POST", `/pub/bookings/${token}/cancel`)
+                .then(() => {
+                  setMessage("Your booking is cancelled.");
+                  load();
+                })
+                .catch(
+                  notNow("This booking cannot be cancelled right now. Please try again later."),
+                )
             }
           >
             Cancel booking
@@ -847,11 +884,21 @@ function Manage({ token }: { token: string }) {
             void api("POST", `/pub/bookings/${token}/reschedule`, {
               start: t.start,
               timeZone: view.zone,
-            }).then(() => {
-              setMode("view");
-              setMessage("Your booking has a new time.");
-              load();
             })
+              .then(() => {
+                setMode("view");
+                setMessage("Your booking has a new time.");
+                load();
+              })
+              .catch((err) => {
+                setMode("view");
+                setMessage(
+                  err instanceof ApiError &&
+                    (err.body as { error?: string } | null)?.error === "account_disconnected"
+                    ? "This booking cannot move now: the organizer's calendar account that holds it is disconnected. Try again later, or ask the organizer."
+                    : "The new time could not be saved. Please try again.",
+                );
+              })
           }
         />
       )}

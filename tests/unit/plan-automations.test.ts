@@ -33,7 +33,7 @@ import type {
   Snapshot,
 } from "../../src/scheduler/model.ts";
 import { plan } from "../../src/scheduler/plan.ts";
-import { withAnchor } from "../../src/server/api/items.ts";
+import { withAnchor } from "../../src/server/api/habits.ts";
 import { addDays, localToUtc } from "../../src/shared/time.ts";
 
 const ZONE = "Europe/Berlin";

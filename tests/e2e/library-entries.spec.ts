@@ -6,7 +6,9 @@
 // - a preset value differs from the entries table (time, length, days, priority, hours);
 // - Lunch ignores its 11:30 to 14:00 window and goes before 11:30 when 12:15 is taken;
 // - the wrap-up time is fixed instead of the last 30 min of the user's work hours;
-// - the focus entries place focus outside their 09:00 to 12:00 window, or lose it on edit;
+// - the focus entries do not fill free mornings first, keep focus out of free afternoons
+//   when mornings are busy, or lose their window on edit;
+// - the wrap-up keeps a fixed time when a day's work hours end earlier or change;
 // - a buffer entry anchors on the wrong events (small meetings, solo events, internal
 //   meetings, external meetings without an address);
 // - a flexible meeting entry repeats at the wrong period, or saves without guests;
@@ -25,6 +27,7 @@ import {
   test,
 } from "./fixtures.ts";
 import { addHabit, claimPage, slot, titled, visitor, W } from "./helpers.ts";
+import { teamOf } from "./link-helpers.ts";
 
 const day = (n: number) => addDays(W, n);
 const week = (cal: CalendarDriver) => cal.events(at(W, "00:00"), at(day(7), "00:00"));
@@ -432,60 +435,150 @@ test("library buffer entries 28, 29, 30 anchor on external meetings: travel only
   ]);
 });
 
-test("library focus entries 7 and 23 place their weekly goal inside the 09:00 to 12:00 window, and the window stays on edit", async ({
+test("library focus entry 7 fills free mornings first and puts the rest of its 8 h in other work hours", async ({
+  page,
+  cal,
+  signIn,
+}) => {
+  await blockUntil(cal, W);
+  // Monday to Thursday mornings are busy: only Friday has a free morning.
+  for (const d of [0, 1, 2, 3]) {
+    await cal.addEvent({
+      title: "Morning meetings",
+      start: at(day(d), "09:00"),
+      end: at(day(d), "12:00"),
+    });
+  }
+  await signIn();
+  const form = page.getByTestId("automation-form");
+  await use(page, "Executive weekly focus");
+  await expect(form.getByLabel("Weekly goal (hours)")).toHaveValue("8");
+  await saveShared(page);
+  // Friday's free morning goes first (3 h); the other 5 h go to the largest free
+  // afternoon gaps, at most 4 h a day. Without the preferred window the goal
+  // fills Monday and Tuesday afternoons only; with the mornings as hard hours
+  // only Friday's 3 h fit.
+  await eventually(
+    () => week(cal),
+    (l) =>
+      expect(spans(l, "Executive weekly focus")).toEqual([
+        `${day(0)} 12:00-16:00`,
+        `${day(1)} 12:00-13:00`,
+        `${day(4)} 09:00-12:00`,
+      ]),
+  );
+  // The goal uses work hours and keeps its window: the edit form shows both after a reload.
+  await page.reload();
+  await automation(page, "Executive weekly focus").getByRole("link", { name: "Edit" }).click();
+  await expect(form.getByLabel("Hours").locator("option:checked")).toHaveText("Work hours");
+  await expect(form.getByLabel("Preferred window begins")).toHaveValue("09:00");
+  await expect(form.getByLabel("Preferred window ends")).toHaveValue("12:00");
+  await expectAdded(page, ["Executive weekly focus"]);
+});
+
+test("library focus entry 23 prefers 09:00 to 12:00 over busy mornings, and a window the user changes moves its 10 h", async ({
+  page,
+  cal,
+  signIn,
+}) => {
+  await blockUntil(cal, W);
+  // Monday to Wednesday mornings are busy.
+  for (const d of [0, 1, 2]) {
+    await cal.addEvent({
+      title: "Morning meetings",
+      start: at(day(d), "09:00"),
+      end: at(day(d), "12:00"),
+    });
+  }
+  await signIn();
+  const form = page.getByTestId("automation-form");
+  await use(page, "Peak-energy focus");
+  await expect(form.getByLabel("Weekly goal (hours)")).toHaveValue("10");
+  await saveShared(page);
+  // The free mornings of Thursday and Friday first, then 4 h on Monday afternoon.
+  await eventually(
+    () => week(cal),
+    (l) =>
+      expect(spans(l, "Peak-energy focus")).toEqual([
+        `${day(0)} 12:00-16:00`,
+        `${day(3)} 09:00-12:00`,
+        `${day(4)} 09:00-12:00`,
+      ]),
+  );
+  // The user changes the window to 13:00 to 15:00: each workday gets 2 h there.
+  await page.reload();
+  await automation(page, "Peak-energy focus").getByRole("link", { name: "Edit" }).click();
+  await expect(form.getByLabel("Preferred window begins")).toHaveValue("09:00");
+  await expect(form.getByLabel("Preferred window ends")).toHaveValue("12:00");
+  await form.getByLabel("Preferred window begins").fill("13:00");
+  await form.getByLabel("Preferred window ends").fill("15:00");
+  await saveShared(page);
+  await eventually(
+    () => week(cal),
+    (l) =>
+      expect(spans(l, "Peak-energy focus")).toEqual(
+        [0, 1, 2, 3, 4].map((d) => `${day(d)} 13:00-15:00`),
+      ),
+  );
+  await page.reload();
+  await automation(page, "Peak-energy focus").getByRole("link", { name: "Edit" }).click();
+  await expect(form.getByLabel("Preferred window begins")).toHaveValue("13:00");
+  await expect(form.getByLabel("Preferred window ends")).toHaveValue("15:00");
+});
+
+test("library entry 11 puts the wrap-up in the last 30 min of each day's work hours, on a shorter Friday, and follows an hours change", async ({
   page,
   cal,
   signIn,
 }) => {
   await blockUntil(cal, W);
   await signIn();
-  const form = page.getByTestId("automation-form");
-  const inWindow = (evs: Awaited<ReturnType<typeof week>>, title: string) => {
-    const blocks = titled(evs, title);
-    const minutes = blocks.reduce((a, e) => a + (e.end - e.start) / 60_000, 0);
-    const outside = blocks.filter(
-      (e) => local(e.start).slice(11) < "09:00" || local(e.end).slice(11) > "12:00",
-    );
-    return { minutes, outside: outside.length };
+  const saveWorkEnd = async (days: number[], end: string) => {
+    await page.getByRole("link", { name: "Settings" }).click();
+    for (const d of days) {
+      await page.getByTestId(`range-work-${d}-0`).locator("input").nth(1).fill(end);
+    }
+    await page.getByRole("button", { name: "Save work hours" }).click();
+    await expect(page.getByTestId("settings-message")).toHaveText("Saved");
   };
-
-  await use(page, "Executive weekly focus");
-  await expect(form.getByLabel("Weekly goal (hours)")).toHaveValue("8");
-  await expect(form.getByLabel("Hours").locator("option:checked")).toHaveText(
-    "Item-specific hours",
-  );
-  const window = form.getByTestId("item-hours");
-  expect(await checkedDays(window, "itemDays")).toEqual(["1", "2", "3", "4", "5"]);
-  await expect(window.getByLabel("From")).toHaveValue("09:00");
-  await expect(window.getByLabel("To")).toHaveValue("12:00");
-  await saveShared(page);
+  // Friday's work hours end at 15:00, the other workdays at 17:00.
+  await saveWorkEnd([5], "15:00");
+  const wrap = await habitPreset(page, "End-of-day wrap-up", {
+    ideal: "16:30",
+    minutes: 30,
+    level: 3,
+    days: [],
+    hours: "Work hours",
+  });
+  await addFromForm(page, wrap, "End-of-day wrap-up");
   await eventually(
     () => week(cal),
-    (l) => expect(inWindow(l, "Executive weekly focus")).toEqual({ minutes: 480, outside: 0 }),
+    (l) =>
+      expect(spans(l, "End-of-day wrap-up")).toEqual([
+        ...[0, 1, 2, 3].map((d) => `${day(d)} 16:30-17:00`),
+        `${day(4)} 14:30-15:00`,
+      ]),
   );
-  // The window is stored: the edit form shows it after a reload.
+  // Work hours now end at 18:00 from Monday to Thursday: the wrap-up follows the
+  // new end. A fixed ideal time (16:30) would keep it at 16:30.
+  await saveWorkEnd([1, 2, 3, 4], "18:00");
+  await eventually(
+    () => week(cal),
+    (l) =>
+      expect(spans(l, "End-of-day wrap-up")).toEqual([
+        ...[0, 1, 2, 3].map((d) => `${day(d)} 17:30-18:00`),
+        `${day(4)} 14:30-15:00`,
+      ]),
+  );
+  // The setting is stored: the edit form shows it after a reload.
+  await page.getByRole("link", { name: "Habits" }).click();
   await page.reload();
-  await automation(page, "Executive weekly focus").getByRole("link", { name: "Edit" }).click();
-  await expect(form.getByLabel("Hours").locator("option:checked")).toHaveText(
-    "Item-specific hours",
-  );
-  await expect(form.getByTestId("item-hours").getByLabel("From")).toHaveValue("09:00");
-  await expect(form.getByTestId("item-hours").getByLabel("To")).toHaveValue("12:00");
-  await turnOff(page, "Executive weekly focus");
-
-  await use(page, "Peak-energy focus");
-  await expect(form.getByLabel("Weekly goal (hours)")).toHaveValue("10");
-  await expect(form.getByTestId("item-hours").getByLabel("From")).toHaveValue("09:00");
-  await expect(form.getByTestId("item-hours").getByLabel("To")).toHaveValue("12:00");
-  await saveShared(page);
-  await eventually(
-    () => week(cal),
-    (l) => {
-      expect(titled(l, "Executive weekly focus")).toHaveLength(0);
-      expect(inWindow(l, "Peak-energy focus")).toEqual({ minutes: 600, outside: 0 });
-    },
-  );
-  await expectAdded(page, ["Executive weekly focus", "Peak-energy focus"]);
+  const row = page.locator('[data-habit-title="End-of-day wrap-up"]');
+  await expect(row).toContainText("ideal: end of each day");
+  await row.getByRole("button", { name: "Edit" }).click();
+  await expect(
+    page.getByTestId("habit-editor").getByLabel("Place at the end of each day"),
+  ).toBeChecked();
 });
 
 test("focus time keeps item-specific hours of several ranges when the form saves other fields", async ({
@@ -529,6 +622,20 @@ test("focus time keeps item-specific hours of several ranges when the form saves
     );
   await expect.poll(async () => (await stored())?.weekly_goal_minutes).toBe(180);
   expect(JSON.parse((await stored())?.item_hours ?? "null")).toEqual(hours);
+  // The 3 h sit only inside the item's own hours, not in the default work hours.
+  const own = [
+    [at(day(0), "09:00"), at(day(0), "10:00")],
+    [at(day(0), "13:00"), at(day(0), "14:00")],
+    [at(day(2), "10:00"), at(day(2), "12:00")],
+  ] as const;
+  await eventually(
+    () => week(cal),
+    (l) => {
+      const evs = titled(l, "Split focus");
+      expect(evs.every((e) => own.some(([from, to]) => e.start >= from && e.end <= to))).toBe(true);
+      expect(evs.reduce((m, e) => m + (e.end - e.start), 0)).toBe(180 * 60_000);
+    },
+  );
 });
 
 test("library entries 32, 34 and 37: flexible meetings repeat at their period with the guests, and the priority link offers time over P3 and P4 habits", async ({
@@ -631,7 +738,70 @@ test("library entries 32, 34 and 37: flexible meetings repeat at their period wi
   await expectAdded(page, ["Recurring client meetings", "One-on-ones", "Priority booking link"]);
 });
 
-test("library mirroring entries 38 and 39 copy busy time only between job calendars, both ways, never copying a copy", async ({
+test("library entry 32 takes external guests only: a guest on the user's own domain or a person of the user's team is refused with the reason; an outside guest, also a user of another team, saves (entry 32 preset)", async ({
+  page,
+  cal,
+  signIn,
+  people,
+  mail,
+}) => {
+  await blockUntil(cal, W);
+  // A person of the user's team whose address is on another domain.
+  const partner = await people(3, "pat@partner.example");
+  // A user of this instance in another team: the user cannot see them.
+  const other = await people(4, "max@other.example");
+  await other.signIn();
+  await teamOf(page, signIn, [partner], mail);
+  const meeting = page.getByTestId("meeting-form");
+  const guests = meeting.getByLabel("Guests (comma list)", { exact: true });
+  const alert = page.getByTestId("meetings-page").locator("p.error");
+  const twoWeeks = () => cal.events(at(W, "00:00"), at(day(14), "00:00"));
+
+  // The default: a meeting made without the entry takes any guest.
+  await page.getByRole("link", { name: "Meetings" }).click();
+  await meeting.getByLabel("Title").fill("Team sync");
+  await guests.fill("lee@tempoloom.test");
+  await meeting.getByRole("button", { name: "Add meeting" }).click();
+  await expect(page.locator('[data-meeting-title="Team sync"]')).toBeVisible();
+
+  await use(page, "Recurring client meetings");
+  await guests.fill("client@example.com, lee@tempoloom.test");
+  await meeting.getByRole("button", { name: "Add meeting" }).click();
+  await expect(alert).toHaveText(
+    "lee@tempoloom.test is on your own domain. Recurring client meetings take external guests only.",
+  );
+  await guests.fill("pat@partner.example");
+  await meeting.getByRole("button", { name: "Add meeting" }).click();
+  await expect(alert).toHaveText(
+    "pat@partner.example is in your team. Recurring client meetings take external guests only.",
+  );
+  await page.reload();
+  await expect(page.locator('[data-meeting-title="Recurring client meetings"]')).toHaveCount(0);
+
+  await guests.fill("client@example.com, max@other.example");
+  await meeting.getByRole("button", { name: "Add meeting" }).click();
+  await expect(page.locator('[data-meeting-title="Recurring client meetings"]')).toBeVisible();
+  const placed = await eventually(twoWeeks, (l) =>
+    expect(titled(l, "Recurring client meetings")).toHaveLength(1),
+  );
+  const client = titled(placed, "Recurring client meetings")[0];
+  const invited = await cal.guests(client?.id ?? "");
+  expect(invited.sort((a, b) => a.email.localeCompare(b.email))).toEqual([
+    { email: "client@example.com", optional: false },
+    { email: "max@other.example", optional: false },
+  ]);
+  await page.reload();
+  await expect(page.locator('[data-meeting-title="Recurring client meetings"]')).toBeVisible();
+  await expect(page.locator('[data-meeting-title="Team sync"]')).toBeVisible();
+});
+
+const mirrorCopies = (l: Awaited<ReturnType<typeof week>>) =>
+  l
+    .filter((e) => e.privateProps.tl_key?.startsWith("mirror:"))
+    .map((e) => `${e.summary} ${local(e.start)}`)
+    .sort();
+
+test("library entry 38 saves a two-way busy-only mirror between the old and the new calendar in one save, and copies never chain (entry 38 preset)", async ({
   page,
   cal,
   signIn,
@@ -645,7 +815,52 @@ test("library mirroring entries 38 and 39 copy busy time only between job calend
     "Mirroring needs two connected calendars",
   );
   const oldJob = await cal.newCalendar("Old job");
+  await oldJob.addEvent({ title: "Old review", start: at(W, "10:00"), end: at(W, "11:00") });
+  await cal.addEvent({
+    title: "New standup",
+    start: at(day(2), "09:00"),
+    end: at(day(2), "09:30"),
+  });
+  await page.getByRole("button", { name: "Refresh calendar list" }).click();
+  await expect(page.getByTestId("calendar-list")).toContainText("Old job");
+  await expect(page.getByTestId("mirror-needs-two")).toHaveCount(0);
+
+  const form = page.getByTestId("mirror-form");
+  await expect(form.getByLabel("Copies show")).toHaveValue("busy_only");
+  await form.getByLabel("Old calendar").selectOption({ label: "Old job" });
+  await form.getByLabel("New calendar").selectOption({ label: "Work" });
+  await form.getByRole("button", { name: "Add mirroring both ways" }).click();
+  const list = page.getByTestId("mirror-list");
+  await expect(list.locator("[data-mirror]")).toHaveCount(2);
+  await expect(list).toContainText("Old job → Work · busy only");
+  await expect(list).toContainText("Work → Old job · busy only");
+
+  // Each calendar gets one "Busy" copy of the other's event, and no copy of a copy.
+  await eventually(
+    () => week(cal),
+    (l) => expect(mirrorCopies(l)).toEqual([`Busy ${W} 10:00`]),
+  );
+  await eventually(
+    () => week(oldJob),
+    (l) => expect(mirrorCopies(l)).toEqual([`Busy ${day(2)} 09:00`]),
+  );
+  expect((await week(cal)).filter((e) => e.summary.includes("Old review"))).toEqual([]);
+  await page.reload();
+  await expect(page.getByTestId("mirror-list").locator("[data-mirror]")).toHaveCount(2);
+  await expectAdded(page, ["Mirror calendars after a merger or role change"]);
+});
+
+test("library entry 39 saves one busy-only policy per ordered pair of the chosen job calendars in one save; each event gets one copy on every other calendar; a set with a pair that exists saves nothing (entry 39 preset)", async ({
+  page,
+  cal,
+  signIn,
+}) => {
+  test.skip(BACKEND === "google", "Mirroring E2E uses CalDAV calendars.");
+  await blockUntil(cal, W);
+  await signIn();
+  const oldJob = await cal.newCalendar("Old job");
   const second = await cal.newCalendar("Second job");
+  await cal.newCalendar("Family");
   await oldJob.addEvent({ title: "Old review", start: at(W, "10:00"), end: at(W, "11:00") });
   await second.addEvent({ title: "Gig", start: at(day(1), "15:00"), end: at(day(1), "16:00") });
   await cal.addEvent({
@@ -653,35 +868,50 @@ test("library mirroring entries 38 and 39 copy busy time only between job calend
     start: at(day(2), "09:00"),
     end: at(day(2), "09:30"),
   });
+  await page.getByRole("link", { name: "Settings", exact: true }).click();
   await page.getByRole("button", { name: "Refresh calendar list" }).click();
-  await expect(page.getByTestId("calendar-list")).toContainText("Second job");
-  await expect(page.getByTestId("mirror-needs-two")).toHaveCount(0);
+  await expect(page.getByTestId("calendar-list")).toContainText("Family");
+  const form = page.getByTestId("mirror-form");
+  const list = page.getByTestId("mirror-list");
+  // A plain policy first: a set with a pair that exists already saves nothing.
+  await form.getByLabel("Copy events from").selectOption({ label: "Second job" });
+  await form.getByLabel("To").selectOption({ label: "Old job" });
+  await form.getByRole("button", { name: "Add mirroring" }).click();
+  await expect(list.locator("[data-mirror]")).toHaveCount(1);
 
-  const mirrorForm = page.getByTestId("mirror-form");
-  const addPolicy = async (from: string, to: string) => {
-    await expect(mirrorForm.getByLabel("Copies show")).toHaveValue("busy_only");
-    await mirrorForm.getByLabel("Copy events from").selectOption({ label: from });
-    await mirrorForm.getByLabel("To").selectOption({ label: to });
-    await mirrorForm.getByRole("button", { name: "Add mirroring" }).click();
-    await expect(page.getByTestId("mirror-list")).toContainText(`${from} → ${to}`);
-  };
-  // Entry 38: two ways between the old and the new work calendar.
-  await addPolicy("Old job", "Work");
-  await addPolicy("Work", "Old job");
-  // Entry 39: each job calendar into each other one.
   await use(page, "Mirror calendars across several jobs");
-  await addPolicy("Second job", "Work");
-  await addPolicy("Work", "Second job");
-  await addPolicy("Second job", "Old job");
-  await addPolicy("Old job", "Second job");
+  const jobs = form.getByRole("group", { name: "Job calendars" });
+  await expect(form.getByLabel("Copies show")).toHaveValue("busy_only");
+  for (const name of ["Work", "Old job", "Second job"]) await jobs.getByLabel(name).check();
+  await form.getByRole("button", { name: "Add mirroring between all" }).click();
+  await expect(page.getByTestId("mirror-message")).toHaveText(
+    "A mirroring policy from Second job to Old job already exists.",
+  );
+  await expect(list.locator("[data-mirror]")).toHaveCount(1);
+  await list
+    .locator('[data-mirror="Second job → Old job"]')
+    .getByRole("button", { name: "Delete" })
+    .click();
+  await page.getByRole("dialog").getByRole("button", { name: "Delete policy" }).click();
+  await expect(list.locator("[data-mirror]")).toHaveCount(0);
 
-  const copies = (l: Awaited<ReturnType<typeof week>>) =>
-    l
-      .filter((e) => e.privateProps.tl_key?.startsWith("mirror:"))
-      .map((e) => `${e.summary} ${local(e.start)}`)
-      .sort();
+  for (const name of ["Work", "Old job", "Second job"]) await jobs.getByLabel(name).check();
+  await expect(jobs.getByLabel("Family")).not.toBeChecked();
+  await form.getByRole("button", { name: "Add mirroring between all" }).click();
+  await expect(list.locator("[data-mirror]")).toHaveCount(6);
+  for (const [from, to] of [
+    ["Work", "Old job"],
+    ["Work", "Second job"],
+    ["Old job", "Work"],
+    ["Old job", "Second job"],
+    ["Second job", "Work"],
+    ["Second job", "Old job"],
+  ]) {
+    await expect(list.locator(`[data-mirror="${from} → ${to}"]`)).toContainText("busy only");
+  }
+
   const originals = [`${W} 10:00`, `${day(1)} 15:00`, `${day(2)} 09:00`];
-  // Each calendar gets a "Busy" copy of the two others' events and nothing more.
+  // Each job calendar gets a "Busy" copy of the two others' events and nothing more.
   for (const [c, own] of [
     [cal, `${day(2)} 09:00`],
     [oldJob, `${W} 10:00`],
@@ -689,17 +919,11 @@ test("library mirroring entries 38 and 39 copy busy time only between job calend
   ] as const) {
     await eventually(
       () => week(c),
-      (l) => expect(copies(l)).toEqual(originals.filter((o) => o !== own).map((o) => `Busy ${o}`)),
+      (l) =>
+        expect(mirrorCopies(l)).toEqual(originals.filter((o) => o !== own).map((o) => `Busy ${o}`)),
     );
   }
-  const work = await week(cal);
-  expect(work.filter((e) => e.summary.includes("Old review") || e.summary.includes("Gig"))).toEqual(
-    [],
-  );
   await page.reload();
-  await expect(page.getByTestId("mirror-list")).toContainText("Old job → Second job");
-  await expectAdded(page, [
-    "Mirror calendars after a merger or role change",
-    "Mirror calendars across several jobs",
-  ]);
+  await expect(page.getByTestId("mirror-list").locator("[data-mirror]")).toHaveCount(6);
+  await expectAdded(page, ["Mirror calendars across several jobs"]);
 });

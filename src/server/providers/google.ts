@@ -13,6 +13,7 @@ import {
   type EventChanges,
   type EventWrite,
   type ExternalChange,
+  type ProfileSettings,
   type ProviderCalendar,
   ProviderError,
   type ProviderEvent,
@@ -153,6 +154,33 @@ export class GoogleProvider implements CalendarProvider {
       }));
   }
 
+  async profileSettings(): Promise<ProfileSettings> {
+    const s = await this.#api.settings().catch(mapError);
+    const week = s.get("weekStart");
+    const h24 = s.get("format24HourTime");
+    const order = s.get("dateFieldOrder");
+    return {
+      // Google also allows Saturday ("6"); Tempoloom has Monday and Sunday only.
+      ...(week === "1" ? { weekStart: 1 as const } : week === "0" ? { weekStart: 7 as const } : {}),
+      ...(h24 === "true"
+        ? { timeFormat: "24h" as const }
+        : h24 === "false"
+          ? { timeFormat: "12h" as const }
+          : {}),
+      ...(order === "YMD" || order === "DMY" || order === "MDY" ? { dateFormat: order } : {}),
+    };
+  }
+
+  async freeBusy(
+    emails: string[],
+    timeMin: number,
+    timeMax: number,
+  ): Promise<Map<string, { start: number; end: number }[]>> {
+    if (emails.length === 0) return new Map();
+    const found = await this.#api.freeBusy(emails, timeMin, timeMax).catch(mapError);
+    return new Map([...found].map(([id, busy]) => [id.toLowerCase(), busy]));
+  }
+
   async listEvents(
     calendarId: string,
     opts: { syncToken: string | null; timeMin: number; timeMax: number },
@@ -199,6 +227,11 @@ export class GoogleProvider implements CalendarProvider {
       .patchEvent(calendarId, eventId, { colorId: colorId ?? "" }, etag ? { etag } : {})
       .catch(mapError);
     return fromGoogleEvent(ev, this.#zone);
+  }
+
+  /** editExternal sends no update to guests (sendUpdates "none"), except with an answer. */
+  async notifiesGuests(): Promise<boolean> {
+    return false;
   }
 
   async editExternal(

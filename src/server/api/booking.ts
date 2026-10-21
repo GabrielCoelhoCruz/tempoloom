@@ -29,6 +29,7 @@ import { type Answer, type BookingChange, notifyBooking } from "../booking-mail.
 import {
   assign,
   bookingHolds,
+  CalendarDisconnected,
   hoursOf,
   type LinkPerson,
   linkPeople,
@@ -39,11 +40,14 @@ import {
 } from "../booking-team.ts";
 import { all, type Db, one, run, tx } from "../db.ts";
 import { jsonBody, notFound } from "../http.ts";
+import { createItemHours, dropItemHours, itemHoursSchema } from "../item-hours.ts";
 import { limitRefusal } from "../limits.ts";
 import type { Mailer } from "../mail.ts";
 import { getPrefs } from "../meeting-prefs.ts";
+import { OFF_MAIN_TASK_CHUNK } from "../planner/events.ts";
 import { MANAGED_PROP } from "../planner/push.ts";
 import { writeCalendar } from "../planner/replan.ts";
+import { waitingCalendars } from "../planner/write.ts";
 import { getSettings } from "../settings.ts";
 import type { SyncService } from "../sync/service.ts";
 import { membership, sameTeam } from "../teams.ts";
@@ -258,11 +262,13 @@ const BRANDINGS = ["sameAsGroup", "default", "none", "custom"] as const;
 const linkChanges = linkInput.partial().extend({
   useRecoveryBuffer: z.boolean().optional(),
   branding: z.enum(BRANDINGS).optional(),
+  /** `itemHours`: new item-specific hours for the person; `hoursSetId` is then ignored. */
   organizers: z
     .array(
       z.object({
         userId: z.string(),
         hoursSetId: z.string().nullable(),
+        itemHours: itemHoursSchema.optional(),
         required: z.boolean(),
         isHost: z.boolean(),
       }),
@@ -271,7 +277,12 @@ const linkChanges = linkInput.partial().extend({
     .optional(),
   pool: z
     .array(
-      z.object({ userId: z.string(), hoursSetId: z.string().nullable(), preferred: z.boolean() }),
+      z.object({
+        userId: z.string(),
+        hoursSetId: z.string().nullable(),
+        itemHours: itemHoursSchema.optional(),
+        preferred: z.boolean(),
+      }),
     )
     .max(50)
     .optional(),
@@ -425,6 +436,14 @@ export function calendarItems(db: Db, userId: string, from: number, to: number):
   )) {
     levels.set(`buffer:${b.id}`, b.level);
   }
+  // offer_to_booking_links=false: no link offers that focus time (focus-time.md rule 32).
+  const hidden = new Set(
+    all<{ id: string }>(
+      db,
+      "SELECT id FROM focus_goals WHERE user_id = ? AND offer_to_links = 0",
+      userId,
+    ).map((f) => f.id),
+  );
   for (const m of all<{
     kind: string;
     source_id: string;
@@ -433,15 +452,20 @@ export function calendarItems(db: Db, userId: string, from: number, to: number):
     busy: number;
     locked: number;
     title: string;
+    off_main: number;
   }>(
     db,
-    "SELECT kind, source_id, start_ms, end_ms, busy, locked, title FROM managed_events WHERE user_id = ? AND end_ms > ? AND start_ms < ?",
+    `SELECT kind, source_id, start_ms, end_ms, busy, locked, title, (${OFF_MAIN_TASK_CHUNK}) AS off_main
+     FROM managed_events m WHERE user_id = ? AND end_ms > ? AND start_ms < ?`,
     userId,
     from,
     to,
   )) {
     const span = { start: m.start_ms, end: m.end_ms, title: m.title };
-    if (m.locked) items.push({ ...span, cls: "fixed" });
+    // A locked chunk never moves (LCK-2), so it blocks links also off the main calendar.
+    if (m.locked || (m.kind === "focus" && hidden.has(m.source_id)))
+      items.push({ ...span, cls: "fixed" });
+    else if (m.off_main) items.push({ ...span, cls: "free" });
     else if (!m.busy) items.push({ ...span, cls: "free" });
     else {
       // Placed focus time counts as P2 for booking links.
@@ -474,6 +498,10 @@ function rulesFor(db: Db, link: LinkRow, duration: number): TeamRules {
 const zoneOf = (db: Db, userId: string) =>
   one<{ time_zone: string }>(db, "SELECT time_zone FROM users WHERE id = ?", userId)?.time_zone ??
   "UTC";
+/** The owner's Google profile picture for booking pages; '' for none (settings-profile.md PRF-5). */
+const pictureOf = (db: Db, userId: string) =>
+  one<{ avatar_url: string }>(db, "SELECT avatar_url FROM users WHERE id = ?", userId)
+    ?.avatar_url ?? "";
 const nameOf = (db: Db, userId: string) =>
   one<{ name: string }>(db, "SELECT name FROM users WHERE id = ?", userId)?.name ?? "";
 
@@ -621,6 +649,45 @@ interface PersonView {
   name: string;
   email: string;
   hoursSetId: string | null;
+  /** The ranges when `hoursSetId` is the person's item-specific hours on the link. */
+  itemHours: WeeklyHours | null;
+}
+
+/** The ranges of an item-specific hours set, or null for a named set or none. */
+function itemWeekly(db: Db, setId: string | null): WeeklyHours | null {
+  const row =
+    setId &&
+    one<{ weekly: string }>(
+      db,
+      "SELECT weekly FROM hours_sets WHERE id = ? AND item_specific = 1",
+      setId,
+    );
+  return row ? (JSON.parse(row.weekly) as WeeklyHours) : null;
+}
+
+/**
+ * Why the link's calendar for booked events cannot take them, or null
+ * (connected calendars rules 19, 22): its account was removed or is
+ * disconnected, or the calendar is read-only. The link then takes no new
+ * bookings until the owner picks another account; it does not fall back.
+ */
+export function targetProblem(db: Db, link: LinkRow): string | null {
+  if (!link.calendar_id) return null;
+  const c = one<{ email: string; status: string; writable: number }>(
+    db,
+    `SELECT a.email, a.status, c.writable FROM calendars c JOIN accounts a ON a.id = c.account_id
+     WHERE c.id = ? AND a.user_id = ?`,
+    link.calendar_id,
+    link.user_id,
+  );
+  const pick = "choose another account for booked events.";
+  if (!c)
+    return "Paused: the account for booked events was removed. Choose another account for booked events.";
+  if (c.status !== "ok")
+    return `Paused: ${c.email} is disconnected. Reconnect it on the Account page, or ${pick}`;
+  if (!c.writable)
+    return `Paused: Tempoloom cannot write to this calendar of ${c.email}. Please ${pick}`;
+  return null;
 }
 
 /** A link as its owner and co-organizers see it, with its people. */
@@ -635,6 +702,7 @@ function linkView(db: Db, link: LinkRow, oneOffDays: number) {
     userId: p.userId,
     ...user(p.userId),
     hoursSetId: p.hoursSetId,
+    itemHours: itemWeekly(db, p.hoursSetId),
   });
   return {
     ...link,
@@ -645,6 +713,10 @@ function linkView(db: Db, link: LinkRow, oneOffDays: number) {
     page: link.group_id ?? (link.hidden ? "hidden" : "main"),
     pageSlug: linkPageSlug(db, link),
     expiresAt: oneOffExpiry(link, oneOffDays, zoneOf(db, link.user_id)),
+    // Accounts rule 16: the owner's calendar for the link is on a disconnected
+    // account; bookings that the owner hosts wait.
+    disconnected: waitingCalendars(db, link.user_id)(link.calendar_id),
+    targetError: targetProblem(db, link),
     organizers: people
       .filter((p) => p.kind === "organizer")
       .map((p) => ({ ...view(p), required: p.required, isHost: p.isHost })),
@@ -656,13 +728,19 @@ function linkView(db: Db, link: LinkRow, oneOffDays: number) {
 
 type Changes = z.infer<typeof linkChanges>;
 
-/** Team rules 1, 3, 9, 12 and 13: who may be on a link and in which role. */
+/**
+ * Team rules 1, 3, 9, 12 and 13: who may be on a link and in which role. A
+ * person's hours are a named set of theirs, or the item-specific hours they
+ * have on this link already (planning-hours.md, item-specific hours).
+ */
 function checkPeople(
   db: Db,
-  ownerId: string,
+  link: LinkRow,
   organizers: NonNullable<Changes["organizers"]>,
   pool: NonNullable<Changes["pool"]>,
 ): void {
+  const ownerId = link.user_id;
+  const current = new Map(linkPeople(db, link.id).map((p) => [p.userId, p.hoursSetId]));
   const ids = [...organizers, ...pool].map((p) => p.userId);
   if (new Set(ids).size !== ids.length) invalid("duplicate_person");
   if (organizers.length === 0 && pool.length === 0) invalid("no_people");
@@ -673,8 +751,15 @@ function checkPeople(
   for (const p of [...organizers, ...pool]) {
     if (!sameTeam(db, ownerId, p.userId)) invalid("not_in_team");
     if (
+      !p.itemHours &&
       p.hoursSetId &&
-      !one(db, "SELECT 1 FROM hours_sets WHERE id = ? AND user_id = ?", p.hoursSetId, p.userId)
+      p.hoursSetId !== current.get(p.userId) &&
+      !one(
+        db,
+        "SELECT 1 FROM hours_sets WHERE id = ? AND user_id = ? AND item_specific = 0",
+        p.hoursSetId,
+        p.userId,
+      )
     ) {
       invalid("unknown_hours");
     }
@@ -851,7 +936,7 @@ export function bookingRoutes(db: Db, now: () => number, oneOffDays: number): Ho
     const sets = all<{ id: string; user_id: string; name: string }>(
       db,
       `SELECT h.id, h.user_id, h.name FROM hours_sets h JOIN team_members m ON m.user_id = h.user_id
-       WHERE m.team_id = ? ORDER BY h.created_at`,
+       WHERE m.team_id = ? AND h.item_specific = 0 ORDER BY h.created_at`,
       team.id,
     );
     return c.json({
@@ -935,7 +1020,7 @@ export function bookingRoutes(db: Db, now: () => number, oneOffDays: number): Ho
       linkPeople(db, link.id)
         .filter((p) => p.kind === "pool")
         .map((p) => ({ ...p }));
-    if (b.organizers || b.pool) checkPeople(db, link.user_id, organizers, pool);
+    if (b.organizers || b.pool) checkPeople(db, link, organizers, pool);
     const columns: [string, string | number | null | undefined][] = [
       ["title", b.title],
       ["description", b.description],
@@ -983,6 +1068,12 @@ export function bookingRoutes(db: Db, now: () => number, oneOffDays: number): Ho
         );
       }
       if (b.organizers || b.pool) {
+        const before = linkPeople(db, link.id).map((p) => p.hoursSetId);
+        // New item-specific hours get a new private set: a one-off link may share the old one.
+        for (const p of [...organizers, ...pool]) {
+          if ("itemHours" in p && p.itemHours)
+            p.hoursSetId = createItemHours(db, p.userId, link.title, p.itemHours);
+        }
         run(db, "DELETE FROM booking_link_people WHERE link_id = ?", link.id);
         const add = run.bind(
           null,
@@ -1005,6 +1096,7 @@ export function bookingRoutes(db: Db, now: () => number, oneOffDays: number): Ho
         pool.forEach((p, i) => {
           add(link.id, p.userId, "pool", p.hoursSetId, 1, 0, p.preferred ? 1 : 0, i);
         });
+        for (const id of before) if (id) dropItemHours(db, id);
       }
     });
   }
@@ -1089,7 +1181,9 @@ export function bookingRoutes(db: Db, now: () => number, oneOffDays: number): Ho
     const { link, owner } = editable(c.req.param("id"), c.get("user").id);
     if (!owner) forbidden();
     // Booked events stay (booking-links rule 20).
+    const sets = linkPeople(db, link.id).map((p) => p.hoursSetId);
     run(db, "DELETE FROM booking_links WHERE id = ?", link.id);
+    for (const id of sets) if (id) dropItemHours(db, id);
     return c.body(null, 204);
   });
 
@@ -1349,6 +1443,7 @@ export function publicBookingRoutes(
         );
     return c.json({
       name: owner?.name ?? "",
+      picture: pictureOf(db, page.user_id),
       title: group?.title ?? null,
       slug: page.slug,
       links: links.map(publicLink),
@@ -1359,12 +1454,18 @@ export function publicBookingRoutes(
   r.get("/pages/:page/:link", (c) => {
     const link = findLink(c.req.param("page"), c.req.param("link"));
     if (!link) notFound("link");
+    // A round-robin link names nobody before confirmation (rule 17): no owner picture or name.
+    const anonymous = linkPeople(db, link.id).some((p) => p.kind === "pool");
     return c.json({
       link: publicLink(link),
       organizers: organizerNames(db, link),
+      owner: anonymous
+        ? null
+        : { name: nameOf(db, link.user_id), picture: pictureOf(db, link.user_id) },
       timeZone: zoneOf(db, link.user_id),
       branding: brandingFor(db, link.user_id, resolveLinkBranding(db, link)),
       oneOff: link.source_id ? { expiresAt: expiryOf(link), expired: expired(link) } : null,
+      paused: targetProblem(db, link) !== null,
     });
   });
 
@@ -1481,11 +1582,14 @@ export function publicBookingRoutes(
     });
 
   const noCalendar = (err: unknown) => err instanceof Error && err.message === "no_calendar";
+  /** Accounts rule 16: the host's calendar is on a disconnected account; the booker tries later. */
+  const disconnected = { error: "calendar_disconnected" as const };
 
   r.post("/pages/:page/:link/book", async (c) => {
     const link = findLink(c.req.param("page"), c.req.param("link"));
     if (!link) notFound("link");
     if (expired(link)) return c.json({ error: "expired" }, 410);
+    if (targetProblem(db, link)) return c.json({ error: "paused" }, 409);
     const body = await jsonBody(c, bookInput);
     if (!(JSON.parse(link.durations) as number[]).includes(body.duration))
       return c.json({ error: "invalid_duration" }, 400);
@@ -1560,6 +1664,7 @@ export function publicBookingRoutes(
       } catch (err) {
         run(db, "DELETE FROM bookings WHERE id = ?", id);
         if (noCalendar(err)) return { error: "no_calendar" as const };
+        if (err instanceof CalendarDisconnected) return disconnected;
         throw err;
       }
       run(
@@ -1619,7 +1724,11 @@ export function publicBookingRoutes(
     if ("error" in result)
       return c.json(
         result,
-        result.error === "slot_taken" || result.error === "no_travel_time" ? 409 : 500,
+        result.error === "slot_taken" || result.error === "no_travel_time"
+          ? 409
+          : result.error === "calendar_disconnected"
+            ? 503
+            : 500,
       );
     return c.json(result, 201);
   });
@@ -1717,6 +1826,13 @@ export function publicBookingRoutes(
         );
       } catch (err) {
         if (noCalendar(err)) return { error: "no_event" as const };
+        // Accounts rules 16, 19, 22: the old or new host calendar is on a
+        // disconnected account, so the move waits for the reconnect.
+        if (
+          err instanceof CalendarDisconnected ||
+          (err instanceof Error && err.message === "account_disconnected")
+        )
+          return { error: "account_disconnected" as const };
         throw err;
       }
       // A moved booking gets its reminder again for the new time (rule 21).
@@ -1764,14 +1880,18 @@ export function publicBookingRoutes(
       });
       return { start, end, assignee: contact(db, plan.assignee) };
     });
-    if ("error" in result) return c.json(result, result.error === "slot_taken" ? 409 : 500);
+    if ("error" in result)
+      return c.json(
+        result,
+        result.error === "slot_taken" || result.error === "account_disconnected" ? 409 : 500,
+      );
     return c.json(result);
   });
 
   r.post("/bookings/:token/cancel", async (c) => {
     const b = byToken(c.req.param("token"));
     if (!b || b.status !== "booked") notFound("booking");
-    await sync.exclusive(b.user_id, async () => {
+    const result = await sync.exclusive(b.user_id, async () => {
       const link = b.link_id
         ? one<LinkRow>(db, "SELECT * FROM booking_links WHERE id = ?", b.link_id)
         : undefined;
@@ -1779,13 +1899,18 @@ export function publicBookingRoutes(
         ? eventTitle(link, organizerName(db, link, b.assignee_id), b.name)
         : b.name;
       const before = facts(b, link, title);
-      await writeBookingEvents(
-        db,
-        sync,
-        b.id,
-        { hostId: b.host_id ?? b.user_id, calendarId: b.calendar_id, eventId: b.event_id },
-        null,
-      );
+      try {
+        await writeBookingEvents(
+          db,
+          sync,
+          b.id,
+          { hostId: b.host_id ?? b.user_id, calendarId: b.calendar_id, eventId: b.event_id },
+          null,
+        );
+      } catch (err) {
+        if (err instanceof CalendarDisconnected) return disconnected;
+        throw err;
+      }
       run(db, "UPDATE bookings SET status = 'cancelled', updated_at = ? WHERE id = ?", now(), b.id);
       if (link) {
         event(link.id, "booking_link.meeting.cancelled", {
@@ -1810,7 +1935,9 @@ export function publicBookingRoutes(
           cc: before.cc,
         });
       }
+      return null;
     });
+    if (result) return c.json(result, 503);
     return c.json({ ok: true });
   });
 

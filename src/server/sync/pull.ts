@@ -2,12 +2,14 @@
 import { randomUUID } from "node:crypto";
 import { DAY } from "../../shared/time.ts";
 import { all, type Db, one, run, tx } from "../db.ts";
+import { GOOGLE_SETTINGS_SCOPE } from "../google/oauth.ts";
 import {
   type CalendarProvider,
   type ProviderCalendar,
   ProviderError,
   type ProviderEvent,
 } from "../providers/types.ts";
+import { updateSettings } from "../settings.ts";
 
 /** Events from 12 weeks ago (the stats range) to 120 days ahead are cached. */
 const WINDOW_PAST = 84 * DAY;
@@ -36,6 +38,41 @@ export interface CalendarRow {
   window_end: number | null;
 }
 
+/** Accounts whose failed settings read is logged already: one line, not one per sync. */
+const settingsFailureLogged = new Set<string>();
+
+/**
+ * Week start, time format and date format follow the user's main Google
+ * account (settings-profile.md PRF-2, PRF-3): read with each calendar list
+ * sync. A grant without the settings scope keeps the current values. The
+ * Google week start is kept as googleWeekStart for the profile page only: the
+ * planning week start does not change, so no weekly planner key changes.
+ */
+async function readProfileSettings(
+  db: Db,
+  provider: CalendarProvider,
+  accountId: string,
+  userId: string,
+): Promise<void> {
+  if (!provider.profileSettings) return;
+  // Only a user's own Google login: a service account reads its own settings.
+  const acc = one<{ scope: string }>(
+    db,
+    "SELECT scope FROM accounts WHERE id = ? AND is_main = 1 AND provider = 'google'",
+    accountId,
+  );
+  if (!acc?.scope.split(" ").includes(GOOGLE_SETTINGS_SCOPE)) return;
+  try {
+    const { weekStart, ...formats } = await provider.profileSettings();
+    settingsFailureLogged.delete(accountId);
+    updateSettings(db, userId, { ...formats, googleWeekStart: weekStart ?? null });
+  } catch (err) {
+    if (settingsFailureLogged.has(accountId)) return;
+    settingsFailureLogged.add(accountId);
+    console.error("Reading the Google Calendar settings failed", err);
+  }
+}
+
 export async function syncCalendarList(
   db: Db,
   provider: CalendarProvider,
@@ -43,6 +80,7 @@ export async function syncCalendarList(
   userId: string,
 ): Promise<void> {
   const listed = await provider.listCalendars();
+  await readProfileSettings(db, provider, accountId, userId);
   // Keep the account's main calendar stable: a backend without a primary flag
   // (CalDAV) must not move the main calendar when calendars are added.
   const current = one<{ provider_id: string }>(
@@ -115,12 +153,17 @@ export function cacheEvent(db: Db, calendarId: string, e: ProviderEvent): void {
     run(db, "DELETE FROM events WHERE calendar_id = ? AND event_id = ?", calendarId, e.id);
     return;
   }
+  // Alerts of Tempoloom's own events: a copy that someone gave an alert is
+  // written again. Privacy of every event: a meeting occurrence with a new
+  // privacy is written again (rule 22), and the planner's "view as" hides the
+  // details of private events (PLN-6).
   run(
     db,
     `INSERT INTO events (calendar_id, event_id, summary, description, location, start_ms, end_ms,
        all_day, busy, event_type, self_response, attendee_count, organizer_self, recurring_id, color_id,
-       etag, updated_ms, private_props, attendees, responses, conference, rsvp_note, organizer_email)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       etag, updated_ms, private_props, attendees, responses, conference, rsvp_note, alerts,
+       own_visibility, organizer_email)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT (calendar_id, event_id) DO UPDATE SET
        summary = excluded.summary, description = excluded.description, location = excluded.location,
        start_ms = excluded.start_ms, end_ms = excluded.end_ms, all_day = excluded.all_day,
@@ -129,8 +172,8 @@ export function cacheEvent(db: Db, calendarId: string, e: ProviderEvent): void {
        recurring_id = excluded.recurring_id, color_id = excluded.color_id, etag = excluded.etag,
        updated_ms = excluded.updated_ms, private_props = excluded.private_props,
        attendees = excluded.attendees, responses = excluded.responses,
-       conference = excluded.conference, rsvp_note = excluded.rsvp_note,
-       organizer_email = excluded.organizer_email`,
+       conference = excluded.conference, rsvp_note = excluded.rsvp_note, alerts = excluded.alerts,
+       own_visibility = excluded.own_visibility, organizer_email = excluded.organizer_email`,
     calendarId,
     e.id,
     e.summary,
@@ -153,19 +196,10 @@ export function cacheEvent(db: Db, calendarId: string, e: ProviderEvent): void {
     JSON.stringify(e.responses ?? {}),
     e.conference ?? "",
     e.rsvpNote ?? "",
+    e.privateProps.tl === "1" && e.alerts ? 1 : 0,
+    e.visibility,
     e.organizerEmail ?? "",
   );
-  // Alerts and privacy of Tempoloom's own events: a copy that someone gave an
-  // alert, or a meeting occurrence with a new privacy, is written again.
-  if (e.privateProps.tl === "1")
-    run(
-      db,
-      "UPDATE events SET alerts = ?, own_visibility = ? WHERE calendar_id = ? AND event_id = ?",
-      e.alerts ? 1 : 0,
-      e.visibility,
-      calendarId,
-      e.id,
-    );
 }
 
 /** Pulls changes for one calendar, `ahead` into the future. Returns the number of changed events. */

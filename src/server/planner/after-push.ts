@@ -3,12 +3,11 @@
 // block (events-tags.md rule 14). The done marker on
 // ended occurrences is markEnded in markers.ts.
 import { TAG_BUSY } from "../../scheduler/blocking.ts";
+import { DEFAULT_DECLINE_MESSAGE, HABIT_DECLINE_MESSAGE } from "../../shared/decline.ts";
 import { all, type Db, run } from "../db.ts";
 import { type CalendarProvider, ProviderError } from "../providers/types.ts";
 import { cacheEvent } from "../sync/pull.ts";
 import { MANAGED_PROP } from "./push.ts";
-
-export const DEFAULT_DECLINE_MESSAGE = "Declined automatically: this time is protected for focus.";
 
 type Provider = (accountId: string) => CalendarProvider;
 
@@ -64,24 +63,32 @@ async function quickBlock(db: Db, userId: string, provider: Provider, now: numbe
 /**
  * Tempoloom decision: auto-decline answers unanswered invitations from other
  * organizers that overlap a placed focus event of an automation with
- * auto-decline on. It never answers the same invitation twice, so the user
- * may accept it again.
+ * auto-decline on, or a busy occurrence of a habit with auto-decline on
+ * (habits rules 37, 38: never a free one). It never answers the same
+ * invitation twice, so the user may accept it again.
  */
 async function autoDecline(db: Db, userId: string, provider: Provider, now: number): Promise<void> {
   const sources = new Map(
-    all<{ id: string; message: string }>(
+    all<{ id: string; message: string; habit: number }>(
       db,
-      `SELECT id, decline_message AS message FROM focus_goals WHERE user_id = ? AND enabled = 1 AND decline_enabled = 1
+      `SELECT id, decline_message AS message, 0 AS habit FROM focus_goals WHERE user_id = ? AND enabled = 1 AND decline_enabled = 1
        UNION ALL
-       SELECT id, decline_message AS message FROM meeting_overloads WHERE user_id = ? AND enabled = 1 AND decline_enabled = 1`,
+       SELECT id, decline_message AS message, 0 AS habit FROM meeting_overloads WHERE user_id = ? AND enabled = 1 AND decline_enabled = 1
+       UNION ALL
+       SELECT id, decline_message AS message, 1 AS habit FROM habits WHERE user_id = ? AND enabled = 1 AND decline_enabled = 1`,
       userId,
       userId,
-    ).map((s) => [s.id, s.message.trim() || DEFAULT_DECLINE_MESSAGE]),
+      userId,
+    ).map((s) => [
+      s.id,
+      s.message.trim() || (s.habit ? HABIT_DECLINE_MESSAGE : DEFAULT_DECLINE_MESSAGE),
+    ]),
   );
   if (sources.size === 0) return;
   const blocks = all<{ source_id: string; start_ms: number; end_ms: number }>(
     db,
-    "SELECT source_id, start_ms, end_ms FROM managed_events WHERE user_id = ? AND kind = 'focus' AND end_ms > ?",
+    `SELECT source_id, start_ms, end_ms FROM managed_events
+     WHERE user_id = ? AND end_ms > ? AND (kind = 'focus' OR (kind = 'habit' AND busy = 1))`,
     userId,
     now,
   ).filter((b) => sources.has(b.source_id));

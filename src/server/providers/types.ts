@@ -66,6 +66,11 @@ export interface EventWrite {
   optionalAttendees?: string[];
   /** The organizer's email, written when the event has guests. */
   organizer?: string;
+  /**
+   * The calendar server sends the guests nothing (RFC 6638 SCHEDULE-AGENT=CLIENT
+   * on CalDAV; Tempoloom writes Google events without updates anyway).
+   */
+  quietGuests?: boolean;
   /** An all-day event on these local dates (end exclusive); `start` and `end` are then not written. */
   allDayDates?: { start: string; end: string };
   /** An RFC 5545 RRULE value, for example "FREQ=WEEKLY;BYDAY=WE": a recurring series. */
@@ -132,8 +137,26 @@ export class ProviderError extends Error {
   }
 }
 
+/** Display settings of the account (settings-profile.md PRF-2); a value the account lacks is left out. */
+export interface ProfileSettings {
+  weekStart?: 1 | 7;
+  timeFormat?: "24h" | "12h";
+  dateFormat?: "YMD" | "DMY" | "MDY";
+}
+
 export interface CalendarProvider {
   listCalendars(): Promise<ProviderCalendar[]>;
+  /** Week start, time format and date format of the account. Only Google has them. */
+  profileSettings?(): Promise<ProfileSettings>;
+  /**
+   * Busy intervals of other people's calendars, by email (Google free/busy).
+   * An email with no data is left out of the map. Only Google has it.
+   */
+  freeBusy?(
+    emails: string[],
+    timeMin: number,
+    timeMax: number,
+  ): Promise<Map<string, { start: number; end: number }[]>>;
   /**
    * Reads events in [timeMin, timeMax) with recurring series expanded. With a
    * sync token, the backend may return only the changes since that token.
@@ -174,6 +197,11 @@ export interface CalendarProvider {
     change: ExternalChange,
     etag: string | null,
   ): Promise<ProviderEvent>;
+  /**
+   * Whether a change of an event with guests mails the guests (a CalDAV server
+   * with scheduling, RFC 6638). Unknown counts as yes.
+   */
+  notifiesGuests?(calendarId: string): Promise<boolean>;
   /**
    * Sets the private properties of a whole recurring series, the series and
    * every changed instance; other fields stay as they are (meetings-flexible.md

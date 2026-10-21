@@ -27,6 +27,15 @@ const autoLockMode = z.enum(["off", "day", "week"]);
 export const settingsSchema = z.object({
   schedulingWindowWeeks: z.number().int().min(1).max(12).default(3),
   weekStart: z.union([z.literal(1), z.literal(7)]).default(1),
+  // The week start of the main Google account, shown on the profile page only: planning
+  // keeps weekStart (applying it to planning is not built; settings-profile.md PRF-6).
+  googleWeekStart: z
+    .union([z.literal(1), z.literal(7)])
+    .nullable()
+    .default(null),
+  // settings-profile.md PRF-2: read from the main Google account's calendar settings.
+  timeFormat: z.enum(["24h", "12h"]).default("24h"),
+  dateFormat: z.enum(["YMD", "DMY", "MDY"]).default("YMD"),
   urgencyMode: z
     .enum(["priority-only", "due-date", "due-date-and-work"])
     .default("due-date-and-work"),
@@ -88,11 +97,20 @@ export const settingsSchema = z.object({
   // r3 s3: task placement (planning-tasks.md TSK-70), in-app alerts
   // (planning-notifications.md), first-run hours review (HRS-15), profile fields.
   taskPlacement: z.enum(["chunks", "suggestions"]).default("chunks"),
+  // planning-task-progress.md PRG-1 to PRG-5: count a chunk when its time passes,
+  // or only after Start. manualSince: when manual mode began; older chunks keep counting.
+  startMode: z.enum(["auto", "manual"]).default("auto"),
+  manualSince: z.number().int().nullable().default(null),
   // sync-calendar-mirroring.md account-level setting: copies of events with no reply.
   noReplyCopies: z.enum(["free", "busy"]).default("free"),
   tabAlert: z.boolean().default(true),
   startChime: z.boolean().default(false),
   hoursReviewed: z.boolean().default(false),
+  // planning-planner.md: the days the planner shows (PLN-3) and calendars it hides (PLN-20).
+  plannerDays: z.enum(["all-days", "weekdays", "rolling-9-days"]).default("all-days"),
+  hiddenCalendars: z.array(z.string().max(200)).max(500).default([]),
+  // planning-event-content.md CNT-15: a short tip in managed event descriptions.
+  eventTips: z.boolean().default(true),
   profile: z
     .object({
       jobTitle: z.string().trim().max(100).default(""),

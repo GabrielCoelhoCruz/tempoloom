@@ -543,6 +543,14 @@ Proposed defaults:
   days: run time, action (placed, moved, removed, kept as conflict, status
   change), old and new times, and reason code.
 
+  Tempoloom decision: a period that gets no event is logged as "skipped". A
+  removal or skip carries the SCH-116 code of the run's report. A move that
+  the report does not explain gets `no-space-fixed` (another event now covers
+  the old time), `no-space-priority` (another item of the run took it),
+  `rules-changed` (the item's settings changed) or `rearranged`; a snooze
+  that moves a started event later is a move with `snoozed`. The log shows
+  under each task and automation, and on the flexible meeting view.
+
 ## Outputs
 
 - Google Calendar writes: creates, updates (time, status, title marker,

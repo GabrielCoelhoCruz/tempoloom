@@ -4,10 +4,12 @@ import { CATEGORIES } from "../../scheduler/categories.ts";
 import type { Settings as UserSettings } from "../../server/settings.ts";
 import { defaultEventSettings, readEventSettings } from "../../shared/event-settings.ts";
 import { api } from "../lib/api.ts";
+import { CalendarDisconnected } from "../lib/calendars.tsx";
 import { CATEGORY_LABELS, COLORS } from "../lib/categories.ts";
 import { hhmm, parseHhmm } from "../lib/format.ts";
 import { lazyComponent } from "../lib/lazy.ts";
 import { loadPolicyMarks, PolicyMark, policyMarks } from "../lib/policy-marks.tsx";
+import { onLinkClick } from "../lib/router.ts";
 import { loadMe, me, planNow } from "../lib/state.ts";
 import { BufferEditor } from "./buffer-editor.tsx";
 import { FocusOptionsList, MeetingOverloadSection } from "./focus-options.tsx";
@@ -16,9 +18,11 @@ import {
   AlertSettings,
   AutoLockSettings,
   DeleteHoursSet,
+  EventTipsSetting,
   FocusNotes,
   HoursZoneNote,
   PlacementSetting,
+  StartModeSetting,
   TravelSettings,
 } from "./settings-extra.tsx";
 import { TaskDefaults } from "./task-defaults.tsx";
@@ -30,6 +34,8 @@ interface HoursSet {
   name: string;
   weekly: Record<string, [number, number][]>;
   task_calendar_id?: string | null;
+  /** The email of the disconnected account that holds the task calendar. */
+  disconnected?: string | null;
 }
 const FocusRecommendation = lazyComponent(() =>
   import("./team-recommendations.tsx").then((m) => m.FocusRecommendation),
@@ -268,6 +274,11 @@ export function Settings() {
   return (
     <div class="page" data-testid="settings-page">
       <h1>Settings</h1>
+      <p>
+        <a href="/settings/integrations" onClick={onLinkClick}>
+          Integrations
+        </a>
+      </p>
       {message && (
         <p class="status" data-testid="settings-message">
           {message}
@@ -378,6 +389,7 @@ export function Settings() {
             </select>
           </label>
           <PlacementSetting settings={settings} act={act} />
+          <StartModeSetting settings={settings} act={act} />
         </div>
       </section>
 
@@ -385,6 +397,7 @@ export function Settings() {
       <AutoLockSettings settings={settings} act={act} />
 
       <AlertSettings settings={settings} act={act} />
+      <EventTipsSetting settings={settings} act={act} />
 
       <section id="hours">
         <h2>Hours</h2>
@@ -398,6 +411,7 @@ export function Settings() {
             {(dirty) => (
               <>
                 <TaskCalendar set={h} calendars={taskCalendars} dirty={dirty} act={act} />
+                <CalendarDisconnected email={h.disconnected} />
                 {h.kind === "custom" && <DeleteHoursSet set={h} sets={hours} act={act} />}
               </>
             )}

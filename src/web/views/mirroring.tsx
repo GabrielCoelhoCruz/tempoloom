@@ -42,6 +42,8 @@ interface Policy {
 interface Fields {
   source: string;
   dest: string;
+  /** Mesh mode: the calendars that mirror into each other. */
+  calendars: string[];
   visibility: string;
   calendarType: string;
   allDayMode: string;
@@ -52,11 +54,19 @@ interface Fields {
 const WARNING =
   "People who can change the destination calendar, and domain admins, can still see the details of these copies.";
 
+/**
+ * `pairs`: one policy from a source to a destination; `both`: an old and a
+ * new calendar, both ways (library entry 38); `mesh`: a set of calendars,
+ * each into each other one (library entry 39).
+ */
+type Pairs = "one" | "both" | "mesh";
+
 function PolicyForm({
   testid,
   initial,
   calendars,
   submit,
+  pairs = "one",
   onSave,
   onCancel,
 }: {
@@ -64,6 +74,7 @@ function PolicyForm({
   initial: Fields;
   calendars: CalendarRow[];
   submit: string;
+  pairs?: Pairs;
   onSave: (f: Fields) => void;
   onCancel?: () => void;
 }) {
@@ -86,6 +97,7 @@ function PolicyForm({
         onSave({
           source: String(d.get("source")),
           dest: String(d.get("dest")),
+          calendars: d.getAll("calendars").map(String),
           visibility: String(d.get("visibility")),
           calendarType: String(d.get("calendarType")),
           allDayMode: String(d.get("allDayMode")),
@@ -94,36 +106,52 @@ function PolicyForm({
         });
       }}
     >
-      <div class="field">
-        <label for={`${id}-source`}>Copy events from</label>
-        <select
-          id={`${id}-source`}
-          name="source"
-          value={f.source || options[0]?.id}
-          onChange={set("source")}
-        >
+      {pairs === "mesh" ? (
+        <fieldset class="wide">
+          <legend>Job calendars</legend>
           {options.map((c) => (
-            <option value={c.id} key={c.id}>
+            <label class="inline" key={c.id}>
+              <input type="checkbox" name="calendars" value={c.id} />
               {displayName(c, calendars)}
-            </option>
+            </label>
           ))}
-        </select>
-      </div>
-      <div class="field">
-        <label for={`${id}-dest`}>To</label>
-        <select
-          id={`${id}-dest`}
-          name="dest"
-          value={f.dest || options[1]?.id}
-          onChange={set("dest")}
-        >
-          {options.map((c) => (
-            <option value={c.id} key={c.id}>
-              {displayName(c, calendars)}
-            </option>
-          ))}
-        </select>
-      </div>
+        </fieldset>
+      ) : (
+        <>
+          <div class="field">
+            <label for={`${id}-source`}>
+              {pairs === "both" ? "Old calendar" : "Copy events from"}
+            </label>
+            <select
+              id={`${id}-source`}
+              name="source"
+              value={f.source || options[0]?.id}
+              onChange={set("source")}
+            >
+              {options.map((c) => (
+                <option value={c.id} key={c.id}>
+                  {displayName(c, calendars)}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div class="field">
+            <label for={`${id}-dest`}>{pairs === "both" ? "New calendar" : "To"}</label>
+            <select
+              id={`${id}-dest`}
+              name="dest"
+              value={f.dest || options[1]?.id}
+              onChange={set("dest")}
+            >
+              {options.map((c) => (
+                <option value={c.id} key={c.id}>
+                  {displayName(c, calendars)}
+                </option>
+              ))}
+            </select>
+          </div>
+        </>
+      )}
       <div class="field">
         <label for={`${id}-visibility`}>Copies show</label>
         <select
@@ -220,6 +248,7 @@ export function MirrorSettings() {
   // A library mirroring entry fills the form (automations-library.md rule 5).
   const template = templateFromUrl();
   const fromLibrary = template?.kind === "calendar_mirroring";
+  const pairs: Pairs = fromLibrary ? template.preset.pairs : "one";
   const [policies, setPolicies] = useState<Policy[]>([]);
   const [reconciledAt, setReconciledAt] = useState<number | null>(null);
   const [tab, setTab] = useState<string | null>(null);
@@ -295,29 +324,39 @@ export function MirrorSettings() {
         </p>
       )}
       <PolicyForm
-        key={`new-${created}`}
+        key={`new-${pairs}-${created}`}
         testid="mirror-form"
         calendars={calendars}
-        submit="Add mirroring"
+        pairs={pairs}
+        submit={
+          pairs === "both"
+            ? "Add mirroring both ways"
+            : pairs === "mesh"
+              ? "Add mirroring between all"
+              : "Add mirroring"
+        }
         initial={{
           source: "",
           dest: "",
+          calendars: [],
           visibility: fromLibrary ? "busy_only" : "label_only",
           calendarType: "personal",
           allDayMode: "none",
           color: "",
           outside: true,
         }}
-        onSave={(f) =>
+        onSave={(f) => {
+          const { sourceCalendarId, destCalendarId, ...rest } = body(f);
+          const from = fromLibrary ? { templateId: template.slug } : {};
+          const ids = pairs === "mesh" ? f.calendars : [sourceCalendarId, destCalendarId];
           void act(
             () =>
-              api("POST", "/api/mirrors", {
-                ...body(f),
-                ...(fromLibrary ? { templateId: template.slug } : {}),
-              }),
+              pairs === "one"
+                ? api("POST", "/api/mirrors", { ...body(f), ...from })
+                : api("POST", "/api/mirrors/mesh", { ...rest, calendarIds: ids, ...from }),
             () => setCreated((n) => n + 1),
-          )
-        }
+          );
+        }}
       />
       {message && (
         <p class="status" role="status" data-testid="mirror-message">
@@ -419,6 +458,7 @@ export function MirrorSettings() {
                   initial={{
                     source: p.source_calendar_id,
                     dest: p.dest_calendar_id,
+                    calendars: [],
                     visibility: p.visibility,
                     calendarType: p.calendar_type,
                     allDayMode: p.all_day_mode,
