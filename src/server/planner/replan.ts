@@ -49,6 +49,7 @@ import {
 import { recordMeetingChanges } from "./meeting-log.ts";
 import { attendeeOccurrences, attendeesOf, meetingItems } from "./meetings.ts";
 import { LABELS, mirrorCopies } from "./mirror.ts";
+import { doneMinutes, endedUnstarted, nextIndexAfter } from "./progress.ts";
 import { type DesiredEvent, type ManagedRow, type PushResult, pushSchedule } from "./push.ts";
 import { type Paint, type PaintJob, repaintRequest } from "./repaint.ts";
 
@@ -127,6 +128,8 @@ export function loadSnapshot(
   titles: Map<string, string>;
   /** Event settings of each automation, by `kind:id` (src/shared/event-settings.ts). */
   eventSettings: Map<string, EventSettings>;
+  /** Manual start mode: ended chunks and habit events nobody started, to place again. */
+  reopen: ManagedRow[];
 } {
   const windowEnd = schedulingWindowEnd(zone, now, settings.schedulingWindowWeeks);
   const hoursRows = all<{ id: string; kind: string; weekly: string }>(
@@ -157,6 +160,24 @@ export function loadSnapshot(
   ];
 
   const rows = all<ManagedRow>(db, "SELECT * FROM managed_events WHERE user_id = ?", userId);
+  // PRG-3, PRG-5: in manual start mode an ended chunk or habit event that nobody
+  // started goes back to the plan (src/server/planner/progress.ts).
+  const openItems = new Set([
+    ...all<{ id: string }>(
+      db,
+      "SELECT id FROM tasks WHERE user_id = ? AND status = 'open'",
+      userId,
+    ).map((t) => `task:${t.id}`),
+    ...all<{ id: string }>(
+      db,
+      "SELECT id FROM habits WHERE user_id = ? AND enabled = 1",
+      userId,
+    ).map((h) => `habit:${h.id}`),
+  ]);
+  const reopen = rows.filter(
+    (r) => endedUnstarted(r, now, settings) && openItems.has(`${r.kind}:${r.source_id}`),
+  );
+  const reopened = new Set(reopen.map((r) => r.id));
   const toPlacement = (r: ManagedRow): CurrentPlacement => ({
     key: r.key,
     itemId: r.source_id,
@@ -168,7 +189,10 @@ export function loadSnapshot(
   const weekStart = weekStartOf(zone, now, settings.weekStart);
   // An ended habit occurrence is done for its date, also when the user moved it to an earlier week.
   const past = rows
-    .filter((r) => r.end_ms <= now && (r.start_ms >= weekStart || r.kind === "habit"))
+    .filter(
+      (r) =>
+        r.end_ms <= now && (r.start_ms >= weekStart || r.kind === "habit") && !reopened.has(r.id),
+    )
     .map(toPlacement);
 
   const exclusions = new Map<string, { start: number; end: number }[]>();
@@ -203,14 +227,12 @@ export function loadSnapshot(
   const eventSettings = new Map<string, EventSettings>();
   const hoursKind = new Map(hoursRows.map((h) => [h.id, h.kind]));
 
-  const consumed = new Map<string, number>();
+  // PRG-1: ended chunks are done work. A new chunk never takes the key of an ended one.
+  const consumed = doneMinutes(rows, now, settings);
+  const nextIndex = new Map<string, number>();
   for (const r of rows) {
-    if (r.kind === "task" && r.end_ms <= now) {
-      consumed.set(
-        r.source_id,
-        (consumed.get(r.source_id) ?? 0) + (r.end_ms - r.start_ms) / 60_000,
-      );
-    }
+    if (r.kind === "task")
+      nextIndex.set(r.source_id, nextIndexAfter(nextIndex.get(r.source_id) ?? 0, r));
   }
   const tasks = all<{
     id: string;
@@ -248,6 +270,7 @@ export function loadSnapshot(
       createdAt: t.created_at,
       exclusions: exclusions.get(`task:${t.id}`) ?? [],
       changed: t.rules_changed_at > lastPlannedAt,
+      nextIndex: nextIndex.get(t.id) ?? 0,
     };
   });
 
@@ -449,7 +472,7 @@ export function loadSnapshot(
     ...(buffers.length > 0 ? { mirrorCopies: copyAnchors(db, userId, now) } : {}),
     ...(fragmentation ? { fragmentation } : {}),
   };
-  return { snapshot, rows, notes, titles, eventSettings };
+  return { snapshot, rows, notes, titles, eventSettings, reopen };
 }
 
 /**
@@ -582,7 +605,7 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
   const last =
     one<{ planned_at: number }>(db, "SELECT planned_at FROM plan_reports WHERE user_id = ?", userId)
       ?.planned_at ?? 0;
-  const { snapshot, rows, notes, titles, eventSettings } = loadSnapshot(
+  const { snapshot, rows, notes, titles, eventSettings, reopen } = loadSnapshot(
     db,
     userId,
     planningZone(db, userId, user.time_zone),
@@ -601,6 +624,14 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
     ).map((h) => [h.id, h.task_calendar_id]),
   );
   const taskHours = new Map(snapshot.tasks.map((t) => [t.id, t.hours]));
+  // CNT-20, CNT-24: chunks of a private task are private events.
+  const privateTasks = new Set(
+    all<{ id: string }>(
+      db,
+      "SELECT id FROM tasks WHERE user_id = ? AND visibility = 'private'",
+      userId,
+    ).map((t) => t.id),
+  );
   // Guests and location of each flexible meeting (meetings-flexible.md rules 35, 41).
   const meetingRows = new Map(
     all<{ id: string; location: string }>(
@@ -690,6 +721,9 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
             accountEmail.get(calendars.get(calendarId)?.account_id ?? "") ?? user.email,
             user.email,
           )
+        : {}),
+      ...(p.kind === "task" && privateTasks.has(p.itemId)
+        ? { visibility: "private" as const }
         : {}),
       ...(p.kind === "meeting"
         ? meetingGuests(
@@ -811,6 +845,7 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
       userId,
       now,
       fullCheck: ctx.fullMirror ?? false,
+      reopen,
       target: (calendarId) => {
         const c = calendars.get(calendarId);
         if (!c) throw new Error(`Unknown calendar ${calendarId}`);
@@ -863,11 +898,13 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
   await afterPush(db, userId, (accountId) => ctx.provider(accountId), now);
   run(
     db,
-    `INSERT INTO plan_reports (user_id, report, planned_at) VALUES (?, ?, ?)
-     ON CONFLICT (user_id) DO UPDATE SET report = excluded.report, planned_at = excluded.planned_at`,
+    `INSERT INTO plan_reports (user_id, report, planned_at, task_order) VALUES (?, ?, ?, ?)
+     ON CONFLICT (user_id) DO UPDATE SET report = excluded.report, planned_at = excluded.planned_at,
+       task_order = excluded.task_order`,
     userId,
     JSON.stringify(result.report),
     now,
+    JSON.stringify(result.taskOrder),
   );
   return { push, report: result.report, paint: { paints, requestedAt } };
 }

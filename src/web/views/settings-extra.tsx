@@ -1,5 +1,5 @@
 // Settings added for tasks, alerts, hours and travel: task placement
-// (planning-tasks.md TSK-70), in-app alerts (planning-notifications.md),
+// (planning-tasks.md TSK-70), auto-lock (planning-locks.md LCK-30), in-app alerts (planning-notifications.md),
 // deleting a custom hours set with a replacement (planning-hours.md HRS-10),
 // the zone that hours apply in (HRS-13, HRS-14, edge case 6), travel time
 // zones (timezones-home-and-travel.md rules 6, 7, 12) and the focus time
@@ -26,6 +26,64 @@ export function PlacementSetting({ settings, act }: { settings: Settings; act: A
         <option value="suggestions">Suggestions only (no task events)</option>
       </select>
     </label>
+  );
+}
+
+/** planning-task-progress.md PRG-1, PRG-3: when a chunk or habit event counts as done. */
+export function StartModeSetting({ settings, act }: { settings: Settings; act: Act }) {
+  return (
+    <label>
+      Start mode
+      <select
+        value={settings.startMode}
+        onChange={(e) =>
+          void act(() => api("PATCH", "/api/settings", { startMode: e.currentTarget.value }))
+        }
+      >
+        <option value="auto">Count when the time passes</option>
+        <option value="manual">Count only after I press Start</option>
+      </select>
+    </label>
+  );
+}
+
+const AUTO_LOCK = [
+  ["meeting", "Flexible meetings"],
+  ["habit", "Habits"],
+  ["task", "Tasks"],
+  ["focus", "Focus time"],
+] as const;
+
+/** planning-locks.md LCK-30 to LCK-32: lock each kind's events of the day or the week. */
+export function AutoLockSettings({ settings, act }: { settings: Settings; act: Act }) {
+  return (
+    <section>
+      <h2>Auto-lock</h2>
+      <p class="status">
+        Each day between 01:00 and 02:00, Tempoloom locks the events that start that day, or on the
+        first day of the week those of the week. Events placed later stay unlocked; turn the setting
+        off and on to lock them at once.
+      </p>
+      <div class="form" data-testid="auto-lock">
+        {AUTO_LOCK.map(([kind, label]) => (
+          <label key={kind}>
+            {label}
+            <select
+              value={settings.autoLock[kind]}
+              onChange={(e) =>
+                void act(() =>
+                  api("PATCH", "/api/settings", { autoLock: { [kind]: e.currentTarget.value } }),
+                )
+              }
+            >
+              <option value="off">Off</option>
+              <option value="day">Each day</option>
+              <option value="week">Each week</option>
+            </select>
+          </label>
+        ))}
+      </div>
+    </section>
   );
 }
 

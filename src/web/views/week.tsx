@@ -23,10 +23,17 @@ interface Props {
   now: number;
   onMove?: (id: string, start: number) => void;
   onSelect?: (id: string) => void;
+  /** TSK-7: a range picked on free space (a drag), or a click there (end null). */
+  onCreate?: (start: number, end: number | null) => void;
   /** Event ids drawn as conflicts (events-external-priority.md rule 8). */
   flagged?: ReadonlySet<string>;
   /** A second time column in this zone (timezones-home-and-travel.md rule 10). */
   extraZone?: string | null;
+  /**
+   * A click or a drag on a past time (planning-task-progress.md PRG-21): the
+   * start, rounded down to 15 minutes, and for a drag its length in minutes.
+   */
+  onPickPast?: (t: number, minutes?: number) => void;
 }
 
 const city = (z: string) => (z.split("/").at(-1) ?? z).replace(/_/g, " ");
@@ -88,8 +95,23 @@ export function layout(days: LocalDate[], zone: string, events: WeekEvent[]): Bo
 }
 
 const drag = signal<{ id: string; dx: number; dyMin: number } | null>(null);
+/** A range being picked on free space: day index and local minutes. */
+const pick = signal<{ day: number; from: number; to: number } | null>(null);
+const snapDown = (m: number) => Math.floor(m / SNAP_MIN) * SNAP_MIN;
+const snapUp = (m: number) => Math.ceil(m / SNAP_MIN) * SNAP_MIN;
 
-export function WeekView({ days, zone, events, now, onMove, onSelect, flagged, extraZone }: Props) {
+export function WeekView({
+  days,
+  zone,
+  events,
+  now,
+  onMove,
+  onSelect,
+  onCreate,
+  flagged,
+  extraZone,
+  onPickPast,
+}: Props) {
   const boxes = useMemo(() => layout(days, zone, events), [days, zone, events]);
   const gridRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -105,6 +127,42 @@ export function WeekView({ days, zone, events, now, onMove, onSelect, flagged, e
     ? Array.from({ length: 24 }, (_, h) => utcToLocal(extraZone, localToUtc(zone, ref, h * 60)))
     : null;
   const labelCols = extra ? "56px 56px" : "56px";
+
+  /** The pointer is on a time before now. */
+  const isPast = (e: PointerEvent, date: LocalDate) => {
+    const top = (e.currentTarget as HTMLElement).getBoundingClientRect().top;
+    const m = Math.min(24 * 60, Math.max(0, ((e.clientY - top) / HOUR_PX) * 60));
+    return localToUtc(zone, date, Math.floor(m / SNAP_MIN) * SNAP_MIN) < Date.now();
+  };
+
+  /** PRG-21: a click or a drag down an empty day column on a past time opens Log work. */
+  const pickPast = (
+    e: PointerEvent,
+    date: LocalDate,
+    pick: (t: number, minutes?: number) => void,
+  ) => {
+    if (e.button !== 0 || e.target !== e.currentTarget) return;
+    const el = e.currentTarget as HTMLElement;
+    el.setPointerCapture(e.pointerId);
+    const minuteAt = (y: number) =>
+      Math.min(24 * 60, Math.max(0, ((y - el.getBoundingClientRect().top) / HOUR_PX) * 60));
+    const from = minuteAt(e.clientY);
+    el.addEventListener(
+      "pointerup",
+      (u) => {
+        const to = minuteAt(u.clientY);
+        const lo = Math.floor(Math.min(from, to) / SNAP_MIN) * SNAP_MIN;
+        const hi = Math.round(Math.max(from, to) / SNAP_MIN) * SNAP_MIN;
+        const t = localToUtc(zone, date, lo);
+        const room = Math.floor((Date.now() - t) / 60_000);
+        if (room <= 0) return;
+        // A drag into the future logs work only up to now (edge case 6).
+        const dragged = hi - lo >= SNAP_MIN && Math.abs(to - from) >= SNAP_MIN / 2;
+        pick(t, dragged ? Math.min(hi - lo, room) : undefined);
+      },
+      { once: true },
+    );
+  };
 
   const startDrag = (e: PointerEvent, box: Box) => {
     if (e.button !== 0) return;
@@ -143,6 +201,43 @@ export function WeekView({ days, zone, events, now, onMove, onSelect, flagged, e
     el.addEventListener("pointermove", move);
     el.addEventListener("pointerup", up);
   };
+
+  const startPick = (e: PointerEvent, day: number) => {
+    if (e.button !== 0 || !onCreate) return;
+    const col = e.currentTarget as HTMLElement;
+    const top = col.getBoundingClientRect().top;
+    const minuteAt = (y: number) => Math.max(0, Math.min(1440, ((y - top) / HOUR_PX) * 60));
+    const m0 = minuteAt(e.clientY);
+    const y0 = e.clientY;
+    col.setPointerCapture(e.pointerId);
+    let moved = false;
+    const move = (m: PointerEvent) => {
+      if (Math.abs(m.clientY - y0) > 4) moved = true;
+      if (!moved) return;
+      const a = Math.min(m0, minuteAt(m.clientY));
+      const b = Math.max(m0, minuteAt(m.clientY));
+      pick.value = { day, from: snapDown(a), to: Math.max(snapDown(a) + SNAP_MIN, snapUp(b)) };
+    };
+    const end = () => {
+      col.removeEventListener("pointermove", move);
+      col.removeEventListener("pointerup", up);
+      col.removeEventListener("pointercancel", end);
+      const p = pick.value;
+      pick.value = null;
+      return p;
+    };
+    // A cancelled pointer (a touch pan, for example) makes no task.
+    const up = () => {
+      const p = end();
+      const date = days[day] as LocalDate;
+      if (moved && p) onCreate(localToUtc(zone, date, p.from), localToUtc(zone, date, p.to));
+      else onCreate(localToUtc(zone, date, snapDown(m0)), null);
+    };
+    col.addEventListener("pointermove", move);
+    col.addEventListener("pointerup", up);
+    col.addEventListener("pointercancel", end);
+  };
+  const picked = pick.value;
 
   return (
     <div class="week">
@@ -206,9 +301,30 @@ export function WeekView({ days, zone, events, now, onMove, onSelect, flagged, e
             ref={gridRef}
             style={{ gridTemplateColumns: `repeat(${days.length}, 1fr)` }}
           >
-            {days.map((d) => (
-              <div class="day-col" key={d} />
+            {days.map((d, i) => (
+              <div
+                class="day-col"
+                key={d}
+                data-date={d}
+                // A past time logs work (PRG-21), a future time makes a task (TSK-7).
+                // The toolbar's "Log work" button is the keyboard path.
+                onPointerDown={(e) =>
+                  onPickPast && isPast(e, d) ? pickPast(e, d, onPickPast) : startPick(e, i)
+                }
+              />
             ))}
+            {picked && (
+              <div
+                class="ev ev-pick"
+                data-testid="pick"
+                style={{
+                  top: `${(picked.from / 60) * HOUR_PX}px`,
+                  height: `${((picked.to - picked.from) / 60) * HOUR_PX}px`,
+                  left: `${(picked.day / days.length) * 100}%`,
+                  width: `calc(${100 / days.length}% - 2px)`,
+                }}
+              />
+            )}
             {todayIdx >= 0 && (
               <div
                 class="now-line"

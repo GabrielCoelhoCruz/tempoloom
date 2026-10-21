@@ -50,6 +50,8 @@ import { scimRoutes } from "./api/scim.ts";
 import { settingsRoutes } from "./api/settings.ts";
 import { ssoAdminRoutes, ssoAuthRoutes } from "./api/sso.ts";
 import { statsRoutes } from "./api/stats.ts";
+import { taskActionRoutes } from "./api/task-actions.ts";
+import { taskProgressRoutes } from "./api/task-progress.ts";
 import { taskSearchRoutes } from "./api/task-searches.ts";
 import { taskTimeRoutes } from "./api/task-time.ts";
 import { publicInviteRoutes, teamRoutes } from "./api/team.ts";
@@ -74,6 +76,7 @@ import { jsonBody } from "./http.ts";
 import { createLiveHub } from "./live.ts";
 import type { Mailer } from "./mail.ts";
 import { mcpRoutes } from "./mcp.ts";
+import { oauthConsentRoutes, oauthRoutes } from "./oauth.ts";
 import { wakeOrganizers } from "./planner/meetings.ts";
 import { createPreview } from "./preview.ts";
 import { CalDavProvider } from "./providers/caldav.ts";
@@ -126,6 +129,15 @@ const caldavLogin = z.object({
   /** Sign up with an email that several accounts hold as a secondary email (rule 3.3). */
   newAccount: z.boolean().optional(),
 });
+
+/** A same-origin consent page URL (`/oauth/authorize?...`) to come back to, or null. */
+function pendingAuthorization(target: string | undefined, origin: string): string | null {
+  if (!target?.startsWith("/oauth/authorize?")) return null;
+  const u = new URL(target, origin);
+  return u.origin === origin && u.pathname === "/oauth/authorize"
+    ? `${u.pathname}${u.search}`
+    : null;
+}
 
 export function createApp(deps: AppDeps): Hono<AppEnv> {
   const { db, config, box, sync } = deps;
@@ -181,11 +193,12 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
     run(db, "DELETE FROM oauth_states WHERE created_at < ?", now() - STATE_TTL);
     run(
       db,
-      "INSERT INTO oauth_states (state, code_verifier, created_at, reconnect_account_id) VALUES (?, ?, ?, ?)",
+      "INSERT INTO oauth_states (state, code_verifier, created_at, reconnect_account_id, return_to) VALUES (?, ?, ?, ?, ?)",
       req.state,
       req.codeVerifier,
       now(),
       reconnect?.id ?? null,
+      reconnect ? null : pendingAuthorization(c.req.query("return_to"), origin),
     );
     return c.redirect(req.url);
   });
@@ -195,9 +208,14 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
     const { state, code, error } = c.req.query();
     if (error) return c.redirect(`/?login_error=${encodeURIComponent(error)}`);
     const saved = state
-      ? one<{ code_verifier: string; created_at: number; reconnect_account_id: string | null }>(
+      ? one<{
+          code_verifier: string;
+          created_at: number;
+          reconnect_account_id: string | null;
+          return_to: string | null;
+        }>(
           db,
-          "SELECT code_verifier, created_at, reconnect_account_id FROM oauth_states WHERE state = ?",
+          "SELECT code_verifier, created_at, reconnect_account_id, return_to FROM oauth_states WHERE state = ?",
           state,
         )
       : undefined;
@@ -227,7 +245,8 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
       if (isDeactivated(db, user.id)) return c.redirect("/?login_error=deactivated");
       startSession(c, user.id);
       void sync.onConnect(user.id, accountId);
-      return c.redirect("/");
+      // Back to the AI tool's pending sign-in, when it sent the user here.
+      return c.redirect(saved.return_to ?? "/");
     } catch (err) {
       console.error("Google sign-in failed", err);
       return c.redirect("/?login_error=google_failed");
@@ -345,6 +364,8 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
     ),
   );
 
+  // OAuth for MCP clients: metadata, registration and tokens; no session.
+  app.route("/", oauthRoutes(db, config.BASE_URL, now, config.TRUSTED_PROXIES));
   app.route("/pub", publicInviteRoutes(db));
   app.route("/", embedRoutes());
   app.route("/pub", publicBrandingRoutes(db));
@@ -447,6 +468,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   app.route("/api", settingsRoutes(db, sync, now));
   app.route("/api", itemRoutes(db, sync, now));
   app.route("/api", habitRoutes(db, sync, now));
+  app.route("/api", taskActionRoutes(db, sync, now));
   app.route("/api", meetingRoutes(db, sync, now, deps.mailer));
   app.route("/api/planner", plannerRoutes(db, sync, now));
   app.route("/api/booking", bookingRoutes(db, now, config.ONEOFF_LINK_DAYS));
@@ -483,6 +505,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
     ),
   );
   app.route("/api", helpRoutes(db, config.SUPPORT_URL, now));
+  app.route("/api", oauthConsentRoutes(db, config.BASE_URL, now));
   app.route("/api", insightRoutes(db, now));
   app.route(
     "/mcp",
@@ -513,6 +536,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   // r3 s3: planner now line, task time, travel time zones, hours deletion.
   app.route("/api", nowRoutes(db, now));
   app.route("/api", taskTimeRoutes(db, sync, config.BASE_URL, now));
+  app.route("/api", taskProgressRoutes(db, sync, config.BASE_URL, now));
   app.route("/api", travelRoutes(db, sync, now));
   app.route("/api", hoursExtraRoutes(db, sync, now));
 

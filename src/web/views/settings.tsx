@@ -14,12 +14,15 @@ import { FocusOptionsList, MeetingOverloadSection } from "./focus-options.tsx";
 import { MeetingSettings } from "./meeting-settings.tsx";
 import {
   AlertSettings,
+  AutoLockSettings,
   DeleteHoursSet,
   FocusNotes,
   HoursZoneNote,
   PlacementSetting,
+  StartModeSetting,
   TravelSettings,
 } from "./settings-extra.tsx";
+import { TaskDefaults } from "./task-defaults.tsx";
 import { WeeklyReportSetting } from "./weekly-report-setting.tsx";
 
 interface HoursSet {
@@ -376,8 +379,12 @@ export function Settings() {
             </select>
           </label>
           <PlacementSetting settings={settings} act={act} />
+          <StartModeSetting settings={settings} act={act} />
         </div>
       </section>
+
+      <TaskDefaults settings={settings} hours={hours} act={act} />
+      <AutoLockSettings settings={settings} act={act} />
 
       <AlertSettings settings={settings} act={act} />
 

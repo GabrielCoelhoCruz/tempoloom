@@ -5,9 +5,10 @@ import { useCallback, useEffect, useState } from "preact/hooks";
 import type { PlannerEvent } from "../../server/api/planner.ts";
 import { utcToLocal } from "../../shared/time.ts";
 import { api } from "../lib/api.ts";
-import { hhmm } from "../lib/format.ts";
+import { fromLocalInput, hhmm, toLocalInput } from "../lib/format.ts";
 import { useLive } from "../lib/live.ts";
 import { navigate, onLinkClick } from "../lib/router.ts";
+import { zone } from "../lib/state.ts";
 import { type SearchTask, SearchTaskList, TaskSearchPicker } from "./task-search-picker.tsx";
 
 interface Actions {
@@ -305,5 +306,102 @@ export function FocusProgress({ week }: { week: string }) {
         </div>
       ))}
     </div>
+  );
+}
+
+interface WorkItem {
+  value: string;
+  label: string;
+}
+
+/**
+ * Log work (planning-task-progress.md PRG-20 to PRG-22, habits-automation.md
+ * rule 32): minutes on a task or a habit from a past start time. Tempoloom
+ * writes a past event for it, and a task's remaining work goes down.
+ */
+export function LogWork({
+  start,
+  minutes = 30,
+  onClose,
+}: {
+  start: number;
+  minutes?: number | undefined;
+  onClose: (saved: boolean) => void;
+}) {
+  const z = zone();
+  const [items, setItems] = useState<WorkItem[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    void Promise.all([
+      api<{ tasks: { id: string; title: string }[] }>("GET", "/api/tasks?status=open"),
+      api<{ habits: { id: string; title: string }[] }>("GET", "/api/habits"),
+    ]).then(([t, h]) =>
+      setItems([
+        ...t.tasks.map((x) => ({ value: `task:${x.id}`, label: x.title })),
+        ...h.habits.map((x) => ({ value: `habit:${x.id}`, label: `${x.title} (habit)` })),
+      ]),
+    );
+  }, []);
+  return (
+    <form
+      class="form log-work"
+      data-testid="log-work"
+      onSubmit={(e) => {
+        e.preventDefault();
+        const f = new FormData(e.currentTarget as HTMLFormElement);
+        const [kind, itemId] = String(f.get("item")).split(":");
+        setError(null);
+        void api("POST", "/api/log-work", {
+          kind,
+          itemId,
+          start: fromLocalInput(z, String(f.get("start"))),
+          minutes: Number(f.get("minutes")),
+        })
+          .then(() => onClose(true))
+          .catch((err) =>
+            setError(
+              (err as { body?: { message?: string } }).body?.message ??
+                "That did not work. Try again.",
+            ),
+          );
+      }}
+    >
+      <label>
+        Start
+        <input type="datetime-local" name="start" required defaultValue={toLocalInput(z, start)} />
+      </label>
+      <label>
+        Work on
+        <select name="item" required>
+          {items.map((i) => (
+            <option value={i.value} key={i.value}>
+              {i.label}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label>
+        Minutes
+        <input
+          type="number"
+          name="minutes"
+          min={1}
+          max={1440}
+          required
+          defaultValue={String(minutes)}
+        />
+      </label>
+      <button type="submit" class="primary">
+        Log work
+      </button>
+      <button type="button" onClick={() => onClose(false)}>
+        Cancel
+      </button>
+      {error && (
+        <p class="error" data-testid="log-error">
+          {error}
+        </p>
+      )}
+    </form>
   );
 }

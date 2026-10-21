@@ -11,7 +11,7 @@ import { lazyComponent, settle, settled } from "../lib/lazy.ts";
 import { useLive } from "../lib/live.ts";
 import { blockPreview, conflictIds, extraZone, plannerReload } from "../lib/planner-signals.ts";
 import { overlay, withPreview } from "../lib/preview.ts";
-import { planNow, zone } from "../lib/state.ts";
+import { me, planNow, zone } from "../lib/state.ts";
 import { WeekView } from "./week.tsx";
 
 // The Issues and Recommendations panel loads on demand, after the week view.
@@ -56,6 +56,11 @@ function calendarName(ref: CalendarRef): string {
 const PreviewPanel = lazyComponent<{ onApplied: () => void }>(() =>
   import("./preview.tsx").then((m) => m.PreviewPanel),
 );
+const TaskHereDialog = lazyComponent<{
+  start: number;
+  end: number;
+  onClose: (created: boolean) => void;
+}>(() => import("./task-here.tsx").then((m) => m.TaskHereDialog));
 const PlannerHints = lazyComponent(() => import("./hints.tsx").then((m) => m.PlannerHints));
 // Event actions, the running event's tasks and focus progress load on demand.
 const EventActions = lazyComponent<{
@@ -67,6 +72,11 @@ const EventActions = lazyComponent<{
 const CurrentTasks = lazyComponent(() =>
   import("./planner-extras.tsx").then((m) => m.CurrentTasks),
 );
+const LogWork = lazyComponent<{
+  start: number;
+  minutes?: number | undefined;
+  onClose: (saved: boolean) => void;
+}>(() => import("./planner-extras.tsx").then((m) => m.LogWork));
 const FocusProgress = lazyComponent<{ week: string }>(() =>
   import("./planner-extras.tsx").then((m) => m.FocusProgress),
 );
@@ -88,12 +98,16 @@ export function Planner() {
   const [events, setEvents] = useState<PlannerEvent[]>([]);
   const [report, setReport] = useState<ReportEntry[]>([]);
   const [selected, setSelected] = useState<PlannerEvent | null>(null);
+  // PRG-20, PRG-21: the log work form, opened on a past time or from the toolbar.
+  const [logAt, setLogAt] = useState<{ start: number; minutes?: number | undefined } | null>(null);
   // The drawer names calendars as the calendar list does; that list loads on the first open.
   const external = selected?.kind === "external";
   useEffect(() => {
     if (external && calendarList.value.length === 0) void loadCalendars().catch(() => {});
   }, [external]);
   const [busy, setBusy] = useState(false);
+  // TSK-7: a range picked on free space, for a new locked task.
+  const [here, setHere] = useState<{ start: number; end: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
   // A planner link (?item=task:<id>, planning-event-content.md CNT-10) opens that item's event.
   const openItem = useRef(new URLSearchParams(location.search).get("item"));
@@ -234,6 +248,14 @@ export function Planner() {
         </span>
         <button
           type="button"
+          onClick={() =>
+            setLogAt({ start: Math.floor((Date.now() - 3_600_000) / 900_000) * 900_000 })
+          }
+        >
+          Log work
+        </button>
+        <button
+          type="button"
           class="primary"
           disabled={busy}
           onClick={() => void run(async () => {})}
@@ -241,6 +263,18 @@ export function Planner() {
           Plan now
         </button>
       </div>
+      {logAt !== null && (
+        <LogWork
+          key={`${logAt.start}:${logAt.minutes}`}
+          start={logAt.start}
+          minutes={logAt.minutes}
+          onClose={(saved) => {
+            setLogAt(null);
+            // The new past event changes the plan: plan again, then draw the week.
+            if (saved) void planNow().then(load);
+          }}
+        />
+      )}
       <div class="now-bar" data-testid="now-bar">
         {settled.value && (
           <NowBar from={localToUtc(z, weekStart, 0)} to={localToUtc(z, addDays(weekStart, 7), 0)} />
@@ -262,9 +296,28 @@ export function Planner() {
         now={Date.now()}
         onMove={onMove}
         onSelect={(id) => setSelected(events.find((e) => e.id === id) ?? null)}
+        onCreate={(start, end) => {
+          if (start < Date.now()) return;
+          const minutes = me.value?.settings.taskDefaults.minutes ?? 60;
+          setHere({ start, end: end ?? start + minutes * 60_000 });
+        }}
         flagged={conflictIds.value}
         extraZone={extraZone.value}
+        onPickPast={(start, minutes) => {
+          setSelected(null);
+          setLogAt({ start, minutes });
+        }}
       />
+      {here && (
+        <TaskHereDialog
+          start={here.start}
+          end={here.end}
+          onClose={(created) => {
+            setHere(null);
+            if (created) void load();
+          }}
+        />
+      )}
       {settled.value && <IssuesPanel />}
       {report.length > 0 && (
         <details class="issues" data-testid="issues">
