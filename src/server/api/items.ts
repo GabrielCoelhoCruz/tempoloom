@@ -293,8 +293,8 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
       db,
       `UPDATE tasks SET title = ?, notes = ?, level = ?, total_minutes = ?, min_chunk_minutes = ?, max_chunk_minutes = ?,
          start_after = ?, due_at = ?, hours_set_id = ?, rules_changed_at = ?, color = ?, visibility = ?,
-         base_minutes = CASE WHEN ? AND readds = 0 THEN ? ELSE base_minutes END,
-         minutes_changed_at = CASE WHEN ? THEN ? ELSE minutes_changed_at END WHERE id = ?`,
+         base_minutes = CASE WHEN ? AND readds = 0 AND base_minutes IS NOT NULL
+           THEN MIN(?, MAX(15, ? - (total_minutes - base_minutes))) ELSE base_minutes END WHERE id = ?`,
       body.title ?? task.title,
       body.notes ?? task.notes,
       body.level ?? task.level,
@@ -307,12 +307,12 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
       now(),
       body.color ?? task.color,
       body.visibility ?? task.visibility,
-      // PRG-41: a total the user sets before the first re-add is the one that
-      // "re-add" adds again. A changed total restarts the wait (PRG-41, PRG-42).
+      // PRG-45: before the first re-add, a minutes edit changes the first total
+      // by the same amount; the minutes that "Add N min" added stay out of it.
+      // (NULL: the first total is the total, so it follows the edit.)
       minutesChanged ? 1 : 0,
       total,
-      minutesChanged ? 1 : 0,
-      now(),
+      total,
       task.id,
     );
     changed(user.id);

@@ -1347,7 +1347,7 @@ E2E.update({
     40: ["u67_done", "u67_readd", "u67_manual"],
 })
 E2E_NOTES.update({
-    40: "Settings has the action and the wait days (1 to 30, default 3); the wait counts from the time the task became time-used, or from a later change of its total (PRG-46), and a plan run applies the action and writes it to the task's change log",
+    40: "Settings has the action and the wait days (1 to 30, default 3); the wait counts from the first plan run that finds the task time-used (PRG-46), and a plan run applies the action and writes it to the task's change log",
 })
 BLOCKED[36] = ("Restart from " + VENDOR_STARTS + " (PRG-13) needs those vendor apps; Restart in the task list and in the planner is built, "
                "with full UI E2E on CalDAV (E2E: \u201c" + T["u67_restart"] + "\u201d; \u201c" + T["u67_restart_manual"] + "\u201d)")

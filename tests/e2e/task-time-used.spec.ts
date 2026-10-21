@@ -9,6 +9,7 @@
 // - Restart makes a second event, or the next plan run moves it back    -> one event after a run
 // - "Nothing" closes or refills a time-used task                        -> open, no new event
 // - an action runs before the wait days end                             -> open after 2 days
+//   (the wait starts at the first plan run that finds the task time-used)
 // - a new action skips tasks that were time-used before the change      -> done after 3 days
 // - mark-done changes the events                                        -> event at its time
 // - re-add adds nothing, or adds the current total instead of the first -> 60, then 60 again
@@ -310,7 +311,13 @@ test("time-used action: Add the time again adds the first total after the wait d
 
   // The new hour passes, and a day later the first total (60), not 120, comes again.
   const [next] = titled(await weekEvents(cal), "AT-P7").filter((e) => e.start >= t1);
-  const t2 = (next?.end ?? 0) + DAY + 60 * MIN;
+  // A plan run after the new hour ends finds the task time-used: its wait starts (PRG-46).
+  const used = (next?.end ?? 0) + 5 * MIN;
+  await clockAt(app, used);
+  await planRun(page);
+  row = await taskRow(page, "AT-P7");
+  await expect(row.getByTestId("task-state")).toHaveText("time-used");
+  const t2 = used + DAY + 60 * MIN;
   await clockAt(app, t2);
   await planRun(page);
   await eventually(
