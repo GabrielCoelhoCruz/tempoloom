@@ -33,6 +33,7 @@ import {
 } from "../planner/meetings.ts";
 import { KEY_PROP, MANAGED_PROP, type ManagedRow } from "../planner/push.ts";
 import { meetingGuests, planningSnapshot } from "../planner/replan.ts";
+import { editOwnSeries, endOwnSeries, lockedIds, seriesTarget } from "../planner/series.ts";
 import { waitingCalendars } from "../planner/write.ts";
 import type { ProviderPool } from "../providers/index.ts";
 import { getSettings } from "../settings.ts";
@@ -230,21 +231,27 @@ function save(db: Db, row: MeetingRow, attendees: Attendee[], insert: boolean): 
     "lead_minutes",
     "rules_changed_at",
     "auto_reschedule",
-    "series_calendar_id",
-    "series_event_id",
-    "series_owned",
-    "series_rule",
     "event_settings",
   ] as const;
   const values = cols.map((k) => row[k]);
   if (insert) {
+    // The series columns are set here and by the plan run only: an edit never
+    // writes back a series id or baseline it read before (rule 2).
+    const series = [
+      "series_calendar_id",
+      "series_event_id",
+      "series_owned",
+      "series_rule",
+    ] as const;
     run(
       db,
-      `INSERT INTO meetings (id, user_id, created_at, ${cols.join(", ")}) VALUES (?, ?, ?, ${cols.map(() => "?").join(", ")})`,
+      `INSERT INTO meetings (id, user_id, created_at, ${[...cols, ...series].join(", ")})
+       VALUES (?, ?, ?, ${[...cols, ...series].map(() => "?").join(", ")})`,
       row.id,
       row.user_id,
       row.created_at,
       ...values,
+      ...series.map((k) => row[k]),
     );
   } else {
     run(
@@ -368,69 +375,6 @@ function keepSeriesFrequency(old: MeetingRow, f: Frequency): LocalDate | null {
 
 /** An adopted series: the user's own recurring meeting with rules attached (rule 1). */
 export const adopted = (m: MeetingRow) => m.series_event_id !== null && !m.series_owned;
-
-/**
- * Ends Tempoloom's own series at `now` (MEET-02 rules 27-29): the past
- * instances stay, later ones go except the ids in `keep`, and the meeting
- * forgets the series, so the next plan run writes a new one when it places.
- */
-export async function endOwnSeries(
-  db: Db,
-  pool: ProviderPool,
-  m: MeetingRow,
-  now: number,
-  keep: string[],
-): Promise<void> {
-  if (!m.series_owned || !m.series_event_id) return;
-  const cal = seriesTarget(db, m);
-  const provider = cal && pool.get(cal.account_id);
-  if (cal && provider?.endSeries)
-    await provider.endSeries(cal.provider_id, m.series_event_id, now, keep);
-  const instances = `SELECT event_id FROM events WHERE calendar_id = ? AND recurring_id = ? AND start_ms > ?`;
-  const kept = keep.length > 0 ? `AND event_id NOT IN (${keep.map(() => "?").join(", ")})` : "";
-  run(
-    db,
-    `DELETE FROM managed_events WHERE kind = 'meeting' AND source_id = ? AND start_ms > ?
-       AND event_id IN (${instances}) ${kept}`,
-    m.id,
-    now,
-    m.series_calendar_id,
-    m.series_event_id,
-    now,
-    ...keep,
-  );
-  run(
-    db,
-    `DELETE FROM events WHERE calendar_id = ? AND recurring_id = ? AND start_ms > ? ${kept}`,
-    m.series_calendar_id,
-    m.series_event_id,
-    now,
-    ...keep,
-  );
-  run(
-    db,
-    "UPDATE meetings SET series_calendar_id = NULL, series_event_id = NULL, series_rule = '' WHERE id = ?",
-    m.id,
-  );
-}
-
-/** Locked future occurrences: they stay when the series ends (LCK-2). */
-const lockedIds = (db: Db, m: MeetingRow, now: number) =>
-  all<{ event_id: string }>(
-    db,
-    `SELECT event_id FROM managed_events WHERE kind = 'meeting' AND source_id = ? AND locked = 1
-       AND start_ms > ? AND event_id IS NOT NULL`,
-    m.id,
-    now,
-  ).map((r) => r.event_id);
-
-function seriesTarget(db: Db, m: MeetingRow) {
-  return one<{ account_id: string; provider_id: string }>(
-    db,
-    "SELECT account_id, provider_id FROM calendars WHERE id = ?",
-    m.series_calendar_id,
-  );
-}
 
 /** The series carries the meeting id (rule 1, output `tlMeetingId`) and counts as managed. */
 async function markSeries(db: Db, pool: ProviderPool, m: MeetingRow, userId: string) {
@@ -687,57 +631,46 @@ export function meetingRoutes(
 
   r.put("/meetings/:id", async (c) => {
     const user = c.get("user");
-    const old = own(c.req.param("id"), user.id);
+    own(c.req.param("id"), user.id);
     const body = await jsonBody(c, meetingInput);
-    const t = now();
-    const { row, attendees } = rowFrom(db, user.id, old.id, body, t, old.rank);
-    if (adopted(old)) row.starting = keepSeriesFrequency(old, body.frequency);
-    const rulesChanged = rulesChangedAt(db, old, row, attendees, body, t);
-    // Tempoloom's own series repeats by the frequency: a new frequency or start
-    // date ends it, and the next run writes a series with the new rule.
-    const restart =
-      old.series_owned === 1 &&
-      old.series_event_id !== null &&
-      (old.frequency !== row.frequency || old.starting !== row.starting);
-    const series = {
-      calendar: old.series_calendar_id,
-      id: old.series_event_id,
-      rule: old.series_rule,
-    };
-    if (restart)
-      await sync.exclusive(user.id, async (pool) => {
-        await endOwnSeries(db, pool, old, t, lockedIds(db, old, t));
-        series.calendar = null;
-        series.id = null;
-        series.rule = "";
-      });
-    tx(db, () => {
-      if (body.hoursMode === "itemSpecific" && body.itemHours)
-        row.hours_set_id = saveItemHours(db, user.id, old.hours_set_id, row.title, body.itemHours);
-      // Rule 7: a new priority puts the meeting at the end of its new group.
-      if (row.level !== old.level) row.rank = endRank(db, user.id, row.level);
-      save(
-        db,
-        {
-          ...row,
-          rules_changed_at: rulesChanged,
-          created_at: old.created_at,
-          series_calendar_id: series.calendar,
-          series_event_id: series.id,
-          series_owned: old.series_owned,
-          series_rule: series.rule,
-          // The calendar is set at creation only (`targetCalendar`).
-          event_settings: JSON.stringify(
-            editedEventSettings(
-              readEventSettings(old.event_settings, defaultEventSettings("meeting")),
-              body.eventSettings,
+    // Read in the queue: a plan run may write the series meanwhile (rule 2).
+    await sync.exclusive(user.id, async (pool) => {
+      const old = own(c.req.param("id"), user.id);
+      const t = now();
+      const { row, attendees } = rowFrom(db, user.id, old.id, body, t, old.rank);
+      if (adopted(old)) row.starting = keepSeriesFrequency(old, body.frequency);
+      const rulesChanged = rulesChangedAt(db, old, row, attendees, body, t);
+      await editOwnSeries(db, (id) => pool.get(id), old, row, attendees, t);
+      tx(db, () => {
+        if (body.hoursMode === "itemSpecific" && body.itemHours)
+          row.hours_set_id = saveItemHours(
+            db,
+            user.id,
+            old.hours_set_id,
+            row.title,
+            body.itemHours,
+          );
+        // Rule 7: a new priority puts the meeting at the end of its new group.
+        if (row.level !== old.level) row.rank = endRank(db, user.id, row.level);
+        save(
+          db,
+          {
+            ...row,
+            rules_changed_at: rulesChanged,
+            created_at: old.created_at,
+            // The calendar is set at creation only (`targetCalendar`).
+            event_settings: JSON.stringify(
+              editedEventSettings(
+                readEventSettings(old.event_settings, defaultEventSettings("meeting")),
+                body.eventSettings,
+              ),
             ),
-          ),
-        },
-        attendees,
-        false,
-      );
-      if (row.hours_set_id !== old.hours_set_id) dropItemHours(db, old.hours_set_id);
+          },
+          attendees,
+          false,
+        );
+        if (row.hours_set_id !== old.hours_set_id) dropItemHours(db, old.hours_set_id);
+      });
     });
     changed(user.id);
     return c.json({ ok: true });
@@ -749,9 +682,11 @@ export function meetingRoutes(
    */
   r.post("/meetings/:id/enabled", async (c) => {
     const user = c.get("user");
-    const m = own(c.req.param("id"), user.id);
+    own(c.req.param("id"), user.id);
     const { enabled } = await jsonBody(c, z.object({ enabled: z.boolean() }));
     await sync.exclusive(user.id, async (pool) => {
+      // Read in the queue, so a series that a plan run just wrote is ended too.
+      const m = own(c.req.param("id"), user.id);
       run(
         db,
         "UPDATE meetings SET enabled = ?, rules_changed_at = ? WHERE id = ?",
@@ -762,7 +697,8 @@ export function meetingRoutes(
       if (adopted(m)) {
         if (enabled) await markSeries(db, pool, m, user.id);
         else await releaseSeries(db, pool, m);
-      } else if (!enabled) await endOwnSeries(db, pool, m, now(), lockedIds(db, m, now()));
+      } else if (!enabled)
+        await endOwnSeries(db, (id) => pool.get(id), m, now(), lockedIds(db, m, now()));
     });
     changed(user.id);
     return c.json({ ok: true });
@@ -990,8 +926,10 @@ export function meetingRoutes(
         m.id,
         now(),
       );
-      if (adopted(m)) await releaseSeries(db, pool, m);
-      else await endOwnSeries(db, pool, m, now(), []);
+      // Read again in the queue, so a series that a plan run just wrote is ended too.
+      const cur = own(m.id, user.id);
+      if (adopted(cur)) await releaseSeries(db, pool, cur);
+      else await endOwnSeries(db, (id) => pool.get(id), cur, now(), []);
       run(db, "DELETE FROM meetings WHERE id = ?", m.id);
       dropItemHours(db, m.hours_set_id);
       return future.map((o) => ({ start: o.start_ms, end: o.end_ms }));

@@ -9,14 +9,12 @@ import { type LocalDate, MINUTE, utcToLocal, weekdayOf } from "../../shared/time
 import { all, type Db, one, run, tx } from "../db.ts";
 import type { SeriesFacts } from "../providers/types.ts";
 import { getSettings } from "../settings.ts";
-import { planningZone } from "../travel.ts";
+import { homeZone, planningZone } from "../travel.ts";
 import { stripMarker } from "./markers.ts";
 import { logChange, periodOf } from "./meeting-log.ts";
 import type { MeetingRow } from "./meetings.ts";
 import type { ManagedRow } from "./push.ts";
-import { instanceDate } from "./series.ts";
-
-const BYDAY = ["MO", "TU", "WE", "TH", "FR", "SA", "SU"];
+import { type Baseline, BYDAY, instanceDate } from "./series.ts";
 
 interface Instance {
   event_id: string;
@@ -28,7 +26,7 @@ interface Instance {
 }
 
 const factsOf = (json: string): SeriesFacts | null =>
-  json ? (JSON.parse(json) as SeriesFacts) : null;
+  json ? (JSON.parse(json) as SeriesFacts | null) : null;
 
 /** The fields of a master that a series edit changes. */
 const ruleKey = (f: SeriesFacts | null) =>
@@ -134,52 +132,77 @@ function readOne(
       seriesId,
     );
   const current = instancesOf(m.series_event_id as string);
+  // C2: the organizer deleted the whole series of Tempoloom's own meeting:
+  // as a delete without guest emails, the rules stay and turn off (edge case 5).
+  if (
+    m.series_owned &&
+    !one(
+      db,
+      "SELECT 1 FROM events WHERE calendar_id = ? AND recurring_id = ? LIMIT 1",
+      calendarId,
+      m.series_event_id,
+    )
+  ) {
+    run(
+      db,
+      `UPDATE meetings SET enabled = 0, series_calendar_id = NULL, series_event_id = NULL,
+         series_rule = '', rules_changed_at = ? WHERE id = ?`,
+      now,
+      m.id,
+    );
+    return;
+  }
   const currentFacts = factsOf(current[0]?.series ?? "");
   // "This and following": a later series on the calendar that carries this meeting.
-  const later = all<{ recurring_id: string; series: string; private_props: string }>(
+  // A series that Tempoloom ended (tl_ended) is never the organizer's split.
+  const later = all<{ recurring_id: string; series: string }>(
     db,
-    `SELECT recurring_id, series, private_props FROM events
+    `SELECT recurring_id, series FROM events
      WHERE calendar_id = ? AND recurring_id IS NOT NULL AND recurring_id <> ? AND series <> ''
-       AND end_ms > ? GROUP BY recurring_id`,
+       AND end_ms > ? AND json_extract(private_props, '$.tl_meeting') = ?
+       AND json_extract(private_props, '$.tl_ended') IS NOT '1'
+     GROUP BY recurring_id`,
     calendarId,
     m.series_event_id,
     now,
+    m.id,
   )
     .filter(
-      (e) =>
-        (JSON.parse(e.private_props) as Record<string, string>).tl_meeting === m.id &&
-        (factsOf(e.series)?.start ?? 0) > (currentFacts?.start ?? Number.POSITIVE_INFINITY),
+      (e) => (factsOf(e.series)?.start ?? 0) > (currentFacts?.start ?? Number.POSITIVE_INFINITY),
     )
     .sort((a, b) => (factsOf(b.series)?.start ?? 0) - (factsOf(a.series)?.start ?? 0))[0];
   const seriesId = later?.recurring_id ?? (m.series_event_id as string);
   const instances = later ? instancesOf(seriesId) : current;
   const facts = later ? factsOf(later.series) : currentFacts;
   if (!facts) return;
-  const seen = factsOf(m.series_rule);
+  const seen = factsOf(m.series_rule) as Baseline | null;
   if (!later && seen && ruleKey(seen) === ruleKey(facts)) return;
-  const store = () =>
-    run(
-      db,
-      "UPDATE meetings SET series_rule = ? WHERE id = ?",
-      JSON.stringify({ ...facts, own: false }),
-      m.id,
-    );
-  // The first look at a series (an adopted one): nothing to compare with.
+  // The new baseline keeps the zone the rule was written in (W8).
+  const baseline = JSON.stringify({
+    ...facts,
+    own: false,
+    ...(seen?.zone ? { zone: seen.zone } : {}),
+  });
+  // The first look at an adopted series: nothing to compare with. Tempoloom's
+  // own series has the baseline of its write (push.ts writeSeries); without one
+  // the edit cannot be read, so it is logged, not dropped in silence.
   if (!seen) {
-    store();
+    if (m.series_owned)
+      console.error(`Meeting ${m.id}: its series has no baseline; a series edit is not read`);
+    run(db, "UPDATE meetings SET series_rule = ? WHERE id = ?", baseline, m.id);
     return;
   }
 
   // The meeting rules follow the series master.
   const was = JSON.parse(m.frequency) as MeetingFrequency;
-  const start = utcToLocal(zone, facts.start);
+  const start = utcToLocal(seen.zone ?? homeZone(db, userId), facts.start);
   const minutes = Math.round((facts.end - facts.start) / MINUTE);
   const changed = { ...m, series_event_id: seriesId };
   if (minutes >= 5 && minutes <= 480 && facts.end - facts.start !== seen.end - seen.start) {
     changed.duration_minutes = minutes;
     changed.shortest_minutes = Math.min(m.shortest_minutes, minutes);
   }
-  if (utcToLocal(zone, seen.start).minuteOfDay !== start.minuteOfDay)
+  if (utcToLocal(seen.zone ?? homeZone(db, userId), seen.start).minuteOfDay !== start.minuteOfDay)
     changed.ideal_minute = start.minuteOfDay;
   const next = frequencyOf(facts.rrule, start.date);
   if (next && (facts.rrule !== seen.rrule || later)) {
@@ -242,7 +265,7 @@ function readOne(
     changed.shortest_minutes,
     changed.starting,
     changed.rules_changed_at,
-    JSON.stringify({ ...facts, own: false }),
+    baseline,
     m.id,
   );
 

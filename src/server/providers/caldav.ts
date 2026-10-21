@@ -1271,14 +1271,20 @@ export class CalDavProvider implements CalendarProvider {
   async addInstance(calendarId: string, seriesId: string, w: EventWrite): Promise<ProviderEvent> {
     const { root, master, etag } = await this.#seriesObject(calendarId, seriesId);
     const { time, tzid } = this.#seriesTime(master, w.start);
-    // An EXDATE of the same time would hide the new instance.
+    // At a rule time with an EXDATE: removing the EXDATE gives the instance
+    // back. An RDATE there too would make two instances at the same time.
+    let ruleTime = false;
     for (const p of master.getAllProperties("exdate"))
-      if ((p.getFirstValue() as ICAL.Time | null)?.toString() === time.toString())
+      if ((p.getFirstValue() as ICAL.Time | null)?.toString() === time.toString()) {
         master.removeProperty(p);
-    const rdate = new ICAL.Property("rdate");
-    rdate.setValue(time);
-    if (tzid) rdate.setParameter("tzid", tzid);
-    master.addProperty(rdate);
+        ruleTime = true;
+      }
+    if (!ruleTime) {
+      const rdate = new ICAL.Property("rdate");
+      rdate.setValue(time);
+      if (tzid) rdate.setParameter("tzid", tzid);
+      master.addProperty(rdate);
+    }
     const tag = await this.#putSeries(seriesId, root, etag);
     return this.#updateInstance(calendarId, `${seriesId}#${time.toString()}`, w, tag);
   }
@@ -1292,59 +1298,106 @@ export class CalDavProvider implements CalendarProvider {
     const { client, root, master, etag } = found;
     const kept = new Set(keep);
     const idOf = (t: ICAL.Time) => `${seriesId}#${t.toString()}`;
-    const later = (t: unknown) => t instanceof ICAL.Time && instantOf(t, this.#zone) >= at;
-    const start = master.getFirstPropertyValue("dtstart");
-    const rdates = new Set<string>();
-    for (const p of master.getAllProperties("rdate")) {
-      const t = p.getFirstValue();
-      if (!later(t)) continue;
-      if (kept.has(idOf(t as ICAL.Time))) rdates.add((t as ICAL.Time).toString());
-      else master.removeProperty(p);
-    }
+    const instant = (t: unknown) =>
+      t instanceof ICAL.Time ? instantOf(t, this.#zone) : Number.NEGATIVE_INFINITY;
     const tzid = master.getFirstProperty("dtstart")?.getParameter("tzid");
-    // A kept later instance stays as an RDATE of its own rule time (its id).
-    const keepAt = (t: ICAL.Time) => {
-      if (rdates.has(t.toString()) || (start instanceof ICAL.Time && t.compare(start) === 0))
-        return;
-      const p = new ICAL.Property("rdate");
+    const start = master.getFirstPropertyValue("dtstart");
+    const datesOf = (name: string) =>
+      new Set(
+        master.getAllProperties(name).map((p) => (p.getFirstValue() as ICAL.Time).toString()),
+      );
+    const rdates = datesOf("rdate");
+    const exdates = datesOf("exdate");
+    const add = (name: "rdate" | "exdate", t: ICAL.Time) => {
+      const set = name === "rdate" ? rdates : exdates;
+      if (set.has(t.toString())) return;
+      const p = new ICAL.Property(name);
       p.setValue(t);
       if (typeof tzid === "string" && !t.zone?.tzid?.startsWith("UTC"))
         p.setParameter("tzid", tzid);
       master.addProperty(p);
-      rdates.add(t.toString());
+      set.add(t.toString());
     };
+    // An instance counts by its start: an override's own start, else its rule
+    // time (the RECURRENCE-ID). The rule ends at `at`, so an instance kept
+    // with a later rule time needs an RDATE of that time (its id); a removed
+    // one whose rule time is before `at` needs an EXDATE.
+    const keepRdate = new Set<string>();
     for (const ov of root.getAllSubcomponents("vevent")) {
       if (ov === master) continue;
       const rid = ov.getFirstPropertyValue("recurrence-id");
-      if (!later(rid)) continue;
-      if (kept.has(idOf(rid as ICAL.Time))) keepAt(rid as ICAL.Time);
-      else root.removeSubcomponent(ov);
+      if (!(rid instanceof ICAL.Time)) continue;
+      const ruleLater = instant(rid) >= at;
+      const startLater = instant(ov.getFirstPropertyValue("dtstart") ?? rid) >= at;
+      if (startLater && !kept.has(idOf(rid))) {
+        root.removeSubcomponent(ov);
+        if (!ruleLater) add("exdate", rid);
+        continue;
+      }
+      if (ruleLater) keepRdate.add(rid.toString());
     }
-    // Kept instances without an override are kept at their rule time.
+    // Kept instances without an override stay at their rule time.
     for (const id of kept) {
-      if (!id.startsWith(`${seriesId}#`)) continue;
-      const rid = id.slice(seriesId.length + 1);
+      if (!id.startsWith(`${seriesId}#`) || !(start instanceof ICAL.Time)) continue;
+      const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})/.exec(
+        id.slice(seriesId.length + 1),
+      );
+      if (!m) continue;
+      const t = start.clone();
+      [t.year, t.month, t.day, t.hour, t.minute, t.second] = m.slice(1).map(Number) as [
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+      ];
+      if (instant(t) >= at) keepRdate.add(t.toString());
+    }
+    for (const p of master.getAllProperties("rdate")) {
+      const t = p.getFirstValue() as ICAL.Time;
+      if (instant(t) >= at && !keepRdate.has(t.toString())) {
+        master.removeProperty(p);
+        rdates.delete(t.toString());
+      }
+    }
+    for (const ov of root.getAllSubcomponents("vevent")) {
+      const rid = ov.getFirstPropertyValue("recurrence-id");
+      if (ov !== master && rid instanceof ICAL.Time && keepRdate.has(rid.toString()))
+        add("rdate", rid);
+    }
+    for (const id of keepRdate) {
       const ov = root
         .getAllSubcomponents("vevent")
         .some(
-          (v) => (v.getFirstPropertyValue("recurrence-id") as ICAL.Time | null)?.toString() === rid,
+          (v) => (v.getFirstPropertyValue("recurrence-id") as ICAL.Time | null)?.toString() === id,
         );
-      if (!ov && start instanceof ICAL.Time) {
-        const t = start.clone();
-        const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})/.exec(rid);
-        if (!m) continue;
-        t.year = Number(m[1]);
-        t.month = Number(m[2]);
-        t.day = Number(m[3]);
-        t.hour = Number(m[4]);
-        t.minute = Number(m[5]);
-        t.second = Number(m[6]);
-        if (later(t)) keepAt(t);
-      }
+      if (ov || !(start instanceof ICAL.Time)) continue;
+      const t = start.clone();
+      const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})/.exec(id);
+      if (!m) continue;
+      [t.year, t.month, t.day, t.hour, t.minute, t.second] = m.slice(1).map(Number) as [
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+      ];
+      add("rdate", t);
+    }
+    // Tempoloom ended this series: it is never read as the organizer's split.
+    for (const ev of root.getAllSubcomponents("vevent")) {
+      const props = { ...readProps(ev), tl_ended: "1" };
+      ev.removeAllProperties(PROPS_PROPERTY);
+      ev.addPropertyWithValue(
+        PROPS_PROPERTY,
+        Buffer.from(JSON.stringify(props)).toString("base64url"),
+      );
     }
     const rule = master.getFirstPropertyValue("rrule");
-    if (later(start)) {
-      // The series had not started: only kept instances stay, as RDATEs.
+    if (instant(start) >= at) {
+      // The series had not started: only the kept instances stay, as RDATEs.
       master.removeAllProperties("rrule");
       const startKept = start instanceof ICAL.Time && kept.has(idOf(start));
       if (!startKept && rdates.size === 0) {
@@ -1353,12 +1406,7 @@ export class CalDavProvider implements CalendarProvider {
           throw new ProviderError("other", res.status, `Delete failed: ${res.status}`);
         return;
       }
-      if (!startKept && start instanceof ICAL.Time) {
-        const ex = new ICAL.Property("exdate");
-        ex.setValue(start);
-        if (typeof tzid === "string") ex.setParameter("tzid", tzid);
-        master.addProperty(ex);
-      }
+      if (!startKept && start instanceof ICAL.Time) add("exdate", start);
     } else if (rule instanceof ICAL.Recur) {
       rule.count = null as unknown as number;
       rule.until = toUtcTime(at - 1000);

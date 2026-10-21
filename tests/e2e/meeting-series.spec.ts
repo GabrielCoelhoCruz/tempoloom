@@ -159,11 +159,12 @@ test("a calendar resize of this and the following occurrences sets the meeting l
   await signIn();
   const [, second] = await weekly(page, cal, "Plan review", 60);
 
-  // The organizer shortens next week's occurrence and the following ones to 30 minutes.
+  // The organizer shortens next week's occurrence and the following ones to 45 minutes
+  // (not the form default, so a reset to it shows).
   const added = await splitSeries(cal.calendarId, second, (lines) =>
-    lines.map((l) => (/^DTEND[:;]/.test(l) ? l.replace(/T\d{6}/, "T103000") : l)),
+    lines.map((l) => (/^DTEND[:;]/.test(l) ? l.replace(/T\d{6}/, "T104500") : l)),
   );
-  const expected = [`${day(1)} 10:00-11:00`, `${day(8)} 10:00-10:30`];
+  const expected = [`${day(1)} 10:00-11:00`, `${day(8)} 10:00-10:45`];
   await eventually(
     async () => {
       await planNow(page);
@@ -172,9 +173,9 @@ test("a calendar resize of this and the following occurrences sets the meeting l
     (l) => expect(times(l, "Plan review")).toEqual(expected),
     60_000,
   );
-  await expect(row(page, "Plan review")).toContainText("30 min");
-  await expectShown(page, "Plan review", [/10:00 to 11:00$/, /10:00 to 10:30$/]);
-  await expect(row(page, "Plan review")).toContainText("every week, ideally Tue at 10:00 · 30 min");
+  await expect(row(page, "Plan review")).toContainText("45 min");
+  await expectShown(page, "Plan review", [/10:00 to 11:00$/, /10:00 to 10:45$/]);
+  await expect(row(page, "Plan review")).toContainText("every week, ideally Tue at 10:00 · 45 min");
   // Kept, not counted as a skip or a move by hand: nothing is locked.
   await expect(row(page, "Plan review").getByTestId("meeting-occurrences")).not.toContainText(
     "locked",
@@ -189,7 +190,7 @@ test("a calendar resize of this and the following occurrences sets the meeting l
   expect(times(after, "Plan review")).toEqual(expected);
   expect([...objects(after, "Plan review")].sort()).toHaveLength(2);
   expect(titled(after, "Plan review")[1]?.id.split("#")[0]).toBe(added);
-  expect(blockProp(masterOf(await rawObject(cal.calendarId, added)), "DTEND")).toContain("T103000");
+  expect(blockProp(masterOf(await rawObject(cal.calendarId, added)), "DTEND")).toContain("T104500");
 });
 
 test("a calendar resize of all occurrences sets the meeting length for every occurrence, also the one Tempoloom moved, and nothing locks (MEET-02 rule 18)", async ({

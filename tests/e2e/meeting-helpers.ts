@@ -65,9 +65,14 @@ export async function rawObject(calendarUrl: string, id: string): Promise<string
  * (`<object url>#<recurrence id>`): its own VEVENT, the override, else the master.
  */
 export async function rawEvent(calendarUrl: string, id: string): Promise<string> {
-  const text = await rawObject(calendarUrl, id);
+  return instanceText(await rawObject(calendarUrl, id), id);
+}
+
+/** The text of the event an id names: an instance's own VEVENT, else the whole object. */
+export function instanceText(text: string, id: string): string {
   if (!id.includes("#")) return text;
-  return overrideOf(text.replace(/\r\n/g, "\n"), id) ?? masterOf(text.replace(/\r\n/g, "\n"));
+  const lf = text.replace(/\r\n/g, "\n");
+  return overrideOf(lf, id) ?? masterOf(lf);
 }
 
 /**
@@ -253,10 +258,7 @@ export function overrideOf(ics: string, id: string): string | null {
 }
 
 /** What a guest's calendar app shows of one instance: its override, else the master. */
-export async function instanceRaw(calendarUrl: string, id: string): Promise<string> {
-  const ics = await rawEvent(calendarUrl, id);
-  return overrideOf(ics, id) ?? masterOf(ics);
-}
+export const instanceRaw = rawEvent;
 
 const icsUtc = (t: number) =>
   new Date(t)

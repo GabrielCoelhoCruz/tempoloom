@@ -3,18 +3,15 @@
 import type { Locator, Page } from "@playwright/test";
 import { expect } from "./fixtures.ts";
 import { credentials } from "./ics.ts";
-import { masterOf, overrideOf } from "./meeting-helpers.ts";
+import { instanceText } from "./meeting-helpers.ts";
 
 /** The iCalendar text of one event on Radicale, with folded lines joined. */
 export async function rawEvent(url: string): Promise<string> {
   const object = url.replace(/#.*$/, "");
   const res = await fetch(object, { headers: { authorization: credentials(object) } });
   if (!res.ok) throw new Error(`GET ${object}: ${res.status}`);
-  const text = (await res.text()).replace(/\r?\n[ \t]/g, "");
   // An instance of a series: its own VEVENT, the override, else the master.
-  if (!url.includes("#")) return text;
-  const lf = text.replace(/\r\n/g, "\n");
-  return overrideOf(lf, url) ?? masterOf(lf);
+  return instanceText((await res.text()).replace(/\r?\n[ \t]/g, ""), url);
 }
 
 /** The VEVENT part of an object, without its alarms. */

@@ -1574,8 +1574,8 @@ T["u68_edits"] = "series edits in the calendar are kept: a new day and time set 
 E2E[320] = ["u68_series"]
 E2E_NOTES[320] = ("The E2E reads the Radicale object: one VEVENT with a weekly RRULE and a local DTSTART (TZID), and an override "
                   "(RECURRENCE-ID) for the occurrence that moved; reload, plan runs and a server restart keep it. A meeting saved before "
-                  "keeps its single events, and its series EXDATEs those periods (unit test). Turning off, delete and a new "
-                  "frequency end the series with an RRULE UNTIL")
+                  "keeps its single events, and its series EXDATEs those periods (unit test). Turning off, delete, a new length, ideal time "
+                  "or frequency, and a new home zone end the series with an RRULE UNTIL by instance start, keeping locked instances (CalDAV integration and unit tests)")
 E2E[364] = ["u7_manual", "u68_following", "u68_all"]
 E2E_NOTES[364] = ("One occurrence: an override, kept and locked. Following: the calendar ends the series and starts a new one; the "
                   "meeting takes the new length from there and the earlier occurrence keeps its own. All: the master's new length is "

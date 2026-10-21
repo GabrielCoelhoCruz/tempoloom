@@ -1,6 +1,7 @@
 // Writes the desired managed events to calendars: creates, moves and deletes
 // events so that the calendars match the plan. Unchanged events get no write.
 import { randomUUID } from "node:crypto";
+import { localToUtc } from "../../shared/time.ts";
 import { logManaged, pruneChangeLog } from "../change-log.ts";
 import { all, type Db, one, run } from "../db.ts";
 import {
@@ -12,11 +13,19 @@ import {
 } from "../providers/types.ts";
 import { getSettings } from "../settings.ts";
 import { cacheEvent } from "../sync/pull.ts";
-import { planningZone } from "../travel.ts";
+import { homeZone, planningZone } from "../travel.ts";
 import { periodOf } from "./meeting-log.ts";
 import type { MeetingRow } from "./meetings.ts";
 import { ACTIVE } from "./mirror.ts";
-import { instanceDate, planSeries } from "./series.ts";
+import {
+  type Baseline,
+  baselineOf,
+  endOwnSeries,
+  forgetSeries,
+  instanceDate,
+  lockedIds,
+  planSeries,
+} from "./series.ts";
 
 export interface DesiredEvent {
   key: string;
@@ -322,6 +331,7 @@ export async function pushSchedule(
       userId,
     ).map((p) => p.id),
   );
+  await restartMovedZones(ctx, frozen);
   const rows = all<ManagedRow>(
     db,
     "SELECT * FROM managed_events WHERE user_id = ? AND end_ms > ?",
@@ -353,7 +363,14 @@ export async function pushSchedule(
     userId,
   )) {
     const own = desired.filter((d) => d.kind === "meeting" && d.sourceId === m.id);
-    result.created += await writeSeries(ctx, m, own, byKey);
+    // One meeting's calendar error never stops the plan run of the user.
+    try {
+      result.created += await writeSeries(ctx, m, own, byKey);
+    } catch (err) {
+      if (!(err instanceof ProviderError)) throw err;
+      console.error(`Writing the series of meeting ${m.id} failed`, err);
+      result.conflicts++;
+    }
   }
 
   for (const row of rows) {
@@ -454,10 +471,27 @@ export async function pushSchedule(
             d.calendarId,
           )?.series_event_id
         : undefined;
-    const ev =
-      series && provider.addInstance
-        ? await provider.addInstance(providerCalendarId, series, write(userId, d))
-        : await provider.insertEvent(providerCalendarId, write(userId, d));
+    let ev: ProviderEvent;
+    try {
+      // The period's rule instance may start after the planning window, so no
+      // row holds it yet: move that instance, never add a second one.
+      if (series && (await moveRuleInstance(ctx, provider, providerCalendarId, series, d, row))) {
+        result.created++;
+        continue;
+      }
+      ev =
+        series && provider.addInstance
+          ? await provider.addInstance(providerCalendarId, series, write(userId, d))
+          : await provider.insertEvent(providerCalendarId, write(userId, d));
+    } catch (err) {
+      // The organizer deleted the whole series: the next run writes a new one.
+      if (series && err instanceof ProviderError && err.kind === "not_found") {
+        forgetSeries(db, d.sourceId);
+        result.conflicts++;
+        continue;
+      }
+      throw err;
+    }
     cacheEvent(db, d.calendarId, ev);
     saveRow(db, userId, d, ev.id, ev.etag, row?.id);
     ctx.written?.set(d.key, { start: d.start, end: d.end });
@@ -556,14 +590,106 @@ async function writeSeries(
     "UPDATE meetings SET series_calendar_id = ?, series_event_id = ?, series_rule = ? WHERE id = ?",
     first.calendarId,
     seriesId,
-    JSON.stringify(ruleOf(instances[0]?.series ?? ev.series)),
+    JSON.stringify(baselineOf(master, (first.organizer ?? "").toLowerCase())),
     m.id,
   );
   return made;
 }
 
-/** The master facts that a series edit compares (meeting-log readSeriesEdits). */
-export const ruleOf = (f: ProviderEvent["series"]) => (f ? { ...f, own: false } : null);
+/**
+ * C1: the instance of `d`'s period in the series, when no row holds it (its
+ * rule time is after the planning window): it becomes the row and moves to the
+ * planned time. False when the period has no instance.
+ */
+async function moveRuleInstance(
+  ctx: PushContext,
+  provider: CalendarProvider,
+  providerCalendarId: string,
+  series: string,
+  d: DesiredEvent,
+  row: ManagedRow | undefined,
+): Promise<boolean> {
+  if (!provider.seriesInstances) return false;
+  const { db, userId, now } = ctx;
+  const m = one<MeetingRow>(db, "SELECT * FROM meetings WHERE id = ?", d.sourceId);
+  if (!m) return false;
+  const period = d.key.slice(d.key.lastIndexOf(":") + 1);
+  const zone = planningZone(db, userId);
+  const { weekStart } = getSettings(db, userId);
+  const from = localToUtc(zone, period, 0) - 86_400_000;
+  const used = new Set(
+    all<{ event_id: string }>(
+      db,
+      "SELECT event_id FROM managed_events WHERE user_id = ? AND event_id IS NOT NULL",
+      userId,
+    ).map((r) => r.event_id),
+  );
+  const inst = (
+    await provider.seriesInstances(providerCalendarId, series, from, from + 34 * 86_400_000)
+  ).find(
+    (e) =>
+      !used.has(e.id) &&
+      periodOf(m, instanceDate(db, userId, e.id, e.start), weekStart, zone) === period,
+  );
+  if (!inst) return false;
+  cacheEvent(db, d.calendarId, inst);
+  const seen = {
+    ...d,
+    start: inst.start,
+    end: inst.end,
+    title: inst.summary,
+    description: inst.description,
+    busy: inst.busy,
+  };
+  saveRow(db, userId, seen, inst.id, inst.etag, row?.id);
+  const fresh = one<ManagedRow>(
+    db,
+    "SELECT * FROM managed_events WHERE user_id = ? AND key = ?",
+    userId,
+    d.key,
+  );
+  const change = fresh
+    ? meetingChange(
+        fresh,
+        { busy: inst.busy ? 1 : 0, own_visibility: null, description: inst.description },
+        d,
+      )
+    : null;
+  let ev = inst;
+  if (change) {
+    ev = await provider.editExternal(providerCalendarId, inst.id, change, inst.etag);
+    cacheEvent(db, d.calendarId, ev);
+  }
+  saveRow(db, userId, d, ev.id, ev.etag, fresh?.id);
+  ctx.written?.set(d.key, { start: d.start, end: d.end });
+  logManaged(db, userId, desiredRef(d, ev.id), "create", d, now);
+  return true;
+}
+
+/**
+ * W8: a series repeats in the home zone it was written in. When the home zone
+ * changes, the series ends and this run writes one in the new zone.
+ */
+async function restartMovedZones(ctx: PushContext, frozen: Set<string>): Promise<void> {
+  const { db, userId, now } = ctx;
+  const home = homeZone(db, userId);
+  for (const m of all<MeetingRow>(
+    db,
+    "SELECT * FROM meetings WHERE user_id = ? AND series_owned = 1 AND series_event_id IS NOT NULL",
+    userId,
+  )) {
+    const zone = (m.series_rule ? (JSON.parse(m.series_rule) as Baseline) : null)?.zone;
+    const calendarId = m.series_calendar_id;
+    if (!zone || zone === home || !calendarId || frozen.has(calendarId)) continue;
+    try {
+      const { provider } = ctx.target(calendarId);
+      await endOwnSeries(db, () => provider, m, now, lockedIds(db, m, now));
+    } catch (err) {
+      if (!(err instanceof ProviderError)) throw err;
+      console.error(`Ending the series of meeting ${m.id} failed`, err);
+    }
+  }
+}
 
 /** PRG-3: moves an ended, unstarted event of the same item to the new time. */
 async function moveReopened(
