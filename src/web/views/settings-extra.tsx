@@ -9,6 +9,7 @@ import { signal } from "@preact/signals";
 import { useEffect, useState } from "preact/hooks";
 import type { Settings } from "../../server/settings.ts";
 import { ApiError, api } from "../lib/api.ts";
+import { useCommit } from "../lib/commit-input.ts";
 import { planNow } from "../lib/state.ts";
 
 type Act = (fn: () => Promise<unknown>, done?: string) => Promise<unknown>;
@@ -53,6 +54,10 @@ export function StartModeSetting({ settings, act }: { settings: Settings; act: A
  * is used. Manual start mode hides it, as it has no effect there.
  */
 export function TimeUsedSetting({ settings, act }: { settings: Settings; act: Act }) {
+  // useCommit keeps a typed value while a live update draws Settings again.
+  const waitDays = useCommit(settings.timeUsedWaitDays, (v) =>
+    act(() => api("PATCH", "/api/settings", { timeUsedWaitDays: Number(v) })),
+  );
   if (settings.startMode === "manual") return null;
   return (
     <>
@@ -71,19 +76,7 @@ export function TimeUsedSetting({ settings, act }: { settings: Settings; act: Ac
       </label>
       <label>
         Days to wait
-        <input
-          type="number"
-          min={1}
-          max={30}
-          value={settings.timeUsedWaitDays}
-          onChange={(e) =>
-            void act(() =>
-              api("PATCH", "/api/settings", {
-                timeUsedWaitDays: Number(e.currentTarget.value),
-              }),
-            )
-          }
-        />
+        <input type="number" min={1} max={30} {...waitDays} />
       </label>
     </>
   );

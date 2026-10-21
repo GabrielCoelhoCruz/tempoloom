@@ -15,11 +15,12 @@
 // - re-add adds nothing, or adds the current total instead of the first -> 60, then 60 again
 // - manual start mode shows the setting, or the action still runs       -> hidden; still open
 // - Restart skips manual mode, or moves an ended chunk                   -> 09:20; 409
+// - a live update between typing and leaving "Days to wait" loses the value -> 7 saved
 import type { Page } from "@playwright/test";
 import { addDays, localToUtc } from "../../src/shared/time.ts";
 import type { AppServer, CalendarDriver } from "./fixtures.ts";
 import { at, eventually, expect, local, test, ZONE } from "./fixtures.ts";
-import { addTask, MIN, openEvent, openWeek, titled, W } from "./helpers.ts";
+import { addTask, changeElsewhere, MIN, openEvent, openWeek, titled, W } from "./helpers.ts";
 import { alwaysHours } from "./s3-helpers.ts";
 
 /** Wednesday of the test week. */
@@ -381,4 +382,25 @@ test("time-used action: manual start mode hides the setting, and the action has 
   expect(app.query("SELECT status FROM tasks WHERE title = 'AT-Manual'")).toEqual([
     { status: "open" },
   ]);
+});
+
+test("Days to wait typed while the page reads the account again is saved (PRG-41, PRG-42)", async ({
+  page,
+  signIn,
+}) => {
+  await signIn();
+  await page.getByRole("link", { name: "Settings" }).click();
+  const field = page.getByLabel("Days to wait");
+  await expect(field).toHaveValue("3");
+  await field.fill("7");
+  // The page draws again before the user leaves the field; the typed value stays.
+  await changeElsewhere(page, 5);
+  await expect(field).toHaveValue("7");
+  const saved = page.waitForResponse(
+    (r) => new URL(r.url()).pathname === "/api/settings" && r.request().method() === "PATCH",
+  );
+  await field.blur();
+  expect((await saved).request().postDataJSON()).toEqual({ timeUsedWaitDays: 7 });
+  await page.reload();
+  await expect(page.getByLabel("Days to wait")).toHaveValue("7");
 });

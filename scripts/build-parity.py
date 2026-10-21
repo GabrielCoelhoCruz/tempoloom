@@ -1341,10 +1341,11 @@ T.update({
     "u67_done": 'time-used action: Nothing keeps a time-used task open after the wait; Mark done waits the days, also for a task already time-used, and changes no event (PRG-40, PRG-42, PRG-43; AT 6)',
     "u67_readd": 'time-used action: Add the time again adds the first total after the wait days, and the scheduler places it (PRG-41; AT 7)',
     "u67_manual": 'time-used action: manual start mode hides the setting, and the action has no effect (PRG-44)',
+    "u67_wait_typed": "Days to wait typed while the page reads the account again is saved (PRG-41, PRG-42)",
     "u67_restart_manual": 'Restart in manual start mode moves the started chunk to now, and Restart with no running chunk is refused (PRG-12)',
 })
 E2E.update({
-    40: ["u67_done", "u67_readd", "u67_manual"],
+    40: ["u67_done", "u67_readd", "u67_manual", "u67_wait_typed"],
 })
 E2E_NOTES.update({
     40: "Settings has the action and the wait days (1 to 30, default 3); the wait counts from the first plan run that finds the task time-used (PRG-46), and a plan run applies the action and writes it to the task's change log",
