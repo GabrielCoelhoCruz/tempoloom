@@ -16,7 +16,8 @@ import { createItemHours, dropItemHours, itemHoursSchema, saveItemHours } from "
 import { automationCount, limitRefusal } from "../limits.ts";
 import { waitingCalendars } from "../planner/write.ts";
 import type { SyncService } from "../sync/service.ts";
-import { badRequest, hhmm, hoursSetId, level, minutes, nextRank } from "./items.ts";
+import { endRank, insertRank } from "./automations.ts";
+import { badRequest, hhmm, hoursSetId, level, minutes } from "./items.ts";
 
 /**
  * habits-automation.md "Frequency". `interval` above 1 is the custom frequency;
@@ -229,46 +230,49 @@ export function habitRoutes(db: Db, sync: SyncService, now: () => number): Hono<
     const es = newEventSettings(db, user.id, "habit", body.eventSettings, {
       personal: personalHours(user.id, hours),
     });
-    run(
-      db,
-      `INSERT INTO habits (id, user_id, title, notes, enabled, level, rank, hours_set_id, ideal_minute, min_minutes,
-         max_minutes, frequency, starting, defense, when_unplaceable, reserved_words, created_at, rules_changed_at,
-         event_settings, template_id, guests, decline_enabled, decline_message, dependencies, ideal_at_end)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      id,
-      user.id,
-      body.title,
-      body.notes ?? "",
-      body.enabled === false ? 0 : 1,
-      lvl,
-      nextRank(db, "habits", user.id, lvl),
-      hours,
-      ideal,
-      body.minMinutes,
-      body.maxMinutes,
-      JSON.stringify(
-        body.frequency
-          ? withAnchor(
-              body.frequency,
-              null,
-              body.starting ?? null,
-              utcToLocal(user.time_zone, t).date,
-            )
-          : { period: "daily" },
+    // The rank shift and the insert are one change (SCH-71).
+    tx(db, () =>
+      run(
+        db,
+        `INSERT INTO habits (id, user_id, title, notes, enabled, level, rank, hours_set_id, ideal_minute, min_minutes,
+           max_minutes, frequency, starting, defense, when_unplaceable, reserved_words, created_at, rules_changed_at,
+           event_settings, template_id, guests, decline_enabled, decline_message, dependencies, ideal_at_end)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        id,
+        user.id,
+        body.title,
+        body.notes ?? "",
+        body.enabled === false ? 0 : 1,
+        lvl,
+        insertRank(db, "habit", user.id, lvl),
+        hours,
+        ideal,
+        body.minMinutes,
+        body.maxMinutes,
+        JSON.stringify(
+          body.frequency
+            ? withAnchor(
+                body.frequency,
+                null,
+                body.starting ?? null,
+                utcToLocal(user.time_zone, t).date,
+              )
+            : { period: "daily" },
+        ),
+        body.starting ?? null,
+        body.defense ?? "adaptive",
+        body.whenUnplaceable ?? "keep_as_conflict",
+        JSON.stringify(body.reservedWords ?? []),
+        t,
+        t,
+        JSON.stringify(es),
+        body.templateId ?? null,
+        JSON.stringify(guestList(body.guests ?? [])),
+        body.autoDecline?.enabled ? 1 : 0,
+        body.autoDecline?.message ?? "",
+        deps,
+        body.idealAtEnd ? 1 : 0,
       ),
-      body.starting ?? null,
-      body.defense ?? "adaptive",
-      body.whenUnplaceable ?? "keep_as_conflict",
-      JSON.stringify(body.reservedWords ?? []),
-      t,
-      t,
-      JSON.stringify(es),
-      body.templateId ?? null,
-      JSON.stringify(guestList(body.guests ?? [])),
-      body.autoDecline?.enabled ? 1 : 0,
-      body.autoDecline?.message ?? "",
-      deps,
-      body.idealAtEnd ? 1 : 0,
     );
     changed(user.id);
     return c.json({ habit: habitRow(id) }, 201);
@@ -324,7 +328,9 @@ export function habitRoutes(db: Db, sync: SyncService, now: () => number): Hono<
     const es = editedEventSettings(
       readEventSettings(
         cur.event_settings,
-        defaultEventSettings("habit", { personal: personalHours(user.id, cur.hours_set_id) }),
+        defaultEventSettings("habit", {
+          personal: personalHours(user.id, cur.hours_set_id),
+        }),
       ),
       body.eventSettings,
     );
@@ -360,7 +366,7 @@ export function habitRoutes(db: Db, sync: SyncService, now: () => number): Hono<
       JSON.stringify(es),
       // A new priority puts the habit at the end of its new group (automations-overview rule 7).
       body.level !== undefined && body.level !== cur.level
-        ? nextRank(db, "habits", user.id, body.level)
+        ? endRank(db, user.id, body.level)
         : cur.rank,
       body.guests ? JSON.stringify(guestList(body.guests)) : cur.guests,
       body.autoDecline ? (body.autoDecline.enabled ? 1 : 0) : cur.decline_enabled,

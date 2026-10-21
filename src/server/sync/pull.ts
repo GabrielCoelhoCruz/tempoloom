@@ -162,8 +162,8 @@ export function cacheEvent(db: Db, calendarId: string, e: ProviderEvent): void {
     `INSERT INTO events (calendar_id, event_id, summary, description, location, start_ms, end_ms,
        all_day, busy, event_type, self_response, attendee_count, organizer_self, recurring_id, color_id,
        etag, updated_ms, private_props, attendees, responses, conference, rsvp_note, alerts,
-       own_visibility)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       own_visibility, organizer_email)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT (calendar_id, event_id) DO UPDATE SET
        summary = excluded.summary, description = excluded.description, location = excluded.location,
        start_ms = excluded.start_ms, end_ms = excluded.end_ms, all_day = excluded.all_day,
@@ -173,7 +173,7 @@ export function cacheEvent(db: Db, calendarId: string, e: ProviderEvent): void {
        updated_ms = excluded.updated_ms, private_props = excluded.private_props,
        attendees = excluded.attendees, responses = excluded.responses,
        conference = excluded.conference, rsvp_note = excluded.rsvp_note, alerts = excluded.alerts,
-       own_visibility = excluded.own_visibility`,
+       own_visibility = excluded.own_visibility, organizer_email = excluded.organizer_email`,
     calendarId,
     e.id,
     e.summary,
@@ -198,6 +198,7 @@ export function cacheEvent(db: Db, calendarId: string, e: ProviderEvent): void {
     e.rsvpNote ?? "",
     e.privateProps.tl === "1" && e.alerts ? 1 : 0,
     e.visibility,
+    e.organizerEmail ?? "",
   );
 }
 

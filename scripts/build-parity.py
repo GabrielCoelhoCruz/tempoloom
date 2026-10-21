@@ -797,6 +797,27 @@ E2E_NOTES.update({
 })
 # --- end U03 ---
 
+# --- U58: processing order across item kinds (processing-order.spec.ts) ---
+T.update({
+    "u58_fixed": "locked chunks and booked meetings are in place before any demand: a P1 task created later does not take their time (SCH-61)",
+    "u58_nextup": "P1 habits and P1 flexible meetings go before next-up tasks; P2 habits go after them (SCH-67, SCH-70)",
+    "u58_focus": "focus time goes after habits, flexible meetings and buffers, also of P4 (SCH-68)",
+    "u58_kinds": "a new automation goes after the last one of its level whose kind comes first: flexible meetings, then buffers, then habits (SCH-71)",
+    "u58_task_key": "tasks of one level go by due date with no due date last, then more remaining minutes, then the older task (SCH-72, SCH-74)",
+    "u58_occurrences": "the occurrences of one habit are placed in date order: Monday's takes the free day nearest to it first (SCH-73)",
+    "u58_level_move": "a buffer moved to another level goes to the end of that level, after its habits (automations-overview rule 7)",
+})
+E2E.update({
+    90: ["u58_fixed", "u03_order", "s1_drag", "t_prio", "u03_urgency", "t_next", "u35_rank", "u58_nextup",
+         "u03_focus", "u58_focus", "u4_buffer_prio", "u58_kinds", "u58_level_move", "u58_task_key", "u58_occurrences", "s3_suggest"],
+})
+E2E_NOTES.update({
+    90: ("The tests follow SCH-61 to SCH-75 in order: fixed things, levels and kinds, stack rank, due date, urgency, the "
+         "next-up queue, focus time last, buffer levels, the kind order of new automations, the task key, the order of one "
+         "item's demands, and suggestions mode"),
+})
+# --- end U58 ---
+
 # --- U07: flexible meeting limits and actions, booking link settings ---
 T.update({
     "u7_notice": "the move notice: an automatic move never starts sooner than the notice after the move, and a meeting with notice 0 takes the nearest time (MEET-02 rule 8)",
@@ -1520,14 +1541,6 @@ E2E.update({
 E2E_NOTES.update({
     102: "Booking links and other people's flexible meetings read main-calendar availability: an unlocked task chunk on another calendar does not block them; a locked one blocks booking links, as every locked event does (LCK-1), because it never moves (Tempoloom decision); the user's own plan keeps the chunk's time",
 })
-PARTIAL[90] = ("E2E on CalDAV covers: an external event before demands, levels and kinds (\u201c" + T["u03_order"] + "\u201d), rank drag, "
-               "the due date, urgency, a next-up task before other tasks of any level and the queue order (\u201c" + T["t_next"] + "\u201d; \u201c"
-               + T["u35_rank"] + "\u201d), focus time after a P4 task (\u201c" + T["u03_focus"] + "\u201d), buffers across levels (\u201c"
-               + T["u4_buffer_prio"] + "\u201d) and suggestions mode (\u201c" + T["s3_suggest"] + "\u201d). Not covered by E2E: SCH-61 (locked "
-               "managed events and booking-link meetings are in place before any demand), SCH-67 (P1 habits and P1 flexible meetings go "
-               "before next-up tasks), SCH-68 (focus time goes after habits, flexible meetings and buffers of any level), SCH-71 (kind "
-               "order inside one level, buffers before habits), SCH-72 and SCH-74 (the task key and its tie-breaks: remaining minutes, "
-               "creation time)")
 GOOGLE_CONSENT = "Needs a Google E2E run with the owner's OAuth consent (a Google account that signs in through Tempoloom's OAuth client, row 510)"
 PARTIAL[145] = ("Not built: PRF-6, the planner, hours page and date displays do not use the time format, date format and week start "
                 "(only the profile page shows them), and applying the Google week start to planning (the planning week start stays the "
