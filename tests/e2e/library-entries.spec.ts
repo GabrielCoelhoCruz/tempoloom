@@ -624,10 +624,10 @@ test("focus time keeps item-specific hours of several ranges when the form saves
   expect(JSON.parse((await stored())?.item_hours ?? "null")).toEqual(hours);
   // The 3 h sit only inside the item's own hours, not in the default work hours.
   const own = [
-    [day(0), "09:00", "10:00"],
-    [day(0), "13:00", "14:00"],
-    [day(2), "10:00", "12:00"],
-  ].map(([d, from, to]) => [at(d!, from!), at(d!, to!)] as const);
+    [at(day(0), "09:00"), at(day(0), "10:00")],
+    [at(day(0), "13:00"), at(day(0), "14:00")],
+    [at(day(2), "10:00"), at(day(2), "12:00")],
+  ] as const;
   await eventually(
     () => week(cal),
     (l) => {
