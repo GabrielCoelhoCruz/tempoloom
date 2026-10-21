@@ -1276,7 +1276,18 @@ export const MIGRATIONS: readonly string[] = [
   UPDATE users SET settings = json_set(settings, '$.eventTips', json('false'))
     WHERE json_valid(settings) AND json_type(settings, '$.eventTips') IS NULL;
   `,
-  // 41: the organizer's hours for one guest (meetings-flexible.md rule 7), as weekly
+  // 41: habit guests, auto-decline and dependencies (habits-automation.md
+  // concepts, rules 18, 37-39), and the snooze of one occurrence (rule 31).
+  `
+  ALTER TABLE habits ADD COLUMN guests TEXT NOT NULL DEFAULT '[]';
+  ALTER TABLE habits ADD COLUMN decline_enabled INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE habits ADD COLUMN decline_message TEXT NOT NULL DEFAULT '';
+  -- [{rule, kind, id}]: see HabitDependency in src/scheduler/model.ts.
+  ALTER TABLE habits ADD COLUMN dependencies TEXT NOT NULL DEFAULT '[]';
+  -- 1: the minute is a snooze time (first legal start at or after it), not a reschedule.
+  ALTER TABLE habit_reschedules ADD COLUMN not_before INTEGER NOT NULL DEFAULT 0;
+  `,
+  // 42: the organizer's hours for one guest (meetings-flexible.md rule 7), as weekly
   // ranges in the guest's time zone; NULL: the guest's own meeting hours. And the
   // periods of a meeting that had no time (meetings-flexible-rescheduling.md rules
   // 16, 34): status 'unplaced' (removed) or 'conflict' (kept in conflict).

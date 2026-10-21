@@ -31,6 +31,7 @@ import { calendarRoutes } from "./api/calendars.ts";
 import { delegationGuard, delegationRoutes } from "./api/delegation.ts";
 import { eventActionRoutes } from "./api/event-actions.ts";
 import { focusExtraRoutes } from "./api/focus-extras.ts";
+import { habitRoutes } from "./api/habits.ts";
 import { helpRoutes } from "./api/help.ts";
 import { hoursExtraRoutes } from "./api/hours-extra.ts";
 import { insightRoutes } from "./api/insights.ts";
@@ -466,6 +467,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
 
   app.route("/api", settingsRoutes(db, sync, now));
   app.route("/api", itemRoutes(db, sync, now));
+  app.route("/api", habitRoutes(db, sync, now));
   app.route("/api", taskActionRoutes(db, sync, now));
   app.route("/api", meetingRoutes(db, sync, now, deps.mailer));
   app.route("/api/planner", plannerRoutes(db, sync, now));

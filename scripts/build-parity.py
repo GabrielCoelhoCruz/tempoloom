@@ -1175,8 +1175,8 @@ BLOCKED[770] = "Not needed: no legacy users (platform-current-version rule 11)"
 
 # Buildable rows that no unit has built yet. Rows that units U31 to U33 and PR #23 build now keep their text.
 PLANNED = "Buildable; not built yet (planned)"
-for n in [36, 40, 102, 118, 167, 169, 170, 183, 187, 189,
-          201, 205, 232, 347, 361, 635, 636, 637, 775, 776, 783, 784]:
+for n in [36, 40, 102, 118,
+          201, 205, 232, 361, 635, 636, 637, 775, 776, 783, 784]:
     BLOCKED[n] = PLANNED
 BLOCKED[92] = PLANNED + ": the reason for each move and skip, and a view per item; the change log of every calendar write is built (src/server/change-log.ts)"
 BLOCKED[507] = PLANNED + ": the link's events go to the calendar chosen on the link (\u201c" + T["u7_locations"] + "\u201d); the choice of an added account, whose primary calendar gets the events and sends the invitations, is not built"
@@ -1337,6 +1337,39 @@ E2E_NOTES.update({
     144: "Tempoloom has no task integrations of its own, so that step points to the API keys that other tools use",
 })
 # --- end U41 ---
+
+# --- U40: habits part B (habit-extras.spec.ts) ---
+T.update({
+    "u40_guests": "habit guests are written to each event without notices, and a busy guest does not move the habit (habits concepts guests)",
+    "u40_decline": "habit auto-decline declines invitations over a busy occurrence with the message, never over a free one (rules 37-39)",
+    "u40_deps": "habit dependencies: before keeps a habit to the other habit's days and ahead of it, not after limits those days only, not on the same day keeps it off them (rule 18)",
+    "u40_meet": "the meeting form adds a habit dependency: the habit goes before the meeting or not after it on its day, and removing it frees the habit (meetings rule 22)",
+    "u40_snooze": "snooze moves one habit occurrence to the first free time at or after the chosen time that day (rule 31)",
+    "u40_default": "habit auto-decline without a message of its own declines with the default note (rule 37)",
+    "u40_typed": "snooze offers +15 min to +2 h from the occurrence's start, takes a typed time, and refuses a time at or before the start (rule 31)",
+    "u40_started": "snooze moves an occurrence that has started to the chosen time (rule 31)",
+    "u40_until": "snooze until a date removes the habit's events before that date and keeps the later ones (rule 35)",
+    "u40_search": "the automation list search box filters habits by title (rule 7)",
+})
+E2E.update({
+    167: ["u40_guests"],
+    169: ["u40_decline", "u40_default"],
+    170: ["u40_deps"],
+    183: ["u40_snooze", "u40_typed", "u40_started"],
+    187: ["u40_until"],
+    189: ["u40_search"],
+    347: ["u40_meet"],
+})
+E2E_NOTES.update({
+    167: "On CalDAV each guest gets SCHEDULE-AGENT=CLIENT, so a server with scheduling sends nothing; Google events are written without updates",
+    169: "Without a message of its own, the note says the time is reserved for a routine; the E2E checks both notes in the COMMENT line",
+    170: "Before: only on days that hold the other habit, ending before it starts; not after: on those days only. The other habit is placed first, at the level of its highest-priority dependent, and never moves. The form and API refuse a rule that makes a loop",
+    183: "The details panel offers +15 min, +30 min, +1 h and +2 h from the later of the occurrence's start and now (a choice past midnight is not offered), or a typed time after that; an earlier time is refused. A snooze also moves an occurrence that has started",
+    187: "Snooze until a date on the habits page sets the start date; clearing it brings the earlier days back",
+    189: "The search box of the automation list filters every automation by title",
+    347: "The meeting form edits the rules of habits on that meeting; the habit form shows them too",
+})
+# --- end U40 ---
 
 # --- U39: flexible meetings part C (meeting-extras.spec.ts) ---
 T.update({

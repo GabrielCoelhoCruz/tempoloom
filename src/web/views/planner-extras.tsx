@@ -138,6 +138,18 @@ export function EventActions({
           <button type="submit">Reschedule</button>
         </form>
       )}
+      {info.kind === "habit" && !info.ended && info.sourceId && info.date && (
+        <SnoozeForm
+          start={event.start}
+          zone={zone}
+          snooze={(time) => {
+            const id = info.sourceId;
+            const date = info.date;
+            close();
+            run(() => api("POST", `/api/habits/${id}/snooze`, { date, time }));
+          }}
+        />
+      )}
       {info.search && (
         <div data-testid="event-task-search">
           <TaskSearchPicker value={searchId} onChange={(id) => void assign(id)} />
@@ -145,6 +157,86 @@ export function EventActions({
         </div>
       )}
     </div>
+  );
+}
+
+const SNOOZES = [15, 30, 60, 120];
+
+/**
+ * Habits rule 31: the occurrence goes to the first legal start at or after
+ * the "not before" time, on the same day. Tempoloom decision: the quick
+ * choices count from the later of the occurrence's start and now, up to the
+ * next 15 minutes; a choice past the end of the day is not offered, and a
+ * typed time must be after that base (an earlier time is not a snooze). A
+ * snooze also moves an occurrence that has started.
+ */
+function SnoozeForm({
+  start,
+  zone,
+  snooze,
+}: {
+  start: number;
+  zone: string;
+  snooze: (time: string) => void;
+}) {
+  const base = utcToLocal(zone, Math.max(start, Date.now())).minuteOfDay;
+  const after = (minutes: number) => {
+    const t = Math.ceil((base + minutes) / 15) * 15;
+    return t < 24 * 60 ? hhmm(t) : null;
+  };
+  const [time, setTime] = useState(() => after(30) ?? "");
+  const [error, setError] = useState("");
+  return (
+    <form
+      class="inline"
+      data-testid="snooze-form"
+      onSubmit={(e) => {
+        e.preventDefault();
+        const [h, m] = time.split(":").map(Number) as [number, number];
+        if (h * 60 + m <= base) {
+          setError(`Pick a time after ${hhmm(base)}`);
+          return;
+        }
+        snooze(time);
+      }}
+    >
+      {SNOOZES.map((m) => {
+        const t = after(m);
+        return (
+          <button
+            type="button"
+            key={m}
+            disabled={t === null}
+            title={t ?? "Past the end of the day"}
+            onClick={() => {
+              if (t) setTime(t);
+              setError("");
+            }}
+          >
+            +{m < 60 ? `${m} min` : `${m / 60} h`}
+          </button>
+        );
+      })}
+      <label>
+        Not before
+        <input
+          type="time"
+          step={900}
+          required
+          value={time}
+          onInput={(e) => {
+            setTime(e.currentTarget.value);
+            setError("");
+          }}
+        />
+      </label>
+      <button type="submit">Snooze</button>
+      {error && (
+        <p class="error" role="alert">
+          {error}
+        </p>
+      )}
+    </form>
   );
 }
 
