@@ -7,6 +7,7 @@ import { freeName, templateFromUrl } from "../lib/library.ts";
 import { useLive } from "../lib/live.ts";
 import { LEVEL_NAMES, planNow, zone } from "../lib/state.ts";
 import { EventSettingsFields, eventSettingsFrom } from "./event-settings.tsx";
+import { MeetingHabitDependencies } from "./habit-dependencies.tsx";
 import { describeWeekly, ItemHoursFields, itemHoursFrom } from "./hours-field.tsx";
 
 interface Person {
@@ -458,6 +459,7 @@ export function Meetings() {
         }}
       >
         {ed && <p class="wide status">Editing “{ed.title}”</p>}
+        {ed && <MeetingHabitDependencies meetingId={ed.id} />}
         <label class="wide" hidden={ed !== null}>
           From an existing meeting
           <select

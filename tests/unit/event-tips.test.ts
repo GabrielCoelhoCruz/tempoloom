@@ -169,12 +169,12 @@ describe("a tip change alone on a meeting occurrence (CNT-15, rule 22)", () => {
   });
 });
 
-/** A database at the schema before the upgrade (every migration but the last), then upgraded. */
+/** A database at the schema before the upgrade (migrations 1-39), then upgraded. */
 function upgrade(before: (db: DatabaseSync) => void): Db {
   const dir = mkdtempSync(join(tmpdir(), "tl-tips-"));
   const path = join(dir, "db.sqlite");
   const old = new DatabaseSync(path);
-  for (const [i, sql] of MIGRATIONS.slice(0, -1).entries()) {
+  for (const [i, sql] of MIGRATIONS.slice(0, 39).entries()) {
     old.exec(sql);
     old.exec(`PRAGMA user_version = ${i + 1}`);
   }

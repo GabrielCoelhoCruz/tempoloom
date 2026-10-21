@@ -90,8 +90,28 @@ export interface HabitItem {
   changed: boolean;
   /** Occurrence date -> the time of day the user chose for it (habits rule 30). */
   rescheduled?: Partial<Record<LocalDate, number>>;
+  /** Occurrence date -> the snooze time of day: the first legal start at or after it (habits rule 31). */
+  notBefore?: Partial<Record<LocalDate, number>>;
+  /** Order rules relative to other habits and flexible meetings (habits rule 18). */
+  dependencies?: HabitDependency[];
   /** Category work or personal (habits concepts); missing: it counts as work when its hours are work hours. */
   work?: boolean;
+}
+
+/**
+ * Habits rule 18 and meetings-flexible.md rule 22. Tempoloom decision:
+ * `before`: the habit takes place only on days that hold an occurrence of the
+ * target, and ends at or before the target's start; `not-after`: on a day that
+ * holds the target, the habit ends at or before the target's start, other days
+ * are free; `not-same-day`: the habit never takes place on a day that holds
+ * the target. The target is placed first, at the level of its highest-priority
+ * dependent (rule 43); the rule never moves the target. A rule that closes a
+ * loop is refused at save time and dropped by the scheduler.
+ */
+export interface HabitDependency {
+  rule: "before" | "not-after" | "not-same-day";
+  kind: "habit" | "meeting";
+  id: string;
 }
 
 /**

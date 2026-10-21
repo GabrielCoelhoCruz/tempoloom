@@ -64,6 +64,11 @@ export interface EventWrite {
   optionalAttendees?: string[];
   /** The organizer's email, written when the event has guests. */
   organizer?: string;
+  /**
+   * The calendar server sends the guests nothing (RFC 6638 SCHEDULE-AGENT=CLIENT
+   * on CalDAV; Tempoloom writes Google events without updates anyway).
+   */
+  quietGuests?: boolean;
   /** An all-day event on these local dates (end exclusive); `start` and `end` are then not written. */
   allDayDates?: { start: string; end: string };
   /** An RFC 5545 RRULE value, for example "FREQ=WEEKLY;BYDAY=WE": a recurring series. */

@@ -27,6 +27,8 @@ export interface DesiredEvent {
   attendees?: string[];
   optionalAttendees?: string[];
   organizer?: string;
+  /** The guests get no notices from the calendar server (habit guests). */
+  quietGuests?: boolean;
   reminders?: EventWrite["reminders"];
   visibility?: EventWrite["visibility"];
   allDayDates?: EventWrite["allDayDates"];
@@ -64,6 +66,7 @@ const extraOf = (d: DesiredEvent) =>
         attendees: d.attendees ?? [],
         optional: d.optionalAttendees ?? [],
         ...(d.organizer ? { organizer: d.organizer } : {}),
+        ...(d.quietGuests ? { quietGuests: true } : {}),
         ...(d.reminders ? { reminders: d.reminders } : {}),
         ...(d.visibility ? { visibility: d.visibility } : {}),
         ...(d.allDayDates ? { allDayDates: d.allDayDates } : {}),
@@ -75,6 +78,7 @@ interface Extra {
   attendees?: string[];
   optional?: string[];
   organizer?: string;
+  quietGuests?: boolean;
   reminders?: DesiredEvent["reminders"];
   visibility?: DesiredEvent["visibility"];
   allDayDates?: DesiredEvent["allDayDates"];
@@ -104,6 +108,7 @@ export function rowWrite(
     ...(x.attendees?.length ? { attendees: x.attendees } : {}),
     ...(x.optional?.length ? { optionalAttendees: x.optional } : {}),
     ...(x.organizer ? { organizer: x.organizer } : {}),
+    ...(x.quietGuests ? { quietGuests: true } : {}),
     ...(x.reminders ? { reminders: x.reminders } : {}),
     ...(x.visibility ? { visibility: x.visibility } : {}),
     ...(x.allDayDates ? { allDayDates: x.allDayDates } : {}),
@@ -149,6 +154,7 @@ function write(userId: string, d: DesiredEvent): EventWrite {
     ...(d.attendees ? { attendees: d.attendees } : {}),
     ...(d.optionalAttendees ? { optionalAttendees: d.optionalAttendees } : {}),
     ...(d.organizer ? { organizer: d.organizer } : {}),
+    ...(d.quietGuests ? { quietGuests: true } : {}),
     ...(d.reminders ? { reminders: d.reminders } : {}),
     ...(d.visibility ? { visibility: d.visibility } : {}),
     ...(d.allDayDates ? { allDayDates: d.allDayDates } : {}),
@@ -274,7 +280,7 @@ export function meetingChange(
 
 /**
  * Makes the user's future managed events equal to `desired`. Events that
- * have started are never changed. Locked events are never moved or deleted.
+ * have started are never changed, except a move to a later start (a snooze). Locked events are never moved or deleted.
  * Writes run in the order deletes, updates, creates.
  */
 export async function pushSchedule(
@@ -338,9 +344,10 @@ export async function pushSchedule(
       creates.push(d);
       continue;
     }
-    // Never change a started event; a locked event may get a new title or
-    // status but never a new time.
-    if (row.start_ms <= now) continue;
+    // Never change a started event (SCH-60a), unless the plan moves it to a
+    // later start: only a snooze does that (plan.ts snoozedLater). A locked
+    // event may get a new title or status but never a new time.
+    if (row.start_ms <= now && d.start <= now) continue;
     if (row.locked && (row.start_ms !== d.start || row.end_ms !== d.end)) continue;
     const cached = one<Cached>(
       db,

@@ -7,13 +7,14 @@ import { hoursToTimeSet, type WeeklyHours } from "../../src/scheduler/hours.ts";
 import type {
   CurrentPlacement,
   ExternalEvent,
+  HabitDependency,
   HabitItem,
   Placement,
   Snapshot,
   TaskItem,
 } from "../../src/scheduler/model.ts";
 import { plan } from "../../src/scheduler/plan.ts";
-import { localToUtc } from "../../src/shared/time.ts";
+import { addDays, localToUtc } from "../../src/shared/time.ts";
 
 const ZONE = "America/New_York";
 const MIN = 60_000;
@@ -120,6 +121,19 @@ const habitArb = fc.record({
   extraQ: fc.integer({ min: 0, max: 4 }),
   defense: fc.constantFrom("adaptive", "always-free", "always-busy"),
   keep: fc.boolean(),
+  // Rule 18: targets h0 to h3, so a rule can name the habit itself, a habit
+  // that is not in the plan, or close a cycle.
+  deps: fc.array(
+    fc.record({
+      target: fc.integer({ min: 0, max: 3 }),
+      rule: fc.constantFrom("before", "not-after", "not-same-day"),
+    }),
+    { maxLength: 2 },
+  ),
+  // Rule 31: a snooze of one occurrence, sometimes after the lunch hours.
+  snooze: fc.option(
+    fc.record({ day: fc.integer({ min: 0, max: 4 }), q: fc.integer({ min: 44, max: 57 }) }),
+  ),
 });
 const toHabit = (h: ValueOf<typeof habitArb>, i: number): HabitItem => ({
   id: `h${i}`,
@@ -139,6 +153,12 @@ const toHabit = (h: ValueOf<typeof habitArb>, i: number): HabitItem => ({
   skips: [],
   exclusions: [],
   changed: false,
+  dependencies: h.deps.map((d) => ({
+    rule: d.rule as HabitDependency["rule"],
+    kind: "habit",
+    id: `h${d.target}`,
+  })),
+  ...(h.snooze ? { notBefore: { [addDays("2026-11-02", h.snooze.day)]: h.snooze.q * 15 } } : {}),
 });
 
 const inputArb = fc.record({
@@ -293,6 +313,49 @@ describe("plan() invariants", { timeout: process.env.PLAN_RUNS ? 300_000 : 15_00
         }
       }),
       runs(3000),
+    );
+  });
+
+  it("keeps the dependency rules of an acyclic set and every snooze (rules 18, 31)", () => {
+    fc.assert(
+      fc.property(snapshotArb, (s) => {
+        const { placements } = plan(s);
+        const ids = new Set(s.habits.map((h) => h.id));
+        const rules = s.habits.flatMap((h) =>
+          (h.dependencies ?? [])
+            .filter((d) => ids.has(d.id) && d.id !== h.id)
+            .map((d) => ({ from: h.id, ...d })),
+        );
+        // A cycle drops one of its rules (the scheduler's choice), so the
+        // rules are checked only when they form no cycle.
+        const leadsTo = (from: string, to: string, seen = new Set<string>()): boolean => {
+          if (from === to) return true;
+          if (seen.has(from)) return false;
+          seen.add(from);
+          return rules.some((r) => r.from === from && leadsTo(r.id, to, seen));
+        };
+        if (!rules.some((r) => leadsTo(r.id, r.from))) {
+          for (const r of rules) {
+            for (const p of placements.filter((x) => x.itemId === r.from)) {
+              const day = localDate(p.start);
+              const target = placements
+                .filter((x) => x.itemId === r.id && localDate(x.start) === day)
+                .map((x) => x.start);
+              const first = Math.min(...target);
+              if (r.rule === "not-same-day") expect(target).toEqual([]);
+              else if (r.rule === "before") expect(p.end).toBeLessThanOrEqual(first);
+              else if (target.length > 0) expect(p.end).toBeLessThanOrEqual(first);
+            }
+          }
+        }
+        for (const h of s.habits) {
+          for (const [date, minute] of Object.entries(h.notBefore ?? {})) {
+            const p = placements.find((x) => x.key === `habit:${h.id}:${date}`);
+            if (p) expect(p.start).toBeGreaterThanOrEqual(localToUtc(ZONE, date, minute ?? 0));
+          }
+        }
+      }),
+      runs(1000),
     );
   });
 
