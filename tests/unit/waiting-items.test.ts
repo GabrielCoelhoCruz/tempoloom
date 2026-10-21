@@ -202,6 +202,21 @@ describe("items of a disconnected account wait (accounts rule 16)", () => {
     for (const w of fresh) expect(w.event.end <= TUE_9 || w.event.start >= TUE_9 + H).toBe(true);
     expect(writes.filter((w) => w.account === "added")).toEqual([]);
   });
+
+  it("a habit dependency on a waiting habit keeps its rule against the kept events (rule 18)", async () => {
+    const { db, userId } = setup("ok", "ok");
+    habit(db, userId, "target", 3, "cal2");
+    await plan(db, userId);
+    run(db, "UPDATE accounts SET status = 'reauth_required' WHERE id = 'added'");
+    // The target keeps a daily event, so a not-same-day habit has no day.
+    habit(db, userId, "walk", 3, null);
+    run(
+      db,
+      `UPDATE habits SET dependencies = '[{"rule":"not-same-day","kind":"habit","id":"target"}]' WHERE id = 'walk'`,
+    );
+    const { writes } = await plan(db, userId);
+    expect(writes.filter((w) => w.event.summary?.includes("walk"))).toEqual([]);
+  });
 });
 
 // SCH-119 log after a failed push: a skipped period is logged once, not on each failed run.

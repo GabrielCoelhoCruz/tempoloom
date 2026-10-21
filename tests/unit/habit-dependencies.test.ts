@@ -362,3 +362,52 @@ describe("snooze of an occurrence that has started (rule 31)", () => {
     expect(spans(p, "lunch")[0]).toBe(`${day(0)}T12:00/12:30`);
   });
 });
+
+describe("habit dependencies on a waiting target (rule 18, accounts rule 16)", () => {
+  // The target's calendar is on a disconnected account: it is not in the plan,
+  // but its kept events stay and count as its placements.
+
+  it("before: only on the days of the waiting habit's kept events, ending before them", () => {
+    const review = habit({
+      id: "review",
+      dependencies: [{ rule: "before", kind: "habit", id: "standup" }],
+    });
+    const p = plan(
+      snapshot({
+        habits: [review],
+        waiting: [
+          { kind: "habit", id: "standup", starts: [at(day(0), "10:00"), at(day(2), "10:00")] },
+        ],
+      }),
+    );
+    const days = spans(p, "review");
+    expect(days.map((s) => s.slice(0, 10))).toEqual([day(0), day(2)]);
+    for (const s of days) expect(s.slice(17)).toBe("10:00");
+  });
+
+  it("not-same-day: never on the day of the waiting meeting's kept event", () => {
+    const walk = habit({
+      id: "walk",
+      dependencies: [{ rule: "not-same-day", kind: "meeting", id: "sync" }],
+    });
+    const p = plan(
+      snapshot({
+        habits: [walk],
+        waiting: [{ kind: "meeting", id: "sync", starts: [at(day(1), "10:00")] }],
+      }),
+    );
+    const days = spans(p, "walk").map((s) => s.slice(0, 10));
+    expect(days).toEqual([day(0), day(2), day(3), day(4)]);
+  });
+
+  it("before: a waiting habit with no kept events leaves the dependent habit no day", () => {
+    const review = habit({
+      id: "review",
+      dependencies: [{ rule: "before", kind: "habit", id: "standup" }],
+    });
+    const p = plan(
+      snapshot({ habits: [review], waiting: [{ kind: "habit", id: "standup", starts: [] }] }),
+    );
+    expect(spans(p, "review")).toEqual([]);
+  });
+});

@@ -675,6 +675,10 @@ function dependencyLimit(ctx: Ctx, h: HabitItem, date: LocalDate): number | null
       if (p.kind === d.kind && p.itemId === d.id && p.start >= from && p.start < to)
         first = Math.min(first, p.start);
     }
+    for (const w of ctx.s.waiting ?? []) {
+      if (w.kind !== d.kind || w.id !== d.id) continue;
+      for (const start of w.starts) if (start >= from && start < to) first = Math.min(first, start);
+    }
     if (first === Number.POSITIVE_INFINITY) {
       if (d.rule === "before") return null;
       continue;
@@ -1778,6 +1782,8 @@ const automationOrder = (a: { rank: number; createdAt: number; id: string }, b: 
 function keptDependencies(s: Snapshot): Map<string, HabitDependency[]> {
   const habits = new Map(s.habits.map((h) => [h.id, h]));
   const meetings = new Set(s.meetings.map((m) => m.id));
+  // A waiting target keeps its rules: its kept events are its placements.
+  const waiting = new Set((s.waiting ?? []).map((w) => `${w.kind}:${w.id}`));
   const kept = new Map<string, HabitDependency[]>();
   const onPath = new Set<string>();
   const visit = (h: HabitItem) => {
@@ -1786,10 +1792,14 @@ function keptDependencies(s: Snapshot): Map<string, HabitDependency[]> {
     const rules: HabitDependency[] = [];
     for (const d of h.dependencies ?? []) {
       if (d.kind === "meeting") {
-        if (meetings.has(d.id)) rules.push(d);
+        if (meetings.has(d.id) || waiting.has(`meeting:${d.id}`)) rules.push(d);
         continue;
       }
       const target = habits.get(d.id);
+      if (!target && waiting.has(`habit:${d.id}`)) {
+        rules.push(d);
+        continue;
+      }
       if (!target || onPath.has(d.id)) continue;
       visit(target);
       rules.push(d);
@@ -1847,9 +1857,14 @@ export function plan(s: Snapshot): Plan {
     if (a.kind === "meeting") return placeMeeting(ctx, a.item, a.boosted);
     if (a.kind === "buffer") return placeBuffer(ctx, a.item);
     for (const d of ctx.deps.get(a.item.id) ?? []) {
-      if (d.kind === "habit")
-        placeAutomation({ kind: "habit", item: habitById.get(d.id) as HabitItem });
-      else placeAutomation({ kind: "meeting", item: meetingById.get(d.id) as MeetingItem });
+      // A waiting target is not placed; its kept events stand (see keptDependencies).
+      if (d.kind === "habit") {
+        const item = habitById.get(d.id);
+        if (item) placeAutomation({ kind: "habit", item });
+      } else {
+        const item = meetingById.get(d.id);
+        if (item) placeAutomation({ kind: "meeting", item });
+      }
     }
     placeHabit(ctx, a.item);
   };

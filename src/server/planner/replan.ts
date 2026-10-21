@@ -698,9 +698,17 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
     snapshot.meetings = snapshot.meetings.filter(keep("meeting", settings("meeting")));
     snapshot.buffers = snapshot.buffers.filter(keep("buffer", settings("buffer")));
     snapshot.focus = snapshot.focus.filter(keep("focus", settings("focus")));
+    // Rule 18: a habit dependency on a waiting habit or meeting keeps its rule;
+    // the target's kept events are its placements.
+    const waiting = new Map<string, { kind: "habit" | "meeting"; id: string; starts: number[] }>();
+    for (const key of left) {
+      const [kind, id] = key.split(":") as [string, string];
+      if (kind === "habit" || kind === "meeting") waiting.set(key, { kind, id, starts: [] });
+    }
     for (const r of rows) {
       if (r.end_ms <= now || !left.has(`${r.kind}:${r.source_id}`)) continue;
       kept.add(r.key);
+      waiting.get(`${r.kind}:${r.source_id}`)?.starts.push(r.start_ms);
       if (r.busy !== 1) continue;
       snapshot.events.push({
         id: `kept:${r.key}`,
@@ -719,6 +727,7 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
         calendarId: r.calendar_id,
       });
     }
+    if (waiting.size > 0) snapshot.waiting = [...waiting.values()];
   }
   const result = plan(snapshot);
 
