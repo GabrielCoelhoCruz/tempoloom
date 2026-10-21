@@ -75,6 +75,8 @@ const habitInput = z.object({
   level: level.optional(),
   hoursSetId: z.string().optional(),
   idealTime: hhmm,
+  /** The ideal start is the end of each day's hours minus the length (`ideal_at_end`). */
+  idealAtEnd: z.boolean().optional(),
   minMinutes: minutes,
   maxMinutes: minutes,
   frequency: habitFrequency.optional(),
@@ -231,8 +233,8 @@ export function habitRoutes(db: Db, sync: SyncService, now: () => number): Hono<
       db,
       `INSERT INTO habits (id, user_id, title, notes, enabled, level, rank, hours_set_id, ideal_minute, min_minutes,
          max_minutes, frequency, starting, defense, when_unplaceable, reserved_words, created_at, rules_changed_at,
-         event_settings, template_id, guests, decline_enabled, decline_message, dependencies)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         event_settings, template_id, guests, decline_enabled, decline_message, dependencies, ideal_at_end)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       id,
       user.id,
       body.title,
@@ -266,6 +268,7 @@ export function habitRoutes(db: Db, sync: SyncService, now: () => number): Hono<
       body.autoDecline?.enabled ? 1 : 0,
       body.autoDecline?.message ?? "",
       deps,
+      body.idealAtEnd ? 1 : 0,
     );
     changed(user.id);
     return c.json({ habit: habitRow(id) }, 201);
@@ -294,6 +297,7 @@ export function habitRoutes(db: Db, sync: SyncService, now: () => number): Hono<
       decline_enabled: number;
       decline_message: string;
       dependencies: string;
+      ideal_at_end: number;
     }>(db, "SELECT * FROM habits WHERE id = ? AND user_id = ?", id, user.id);
     if (!cur) notFound("habit");
     const body = await jsonBody(c, habitInput.partial());
@@ -329,7 +333,7 @@ export function habitRoutes(db: Db, sync: SyncService, now: () => number): Hono<
       `UPDATE habits SET title = ?, notes = ?, enabled = ?, level = ?, hours_set_id = ?, ideal_minute = ?, min_minutes = ?,
          max_minutes = ?, frequency = ?, starting = ?, defense = ?, when_unplaceable = ?, reserved_words = ?,
          rules_changed_at = ?, event_settings = ?, rank = ?, guests = ?, decline_enabled = ?,
-         decline_message = ?, dependencies = ? WHERE id = ?`,
+         decline_message = ?, dependencies = ?, ideal_at_end = ? WHERE id = ?`,
       body.title ?? cur.title,
       body.notes ?? cur.notes,
       body.enabled === undefined ? cur.enabled : body.enabled ? 1 : 0,
@@ -362,6 +366,7 @@ export function habitRoutes(db: Db, sync: SyncService, now: () => number): Hono<
       body.autoDecline ? (body.autoDecline.enabled ? 1 : 0) : cur.decline_enabled,
       body.autoDecline ? body.autoDecline.message : cur.decline_message,
       deps,
+      body.idealAtEnd === undefined ? cur.ideal_at_end : body.idealAtEnd ? 1 : 0,
       id,
     );
     if (hours !== cur.hours_set_id) dropItemHours(db, cur.hours_set_id);

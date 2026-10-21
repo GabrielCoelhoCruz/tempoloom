@@ -1321,7 +1321,15 @@ export const MIGRATIONS: readonly string[] = [
   ) STRICT;
   CREATE INDEX weekly_shares_user ON weekly_shares(user_id);
   `,
-  // 44: the change log per item (planning-scheduler.md SCH-119): each placement,
+  // 44: a focus goal's preferred window in minutes of the day (focus-time.md
+  // `preferred_window`), and a habit whose ideal start is at the end of each
+  // day's hours (habits-automation.md `ideal_at_end`).
+  `
+  ALTER TABLE focus_goals ADD COLUMN preferred_from INTEGER;
+  ALTER TABLE focus_goals ADD COLUMN preferred_to INTEGER;
+  ALTER TABLE habits ADD COLUMN ideal_at_end INTEGER NOT NULL DEFAULT 0;
+  `,
+  // 45: the change log per item (planning-scheduler.md SCH-119): each placement,
   // move and removal a plan run made, with its SCH-116 reason code; 30 days.
   `
   CREATE TABLE item_changes (

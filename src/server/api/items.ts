@@ -104,7 +104,21 @@ const focusInput = z.object({
   templateId: z.string().max(100).optional(),
   /** A one-off window instead of a named set (focus-time.md `hours`). */
   itemHours: itemHoursSchema.optional(),
+  /** focus-time.md `preferred_window`; null clears it. */
+  preferredWindow: z.object({ from: hhmm, to: hhmm }).nullable().optional(),
 });
+
+/** The preferred window in minutes of the day, or null; undefined when not given. */
+function preferredWindow(
+  w: { from: string; to: string } | null | undefined,
+): [number | null, number | null] | undefined {
+  if (w === undefined) return undefined;
+  if (w === null) return [null, null];
+  const m = (t: string) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3));
+  if (m(w.from) >= m(w.to))
+    badRequest("preferredWindow", "The preferred window ends before it begins");
+  return [m(w.from), m(w.to)];
+}
 
 export function badRequest(field: string, message: string): never {
   throw new HTTPException(400, {
@@ -499,6 +513,7 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
     const id = randomUUID();
     const t = now();
     const es = newEventSettings(db, user.id, "focus_time", f.eventSettings);
+    const [prefFrom, prefTo] = preferredWindow(f.preferredWindow) ?? [null, null];
     const hours = f.itemHours
       ? createItemHours(db, user.id, f.title ?? "Focus time", f.itemHours)
       : hoursSetId(db, user.id, f.hoursSetId, "work");
@@ -506,8 +521,8 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
       db,
       `INSERT INTO focus_goals (id, user_id, title, enabled, hours_set_id, weekly_goal_minutes, daily_min_minutes,
          daily_max_minutes, min_block_minutes, max_block_minutes, busy, created_at, rules_changed_at,
-         event_settings, template_id, rank)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         event_settings, template_id, rank, preferred_from, preferred_to)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       id,
       user.id,
       f.title ?? "Focus time",
@@ -528,6 +543,8 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
         "SELECT MAX(rank) AS r FROM focus_goals WHERE user_id = ?",
         user.id,
       )?.r ?? -1) + 1,
+      prefFrom,
+      prefTo,
     );
     changed(user.id);
     return c.json({ focus: one(db, "SELECT * FROM focus_goals WHERE id = ?", id) }, 201);
@@ -546,6 +563,10 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
     const min = f.minBlockMinutes ?? cur.min_block_minutes;
     const max = f.maxBlockMinutes ?? cur.max_block_minutes;
     if (min > max) badRequest("minBlockMinutes", "Minimum block is longer than maximum block");
+    const [prefFrom, prefTo] = preferredWindow(f.preferredWindow) ?? [
+      cur.preferred_from,
+      cur.preferred_to,
+    ];
     const es = editedEventSettings(
       readEventSettings(cur.event_settings, defaultEventSettings("focus_time")),
       f.eventSettings,
@@ -559,7 +580,7 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
       db,
       `UPDATE focus_goals SET title = ?, enabled = ?, hours_set_id = ?, weekly_goal_minutes = ?, daily_min_minutes = ?,
          daily_max_minutes = ?, min_block_minutes = ?, max_block_minutes = ?, busy = ?, event_settings = ?,
-         rules_changed_at = ? WHERE id = ?`,
+         rules_changed_at = ?, preferred_from = ?, preferred_to = ? WHERE id = ?`,
       f.title ?? cur.title,
       f.enabled === undefined ? cur.enabled : f.enabled ? 1 : 0,
       hours,
@@ -571,6 +592,8 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
       f.busy === undefined ? cur.busy : f.busy ? 1 : 0,
       JSON.stringify(es),
       now(),
+      prefFrom,
+      prefTo,
       cur.id,
     );
     if (hours !== cur.hours_set_id) dropItemHours(db, cur.hours_set_id);
@@ -622,4 +645,6 @@ interface FocusRow {
   max_block_minutes: number;
   busy: number;
   event_settings: string;
+  preferred_from: number | null;
+  preferred_to: number | null;
 }
