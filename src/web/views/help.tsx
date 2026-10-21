@@ -297,6 +297,7 @@ interface Lookup {
   copy: { policy: string; source: { title: string; calendar: string } | null } | null;
   policies: { name: string; decision: "copied" | "skipped"; reason: string }[];
   changes: { at: string; action: string; reason: string; range: string; actor: string }[];
+  repairable: boolean;
 }
 
 const ERRORS: Record<string, string> = {
@@ -311,15 +312,35 @@ function LookupView() {
   const [q, setQ] = useState(() => new URLSearchParams(location.search).get("q") ?? "");
   const [result, setResult] = useState<Lookup | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [repairing, setRepairing] = useState<"busy" | "done" | null>(null);
+  // The query of the result on the page: repair acts on that event, also after the input changes.
+  const [shown, setShown] = useState("");
   const run = async (value: string) => {
     setError(null);
+    setRepairing(null);
     setResult(null);
     if (!value.trim()) return;
     try {
       setResult(await api<Lookup>("GET", `/api/help/lookup?q=${encodeURIComponent(value)}`));
+      setShown(value);
     } catch (err) {
       const code = err instanceof ApiError ? (err.body as { error?: string })?.error : undefined;
       setError(ERRORS[code ?? ""] ?? "The lookup failed. Try again.");
+    }
+  };
+  // Rule 10: the copy decision runs again for this one event, and its result is written.
+  const repair = async () => {
+    setError(null);
+    setRepairing("busy");
+    try {
+      setResult(await api<Lookup>("POST", "/api/help/repair", { q: shown }));
+      setRepairing("done");
+    } catch (err) {
+      setRepairing(null);
+      // 502: the run failed or left the event as it was; the lookup shows the event now.
+      const body = err instanceof ApiError ? (err.body as Lookup | undefined) : undefined;
+      if (body?.event) setResult(body);
+      setError("The repair failed: the event is as it was. Try again later.");
     }
   };
   // A link to this page with ?q= shows that event, also after a reload.
@@ -393,6 +414,18 @@ function LookupView() {
                 </li>
               ))}
             </ul>
+          )}
+          {result.repairable && (
+            <div class="actions">
+              <button type="button" disabled={repairing === "busy"} onClick={() => void repair()}>
+                Repair
+              </button>
+              {repairing === "done" && (
+                <span class="status" role="status" data-testid="repair-message">
+                  Repaired: Tempoloom wrote this event again as its copy rules give it.
+                </span>
+              )}
+            </div>
           )}
           <h3>Changes by Tempoloom</h3>
           {result.changes.length === 0 ? (

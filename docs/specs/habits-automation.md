@@ -120,6 +120,8 @@ a fifth such weekday; `last` always selects the month's last such weekday.
     - `remove`: Tempoloom deletes the occurrence from the calendar and shows it as unplaced in the planner (E-0082, E-0081).
 18. Dependencies (legacy evidence, E-0082): a habit may require that it comes before, or never after, another habit or a flexible meeting on the same day, or that it never shares a day with another habit. Tempoloom treats each dependency as a hard placement constraint.
 
+    Tempoloom decision: when the target waits because its calendar is on a disconnected account (`accounts-login-emails-permissions.md` rule 16), the dependency stays. The target gets no new events, and its kept events count as its occurrences: a `before` habit takes place only on days that hold a kept event of the target, and a target with no kept events leaves it no day.
+
 ### Defense (free or busy)
 
 19. With `always-busy`, the occurrence is always busy (E-0196).

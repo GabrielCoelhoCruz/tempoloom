@@ -39,6 +39,7 @@ import { planningZone } from "../travel.ts";
 import { afterPush } from "./after-push.ts";
 import { categoryContext, colorFor, externalPaints } from "./categories.ts";
 import { externalEvents } from "./events.ts";
+import { recordItemChanges } from "./item-log.ts";
 import {
   eventTitle,
   markEnded,
@@ -62,6 +63,10 @@ export interface ReplanContext {
   baseUrl: string;
   /** The full mirroring reconcile: copies are checked field by field (mirroring rule 39). */
   fullMirror?: boolean;
+  /** Managed keys to repair: written again from the plan, compared field by field. */
+  repair?: ReadonlySet<string>;
+  /** Filled with the repair keys the push checked in full or wrote. */
+  repaired?: Set<string>;
 }
 
 export interface ReplanResult {
@@ -87,15 +92,17 @@ export function writeCalendar(
   db: Db,
   userId: string,
   preferredId?: string | null,
+  opts: { anyStatus?: boolean } = {},
 ): CalendarInfo | undefined {
   const pick = (only: string | null) =>
     one<CalendarInfo>(
       db,
       `SELECT c.id, c.account_id, c.provider_id, c.is_primary, c.writable, c.check_availability
        FROM calendars c JOIN accounts a ON a.id = c.account_id
-       WHERE a.user_id = ? AND a.status = 'ok' AND c.writable = 1 AND (? IS NULL OR c.id = ?)
+       WHERE a.user_id = ? AND (? OR a.status = 'ok') AND c.writable = 1 AND (? IS NULL OR c.id = ?)
        ORDER BY a.is_main DESC, c.is_primary DESC, a.created_at, c.name LIMIT 1`,
       userId,
+      opts.anyStatus ? 1 : 0,
       only,
       only,
     );
@@ -624,11 +631,16 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
   if (!user) return null;
   const settings = getSettings(db, userId);
   if (settings.paused || isAnalyticsOnly(db, userId)) return null;
-  const target = writeCalendar(db, userId);
+  // The main calendar, also while its account is disconnected: items that use
+  // it then wait instead of moving to another account (accounts rule 16).
+  const target = writeCalendar(db, userId, null, { anyStatus: true });
   if (!target) return null;
-  const last =
-    one<{ planned_at: number }>(db, "SELECT planned_at FROM plan_reports WHERE user_id = ?", userId)
-      ?.planned_at ?? 0;
+  const lastRun = one<{ planned_at: number; report: string }>(
+    db,
+    "SELECT planned_at, report FROM plan_reports WHERE user_id = ?",
+    userId,
+  );
+  const last = lastRun?.planned_at ?? 0;
   const zone = planningZone(db, userId, user.time_zone);
   const guestBusy = await guestFreeBusy(
     db,
@@ -646,9 +658,6 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
     last,
     guestBusy,
   );
-  const result = plan(snapshot);
-
-  const rowByKey = new Map(rows.map((r) => [r.key, r]));
   const taskCalendar = new Map(
     all<{ id: string; task_calendar_id: string | null }>(
       db,
@@ -656,6 +665,85 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
       userId,
     ).map((h) => [h.id, h.task_calendar_id]),
   );
+  const calendars = new Map(
+    all<CalendarInfo & { ok: number }>(
+      db,
+      `SELECT c.id, c.account_id, c.provider_id, c.is_primary, c.writable, c.check_availability,
+         a.status = 'ok' AS ok
+       FROM calendars c JOIN accounts a ON a.id = c.account_id WHERE a.user_id = ?`,
+      userId,
+    ).map((c) => [c.id, c]),
+  );
+  // A calendar chosen for an item, while its account works and it takes events.
+  const writable = (id: string | null | undefined) => {
+    const cal = id ? calendars.get(id) : undefined;
+    return cal?.writable === 1 && cal.ok === 1 ? cal.id : undefined;
+  };
+  // A chosen calendar of a disconnected account stays chosen: the push writes
+  // nothing to it, so the item gets no new events until reconnect (accounts rule 16).
+  const chosen = (id: string | null | undefined) => {
+    const cal = id ? calendars.get(id) : undefined;
+    return cal?.writable === 1 ? cal.id : undefined;
+  };
+  const chosenCalendar = (es: EventSettings | undefined) => chosen(es?.calendarId);
+  // Accounts rule 16: an item whose calendar is on a disconnected account
+  // waits. Its new demands leave the plan, so they take no time from other
+  // items. The events it has stay as they are on every calendar: the push
+  // neither moves nor deletes them, and the busy ones block their time.
+  const kept = new Set<string>();
+  if ([...calendars.values()].some((c) => c.ok !== 1)) {
+    const waits = (id: string | undefined) => calendars.get(id ?? target.id)?.ok !== 1;
+    const left = new Set<string>();
+    const keep =
+      <T extends { id: string }>(kind: string, calendarOf: (i: T) => string | undefined) =>
+      (i: T) => {
+        if (!waits(calendarOf(i))) return true;
+        left.add(`${kind}:${i.id}`);
+        return false;
+      };
+    const settings = (kind: string) => (i: { id: string }) =>
+      chosenCalendar(eventSettings.get(`${kind}:${i.id}`));
+    snapshot.tasks = snapshot.tasks.filter(
+      keep("task", (t: { id: string; hours: string }) => chosen(taskCalendar.get(t.hours))),
+    );
+    snapshot.habits = snapshot.habits.filter(keep("habit", settings("habit")));
+    snapshot.meetings = snapshot.meetings.filter(keep("meeting", settings("meeting")));
+    snapshot.buffers = snapshot.buffers.filter(keep("buffer", settings("buffer")));
+    snapshot.focus = snapshot.focus.filter(keep("focus", settings("focus")));
+    // Rule 18: a habit dependency on a waiting habit or meeting keeps its rule;
+    // the target's kept events are its placements.
+    const waiting = new Map<string, { kind: "habit" | "meeting"; id: string; starts: number[] }>();
+    for (const key of left) {
+      const [kind, id] = key.split(":") as [string, string];
+      if (kind === "habit" || kind === "meeting") waiting.set(key, { kind, id, starts: [] });
+    }
+    for (const r of rows) {
+      if (r.end_ms <= now || !left.has(`${r.kind}:${r.source_id}`)) continue;
+      kept.add(r.key);
+      waiting.get(`${r.kind}:${r.source_id}`)?.starts.push(r.start_ms);
+      if (r.busy !== 1) continue;
+      snapshot.events.push({
+        id: `kept:${r.key}`,
+        start: r.start_ms,
+        end: r.end_ms,
+        allDay: false,
+        busy: true,
+        title: r.title,
+        description: "",
+        selfResponse: null,
+        organizerSelf: true,
+        attendeeCount: 0,
+        location: "",
+        eventType: "default",
+        bookedViaLink: false,
+        calendarId: r.calendar_id,
+      });
+    }
+    if (waiting.size > 0) snapshot.waiting = [...waiting.values()];
+  }
+  const result = plan(snapshot);
+
+  const rowByKey = new Map(rows.map((r) => [r.key, r]));
   const taskHours = new Map(snapshot.tasks.map((t) => [t.id, t.hours]));
   // CNT-20, CNT-24: chunks of a private task are private events.
   const privateTasks = new Set(
@@ -681,21 +769,6 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
       userId,
     ).map((a) => [a.id, a.email.toLowerCase()]),
   );
-  const calendars = new Map(
-    all<CalendarInfo & { ok: number }>(
-      db,
-      `SELECT c.id, c.account_id, c.provider_id, c.is_primary, c.writable, c.check_availability,
-         a.status = 'ok' AS ok
-       FROM calendars c JOIN accounts a ON a.id = c.account_id WHERE a.user_id = ?`,
-      userId,
-    ).map((c) => [c.id, c]),
-  );
-  // A calendar chosen for an item, while its account works and it takes events.
-  const writable = (id: string | null | undefined) => {
-    const cal = id ? calendars.get(id) : undefined;
-    return cal?.writable === 1 && cal.ok === 1 ? cal.id : undefined;
-  };
-  const chosenCalendar = (es: EventSettings | undefined) => writable(es?.calendarId);
   const travelBuffers = new Set(
     snapshot.buffers.filter((b) => b.filter.travel || b.filter.flight).map((b) => b.id),
   );
@@ -716,7 +789,7 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
     // that cannot be written now stays, and other events stay where they are.
     const taskCalendarId =
       p.kind === "task" && !row?.locked && (!row || writable(row.calendar_id))
-        ? (writable(taskCalendar.get(taskHours.get(p.itemId) ?? "")) ?? target.id)
+        ? (chosen(taskCalendar.get(taskHours.get(p.itemId) ?? "")) ?? target.id)
         : undefined;
     const calendarId = taskCalendarId ?? row?.calendar_id ?? chosenCalendar(es) ?? target.id;
     const keepUserTitle = row?.user_edited === 1;
@@ -872,21 +945,52 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
     );
   }
 
-  const push = await pushSchedule(
-    {
-      db,
-      userId,
+  // SCH-119: what the push wrote is logged per item, also when a later write fails.
+  const written = new Map<string, { start: number; end: number } | null>();
+  const reportJson = JSON.stringify(result.report);
+  // After a failed push only the writes are logged: the report is saved only
+  // after a whole run, so its shortfalls are logged once, by the next whole run.
+  const logChanges = (shortfalls: boolean) =>
+    recordItemChanges(db, userId, {
+      before: rows,
+      written,
+      prevReport: lastRun?.report ?? null,
+      reportJson,
+      shortfalls,
+      snapshot,
+      result,
       now,
-      fullCheck: ctx.fullMirror ?? false,
-      reopen,
-      target: (calendarId) => {
-        const c = calendars.get(calendarId);
-        if (!c) throw new Error(`Unknown calendar ${calendarId}`);
-        return { provider: ctx.provider(c.account_id), providerCalendarId: c.provider_id };
+    });
+  let push: Awaited<ReturnType<typeof pushSchedule>>;
+  try {
+    push = await pushSchedule(
+      {
+        db,
+        userId,
+        now,
+        fullCheck: ctx.fullMirror ?? false,
+        reopen,
+        ...(ctx.repair ? { repair: ctx.repair } : {}),
+        ...(ctx.repaired ? { repaired: ctx.repaired } : {}),
+        keep: kept,
+        written,
+        target: (calendarId) => {
+          const c = calendars.get(calendarId);
+          if (!c) throw new Error(`Unknown calendar ${calendarId}`);
+          return { provider: ctx.provider(c.account_id), providerCalendarId: c.provider_id };
+        },
       },
-    },
-    desired,
-  );
+      desired,
+    );
+  } catch (err) {
+    try {
+      logChanges(false);
+    } catch {
+      // The push's own error is the one to report.
+    }
+    throw err;
+  }
+  logChanges(true);
   recordMeetingChanges(db, userId, rows, now, last);
   recordMissedPeriods(db, userId, result, now);
   // Rule 8: a new color also repaints managed events that ended, up to 90 days back.
@@ -936,7 +1040,7 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
      ON CONFLICT (user_id) DO UPDATE SET report = excluded.report, planned_at = excluded.planned_at,
        task_order = excluded.task_order`,
     userId,
-    JSON.stringify(result.report),
+    reportJson,
     now,
     JSON.stringify(result.taskOrder),
   );
