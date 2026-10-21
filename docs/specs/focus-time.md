@@ -43,8 +43,10 @@ color rule unless the user picks one. A new focus goal is public with no
 reminders. Focus events show no free or busy marker, only the lock marker
 (answers open question 2 of `events-title-emoji.md`).
 
-Tempoloom decision (library entries 7 and 23, "ideal time mornings"): a focus
-goal may have a `preferred_window`. It is a preference, not hard hours. In
+Tempoloom decision (library entry 7, "Ideal time mornings", and entry 23,
+"Ideal window 09:00 to 12:00 (user can change)"): a focus goal may have a
+`preferred_window`. Tempoloom reads "mornings" as 09:00 to 12:00, so both
+entries add the window 09:00 to 12:00. It is a preference, not hard hours. In
 proactive mode Tempoloom first places focus in the free time that is inside
 both `hours` and the window, on each allowed day. Only when that time is full
 does it use the other free time inside `hours`. Rules 3 to 6 apply as before;
