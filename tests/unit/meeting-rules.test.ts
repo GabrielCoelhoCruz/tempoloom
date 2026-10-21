@@ -269,15 +269,9 @@ describe("series adoption", () => {
       "END:VEVENT",
       "END:VCALENDAR",
     ].join("\r\n");
-    for (const e of eventsFromObject(
-      ics,
-      "/cal/standup.ics",
-      null,
-      T0,
-      T0 + 365 * DAY,
-      "UTC",
+    for (const e of eventsFromObject(ics, "/cal/standup.ics", null, T0, T0 + 365 * DAY, "UTC", [
       "owner@example.com",
-    ))
+    ]))
       cacheEvent(s.db, "cal", e);
     const list = async () =>
       (await s.call("GET", "/meetings/series")).series as {

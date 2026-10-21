@@ -62,7 +62,7 @@ export function feedEvents(
     for (const z of zones) cal.addSubcomponent(new ICAL.Component(z));
     for (const p of parts) cal.addSubcomponent(new ICAL.Component(p.toJSON()));
     const id = `${url}#${encodeURIComponent(uid)}`;
-    for (const e of eventsFromObject(cal.toString(), id, null, from, to, zone, ""))
+    for (const e of eventsFromObject(cal.toString(), id, null, from, to, zone, []))
       out.push({ ...e, busy: true, attendeeCount: 0, attendees: [], selfResponse: null });
   }
   return out;

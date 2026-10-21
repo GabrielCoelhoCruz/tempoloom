@@ -35,7 +35,7 @@ const note = (data: string) =>
     Date.parse("2026-10-19T00:00:00Z"),
     Date.parse("2026-10-30T00:00:00Z"),
     "UTC",
-    ME,
+    [ME],
   )[0]?.rsvpNote;
 
 describe("CalDAV RSVP note", () => {

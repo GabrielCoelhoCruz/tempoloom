@@ -48,7 +48,9 @@ export function fromGoogleEvent(e: GoogleEvent, zone: string): ProviderEvent {
     attendees: (e.attendees ?? [])
       .filter((a) => !a.resource && a.email)
       .map((a) => (a.email ?? "").toLowerCase()),
-    organizerSelf: e.organizer?.self !== false,
+    // Google sends `self` only when it is true (SCH-21: an unanswered invitation blocks nothing).
+    organizerSelf: e.organizer?.self === true,
+    organizerEmail: (e.organizer?.email ?? "").toLowerCase(),
     recurringId: e.recurringEventId ?? null,
     colorId: e.colorId ?? null,
     updated: e.updated ? Date.parse(e.updated) : null,
