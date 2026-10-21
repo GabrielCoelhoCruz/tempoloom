@@ -49,16 +49,17 @@ Tempoloom decisions for the event fields:
 - `title` and emoji: the emoji is a field of its own; Tempoloom writes `<marker> <emoji> <title>`.
 - `category`: a new habit is personal when it uses personal hours, else work, unless the user picks one in the form. A personal habit gets the personal event category and color and does not count toward focus time; a work habit gets solo work and counts. Habits saved before the field existed count by their hours set, as before.
 - `color`: "Category color" follows the color rule; "Calendar color" or one of the 11 colors overrides it.
+- `target_calendar`: the form offers the main calendar and every writable calendar. If the chosen calendar is gone or read-only, new events go to the main calendar.
+- `reminders`: the form offers the calendar default, none, or one custom alert ("Remind me (minutes)").
 
 Tempoloom decision (library entry 11, "the last 30 min of work hours"): when
 `ideal_at_end` is true, the ideal start on each date is the end of the last
 range of `hours` on that weekday minus `duration_max`. A day whose hours end
 earlier gets an earlier ideal start, and a change of the hours moves it.
 `ideal_time` is then only the value the form shows; the save check of
-`ideal_time` (rule 12, E-0082) still applies. A time the user picks for one date
-(rule 30) wins over it.
-- `target_calendar`: the form offers the main calendar and every writable calendar. If the chosen calendar is gone or read-only, new events go to the main calendar.
-- `reminders`: the form offers the calendar default, none, or one custom alert ("Remind me (minutes)").
+`ideal_time` (field table, E-0082) still applies; rule 12 uses the
+end-of-hours start instead of `ideal_time`. A time the user picks for one date
+(rule 30) or a snooze (rule 31) wins over it.
 
 Defense modes (E-0196, E-0081):
 
