@@ -10,6 +10,8 @@
 //  5. Reactive focus uses the window.
 //  6. The end-of-hours ideal reads one end for every day, or ignores a later change.
 //  7. A time the user picked for one date loses to the end-of-hours ideal.
+//  8. A placed focus event outside the window moves into a free window on a
+//     save of other fields (changed: false).
 import { describe, expect, it } from "vitest";
 import type {
   ExternalEvent,
@@ -142,6 +144,25 @@ describe("focus preferred window", () => {
       ).toBe(true);
     }
     expect(of(r, "focus").reduce((a, p) => a + (p.end - p.start), 0)).toBe(600 * 60_000);
+  });
+
+  it("keeps a placed event outside the window while it is legal, and moves it after a rules change", () => {
+    const current = [
+      {
+        key: `focus:focus:${day(0)}:0`,
+        itemId: "focus",
+        start: at(day(0), "13:00"),
+        end: at(day(0), "15:00"),
+        locked: false,
+      },
+    ];
+    const kept = plan(snapshot({ focus: [goal({ weeklyGoalMinutes: 120 })], current }));
+    expect(spans(of(kept, "focus"))).toEqual([`${day(0)}T13:00/15:00`]);
+    // The window is free: a changed goal (or no sticky rule) places it at 09:00.
+    const moved = plan(
+      snapshot({ focus: [goal({ weeklyGoalMinutes: 120, changed: true })], current }),
+    );
+    expect(spans(of(moved, "focus"))).toEqual([`${day(0)}T09:00/11:00`]);
   });
 
   it("is ignored in reactive mode", () => {
