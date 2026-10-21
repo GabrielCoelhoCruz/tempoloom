@@ -29,6 +29,24 @@ export function PlacementSetting({ settings, act }: { settings: Settings; act: A
   );
 }
 
+/** planning-task-progress.md PRG-1, PRG-3: when a chunk or habit event counts as done. */
+export function StartModeSetting({ settings, act }: { settings: Settings; act: Act }) {
+  return (
+    <label>
+      Start mode
+      <select
+        value={settings.startMode}
+        onChange={(e) =>
+          void act(() => api("PATCH", "/api/settings", { startMode: e.currentTarget.value }))
+        }
+      >
+        <option value="auto">Count when the time passes</option>
+        <option value="manual">Count only after I press Start</option>
+      </select>
+    </label>
+  );
+}
+
 const AUTO_LOCK = [
   ["meeting", "Flexible meetings"],
   ["habit", "Habits"],
@@ -89,6 +107,31 @@ export function AlertSettings({ settings, act }: { settings: Settings; act: Act 
       <div class="form">
         {flag("tabAlert", "Flash the tab title when an event starts")}
         {flag("startChime", "Chime when an event starts")}
+      </div>
+    </section>
+  );
+}
+
+/** planning-event-content.md CNT-15: tips in the descriptions of managed events. */
+export function EventTipsSetting({ settings, act }: { settings: Settings; act: Act }) {
+  return (
+    <section>
+      <h2>Event descriptions</h2>
+      <div class="form">
+        <label class="inline">
+          <input
+            type="checkbox"
+            checked={settings.eventTips}
+            onChange={(e) =>
+              void act(() => api("PATCH", "/api/settings", { eventTips: e.currentTarget.checked }))
+            }
+          />
+          Add tips to event descriptions
+        </label>
+        <p class="meta wide">
+          A short tip after your notes says how to move, skip or reschedule the event from your
+          calendar.
+        </p>
       </div>
     </section>
   );

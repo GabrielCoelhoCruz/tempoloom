@@ -67,6 +67,8 @@ export interface FocusPreset {
   minBlockMinutes?: number;
   /** The ideal window, as item-specific hours (focus-time.md `hours`: a one-off window). */
   window?: ItemRange;
+  /** A time of day that focus fills first (focus-time.md `preferred_window`). */
+  preferredWindow?: { from: string; to: string };
 }
 
 export interface MeetingPreset {
@@ -172,9 +174,9 @@ export const LIBRARY: LibraryEntry[] = [
     name: "Executive weekly focus",
     emoji: "🎯",
     group: "focus_time",
-    summary: "8 h of focus time each week, in the mornings (09:00 to 12:00).",
+    summary: "8 h of focus time each week, in the mornings (09:00 to 12:00) first.",
     kind: "focus_time",
-    preset: { weeklyGoalMinutes: 480, window: { days: WORKDAYS, from: "09:00", to: "12:00" } },
+    preset: { weeklyGoalMinutes: 480, preferredWindow: { from: "09:00", to: "12:00" } },
   },
   {
     slug: "recovery-day",
@@ -263,9 +265,9 @@ export const LIBRARY: LibraryEntry[] = [
     name: "Peak-energy focus",
     emoji: "⚡",
     group: "focus_time",
-    summary: "10 h of focus time each week, from 09:00 to 12:00.",
+    summary: "10 h of focus time each week, from 09:00 to 12:00 first.",
     kind: "focus_time",
-    preset: { weeklyGoalMinutes: 600, window: { days: WORKDAYS, from: "09:00", to: "12:00" } },
+    preset: { weeklyGoalMinutes: 600, preferredWindow: { from: "09:00", to: "12:00" } },
   },
   prompt("task-reranking", "Task re-ranking", "Re-rank open tasks by due date and work left."),
   {

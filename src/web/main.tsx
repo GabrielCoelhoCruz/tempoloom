@@ -14,6 +14,9 @@ const Habits = lazyComponent(() => import("./views/habits.tsx").then((m) => m.Ha
 const Meetings = lazyComponent(() => import("./views/meetings.tsx").then((m) => m.Meetings));
 const Library = lazyComponent(() => import("./views/library.tsx").then((m) => m.Library));
 const Settings = lazyComponent(() => import("./views/settings.tsx").then((m) => m.Settings));
+const Integrations = lazyComponent(() =>
+  import("./views/integrations.tsx").then((m) => m.Integrations),
+);
 const StatsPage = lazyComponent(() => import("./views/stats.tsx").then((m) => m.StatsPage));
 const MeetingCost = lazyComponent(() => import("./views/tools.tsx").then((m) => m.MeetingCost));
 const Pomodoro = lazyComponent(() => import("./views/tools.tsx").then((m) => m.Pomodoro));
@@ -58,6 +61,9 @@ const NewTaskDialog = lazyComponent<{ onClose: () => void }>(() =>
   import("./views/task-dialog.tsx").then((m) => m.NewTaskDialog),
 );
 const Alerts = lazyComponent(() => import("./views/alerts.tsx").then((m) => m.Alerts));
+const OAuthConsent = lazyComponent(() =>
+  import("./views/oauth-consent.tsx").then((m) => m.OAuthConsent),
+);
 // The sign-in page is for signed-out visitors only; it loads on demand.
 const Login = lazyComponent(() => import("./views/login.tsx").then((m) => m.Login));
 const CalDavLogin = lazyComponent(() => import("./views/login.tsx").then((m) => m.CalDavLogin));
@@ -137,6 +143,8 @@ function Page() {
       return <Library />;
     case "/settings":
       return <Settings />;
+    case "/settings/integrations":
+      return <Integrations />;
     case "/links":
       return <Links />;
     case "/stats":
@@ -188,6 +196,8 @@ function App() {
   if (me.value === null && path.value.startsWith("/join/"))
     return <JoinPage token={path.value.slice(6)} login={<CalDavLogin />} />;
   if (me.value === null) return <Login />;
+  // An AI tool's OAuth sign-in: the consent page, without the app around it.
+  if (path.value === "/oauth/authorize") return <OAuthConsent />;
   return (
     <div class="shell" data-testid="app-shell">
       <nav class="nav">

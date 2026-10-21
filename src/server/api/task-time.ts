@@ -147,12 +147,55 @@ export function taskTimeRoutes(
       end,
       title: it.title,
       description: eventDescription(it.notes, baseUrl, t.kind, t.item_id),
+      started: true,
     };
     await writeLocked(db, sync, user.id, body.calendarId, [event]);
     run(db, "DELETE FROM item_timers WHERE user_id = ?", user.id);
     if (body.markDone && t.kind === "task") markTaskDone(db, t.item_id, now());
     sync.request(user.id, 0);
     return c.json({ ok: true });
+  });
+
+  /**
+   * A past work session on a task (integrations-ai-tools.md "Work sessions on
+   * tasks"): a locked task event on the task's calendar, as a timer log is.
+   */
+  r.post("/tasks/:id/sessions", async (c) => {
+    const user = c.get("user");
+    const id = c.req.param("id");
+    const body = await jsonBody(
+      c,
+      z.object({
+        start: z.number().int(),
+        minutes: z
+          .number()
+          .int()
+          .min(1)
+          .max(12 * 60),
+      }),
+    );
+    const it = item(user.id, "task", id);
+    if (!it) notFound("task");
+    const end = body.start + body.minutes * MINUTE;
+    if (end > now() + MINUTE)
+      return c.json({ error: "future", message: "A work session cannot end in the future." }, 400);
+    const calendarId = defaultCalendar(user.id, "task", it);
+    if (!calendarId) notFound("calendar");
+    await writeLocked(db, sync, user.id, calendarId, [
+      {
+        key: `task:${id}:log-${randomUUID().slice(0, 8)}`,
+        kind: "task",
+        sourceId: id,
+        start: body.start,
+        end,
+        title: it.title,
+        description: eventDescription(it.notes, baseUrl, "task", id),
+        // Logged work is started work (PRG-20), so manual start mode counts it.
+        started: true,
+      },
+    ]);
+    sync.request(user.id, 0);
+    return c.json({ ok: true }, 201);
   });
 
   // ---------------------------------------------------------------- work blocks

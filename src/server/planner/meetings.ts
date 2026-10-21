@@ -10,6 +10,7 @@ import { all, type Db, one, run } from "../db.ts";
 import { getPrefs } from "../meeting-prefs.ts";
 import type { CalendarProvider } from "../providers/types.ts";
 import { externalEvents, OFF_MAIN_TASK_CHUNK } from "./events.ts";
+import { meetingBoost } from "./meeting-log.ts";
 
 export interface MeetingRow {
   id: string;
@@ -61,6 +62,8 @@ export function recentMoves(db: Db, meetingId: string, now: number): number {
 export interface Attendee {
   email: string;
   required: boolean;
+  /** Rule 7: the organizer's hours for this guest, in the guest's zone; null: their own. */
+  hoursOverride?: WeeklyHours | null;
 }
 
 export interface InstanceUser {
@@ -173,11 +176,15 @@ export function instanceUser(db: Db, email: string): InstanceUser | undefined {
 }
 
 export function attendeesOf(db: Db, meetingId: string): Attendee[] {
-  return all<{ email: string; required: number }>(
+  return all<{ email: string; required: number; hours_override: string | null }>(
     db,
-    "SELECT email, required FROM meeting_attendees WHERE meeting_id = ? ORDER BY email",
+    "SELECT email, required, hours_override FROM meeting_attendees WHERE meeting_id = ? ORDER BY email",
     meetingId,
-  ).map((a) => ({ email: a.email, required: a.required === 1 }));
+  ).map((a) => ({
+    email: a.email,
+    required: a.required === 1,
+    hoursOverride: a.hours_override ? (JSON.parse(a.hours_override) as WeeklyHours) : null,
+  }));
 }
 
 /**
@@ -227,7 +234,7 @@ function attendeeBusy(
 }
 
 /** The hours set that limits other people's meetings with this user: meeting hours, else work hours. */
-function meetingHoursJson(db: Db, userId: string): string {
+export function meetingHoursJson(db: Db, userId: string): string {
   return (
     one<{ weekly: string }>(
       db,
@@ -248,10 +255,14 @@ function attendeeHoursKey(db: Db, userId: string, m: MeetingRow, attendees: Atte
   for (const a of attendees) {
     const user = a.required ? instanceUser(db, a.email) : undefined;
     if (user && user.id !== userId)
-      parts.push(`${user.id} ${user.time_zone} ${meetingHoursJson(db, user.id)}`);
+      parts.push(`${user.id} ${user.time_zone} ${guestHoursJson(db, user.id, a)}`);
   }
   return parts.join("\n") || "-";
 }
+
+/** Rule 11: a guest's hours for a meeting: the organizer's choice (rule 7), else meeting hours. */
+export const guestHoursJson = (db: Db, userId: string, a: Attendee): string =>
+  a.hoursOverride ? JSON.stringify(a.hoursOverride) : meetingHoursJson(db, userId);
 
 /** One meeting as a scheduler item, with its attendees' hours and busy time. */
 export function meetingItem(
@@ -265,6 +276,7 @@ export function meetingItem(
   exclusions: Map<string, Interval[]>,
   guestBusy: Map<string, Interval[]> = new Map(),
 ): MeetingItem {
+  const boost = meetingBoost(db, userId, m, now);
   let window: TimeSet | null = null;
   // The organizer's no-meeting time (events-tags.md rules 3, 8): a busy #tl_free
   // event they attend is free for tasks and habits, but never for meetings.
@@ -278,7 +290,7 @@ export function meetingItem(
     if (!user || user.id === userId) continue;
     busy.push(...attendeeBusy(db, user, a.email, m.id, now, windowEnd));
     if (m.hours_mode === "everyone") {
-      const hours = JSON.parse(meetingHoursJson(db, user.id)) as WeeklyHours;
+      const hours = JSON.parse(guestHoursJson(db, user.id, a)) as WeeklyHours;
       const own = hoursToTimeSet(hours, user.time_zone, now, windowEnd);
       window = window ? window.intersect(own) : own;
     }
@@ -306,6 +318,9 @@ export function meetingItem(
     movesLeft:
       (MOVE_LIMITS[m.auto_reschedule] ?? MOVE_LIMITS.moderate) - recentMoves(db, m.id, now),
     startMinutes: getPrefs(db, userId).startMinutes,
+    ...lastStart(db, userId, m.id, now),
+    ...manualKeys(db, m.id, now),
+    ...(boost ? { boost: { period: boost.period, level: boost.level } } : {}),
     // An adopted series: only periods that have an instance of it.
     ...(m.series_event_id
       ? {
@@ -318,6 +333,32 @@ export function meetingItem(
         }
       : {}),
   };
+}
+
+/** MEET-02 rule 19: future occurrences whose last logged change is a move by hand. */
+function manualKeys(db: Db, meetingId: string, now: number) {
+  const keys = all<{ key: string }>(
+    db,
+    `SELECT occurrence_key AS key FROM meeting_changes c WHERE meeting_id = ? AND reason = 'manualMove'
+       AND new_start > ? AND id = (SELECT max(id) FROM meeting_changes
+         WHERE meeting_id = c.meeting_id AND occurrence_key = c.occurrence_key)`,
+    meetingId,
+    now,
+  ).map((r) => r.key);
+  return keys.length > 0 ? { manualKeys: keys } : {};
+}
+
+/** Rule 18: the start of the meeting's last occurrence before now. */
+function lastStart(db: Db, userId: string, meetingId: string, now: number) {
+  const t = one<{ t: number | null }>(
+    db,
+    `SELECT max(start_ms) AS t FROM managed_events
+     WHERE user_id = ? AND kind = 'meeting' AND source_id = ? AND start_ms < ?`,
+    userId,
+    meetingId,
+    now,
+  )?.t;
+  return t === null || t === undefined ? {} : { previousStart: t };
 }
 
 /** The organizer's enabled meetings as scheduler items. */

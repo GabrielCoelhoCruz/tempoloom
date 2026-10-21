@@ -227,6 +227,11 @@ export class GoogleProvider implements CalendarProvider {
     return fromGoogleEvent(ev, this.#zone);
   }
 
+  /** editExternal sends no update to guests (sendUpdates "none"), except with an answer. */
+  async notifiesGuests(): Promise<boolean> {
+    return false;
+  }
+
   async editExternal(
     calendarId: string,
     eventId: string,

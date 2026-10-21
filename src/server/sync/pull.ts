@@ -153,12 +153,17 @@ export function cacheEvent(db: Db, calendarId: string, e: ProviderEvent): void {
     run(db, "DELETE FROM events WHERE calendar_id = ? AND event_id = ?", calendarId, e.id);
     return;
   }
+  // Alerts of Tempoloom's own events: a copy that someone gave an alert is
+  // written again. Privacy of every event: a meeting occurrence with a new
+  // privacy is written again (rule 22), and the planner's "view as" hides the
+  // details of private events (PLN-6).
   run(
     db,
     `INSERT INTO events (calendar_id, event_id, summary, description, location, start_ms, end_ms,
        all_day, busy, event_type, self_response, attendee_count, organizer_self, recurring_id, color_id,
-       etag, updated_ms, private_props, attendees, responses, conference, rsvp_note)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       etag, updated_ms, private_props, attendees, responses, conference, rsvp_note, alerts,
+       own_visibility)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT (calendar_id, event_id) DO UPDATE SET
        summary = excluded.summary, description = excluded.description, location = excluded.location,
        start_ms = excluded.start_ms, end_ms = excluded.end_ms, all_day = excluded.all_day,
@@ -167,7 +172,8 @@ export function cacheEvent(db: Db, calendarId: string, e: ProviderEvent): void {
        recurring_id = excluded.recurring_id, color_id = excluded.color_id, etag = excluded.etag,
        updated_ms = excluded.updated_ms, private_props = excluded.private_props,
        attendees = excluded.attendees, responses = excluded.responses,
-       conference = excluded.conference, rsvp_note = excluded.rsvp_note`,
+       conference = excluded.conference, rsvp_note = excluded.rsvp_note, alerts = excluded.alerts,
+       own_visibility = excluded.own_visibility`,
     calendarId,
     e.id,
     e.summary,
@@ -190,18 +196,9 @@ export function cacheEvent(db: Db, calendarId: string, e: ProviderEvent): void {
     JSON.stringify(e.responses ?? {}),
     e.conference ?? "",
     e.rsvpNote ?? "",
+    e.privateProps.tl === "1" && e.alerts ? 1 : 0,
+    e.visibility,
   );
-  // Alerts and privacy of Tempoloom's own events: a copy that someone gave an
-  // alert, or a meeting occurrence with a new privacy, is written again.
-  if (e.privateProps.tl === "1")
-    run(
-      db,
-      "UPDATE events SET alerts = ?, own_visibility = ? WHERE calendar_id = ? AND event_id = ?",
-      e.alerts ? 1 : 0,
-      e.visibility,
-      calendarId,
-      e.id,
-    );
 }
 
 /** Pulls changes for one calendar, `ahead` into the future. Returns the number of changed events. */

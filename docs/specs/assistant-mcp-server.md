@@ -27,10 +27,10 @@ products (ChatGPT, Claude, Cursor) belongs to the integration specs.
 Tempoloom decision: the server URL is `<BASE_URL>/mcp`. The transport is
 Streamable HTTP with one JSON-RPC 2.0 message per POST and a JSON response;
 the server offers no server-sent stream and no sessions, so GET and DELETE
-answer 405. A client authenticates with a personal API key
-(`integrations-api-keys-zapier.md`) as a bearer token, instead of OAuth 2.1:
-Tempoloom has no OAuth authorization server. `mcp_write_enabled` is the
-environment variable `MCP_WRITE_ENABLED`.
+answer 405. A client signs in with OAuth 2.1 (`integrations-ai-tools.md`,
+"Authorization" decision), or sends a personal API key
+(`integrations-api-keys-zapier.md`) as a bearer token. `mcp_write_enabled` is
+the environment variable `MCP_WRITE_ENABLED`.
 
 ### Tools (proposed set)
 
@@ -56,7 +56,7 @@ to the signed-in user:
 | `apply_staged_changes` | write | list of staged change ids | Result per id: applied, stale or failed |
 
 Tempoloom decision: the server has all tools above except
-`propose_automation_change`, `propose_rsvp` and `propose_log_task_time`.
+`propose_automation_change`, and also `propose_focus_time`.
 Times are ISO 8601 with an offset. `find_free_time` returns slots of the
 given length, every 30 minutes and earliest first, inside the user's meeting
 hours (work hours when there are none), where the user, and guests who use
@@ -92,6 +92,9 @@ before it tries again, so a retry does not stage the change twice.
 | `propose_create_event` | stage | `title`, `start`, `end` (at most 24 hours); optional `attendees` (at most 50), `description`, `location`, `reason` | `id`, `state`, `summary`, `review_url`, `message` |
 | `propose_update_event` | stage | `event_id`; optional `start`, `end`, `title`, `reason` | as `propose_create_event` |
 | `propose_delete_event` | stage | `event_id`; optional `reason` | as `propose_create_event` |
+| `propose_rsvp` | stage | `event_id` of an invitation from someone else, `response` (`accepted`, `declined`, `tentative`); optional `reason` | as `propose_create_event` |
+| `propose_focus_time` | stage | `duration_minutes` (15 to 480); optional `start`, `end` (the range, as `find_free_time`), `title` (default "Focus time"), `reason`. The first free slot of `find_free_time` becomes a busy event with the `#tl_focus` tag, so it counts as focus time | as `propose_create_event` |
+| `propose_log_task_time` | stage | `task_id`, `start`, `minutes` (1 to 720); the session must end before now. At apply it is a locked task event on the task's calendar, as a timer log | as `propose_create_event` |
 | `apply_staged_changes` | apply | `ids` (1 to 100) | `results`: `id` and `result` `applied`, `stale` (with `reason`), `failed` (with `error`) or `refused` (with `reason`: not a pending change of an AI tool) |
 
 Annotations: a read tool has `readOnlyHint` and `idempotentHint` true. A
@@ -153,9 +156,10 @@ page reads the whole automation list of the user, which is small.
 10. Each connection appears in the user's settings with client name and last
    use time. The user can revoke a connection (proposal).
 
-   Tempoloom decision: the API key list on the Account page is the connection
-   list: each key has a name and a last use time, and deleting the key
-   disconnects the tool. The planner names the key in each change it staged.
+   Tempoloom decision: the Account page lists each AI tool connected with
+   OAuth (client name, connected, last use) with a Revoke action, and the API
+   keys with their name and last use; deleting a key disconnects a tool that
+   uses it. The planner names the client or the key in each change it staged.
 
 ## Outputs
 

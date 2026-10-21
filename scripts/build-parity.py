@@ -15,7 +15,7 @@ Each row id goes into exactly one status map (E2E, PARTIAL, GOOGLE_ROWS, UNIT or
 BLOCKED). The maps record every write, and the build fails when a row was ever
 written to two of them, even if a later pop removed it from one.
 """
-import re, sys, glob, os, json, subprocess
+import re, sys, glob, os, json, subprocess, bisect
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 STAGING = os.path.join(ROOT, "docs/parity-src")
@@ -41,7 +41,12 @@ class StatusMap(dict):
             self[row_id] = value
         return self[row_id]
 
+def quoted_titles(*keys):
+    """The test titles of keys, each in quotes, joined with "; "."""
+    return "; ".join(f"\u201c{T[k]}\u201d" for k in keys)
+
 T = {
+    "x_selfhost": "the Docker image keeps the session, a task and its event in one SQLite volume across restarts (X2)",
     "split": "places a split task in work hours and keeps it after reload and restart (SPEC-PLANNING-01 AT 1)",
     "meeting": "moves a chunk away from a new meeting and never touches the meeting (SCH-1, SCH-55)",
     "drag": "a drag in the planner moves the chunk and locks it there (CED-50, LCK-2)",
@@ -346,7 +351,6 @@ E2E_NOTES.update({
     304: "The list is its own Automations page; types without a priority show in a Meeting quality section, empty until meeting checks exist",
 })
 PARTIAL.update({
-    301: "From the library and from the top-bar create menu (E2E: \u201ca library entry opens the shared form\u2026\u201d, \u201cthe automation list shows habits\u2026\u201d); asking the assistant chat needs the chat, which is not implemented",
 })
 # --- end s1 ---
 
@@ -494,8 +498,6 @@ E2E_NOTES.update({
     660: "The operator sets max_automations_per_user with the CLI (off by default); habits, focus time and buffers count",
 })
 PARTIAL.update({
-    469: ("Copies of events that Gmail made from an email (Google event type fromGmail) are busy, proven by a unit test; CalDAV "
-          "has no such events, and an E2E cannot make one: Gmail makes them, and the Google Calendar API cannot create them"),
 })
 # --- end s4 ---
 
@@ -665,7 +667,6 @@ T.update({
     "u9_lib_habits2": "library habit entries 40, 41, 42, 44 add habits with their presets: walk, exercise in personal hours, coding at P2, email at P4",
     "u9_lib_buffers": "library buffer entries 1, 10, 19 add buffers after large meetings, around flights and after long meetings only",
     "u9_lib_external": "library buffer entries 28, 29, 30 anchor on external meetings: travel only at an address, prep before, debrief after",
-    "u9_lib_focus": "library focus entries 7 and 23 place their weekly goal inside the 09:00 to 12:00 window, and the window stays on edit",
     "u9_lib_meetings": "library entries 32, 34 and 37: flexible meetings repeat at their period with the guests, and the priority link offers time over P3 and P4 habits",
     "u9_lib_mirror": "library mirroring entries 38 and 39 copy busy time only between job calendars, both ways, never copying a copy",
     "u9_timer": "the pomodoro timer plays the chosen alarm, resets a running session without counting it, and shows the stats view with streak, completion rate and a chart (rules 7, 9, 17; T3)",
@@ -697,28 +698,36 @@ E2E_NOTES.update({
     712: "The stats come from the session log in this browser; the chart groups by day, week or month",
     607: "Focus time held is the time of focus events; work habits and tasks that count toward the goal are not added",
 })
-BLOCKED[638] = (
-    "Google sign-in is built and follows the team's SSO rules; it has no E2E: the Google Calendar run "
-    "(docs/e2e-google-run.md) connects its user with the operator command connect-google-oauth, so "
-    "\u201cSign in with Google\u201d on the sign-in page is not tested. Microsoft sign-in is not built: it needs a Microsoft app "
-    "registration and a Microsoft 365 account to build and test a Microsoft Graph provider"
-)
 # Rows whose entry covers only part of its preset (review of PR 10).
 PARTIAL.update({
-    725: "The entry adds 8 h of weekly focus in a 09:00 to 12:00 window on workdays (E2E: \u201clibrary focus entries 7 and 23 place their weekly goal inside the 09:00 to 12:00 window, and the window stays on edit\u201d). Focus time has no ideal time (focus-time.md), so the mornings are hard hours: with busy mornings no focus goes to the afternoon, where the preset's ideal time would allow it",
-    741: "The entry adds 10 h of weekly focus in a 09:00 to 12:00 window on workdays that the user can change (E2E: \u201clibrary focus entries 7 and 23 place their weekly goal inside the 09:00 to 12:00 window, and the window stays on edit\u201d). Focus time has no ideal time (focus-time.md), so the window is hard hours, not an ideal window",
-    729: "The entry adds the habit at P3, 30 min on workdays (E2E: \u201clibrary habit entries 11, 35, 36, 43, 45, 46 add habits with their presets: wrap-up at the end of work hours, Lunch inside 11:30 to 14:00\u201d). A habit has one ideal time, read from the latest end of work hours when the form opens; a day whose work hours end earlier keeps that time, not its own last 30 min",
     750: "The entry fills a flexible meeting every 2 weeks, 30 min, P2, that needs at least one guest (E2E: \u201clibrary entries 32, 34 and 37: flexible meetings repeat at their period with the guests, and the priority link offers time over P3 and P4 habits\u201d). It does not check that the guests are external",
     756: "The entry fills the mirroring form with busy-only copies (E2E: \u201clibrary mirroring entries 38 and 39 copy busy time only between job calendars, both ways, never copying a copy\u201d). It adds no two-way behavior: the user adds one policy in each direction",
     757: "The entry fills the mirroring form with busy-only copies (E2E: \u201clibrary mirroring entries 38 and 39 copy busy time only between job calendars, both ways, never copying a copy\u201d). It adds no mesh of calendars: the user adds one policy for each pair",
 })
 # --- end U09 ---
 
+# --- U53: ideal-time presets (focus preferred window, habit ideal at the end of hours) ---
+T.update({
+    "u53_focus7": "library focus entry 7 fills free mornings first and puts the rest of its 8 h in other work hours",
+    "u53_focus23": "library focus entry 23 prefers 09:00 to 12:00 over busy mornings, and a window the user changes moves its 10 h",
+    "u53_wrap": "library entry 11 puts the wrap-up in the last 30 min of each day's work hours, on a shorter Friday, and follows an hours change",
+})
+E2E.update({
+    725: ["u53_focus7"],
+    741: ["u53_focus23"],
+    729: ["u53_wrap", "u9_lib_habits1"],
+})
+E2E_NOTES.update({
+    725: "The preset is work hours with a preferred window of 09:00 to 12:00 (focus-time.md `preferred_window`): focus fills free mornings first and goes to other work hours when the mornings are busy",
+    741: "The same preferred window, 09:00 to 12:00 by default; the user changes it in the form and the focus moves into the new window",
+    729: "The habit's ideal start is the end of each day's work hours minus 30 min (habits-automation.md `ideal_at_end`), so a shorter day and a later hours change move it",
+})
+# --- end U53 ---
+
 # --- merge: rows that need the work of more than one stream ---
 E2E.update({282: ["s1_habit_es", "s1_task_color", "s4_labels"]})
 E2E_NOTES.update({282: "Habits, focus time, buffers and tasks have their own color (stream s1); a mirroring policy has a color override (stream s4)"})
 # Rows this round did not build, each with the concrete reason.
-BLOCKED[451] = "Needs Google and Microsoft calendar accounts; mirroring between calendars of two CalDAV accounts is built (rows 453, 460)"
 BLOCKED[491] = "Needs a Google Workspace account: the trigger is Google calendar sharing"
 BLOCKED[492] = "Needs a Google Workspace account: the help covers Workspace sharing and Gmail-made events"
 BLOCKED[493] = "Needs Google or Microsoft accounts that subscribe to the iCloud calendar; a CalDAV server connects directly"
@@ -759,15 +768,6 @@ E2E_NOTES.update({
     934: "The E2E server runs with private receivers off for this test (WEBHOOK_ALLOW_PRIVATE)",
     938: "The 24-hour period is a setting (WEBHOOK_SUSPEND_AFTER_SECONDS), 4 seconds in the test",
 })
-BLOCKED[510] = ("Needs a Microsoft 365 account and a Microsoft Graph provider, which is not built; "
-                "Google sign-in (OAuth with PKCE) and Google Calendar sync are built. The Google Calendar run (docs/e2e-google-run.md) "
-                "proves sync for a Google user, but it connects that user with the operator command connect-google-oauth, "
-                "so \u201cSign in with Google\u201d on the sign-in page has no E2E")
-BLOCKED[513] = ("Needs a Microsoft 365 account and a Microsoft Graph provider, which is not built; a second CalDAV account "
-                "is added with CalDAV E2E (\u201ca user adds a second CalDAV account and removes it after a confirmation\u201d), "
-                "and Google accounts connect through Google sign-in. That test skips on Google, because it adds CalDAV accounts, and "
-                "the Google Calendar run (docs/e2e-google-run.md) connects its one Google user with the operator command, "
-                "so adding a Google account in the UI has no E2E")
 PARTIAL[517] = ("Disconnect, paused policies and reconnect have full UI E2E on CalDAV (\u201c" + T["u8_reconnect"] + "\u201d): "
                 "the server rejects the stored password and the user types a new one; a Google account reconnects through Google sign-in "
                 "with the account's email as the hint and refuses another identity (unit tests). Items that write to a calendar of the "
@@ -809,9 +809,6 @@ E2E_NOTES.update({
     27: "A new choice moves placed unlocked chunks to that calendar at the same times (HRS-7) and applies to new chunks",
     73: "Copy to all takes Monday's ranges and saves at once",
 })
-PARTIAL[78] = ("Each sync takes the home time zone from the primary Google calendar (src/server/sync/pull.ts), and the hours page "
-               "shows the zone that hours apply in and an active trip (E2E on CalDAV and Google: \u201ca browser that reports UTC gets a "
-               "warning\u2026\u201d). No E2E or unit test sets a Google Calendar time zone and checks that the home zone follows it")
 # Row 76 stays partial: planning-hours.md says focus time, flexible meetings and
 # booking links do not offer item-specific hours "yet", so only habits are built.
 # --- end U03 ---
@@ -868,8 +865,6 @@ PARTIAL.update({
     368: "Full UI E2E on CalDAV proves: a title edit and a resize are kept and lock the occurrence (\u201c" + T["u7_manual"] + "\u201d); privacy (CLASS) and free/busy edits are written back from the meeting's event settings, and the organizer's edits of description, location, color (COLOR), note (COMMENT) and an added guest stay through that write-back (\u201c" + T["u25_privacy"] + "\u201d), through an automatic move, a lock and an unlock (\u201c" + T["u25_move"] + "\u201d), and through a visibility change and a guest removal in the meeting settings (\u201c" + T["u25_settings"] + "\u201d); a description edit alone does not lock and gets no write, and a later description edit in the form replaces it on every following occurrence (rule 23; \u201c" + T["u25_description"] + "\u201d). Tempoloom writes only the fields it changed, through the provider's patch call, also on Google and on instances of an adopted series; these two have no E2E here. Not tested: a guest removed by the organizer. Not built: recurrence edits and the scope choice (one, following or all occurrences), because Tempoloom writes each occurrence as its own event, not as one recurring series (row 320)",
 })
 BLOCKED.update({
-    392: "Meet needs a Google account and the Calendar conference API; Zoom needs a Zoom developer app and a Zoom test account; Gong needs a Gong app and a Gong test organization. The other options have full UI E2E on CalDAV: address, phone and other (text or URL), with a default and the booker's choice (\u201c" + T["u7_locations"] + "\u201d)",
-    398: "A conference link needs Google Meet (a Google account and the Calendar conference API) or a Zoom developer app and a Zoom test account. The rest has full UI E2E on CalDAV: a busy event with the booker and CC guests invited, the chosen location and the manage links (\u201c" + T["u7_locations"] + "\u201d; \u201c" + T["b_book"] + "\u201d)",
 })
 # --- end U07 ---
 
@@ -891,7 +886,6 @@ E2E_NOTES.update({
     298: "Tempoloom decision: copies are not separate planner items (mirroring rule 33), so a mirrored event and its copy are one item. Its control is disabled at P1 with a note that the copies count as P1; the control of an event on another connected calendar is disabled at P1 with a note. The API refuses both",
 })
 BLOCKED.update({
-    484: "The add-on part needs a Google Workspace Marketplace add-on (Calendar and Gmail) and a Google Workspace test account. The planner part has full UI E2E on CalDAV: the source event and its copy are one item that names its calendar, the calendars it is copied to and its details (\u201c" + T["u16_one_item"] + "\u201d)",
 })
 # --- end U16 ---
 # --- U04: habits, focus time and buffers (first half of the partial rows) ---
@@ -931,7 +925,6 @@ E2E_NOTES.update({
     243: "A length changed at the buffer's free edge is kept for that event while the event exists, and the buffer does not lock; a buffer moved off its event locks",
 })
 BLOCKED.update({
-    208: "Needs a Google Workspace account: native focus-time events exist only in Google Calendar. Their event type is counted in code, and on CalDAV the focus tag gives the same result (row 209)",
 })
 # --- end U04 ---
 
@@ -974,24 +967,6 @@ E2E_NOTES.update({
     285: "Repaint all events is a button in the Colors section; it counts toward the same limit of 2 a minute",
     292: "Settings, Title markers: one field for each state marker and a position before or after the title",
 })
-PARTIAL[261] = (
-    "Out-of-office events are read from the Google event type outOfOffice and, on CalDAV, from "
-    "X-MICROSOFT-CDO-BUSYSTATUS:OOF, as Outlook-style clients write it. Full UI E2E passes on CalDAV (Radicale) "
-    f"only: \u201c{T['u5_away']}\u201d; \u201c{T['u5_away_conflict']}\u201d. "
-    "Limit: the Google event type has no E2E. Both tests skip on Google, because they write out-of-office events "
-    "as raw CalDAV objects, and they came after the Google Calendar run (docs/e2e-google-run.md); "
-    "the outOfOffice event type has unit tests (tests/unit/categories.test.ts, tests/unit/plan.test.ts)"
-)
-PARTIAL[265] = (
-    f"Full UI E2E passes on CalDAV (Radicale): \u201c{T['u5_holiday']}\u201d. "
-    "Limit: an invitation that lists only a mailing list, not the user, blocks before the user answers, "
-    "because Tempoloom cannot see the user's own answer; holiday feeds are row 266. No Google E2E: the test skips on Google, "
-    "because it writes the invitations as raw CalDAV objects, and it came after the Google Calendar run (docs/e2e-google-run.md)"
-)
-PARTIAL[284] = ("Painting skips an event that the calendar refuses (status 400 or 403) and goes on (src/server/planner/repaint.ts). "
-                "No test proves it: a CalDAV server lets the owner change every event, no unit test sends a refused color write, and "
-                "no Google E2E paints a mail-made or birthday event")
-BLOCKED[317] = "The chat app channel needs a Slack app and a Slack test workspace; the daily digest by email, at a time the user sets, has full UI E2E on CalDAV (\u201clibrary entry 'Flag meeting problems' turns on the checks and an email digest of open, not ignored, issues at the chosen time, once a day\u201d)"
 # --- end U05 ---
 
 # --- U06: flexible meeting rules (tests/e2e/meeting-rules.spec.ts) ---
@@ -1026,7 +1001,6 @@ E2E_NOTES.update({
     353: "Flexible meetings count as one-to-one or group time by their number of people",
     356: "An edit of the rules, a rank or priority change, and an hours change of the organizer or of an attendee who is a user here place future occurrences again, outside the move limit; an edit of the title, notes or location keeps the times, and an attendee's time zone change or new meeting hours set also places again (unit tests)",
 })
-BLOCKED[345] = "Needs Google Meet (a Google account), the Zoom vendor app and Google Workspace room resources; an address or a custom text or link is written as the location of every occurrence (E2E: \u201c" + T["mr_settings"] + "\u201d)"
 # --- end U06 ---
 
 # --- U33: task list UX, task defaults, planner create ---
@@ -1093,21 +1067,6 @@ E2E_NOTES.update({
           "has no personal keyword)"),
     505: "Habits and flexible meetings write to the calendar chosen at creation; the edit form shows it disabled",
 })
-PARTIAL.update({
-    944: ("One MCP URL per instance (/mcp), shown on the Account page, with full UI E2E on CalDAV (\u201c" + T["s7_mcp_read"] + "\u201d). "
-          "Any MCP client that can send a bearer token connects with a personal API key. Not built: OAuth 2.1 with PKCE and a consent page "
-          "(Fields: Authorization), which clients that sign in only with OAuth need; it is buildable on the server"),
-    945: ("Read tools answer at once and change nothing, and write tools stage the change in preview mode with a link to it, with full UI E2E on CalDAV "
-          "(\u201c" + T["s7_mcp_read"] + "\u201d; \u201c" + T["s7_mcp_stage"] + "\u201d). Limits: apply_staged_changes called by the client has unit "
-          "tests only (tests/unit/mcp.test.ts), and no test proves that write tools respect hours sets (rule 4)"),
-    946: ("Built with full UI E2E on CalDAV: view schedule, find meeting times, analyze the week, create, move and delete events as staged changes, "
-          "and review and apply them (\u201c" + T["s7_mcp_read"] + "\u201d; \u201c" + T["s7_mcp_stage"] + "\u201d). Not built: tools to respond "
-          "to invitations, protect focus time and record work sessions; they are buildable"),
-    947: ("A client is disconnected by deleting its personal API key: the key gets 401 at once (\u201c" + T["acct_keys"] + "\u201d). "
-          "No test checks that deleting a key keeps the calendar connections and events (rules 6, 7). Not built: per-client OAuth grants with a Revoke action (rule 8), which come with MCP OAuth (row 944)"),
-    953: ("Any client that sends the personal API key as a bearer token uses the same URL, with full UI E2E on CalDAV (\u201c" + T["s7_mcp_read"] + "\u201d). "
-          "Not built: OAuth sign-in for clients that support only OAuth; it is buildable on the server (row 944)"),
-})
 
 # Chat rows: the assistant chat needs a language model, which the owner must supply.
 G2 = "Needs an LLM provider and key from the owner (gate G2)"
@@ -1120,8 +1079,6 @@ for n in [723, 724, 730, 732, 733, 734, 735, 736, 738, 739, 740, 742, 749]:
 BLOCKED[568] = G2 + ": the switch turns off the assistant chat, so without the chat it has no effect to prove"
 BLOCKED[683] = (G2 + " for the nightly review by chat, and a Slack app and a Slack test workspace for the chat-app channel; "
                 "the morning email digest of meeting checks is built (row 317)")
-BLOCKED[769] = G2 + " for the chat; the other parts of the baseline are built (preview mode, automations, issues, insights, MCP server)"
-BLOCKED[130] = G2 + " for the chat panel; the automations panel and the suggested tasks in the planner are built"
 
 # Rows that need a named outside account, vendor app or API.
 SLACK = "Needs a Slack app and a Slack test workspace"
@@ -1169,18 +1126,8 @@ BLOCKED[147] = BLOCKED[518] = (
     "Needs a Google account and the Google Tasks and Gmail APIs: only the Google Tasks and Gmail features (rows 847 to 858) ask for more Google access. "
     "Google sign-in asks for the calendar scopes up front (with include_granted_scopes); CalDAV has no permission scopes")
 BLOCKED[446] = BLOCKED[447] = WORKSPACE_ADDON + "; the same actions exist on the Booking links page (rows 440 to 443)"
-BLOCKED[948] = ("Needs a paid ChatGPT plan and a listing in the ChatGPT app directory, or a ChatGPT plan with custom connectors; it also needs MCP OAuth "
-                "on the server, which is not built and is buildable (row 944)")
-BLOCKED[949] = ("Needs a Claude account (Claude Desktop or the Claude web app) to add a custom connector; the connector signs in with MCP OAuth, "
-                "which is not built on the server and is buildable (row 944). The MCP server with API keys is built (rows 697 to 699)")
-BLOCKED[950] = ("Needs Claude Code and an Anthropic account; claude mcp add with an HTTP URL signs in with MCP OAuth, which is not built on the server "
-                "and is buildable (row 944). The MCP server with API keys is built (rows 697 to 699)")
-BLOCKED[951] = ("Needs a Claude account to show the per-tool settings, which are a Claude feature. Tempoloom's part is built: each tool has a name, a "
-                "description, readOnlyHint and destructiveHint (unit tests in tests/unit/mcp.test.ts; E2E lists the tools: \u201c" + T["s7_mcp_read"] + "\u201d)")
 BLOCKED[836] = (TASK_APPS + " for imported tasks. A saved search over Tempoloom tasks on a habit and on focus time has full UI E2E "
                 "on CalDAV (\u201c" + T["s2_habit_tasks"] + "\u201d; \u201c" + T["s2_focus_tasks"] + "\u201d)")
-BLOCKED[952] = ("Needs the Cursor app; its HTTP MCP entry signs in with MCP OAuth, which is not built on the server and is buildable (row 944). "
-                "The MCP server with API keys is built (rows 697 to 699)")
 
 # Rows that are not software, or have no evidence to build from.
 BLOCKED[595] = "Not software: a guided pilot and rollout is a human service of the vendor company"
@@ -1191,8 +1138,7 @@ BLOCKED[770] = "Not needed: no legacy users (platform-current-version rule 11)"
 
 # Buildable rows that no unit has built yet. Rows that units U31 to U33 and PR #23 build now keep their text.
 PLANNED = "Buildable; not built yet (planned)"
-for n in [36, 38, 40, 118, 121, 122, 123, 128, 129, 140, 144, 167, 169, 170, 183, 185, 187, 189,
-          201, 205, 232, 326, 327, 340, 347, 361, 362, 365, 370, 375, 542, 543, 635, 636, 637, 775, 776, 783, 784]:
+for n in [36, 40, 361]:
     BLOCKED[n] = PLANNED
 BLOCKED[92] = PLANNED + ": the reason for each move and skip, and a view per item; the change log of every calendar write is built (src/server/change-log.ts)"
 BLOCKED[507] = PLANNED + ": the link's events go to the calendar chosen on the link (\u201c" + T["u7_locations"] + "\u201d); the choice of an added account, whose primary calendar gets the events and sends the invitations, is not built"
@@ -1249,6 +1195,286 @@ BLOCKED[43] = ("Needs the Google Calendar add-on's developer app and a test acco
                + T["u35_panel"] + "\u201d; \u201c" + T["u35_page"] + "\u201d; \u201c" + T["u35_sticky"] + "\u201d)")
 # --- end U35 ---
 
+# --- U49: parity text from the audit of partial rows (audit-partial.tsv) ---
+T.update({
+    "u49_caldav_signin": "signs in with CalDAV, rejects a wrong password, and keeps the session (SPEC-ACCT-02)",
+    "u49_list_holiday": "a company holiday sent only to a mailing list does not block until the user answers yes; then it blocks the day (events-out-of-office rule 10)",
+})
+E2E.update({118: ["u32_unlock", "s5_decline"], 265: ["u5_holiday", "u49_list_holiday"]})
+E2E_NOTES.update({
+    118: "CED-30: a guest's decline and the user's own decline of a flexible meeting unlock it and place it again; a required guest's decline moves it",
+    265: ("Rules 9-10, with a mailing-list attendee next to the user and an invitation sent only to a mailing list, which blocks only "
+          "after the user's own answer appears; holiday feeds (rule 11) are row 266")
+})
+BLOCKED[78] = ("Needs a Google account in a new Google Calendar E2E run (docs/e2e-google-run.md) that changes the time zone in the "
+               "Google Calendar settings and checks that the home zone follows; Tempoloom reads no zone from CalDAV. Built, with no test: "
+               "each sync takes the home time zone from the primary Google calendar (src/server/sync/pull.ts). Built, with full UI E2E "
+               "on CalDAV: a zone set in Tempoloom moves the work day, and the hours page shows the home zone and an active trip ("
+               + quoted_titles("s_zone", "s3_utc") + ")")
+BLOCKED[130] = (G2 + " for the chat panel. Built, with full UI E2E on CalDAV: the automation list, on its own Automations page by decision "
+                "(automations-overview.md rule 6) (" + quoted_titles("s1_list") + "), and the suggested tasks in the planner (" + quoted_titles("s3_suggest", "s3_focus_tasks") + ")")
+BLOCKED[208] = ("Needs a Google Workspace account: Google Calendar has focus-time events only on Workspace primary calendars, and the "
+                "E2E must create one there. Built: the event type focusTime counts as focus time in code (src/scheduler/plan.ts, "
+                "src/server/api/stats.ts); the focus tag gives the same result on CalDAV and Google (row 209, full UI E2E: "
+                + quoted_titles("u4_focus_tag") + ")")
+BLOCKED[261] = ("Needs a Google Workspace account: Google Calendar has the outOfOffice event type only on Workspace primary calendars, "
+                "and the E2E must create one there. Built: Google outOfOffice events and CalDAV X-MICROSOFT-CDO-BUSYSTATUS:OOF are read "
+                "as out of office (unit tests tests/unit/categories.test.ts, tests/unit/plan.test.ts); full UI E2E on CalDAV (Radicale): "
+                + quoted_titles("u5_away", "u5_away_conflict"))
+BLOCKED[284] = ("Needs a Google account with a birthday event or an event that Gmail made from an email, in a new Google Calendar "
+                "E2E run (docs/e2e-google-run.md): only Google refuses a color change on one event, and a CalDAV server lets the owner "
+                "change every event. Built: painting skips an event that the calendar refuses (status 400, 401, 403, 404 or 410, or an auth "
+                "error) and goes on (src/server/planner/repaint.ts); no unit test sends a refused color write yet. Color rules have full UI E2E on CalDAV: " + quoted_titles("c_paint", "u5_repaint"))
+BLOCKED[301] = (G2 + " for the assistant chat. Built, with full UI E2E on CalDAV: create from the library and from the top-bar "
+                "create menu (" + quoted_titles("s1_added", "s1_list") + ")")
+BLOCKED[317] = ("Needs a Slack app and a Slack test workspace for the chat-app channel. Built: the daily digest by email at the time "
+                "the user sets, with full UI E2E on CalDAV: " + quoted_titles("s5_digest"))
+BLOCKED[345] = ("Needs Google Meet (a Google account and the Calendar conference API), a Zoom developer app with a Zoom test account, "
+                "and Google Workspace room resources. Built: an address or a custom text or link is the location of every occurrence, "
+                "with full UI E2E on CalDAV: " + quoted_titles("mr_settings"))
+BLOCKED[392] = ("Meet needs a Google account and the Calendar conference API; Zoom needs a Zoom developer app and a Zoom test account; "
+                "Gong needs a Gong app and a Gong test organization. Built: address, phone and other (text or URL), with a default and "
+                "the booker's choice, full UI E2E on CalDAV: " + quoted_titles("u7_locations"))
+BLOCKED[398] = ("A conference link needs Google Meet (a Google account and the Calendar conference API) or a Zoom developer app and a "
+                "Zoom test account. Built: a busy event with the booker and CC guests invited, the chosen location and the manage links, "
+                "full UI E2E on CalDAV: " + quoted_titles("u7_locations", "b_book"))
+BLOCKED[451] = ("Needs a Microsoft 365 account and a Microsoft app registration to build and test a Microsoft Graph provider, and a "
+                "Google account for the Google side. Built: mirroring between calendars of two CalDAV accounts, full UI E2E on CalDAV: "
+                + quoted_titles("s4_tabs", "s4_mesh"))
+BLOCKED[469] = ("Needs a Google account with Gmail that makes an event from an email (Google event type fromGmail); the Google "
+                "Calendar API cannot create such an event and CalDAV has none. Built: copies of fromGmail events are busy (unit test "
+                "tests/unit/mirror-google.test.ts); the other free/busy lines of rule 21 have full UI E2E on CalDAV: " + quoted_titles("u8_answers"))
+BLOCKED[484] = ("The add-on part needs a Google Workspace Marketplace add-on (Calendar and Gmail) and a Google Workspace test account. "
+                "Built: the planner part, full UI E2E on CalDAV: " + quoted_titles("u16_one_item"))
+BLOCKED[510] = ("Needs the owner to complete Google's sign-in and consent page for the test account during a new Google Calendar E2E run (docs/e2e-google-run.md), for an E2E of \u201cSign in with Google\u201d on the sign-in page (the last run "
+                "connected its user with the operator command connect-google-oauth), and a Microsoft 365 account with a Microsoft app "
+                "registration to build and test a Microsoft Graph provider. Built: Google sign-in (OAuth with PKCE) and Google Calendar "
+                "sync; CalDAV sign-up and sign-in have full UI E2E: " + quoted_titles("u49_caldav_signin", "s4_secondary"))
+BLOCKED[513] = ("Needs the owner to complete Google's sign-in and consent page for the test account during a new Google Calendar E2E run (docs/e2e-google-run.md), for an E2E that adds a Google account in the UI, and a Microsoft 365 account with a Microsoft "
+                "app registration to build and test a Microsoft Graph provider. Built: Google accounts connect through Google sign-in; "
+                "a second CalDAV account has full UI E2E: " + quoted_titles("acct_add"))
+BLOCKED[638] = ("Needs the owner to complete Google's sign-in and consent page for the test account during a new Google Calendar E2E run (docs/e2e-google-run.md), for an E2E of \u201cSign in with Google\u201d on the sign-in page, and a Microsoft 365 account "
+                "with a Microsoft app registration to build and test Microsoft sign-in. Built: Google sign-in follows the team's SSO "
+                "rules; SSO through an OIDC identity provider has full UI E2E: " + quoted_titles("sso_only"))
+BLOCKED[769] = (G2 + " for the chat. Built, with full UI E2E on CalDAV: preview mode (" + quoted_titles("s7_auto") + "), automations ("
+                + quoted_titles("s1_list") + "), suggested tasks (" + quoted_titles("s3_focus_tasks") + "), issues and recommendations ("
+                + quoted_titles("s5_checks", "s5_agenda") + "), insights (" + quoted_titles("u9_balance", "an_org") + ") and the MCP server ("
+                + quoted_titles("s7_mcp_read") + ")")
+BLOCKED[951] = ("Needs a Claude account (Claude Desktop or the Claude web app) to show the per-tool settings, which are a Claude "
+                "feature. Built: each tool has a name, a description, readOnlyHint and destructiveHint (unit tests tests/unit/mcp.test.ts); "
+                "full UI E2E on CalDAV lists the tools: " + quoted_titles("s7_mcp_read", "s7_readonly"))
+# --- end U49 ---
+
+# --- U34: AI tool integrations (MCP OAuth, grants, RSVP, focus time, work sessions) ---
+T.update({
+    "u34_flow": "an MCP client signs in with OAuth on the consent page, reads at once, and its writes wait in preview mode until the user applies them (integrations-ai-tools rules 1-3, 21)",
+    "u34_caps": "an AI tool answers an invitation, protects focus time and records a work session, each staged until the user applies it (integrations-ai-tools capability groups)",
+    "u34_revoke": "revoking one AI tool on the Account page stops only that tool; calendar access, its events and its staged changes stay (integrations-ai-tools rules 6-8, edge case 1)",
+    "u34_signin": "a signed-out user signs in on the consent page and comes back to it; a bad request stays on the page with a link back (integrations-ai-tools Authorization, edge case 2)",
+    "u34_owner": "only the owner can connect or revoke an AI tool: a delegate gets 403 on the consent page and on Revoke, and an API key cannot approve (integrations-ai-tools rules 6-8, delegated access)",
+})
+E2E.update({
+    944: ["u34_flow"],
+    945: ["u34_flow", "u34_caps"],
+    946: ["u34_flow", "u34_caps", "s7_mcp_read", "s7_final"],
+    947: ["u34_revoke", "u34_owner"],
+    953: ["u34_flow", "u34_signin", "u34_owner"],
+})
+E2E_NOTES.update({
+    944: "One URL, <BASE_URL>/mcp, shown on the Account page; two OAuth clients and an API-key client read the same data",
+    945: "Read tools answer at once; propose_* tools stage changes that the user applies in the planner, or that the client lists with list_staged_changes and applies with apply_staged_changes after the user confirms",
+    946: "Tools: list_events, find_free_time (also with attendees: a colleague on this server and an unknown guest), propose_create_event, propose_update_event, propose_delete_event, propose_rsvp, propose_focus_time, get_week_summary, get_stats, propose_log_task_time, list_staged_changes, apply_staged_changes. A focus block is a busy event with the #tl_focus tag",
+    947: "The Account page lists each OAuth client with its redirect host, last use and a Revoke action; revoke deletes the grant and its tokens. Calendar accounts stay connected. Only the owner in a session of their own can allow or revoke: a delegate and an API key get 403",
+    953: "A standard MCP client (the official MCP TypeScript SDK) registers itself, gets the user's consent and uses OAuth 2.1 with PKCE. The consent page names the redirect host, the registration date and \u201cUnverified\u201d, may not be framed, keeps a bad request on the page with a link back, and comes back after a CalDAV sign-in",
+})
+_SERVER = "the server side it uses (OAuth 2.1 with dynamic client registration and PKCE, the consent page, the MCP URL) passes E2E with the MCP SDK client (\u201c" + T["u34_flow"] + "\u201d)"
+BLOCKED[948] = "Needs a paid ChatGPT plan and a listing in the ChatGPT app directory, or a ChatGPT plan with custom connectors; " + _SERVER
+BLOCKED[949] = "Needs a Claude account (Claude Desktop or the Claude web app) to add a custom connector; " + _SERVER + ". The troubleshooting text of rule 15 is not built"
+BLOCKED[950] = "Needs Claude Code and an Anthropic account to run claude mcp add with an HTTP URL and the browser sign-in; " + _SERVER
+BLOCKED[952] = "Needs the Cursor app and a Cursor account to add the mcp.json entry and connect; " + _SERVER
+# --- end U34 ---
+
+# --- U31: task progress, part A (tests/e2e/task-progress.spec.ts) ---
+T.update({
+    "pg_start": "Start moves the first chunk to now and Stop ends it now; the rest is placed later (PRG-10, PRG-11)",
+    "pg_past": "a chunk whose time passed counts as done work, and shortening it in the calendar returns the cut minutes (PRG-1, PRG-2)",
+    "pg_manual": "manual start mode moves an unstarted chunk or habit event later that day, and Start moves a running one to now (PRG-1, PRG-3 to PRG-5)",
+    "pg_log": "logging past work in the planner writes a past event for a task or a habit and reduces the remaining work (PRG-20 to PRG-22; habits rule 32)",
+    "pg_edge": "Start with no chunk makes one from now up to the next busy event, Start on a running chunk changes nothing, and an early Stop removes it (edge cases 1 to 4)",
+    "pg_locked": "manual start mode: a chunk the user locked or dragged that ends without Start still moves later that day (PRG-3)",
+    "pg_unlock": "Unlock on a started chunk or on logged work that ended keeps it as done work, and its event stays (PRG-1, PRG-3, PRG-20)",
+    "pg_left": "manual start mode: a chunk that ended without Start is work left in the task list, the Tasks panel and its title (PRG-3)",
+    "pg_twice": "two Start requests at once make one chunk, and an early Stop is in the change log (edge cases 1 and 4)",
+    "pg_planner": "Start now and End now in the planner move a task chunk to now and end it now (PRG-10, PRG-11, PRG-13)",
+    "pg_cal": "logged work goes to the task calendar of the task's hours set, and a drag over a past time sets its start and length (PRG-21, PRG-22)",
+})
+E2E.update({
+    31: ["pg_past", "pg_manual", "pg_locked", "pg_unlock", "pg_left"],
+    32: ["pg_past", "pg_unlock"],
+    33: ["pg_manual", "pg_locked"],
+    37: ["pg_log", "pg_cal"],
+    38: ["pg_log", "pg_cal"],
+    184: ["pg_log", "pg_cal"],
+    185: ["pg_manual"],
+})
+E2E_NOTES.update({
+    31: "Start, Stop, the timer and logged work mark an event as started; a lock or a drag does not. Events from before the switch to manual mode keep counting",
+    37: "Log work opens on a click or a drag on a past time in the planner, or from its toolbar; the event goes to the task calendar of the task's hours set, else the main calendar (PRG-22 proposed default)",
+    38: "A click opens Log work at that time with 30 minutes; a drag sets the start and the minutes",
+    184: "Log work opens on a click or a drag on a past time in the planner, or from its toolbar",
+    185: "The start mode setting is one for task chunks and habit events (PRG-5)",
+})
+VENDOR_STARTS = ("the Google Calendar add-on (integrations-calendar-add-on.md), the Slack chat app (integrations-slack.md) "
+                 "and the Raycast launcher extension (integrations-raycast.md), which are vendor apps outside the project")
+BLOCKED[34] = ("Start from " + VENDOR_STARTS + " (PRG-13) needs those vendor apps; Start in the task list and in the planner is built, "
+               "with full UI E2E on CalDAV (E2E: \u201c" + T["pg_start"] + "\u201d; \u201c" + T["pg_planner"] + "\u201d; \u201c"
+               + T["pg_edge"] + "\u201d; \u201c" + T["pg_twice"] + "\u201d)")
+BLOCKED[35] = ("Stop from " + VENDOR_STARTS + " (PRG-13) needs those vendor apps; Stop in the task list and in the planner is built, "
+               "with full UI E2E on CalDAV (E2E: \u201c" + T["pg_start"] + "\u201d; \u201c" + T["pg_planner"] + "\u201d; \u201c"
+               + T["pg_edge"] + "\u201d; \u201c" + T["pg_twice"] + "\u201d)")
+# --- end U31 ---
+
+# --- U41: planner views and event content (planner-views.spec.ts, event-tips.spec.ts, support-guidance.spec.ts) ---
+T.update({
+    "u41_days": "the gear menu shows weekdays only or a rolling 9 days, and the choice stays after reload (PLN-3; AT 1)",
+    "u41_viewas": "view as others hides free events and the details of private events (PLN-6)",
+    "u41_viewas_panels": "view as others closes the open event details and the conflicts panel, and the now line shows a private meeting as busy (PLN-6)",
+    "u41_allday": "a day with a busy all-day event shows the dashed pattern and gets no managed event (PLN-5; AT 6)",
+    "u41_calendars": "the calendars panel hides a connected calendar from the planner; it still blocks time and stays connected (PLN-20; AT 5)",
+    "u41_modes": "the details panel has one mode at a time: tasks, priorities or event details (PLN-21)",
+    "u41_tips": "event tips sit between the notes and the planner link on task, habit, focus and meeting events, and turning them off removes them from future events (CNT-15; AT 3)",
+    "u41_tips_organizer": "turning tips off and on keeps the organizer's own description of a meeting occurrence; an occurrence with Tempoloom's text gets the change (CNT-15; MEET-02 rule 22)",
+    "u41_reset": "the account page lists the manual reset steps in order, each with a link to its page (planning-pause.md manual reset steps)",
+    "u41_invitee": "a booked invitee is not accepted for them: the answer stays needs-action (support rule 14; AT-5)",
+    "u41_antispam": "the help explains invitations hidden by anti-spam rules, without a Google account (support rules 13, 15, 16)",
+})
+E2E.update({
+    121: ["u41_days"],
+    122: ["u41_viewas", "u41_viewas_panels"],
+    123: ["u41_allday"],
+    128: ["u41_calendars"],
+    129: ["u41_modes"],
+    140: ["u41_tips", "u41_tips_organizer"],
+    144: ["u41_reset"],
+    542: ["u41_invitee"],
+    543: ["u41_antispam"],
+})
+E2E_NOTES.update({
+    121: "The rolling 9 days start on the first day of the shown week and run to Tuesday of the next week",
+    122: "\u201cOthers\u201d is anyone who sees the calendar without private details: free events are not drawn and private events show as \u201cBusy\u201d in the week and on the now line; the event details and the conflicts panel close; the choice is not kept after a reload. Each calendar is read in full once after the upgrade so that events read before it get their privacy. A Google event with \u201cdefault\u201d visibility counts as public",
+    129: "The Tasks and Priorities buttons on the now line and a click on an event switch the one open panel; the priorities view and the tasks panel have their own rows (64, 42)",
+    140: "Tips go on task, habit, focus time and flexible meeting events that the planner places, and say what a move, delete or decline does. Tips are on for new accounts and off for accounts made before the upgrade, so the upgrade rewrites no event. A tip change alone never writes over the organizer's own description of a meeting occurrence, and is not sent to a CalDAV server that mails the guests on each change (calendar-auto-schedule)",
+    144: "Tempoloom has no task integrations of its own, so that step points to the API keys that other tools use",
+})
+# --- end U41 ---
+
+# --- U40: habits part B (habit-extras.spec.ts) ---
+T.update({
+    "u40_guests": "habit guests are written to each event without notices, and a busy guest does not move the habit (habits concepts guests)",
+    "u40_decline": "habit auto-decline declines invitations over a busy occurrence with the message, never over a free one (rules 37-39)",
+    "u40_deps": "habit dependencies: before keeps a habit to the other habit's days and ahead of it, not after limits those days only, not on the same day keeps it off them (rule 18)",
+    "u40_meet": "the meeting form adds a habit dependency: the habit goes before the meeting or not after it on its day, and removing it frees the habit (meetings rule 22)",
+    "u40_snooze": "snooze moves one habit occurrence to the first free time at or after the chosen time that day (rule 31)",
+    "u40_default": "habit auto-decline without a message of its own declines with the default note (rule 37)",
+    "u40_typed": "snooze offers +15 min to +2 h from the occurrence's start, takes a typed time, and refuses a time at or before the start (rule 31)",
+    "u40_started": "snooze moves an occurrence that has started to the chosen time (rule 31)",
+    "u40_until": "snooze until a date removes the habit's events before that date and keeps the later ones (rule 35)",
+    "u40_search": "the automation list search box filters habits by title (rule 7)",
+})
+E2E.update({
+    167: ["u40_guests"],
+    169: ["u40_decline", "u40_default"],
+    170: ["u40_deps"],
+    183: ["u40_snooze", "u40_typed", "u40_started"],
+    187: ["u40_until"],
+    189: ["u40_search"],
+    347: ["u40_meet"],
+})
+E2E_NOTES.update({
+    167: "On CalDAV each guest gets SCHEDULE-AGENT=CLIENT, so a server with scheduling sends nothing; Google events are written without updates",
+    169: "Without a message of its own, the note says the time is reserved for a routine; the E2E checks both notes in the COMMENT line",
+    170: "Before: only on days that hold the other habit, ending before it starts; not after: on those days only. The other habit is placed first, at the level of its highest-priority dependent, and never moves. The form and API refuse a rule that makes a loop",
+    183: "The details panel offers +15 min, +30 min, +1 h and +2 h from the later of the occurrence's start and now (a choice past midnight is not offered), or a typed time after that; an earlier time is refused. A snooze also moves an occurrence that has started",
+    187: "Snooze until a date on the habits page sets the start date; clearing it brings the earlier days back",
+    189: "The search box of the automation list filters every automation by title",
+    347: "The meeting form edits the rules of habits on that meeting; the habit form shows them too",
+})
+# --- end U40 ---
+
+# --- U39: flexible meetings part C (meeting-extras.spec.ts) ---
+T.update({
+    "u39_map": "the availability map shows each guest's meeting hours in my time zone and the overlap; hours I set for one guest replace theirs in the map and in placement (rules 6-7, 11)",
+    "u39_cadence": "cadence: after an occurrence moves late in its week, the next one keeps at least half a week away instead of its ideal day (rule 18)",
+    "u39_resched": "the reschedule action moves an occurrence to another time the same day or to another day of its period, never its current time, and leaves it unlocked (MEET-02 rule 19)",
+    "u39_resched_kept": "after a Friday occurrence, a reschedule to another day that is less than half a week later stays where I put it, also after the next plan (MEET-02 rule 19)",
+    "u39_guest": "in a 1:1 the guest reschedules or skips an occurrence from the guest's planner; a guest of a group meeting gets no such action (MEET-02 rules 20, 26)",
+    "u39_boost": "a daily meeting lists the days skipped for lack of time; after a missed day the next day uses one level higher and takes the time of a habit at that level, and the boost ends once a day is held (MEET-02 rules 16, 34)",
+    "u39_conflict": "a daily meeting kept in conflict counts each day it stayed in conflict as missed: after two such days it uses P1 and takes a P1 habit's time, and the boost ends once a day is held (MEET-02 rule 16)",
+})
+E2E.update({
+    326: ["u39_map"],
+    327: ["u39_map"],
+    340: ["u39_cadence"],
+    362: ["u39_boost", "u39_conflict"],
+    365: ["u39_resched", "u39_resched_kept"],
+    370: ["u39_guest"],
+    375: ["u39_boost"],
+})
+E2E_NOTES.update({
+    326: "The map shows next week, one row per day; a guest who is not a user here shows as unknown",
+    327: "The hours are one range on chosen weekdays, in the guest's time zone; they apply to a guest who is a user here",
+    340: "Tempoloom decision on the Proposed rule: when the previous occurrence is not on an ideal day of its period, starts in the next period less than half a period after it are skipped when another start exists, also for an occurrence placed before",
+    362: "A period counts as missed when it ended with no time (removed, or kept in conflict); a period with no hours, or skipped by hand, neither counts nor breaks the run",
+    365: "The result stays unlocked and is logged as a move by hand; the lead time and the move limit do not apply; the cadence does not move it back",
+    370: "The guest sees the occurrence in the guest's own planner; Tempoloom writes the change on the organizer's calendar and logs the guest",
+    375: "Periods removed for lack of time stay listed after they end, for 90 days or the last three periods when longer; a period that gets a time later leaves the list",
+})
+# --- end U39 ---
+
+# --- U46: focus and buffers, integrations page, weekly report part B
+# (focus-buffer-extras.spec.ts, integrations.spec.ts, weekly-report-extras.spec.ts) ---
+T.update({
+    "u46_focus_links": "with offer to booking links off, focus time is hidden from every booking link, also a P1 link (rule 32; offer_to_booking_links)",
+    "u46_focus_resched": "reschedule moves a focus event to the first free time at least the chosen delay from now, and it stays there (rule 22)",
+    "u46_focus_deleted": "reschedule does not put a focus event back where the user deleted one of the goal (rules 21, 22)",
+    "u46_recovery": "a recovery buffer gives its time to a habit when that is the habit's last slot, and keeps it where the habit has room (buffers rule 18)",
+    "u46_int_cards": "Settings > Integrations shows one card per integration by category; tools Tempoloom does not build yet show Not available yet with Connect disabled (rules 1, 13)",
+    "u46_int_calendar": ("the Google Calendar card follows the server's Google client and offers a CalDAV user no Connect that would sign in as another user; "
+                         "the Outlook Calendar card is not available yet; Suggest a tool opens the server's support address or the project's issue form (rules 2, 13; calendar cards)"),
+    "u46_wr_preview": "the weekly report previews next week's calendar by day with the busiest and the lightest day, and lists the top open tasks and next week's habits by priority; each links into the app (rules 8, 9)",
+    "u46_wr_share": ("a share link asks first; the confirmed share makes a public noindex page of the report's top part: week, totals and facts, no login name "
+                     "and no event titles; X, LinkedIn and Facebook get the page link; the owner can stop sharing (rules 10-12, edge case 6)"),
+})
+E2E.update({
+    201: ["u46_focus_links"], 205: ["u46_focus_resched", "u46_focus_deleted"], 232: ["u46_recovery"],
+    635: ["u46_wr_preview"], 636: ["u46_wr_preview"], 637: ["u46_wr_share"],
+    775: ["u46_int_cards"], 776: ["u46_int_calendar"],
+    784: ["u46_int_cards", "u46_int_calendar"],
+})
+E2E_NOTES.update({
+    201: "The setting is in the focus time options in Settings; it is on for a new focus goal",
+    205: ("The delays are 15 and 30 minutes, 1 to 4 hours and 1 day; the new time is in the focus goal's hours, free of blocking events and other "
+          "Tempoloom events, not the old time and not a range where the user deleted an event of the goal (rule 21), and the moved event is "
+          "locked there like a move (rule 20). A focus event in progress is not offered the action"),
+    232: ("A recovery buffer is the after side of a buffer that is not travel time; it gives way only when no allowed day of the occurrence has "
+          "other room and the habit turns busy there (adaptive or always busy; an always-free habit leaves it, unit test), and a locked buffer "
+          "does not give way. The rule applies whatever the buffer's priority; task events follow rule 17 (buffers-automation.md rule 18 decision)"),
+    635: "Next week's events on the primary calendar of the main account, on each workday (Monday to Friday without work hours); days and events link to the planner week of that day",
+    636: "The 5 open tasks with the highest priority, then the nearest due date, and the habits with an event next week; each links to its edit form",
+    637: ("Each share link of the email opens a confirm page; only its button makes the page public, so a mail scanner shares nothing. The page "
+          "shows the top part as it was sent, a display name only when the user set one (never an email or a login name; unit test), is noindex, "
+          "and the owner can stop sharing in Settings"),
+    775: ("Tools Tempoloom does not build yet (Outlook, Slack, Zoom, Gong, the task apps, the calendar add-on) show Not available yet; "
+          "webhooks, Raycast, Zapier and AI tools link to their settings; the connect flow of each tool is in rows 777 to 782"),
+    776: "The link goes to the server's SUPPORT_URL, else to the project's issue form",
+    784: "The Microsoft Graph calendar provider is not built (rows 520 to 536), so the card is always Not available yet",
+})
+BLOCKED[783] = ("Needs a Google OAuth client and a Google test account to prove the Connected (with the account's email) and Needs attention "
+                "(with Reconnect) states and the connect journey (rows 777 to 782); adding a Google account to a user who signed in with CalDAV "
+                "needs the same to prove, so the card offers no Connect there. The built part has E2E on CalDAV: Not configured on this server "
+                "without a Google client, and Not connected with no Connect that would sign in as another user (\u201c" + T["u46_int_calendar"] + "\u201d)")
+# --- end U46 ---
+
 # --- U56: order proof, task chunks on a secondary calendar, Google profile and guest free/busy ---
 T.update({
     "u56_secondary": "task chunks on a secondary calendar hold their time against other items but leave it open to booking links and colleagues' meetings (DEF-50)",
@@ -1295,22 +1521,24 @@ BLOCKED[322] = (GOOGLE_CONSENT + " and a second Google account that is not a Tem
 # build stops when a key matches more than one line. A key is proven on Google when its
 # test passed and its test() call is the same now as at the run commit (CHANGED_AFTER
 # otherwise). A key with no line was added after the run; a key whose test did not pass
-# was skipped or did not pass there.
+# was skipped or did not pass there. Limit: the check compares the test() call only. A
+# change in a helper, hook (test.beforeEach, test.use, test.skip), fixture or the product
+# keeps the Google claim of a test whose call did not change; only a new Google run
+# proves those changes on Google.
 GOOGLE_RUN = os.path.join(ROOT, "docs/e2e-google-run.tsv")
 E2E_DIR = os.path.join(ROOT, "tests/e2e")
-TEST_CALL = re.compile(r'\btest\(\s*("(?:[^"\\\n]|\\.)*")')
 
-def e2e_titles():
-    """The title of each test("...") call in tests/e2e/*.ts."""
-    titles = set()
-    for f in glob.glob(f"{E2E_DIR}/*.ts"):
-        src = open(f, encoding="utf8").read()
-        for m in TEST_CALL.finditer(src):
-            titles.add(json.loads(m.group(1)))
-    return titles
+def e2e_calls():
+    """{title: [(line, normalized source)]} of every test("...") call in tests/e2e/*.ts."""
+    head = {}
+    for f in sorted(glob.glob(f"{E2E_DIR}/*.ts")):
+        name = os.path.relpath(f, ROOT)
+        for title, calls in file_test_calls(name, open(f, encoding="utf8").read()).items():
+            head.setdefault(title, []).extend(calls)
+    return head
 
 def check_titles():
-    titles = e2e_titles()
+    titles = E2E_CALLS.keys()
     bad = [k for k, text in T.items() if text not in titles]
     for k in bad:
         print(f"test key {k}: no test in tests/e2e has the title \u201c{T[k]}\u201d", file=sys.stderr)
@@ -1336,84 +1564,179 @@ def google_run():
 
 GOOGLE_RUN_COMMIT, GOOGLE_RUN_STATUS = google_run()
 
-# The source of a test() call: from "test(" to its closing parenthesis.
-OPEN, CLOSE = "([{", ")]}"
-REGEX_AFTER = set("(,=:[!&|?{};+-*%<>~^")
+# The source of a test() call: from "test(" to its closing parenthesis. scan() reads a
+# whole file once, like a JavaScript tokenizer: it skips strings, template literals,
+# comments and regular expression literals, and pairs each bracket in code with its
+# closing bracket. test("...") inside a comment or string is not a call.
+class ParseError(ValueError):
+    def __init__(self, src, i, msg):
+        self.line = src.count("\n", 0, min(i, len(src))) + 1
+        super().__init__(msg)
 
-def call_end(src, i):
-    """Index after the parenthesis that closes the one at src[i]. Skips strings,
-    template literals, comments and regular expression literals."""
-    stack, n = [], len(src)
+OPEN, CLOSE = "([{", ")]}"
+# A "/" after one of these words starts a regular expression, not a division.
+REGEX_WORDS = {"return", "typeof", "instanceof", "in", "of", "new", "delete", "void",
+               "throw", "case", "do", "else", "yield", "await"}
+# A "/" after the ")" of one of these heads starts a regular expression: if (a) /x/.test(s).
+HEAD_WORDS = {"if", "while", "for", "with"}
+WORD = re.compile(r"[\w$]+")
+
+def scan(src):
+    """(code, pairs): code is the offsets of src that are code (not in a string,
+    template text, comment or regular expression); pairs maps the offset of each
+    opening bracket to the offset of its closing bracket. Raises ParseError."""
+    n, i = len(src), 0
+    stack = []            # (offset, bracket) of open brackets; "${" for a template hole
+    skipped = []          # (start, end) spans that are not code
+    pairs = {}
+    last = None           # last code token: ("word", w), ("close", is_head) or ("punct", c)
+    prev = ""             # the punctuation before last, to see "++" and "--"
+
+    def skip_to(end_text, start, what):
+        j = src.find(end_text, start)
+        if j < 0:
+            raise ParseError(src, start, f"{what} has no end")
+        return j
+
+    def template(j):
+        """Scan template text from j; return the offset after ` or after ${."""
+        start = j
+        while j < n:
+            if src[j] == "\\":
+                j += 2
+            elif src[j] == "`":
+                skipped.append((start, j + 1))
+                return j + 1
+            elif src.startswith("${", j):
+                skipped.append((start, j))
+                stack.append((j, "${"))
+                return j + 2
+            else:
+                j += 1
+        raise ParseError(src, start, "template literal has no end")
+
     while i < n:
         c = src[i]
-        if c == "}" and stack and stack[-1] == "${":
-            stack.pop()
-            i = template_end(src, i + 1, stack)
+        if c.isspace():
+            i += 1
+            continue
+        if src.startswith("//", i):
+            j = src.find("\n", i)
+            j = n if j < 0 else j
+            skipped.append((i, j))
+            i = j
+            continue
+        if src.startswith("/*", i):
+            j = skip_to("*/", i + 2, "comment") + 2
+            skipped.append((i, j))
+            i = j
+            continue
+        if c in "'\"":
+            j = i + 1
+            while j < n and src[j] != c and src[j] != "\n":
+                j += 2 if src[j] == "\\" else 1
+            if j >= n or src[j] != c:
+                raise ParseError(src, i, "string has no end")
+            skipped.append((i + 1, j))
+            i, last = j + 1, ("punct", c)
+            continue
+        if c == "`":
+            i, last = template(i + 1), ("punct", "`")
+            continue
+        if c == "}" and stack and stack[-1][1] == "${":
+            pairs[stack.pop()[0]] = i
+            i, last = template(i + 1), ("punct", "`")
+            continue
+        if c == "/" and is_regex(last, prev):
+            j, in_class = i + 1, False
+            while j < n and (in_class or src[j] != "/"):
+                if src[j] == "\n":
+                    break
+                if src[j] == "\\":
+                    j += 1
+                elif src[j] == "[":
+                    in_class = True
+                elif src[j] == "]":
+                    in_class = False
+                j += 1
+            if j >= n or src[j] != "/":
+                raise ParseError(src, i, "regular expression has no end")
+            skipped.append((i, j + 1))
+            i = j + 1
+            while i < n and (src[i].isalnum() or src[i] in "_$"):
+                i += 1
+            last = ("punct", "/")
+            continue
+        m = WORD.match(src, i)
+        if m:
+            last, prev = ("word", m.group()), ""
+            i = m.end()
             continue
         if c in OPEN:
-            stack.append(c)
+            head = c == "(" and last is not None and last[0] == "word" and last[1] in HEAD_WORDS
+            stack.append((i, c + ("h" if head else "")))
+            last, prev = ("punct", c), ""
         elif c in CLOSE:
-            if not stack or OPEN[CLOSE.index(c)] != stack[-1]:
-                raise ValueError(f"unbalanced {c!r} at offset {i}")
-            stack.pop()
-            if not stack:
-                return i + 1
-        elif c in "'\"":
-            i += 1
-            while src[i] != c:
-                i += 2 if src[i] == "\\" else 1
-        elif c == "`":
-            i = template_end(src, i + 1, stack)
-            continue
-        elif src.startswith("//", i):
-            i = src.index("\n", i)
-            continue
-        elif src.startswith("/*", i):
-            i = src.index("*/", i) + 2
-            continue
-        elif c == "/":
-            before = src[:i].rstrip()
-            if not before or before[-1] in REGEX_AFTER or re.search(r"\b(return|typeof|in|of)$", before):
-                i += 1
-                in_class = False
-                while in_class or src[i] != "/":
-                    if src[i] == "\\":
-                        i += 1
-                    elif src[i] == "[":
-                        in_class = True
-                    elif src[i] == "]":
-                        in_class = False
-                    i += 1
-        i += 1
-    raise ValueError("no closing parenthesis")
-
-def template_end(src, i, stack):
-    """Scan a template literal from src[i] (after ` or a closing }); stop after its
-    closing ` or at a ${, which goes on the stack."""
-    while True:
-        c = src[i]
-        if c == "\\":
-            i += 2
-        elif c == "`":
-            return i + 1
-        elif src.startswith("${", i):
-            stack.append("${")
-            return i + 2
+            if not stack or stack[-1][1][0] != OPEN[CLOSE.index(c)]:
+                raise ParseError(src, i, f"{c!r} closes no open bracket")
+            start, kind = stack.pop()
+            pairs[start] = i
+            last, prev = ("close", kind == "(h"), ""
         else:
-            i += 1
+            prev = last[1] if last and last[0] == "punct" else ""
+            last = ("punct", c)
+        i += 1
+    if stack:
+        start, kind = stack[-1]
+        raise ParseError(src, start, f"{'${' if kind == '${' else kind[0]!r} is not closed")
+    return skipped, pairs
+
+def is_regex(last, prev):
+    """True when a "/" after the code token last (and the punctuation prev before it)
+    starts a regular expression literal, False when it is a division."""
+    if last is None:
+        return True
+    kind, value = last
+    if kind == "word":
+        return value in REGEX_WORDS
+    if kind == "close":
+        return value                      # the ")" of if (...), while (...), for (...)
+    if value in "+-" and prev == value:
+        return False                      # i++ / 2
+    return value not in "])'\"`"
+
+def in_spans(spans, i):
+    k = bisect.bisect_right(spans, (i, float("inf"))) - 1
+    return k >= 0 and spans[k][0] <= i < spans[k][1]
+
+# test("title", ...): not x.test("..."), and only in code (scan() drops comments and strings).
+TEST_CALL = re.compile(r'(?<![\w$.])test\(\s*("(?:[^"\\\n]|\\.)*")')
 
 def test_calls(src):
     """{title: [(line, normalized source of the test() call)]} of one file. The
     normalized source drops leading and trailing blanks of each line and empty lines,
-    so moving a test or changing its indent does not count as a change."""
+    so moving a test or changing its indent does not count as a change. Raises
+    ParseError when the file is not valid code for scan()."""
+    skipped, pairs = scan(src)
     calls = {}
     for m in TEST_CALL.finditer(src):
         start = m.start()
-        end = call_end(src, src.index("(", start))
+        if in_spans(skipped, start):
+            continue
+        end = pairs[src.index("(", start)] + 1
         body = "\n".join(l.strip() for l in src[start:end].splitlines() if l.strip())
         line = src.count("\n", 0, start) + 1
         calls.setdefault(json.loads(m.group(1)), []).append((line, body))
     return calls
+
+def file_test_calls(name, src):
+    """test_calls(src); stops the build with the file and line when src does not parse."""
+    try:
+        return test_calls(src)
+    except ParseError as e:
+        sys.exit(f"{name}:{e.line}: cannot read the test() calls: {e}. "
+                 "Fix the code, or fix scan() in scripts/build-parity.py and add the case to "
+                 "scripts/test_build_parity.py")
 
 def git(*args):
     r = subprocess.run(["git", "-C", ROOT, *args], capture_output=True, text=True)
@@ -1425,17 +1748,15 @@ def git(*args):
 def changed_after_run():
     """Keys whose test passed in the Google run but whose test() call is not the same
     now (in the working tree) as at the run commit."""
-    head = {}
-    for f in glob.glob(f"{E2E_DIR}/*.ts"):
-        for title, calls in test_calls(open(f, encoding="utf8").read()).items():
-            head.setdefault(title, []).extend(calls)
+    head = E2E_CALLS
     then, changed = {}, set()
     for key, hits in GOOGLE_RUN_STATUS.items():
         if not hits or hits[0][0] != "passed":
             continue
         path, line = hits[0][1].rsplit(":", 1)
         if path not in then:
-            then[path] = test_calls(git("show", f"{GOOGLE_RUN_COMMIT}:{path}"))
+            then[path] = file_test_calls(f"{path} at commit {GOOGLE_RUN_COMMIT}",
+                                         git("show", f"{GOOGLE_RUN_COMMIT}:{path}"))
         old = then[path].get(T[key], [])
         if [l for l, _ in old] != [int(line)]:
             sys.exit(f"test key {key}: {hits[0][1]} is not the test \u201c{T[key]}\u201d at commit {GOOGLE_RUN_COMMIT}")
@@ -1446,6 +1767,7 @@ def changed_after_run():
             changed.add(key)
     return changed
 
+E2E_CALLS = e2e_calls()
 GOOGLE_CHANGED = changed_after_run()
 
 # Why a test did not pass in the Google run: (singular, plural) phrases.
@@ -1469,7 +1791,7 @@ def google_missing(key):
     return SKIPPED if hits[0][0] == "skipped" else NOT_PASSED
 
 def e2e_status(row_id, keys):
-    tests = "; ".join(f"\u201c{T[k]}\u201d" for k in keys)
+    tests = quoted_titles(*keys)
     note = f" {E2E_NOTES[row_id]}." if row_id in E2E_NOTES else ""
     missing = {k: why for k in keys if (why := google_missing(k))}
     if not missing:
@@ -1571,8 +1893,8 @@ def main():
         out.append(f"| {n} | {feat} | {ev} | {link} | {st} | {why} |")
     out += ["", "## Beyond the reference product", "",
             "| # | Feature | Evidence | Spec | Status | Proof or reason |", "|---|---|---|---|---|---|",
-            "| X1 | Sign in with a CalDAV account (Radicale, Nextcloud, Fastmail) | none | [accounts-login-emails-permissions.md](specs/accounts-login-emails-permissions.md) | partial | CalDAV E2E passes: “signs in with CalDAV, rejects a wrong password, and keeps the session”. Not a reference feature, so no Google E2E applies. |",
-            "| X2 | Self-hosting with one process and one SQLite file, Docker image | none | [../adr/0001-stack.md](adr/0001-stack.md) | partial | Docker image builds; no deployment test yet. |"]
+            "| X1 | Sign in with a CalDAV account (tested on Radicale) | none | [accounts-login-emails-permissions.md](specs/accounts-login-emails-permissions.md) | done (CalDAV) | Full UI E2E passes on CalDAV (Radicale): \u201c" + T["u49_caldav_signin"] + "\u201d. Not a reference feature, so no Google E2E applies. |",
+            f"| X2 | Self-hosting with one process and one SQLite file, Docker image | none | [../adr/0001-stack.md](adr/0001-stack.md) | done (CalDAV) | CalDAV E2E passes: “{T['x_selfhost']}”; CI job self-host builds the image and runs it. Not a reference feature, so no Google E2E applies. |"]
     open(OUT, "w", encoding="utf8").write("\n".join(out) + "\n")
     print(len(rows), counts)
 

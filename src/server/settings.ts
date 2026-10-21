@@ -97,11 +97,20 @@ export const settingsSchema = z.object({
   // r3 s3: task placement (planning-tasks.md TSK-70), in-app alerts
   // (planning-notifications.md), first-run hours review (HRS-15), profile fields.
   taskPlacement: z.enum(["chunks", "suggestions"]).default("chunks"),
+  // planning-task-progress.md PRG-1 to PRG-5: count a chunk when its time passes,
+  // or only after Start. manualSince: when manual mode began; older chunks keep counting.
+  startMode: z.enum(["auto", "manual"]).default("auto"),
+  manualSince: z.number().int().nullable().default(null),
   // sync-calendar-mirroring.md account-level setting: copies of events with no reply.
   noReplyCopies: z.enum(["free", "busy"]).default("free"),
   tabAlert: z.boolean().default(true),
   startChime: z.boolean().default(false),
   hoursReviewed: z.boolean().default(false),
+  // planning-planner.md: the days the planner shows (PLN-3) and calendars it hides (PLN-20).
+  plannerDays: z.enum(["all-days", "weekdays", "rolling-9-days"]).default("all-days"),
+  hiddenCalendars: z.array(z.string().max(200)).max(500).default([]),
+  // planning-event-content.md CNT-15: a short tip in managed event descriptions.
+  eventTips: z.boolean().default(true),
   profile: z
     .object({
       jobTitle: z.string().trim().max(100).default(""),

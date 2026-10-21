@@ -32,6 +32,7 @@ other managed items, and are strongly protected once placed.
 | `target_calendar` | calendar id | primary calendar | Legacy evidence (E-0078). |
 | `visibility` | `public`, `private`, `calendar_default` | `public` | Legacy default is public (E-0078). |
 | `reminders` | list of minutes, or off | off (Proposed) | E-0043. |
+| `preferred_window` | local time range (HH:MM to HH:MM), or none | none | Tempoloom decision, see below. The same range on each day. |
 
 The focus goal automation has no priority field. Its priority is fixed at P4
 (E-0077, E-0141).
@@ -41,6 +42,18 @@ creation only, its emoji goes before the title, and its color follows the
 color rule unless the user picks one. A new focus goal is public with no
 reminders. Focus events show no free or busy marker, only the lock marker
 (answers open question 2 of `events-title-emoji.md`).
+
+Tempoloom decision (library entry 7, "Ideal time mornings", and entry 23,
+"Ideal window 09:00 to 12:00 (user can change)"): a focus goal may have a
+`preferred_window`. Tempoloom reads "mornings" as 09:00 to 12:00, so both
+entries add the window 09:00 to 12:00. It is a preference, not hard hours. In
+proactive mode Tempoloom first places focus in the free time that is inside
+both `hours` and the window, on each allowed day. Only when that time is full
+does it use the other free time inside `hours`. Rules 3 to 6 apply as before;
+for each daily limit pass (rule 5, then rule 4), the window goes first on all
+days, then the rest of `hours`. A placed focus event outside the window stays
+where it is while it is legal (no move only to reach the window). Reactive
+mode ignores the window. The window must start before it ends.
 
 ### Meeting overload automation
 
@@ -106,6 +119,7 @@ Its priority is also fixed at P4 (E-0070, E-0141).
 20. When the user moves a focus event in the planner or in Google Calendar, Tempoloom locks it. A locked focus event does not move even when another event overlaps it (E-0077, E-0078).
 21. When the user deletes a focus event, Tempoloom treats it as skipped. It places no focus event in that time range again (E-0077, E-0078). Proposed: the lost hours may be placed in another range of the same week.
 22. Reschedule action: the user picks a minimum delay from now. Tempoloom moves the focus event to the first legal free range that starts at or after now plus that delay (E-0071).
+    Tempoloom decision: the delays are 15 and 30 minutes, 1 to 4 hours and 1 day, and the start is on a quarter hour. A legal free range is in the goal's hours, has no blocking event and no other Tempoloom event, is not the event's old time, and is not a range where the user deleted an event of the goal (rule 21). The moved event is locked there like a move (rule 20). A focus event in progress is not offered the action.
 23. When `auto_decline.enabled=true`, Tempoloom declines invitations that overlap a placed focus event, with the message as the decline note to the organizer (E-0077, E-0070). Without it, Tempoloom declines nothing; the busy event alone protects the time (E-0070).
     Tempoloom decision: auto-decline answers unanswered invitations from other organizers that overlap a placed focus event of that automation, after each run. Accepted and tentative invitations are not changed (an accepted one moves the focus event, rule 18). Tempoloom answers each invitation once, so the user may accept it again. On CalDAV the decline is `PARTSTAT=DECLINED` on the user's copy with the message as its `COMMENT`; on Google it is the attendee answer with the message as its comment. An empty message sends "Declined automatically: this time is protected for focus." One occurrence of a recurring invitation on CalDAV is not declined. The meeting overload automation has the same setting.
 24. A focus event can carry a task list. The same list shows on every focus event of the week (E-0077).
