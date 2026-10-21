@@ -188,6 +188,7 @@ export function eventActionRoutes(db: Db, sync: SyncService, now: () => number):
       sourceId: row.source_id,
       date: row.key.split(":")[2] ?? null,
       ended,
+      started: row.start_ms <= now(),
       // Start when placed (rule 33): an occurrence is done when its end passes.
       done: row.kind === "habit" && ended,
       search: assignmentOf(db, user.id, row.kind, row.source_id),
