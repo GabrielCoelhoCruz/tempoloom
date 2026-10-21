@@ -10,15 +10,28 @@
 // 3. An item's calendar changed, then that calendar's account disconnects: the
 //    item's events on the old, connected calendar are deleted or moved.
 // 4. Another item is placed over an event that a waiting item keeps.
+// 5. A preview, a task's work blocks, a meeting preview or a meeting
+//    reschedule plans without the waiting rule: it shows or picks times that
+//    the real run does not use.
+// 6. Meeting overload focus time on a disconnected calendar does not wait, or
+//    its moves get no "rules-changed" reason in the change log.
+import { Hono } from "hono";
 import { describe, expect, it } from "vitest";
 import { ensureUser } from "../../src/server/accounts.ts";
+import { meetingRoutes } from "../../src/server/api/meetings.ts";
+import { taskTimeRoutes } from "../../src/server/api/task-time.ts";
+import type { AppEnv } from "../../src/server/app.ts";
 import { type Db, one, openDb, run } from "../../src/server/db.ts";
+import { rescheduleSlot } from "../../src/server/planner/meeting-reschedule.ts";
+import type { ManagedRow } from "../../src/server/planner/push.ts";
 import { replanUser } from "../../src/server/planner/replan.ts";
+import { plannedNow } from "../../src/server/preview.ts";
 import type {
   CalendarProvider,
   EventWrite,
   ProviderEvent,
 } from "../../src/server/providers/types.ts";
+import type { SyncService } from "../../src/server/sync/service.ts";
 
 const H = 3_600_000;
 // Monday 2026-11-02, 06:00 UTC; work hours are 09:00-17:00 on weekdays.
@@ -216,6 +229,176 @@ describe("items of a disconnected account wait (accounts rule 16)", () => {
     );
     const { writes } = await plan(db, userId);
     expect(writes.filter((w) => w.event.summary?.includes("walk"))).toEqual([]);
+  });
+});
+
+function routes(db: Db, userId: string) {
+  const user = one<AppEnv["Variables"]["user"]>(db, "SELECT * FROM users WHERE id = ?", userId);
+  const sync = {
+    request() {},
+    exclusive: async (_u: string, fn: (p: unknown) => Promise<unknown>) => fn({}),
+  } as unknown as SyncService;
+  const app = new Hono<AppEnv>();
+  app.use("*", async (c, next) => {
+    c.set("user", user as AppEnv["Variables"]["user"]);
+    await next();
+  });
+  app.route(
+    "/api",
+    meetingRoutes(db, sync, () => NOW),
+  );
+  app.route(
+    "/api",
+    taskTimeRoutes(db, sync, "http://localhost", () => NOW),
+  );
+  return async (path: string, body: unknown) => {
+    const res = await app.request(`/api${path}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    expect(res.status).toBeLessThan(300);
+    return res.json() as Promise<Record<string, unknown>>;
+  };
+}
+
+describe("every plan entry point keeps the waiting rule (accounts rule 16)", () => {
+  it("the dry-run preview places no waiting item and keeps the other item at its ideal time", () => {
+    const { db, userId } = setup("ok", "reauth_required");
+    habit(db, userId, "waiting", 1, "cal2");
+    habit(db, userId, "own", 3, null);
+    const keys = [...plannedNow(db, userId, NOW).values()];
+    expect(keys.filter((p) => p.key.startsWith("habit:waiting:"))).toEqual([]);
+    expect(keys.find((p) => p.key === "habit:own:2026-11-03")?.start).toBe(TUE_9);
+  });
+
+  it("a task whose task calendar is disconnected gets no work blocks", async () => {
+    const { db, userId } = setup("ok", "ok");
+    run(
+      db,
+      `INSERT INTO tasks (id, user_id, title, level, total_minutes, min_chunk_minutes, max_chunk_minutes,
+         start_after, hours_set_id, created_at, rules_changed_at)
+       SELECT 'report', ?, 'Report', 2, 60, 30, 60, ?, id, 0, 0 FROM hours_sets WHERE user_id = ? AND kind = 'work'`,
+      userId,
+      NOW,
+      userId,
+    );
+    run(db, "UPDATE hours_sets SET task_calendar_id = 'cal2' WHERE user_id = ?", userId);
+    const call = routes(db, userId);
+    expect(((await call("/tasks/report/blocks/preview", {})).blocks as unknown[]).length).toBe(1);
+    run(db, "UPDATE accounts SET status = 'reauth_required' WHERE id = 'added'");
+    expect((await call("/tasks/report/blocks/preview", {})).blocks).toEqual([]);
+  });
+
+  it("a meeting on a disconnected calendar has no preview times and no reschedule slot", async () => {
+    const { db, userId } = setup("ok", "ok");
+    const call = routes(db, userId);
+    const body = {
+      title: "Sync",
+      attendees: [{ email: "dana@example.com" }],
+      frequency: { period: "weekly", everyWeeks: 1, idealDays: [2] },
+      idealTime: "10:00",
+      durationMinutes: 30,
+      eventSettings: { calendarId: "cal2" },
+    };
+    const { id } = (await call("/meetings", body)) as { id: string };
+    await plan(db, userId);
+    const row = one<ManagedRow>(
+      db,
+      "SELECT * FROM managed_events WHERE kind = 'meeting' AND source_id = ? ORDER BY start_ms",
+      id,
+    ) as ManagedRow;
+    expect(row.calendar_id).toBe("cal2");
+    const { eventSettings: _, ...edit } = body;
+    expect((await call(`/meetings/preview?id=${id}`, edit)).occurrences).not.toEqual([]);
+    expect(rescheduleSlot(db, userId, row, "otherDay", NOW)).not.toBeNull();
+
+    run(db, "UPDATE accounts SET status = 'reauth_required' WHERE id = 'added'");
+    expect((await call(`/meetings/preview?id=${id}`, edit)).occurrences).toEqual([]);
+    expect(rescheduleSlot(db, userId, row, "otherDay", NOW)).toBeNull();
+  });
+});
+
+// A meeting overload (focus-time.md rules 11-15) on the main calendar: a
+// 2-hour meeting on Tuesday 13:00-15:00 reaches a 60-minute daily limit.
+function overload(db: Db, userId: string, hoursSetId?: string) {
+  run(
+    db,
+    `INSERT INTO events (calendar_id, event_id, summary, start_ms, end_ms, busy, attendee_count, organizer_self)
+     VALUES ('cal2', 'sync', 'Sync', ?, ?, 1, 3, 1)`,
+    TUE_9 + 4 * H,
+    TUE_9 + 6 * H,
+  );
+  run(
+    db,
+    `INSERT INTO meeting_overloads (id, user_id, title, hours_set_id, daily_max_minutes, min_block_minutes,
+       created_at, rules_changed_at)
+     SELECT 'guard', ?, 'Recovery', COALESCE(?, id), 60, 30, 0, 0 FROM hours_sets
+     WHERE user_id = ? AND kind = 'work'`,
+    userId,
+    hoursSetId ?? null,
+    userId,
+  );
+}
+
+describe("meeting overload focus time (accounts rule 16, SCH-119)", () => {
+  it("waits while the main account is disconnected and takes no time from other items", async () => {
+    const { db, userId } = setup("reauth_required", "ok");
+    overload(db, userId);
+    // Focus time on the connected added calendar: one hour each workday. At one
+    // rank the overload is placed first (focus edge case 5).
+    run(
+      db,
+      `INSERT INTO focus_goals (id, user_id, title, hours_set_id, weekly_goal_minutes, daily_min_minutes,
+         daily_max_minutes, min_block_minutes, max_block_minutes, created_at, rules_changed_at, event_settings)
+       SELECT 'deep', ?, 'Deep work', id, 300, 60, 60, 60, 60, 0, 0, '{"calendarId":"cal2"}'
+       FROM hours_sets WHERE user_id = ? AND kind = 'work'`,
+      userId,
+      userId,
+    );
+    const { writes, result } = await plan(db, userId);
+    expect(result).not.toBeNull();
+    expect(writes.filter((w) => w.event.summary.includes("Recovery"))).toEqual([]);
+    const tuesday = writes.filter(
+      (w) =>
+        w.event.summary.includes("Deep work") &&
+        w.event.start >= TUE_9 &&
+        w.event.start < TUE_9 + 15 * H,
+    );
+    expect(tuesday.map((w) => w.account)).toEqual(["added"]);
+  });
+
+  it("a move after an edit of its rules is logged as rules-changed", async () => {
+    const { db, userId } = setup("ok", "ok");
+    overload(db, userId);
+    await plan(db, userId);
+    const moved = one<{ key: string }>(
+      db,
+      "SELECT key FROM managed_events WHERE source_id = 'guard' AND start_ms = ?",
+      TUE_9,
+    );
+    expect(moved).toBeDefined();
+    // New hours for the overload: 10:00-17:00. Its first Tuesday block starts later.
+    run(
+      db,
+      `INSERT INTO hours_sets (id, user_id, kind, name, weekly, created_at)
+       VALUES ('late', ?, 'custom', 'Late', '{"1":[[600,1020]],"2":[[600,1020]],"3":[[600,1020]],"4":[[600,1020]],"5":[[600,1020]]}', 0)`,
+      userId,
+    );
+    run(
+      db,
+      "UPDATE meeting_overloads SET hours_set_id = 'late', rules_changed_at = ? WHERE id = 'guard'",
+      NOW + 1,
+    );
+    run(db, "UPDATE plan_reports SET planned_at = ? WHERE user_id = ?", NOW, userId);
+    await plan(db, userId);
+    expect(
+      db
+        .prepare(
+          "SELECT action, reason FROM item_changes WHERE demand_key = ? AND action = 'moved'",
+        )
+        .all(moved?.key ?? ""),
+    ).toEqual([{ action: "moved", reason: "rules-changed" }]);
   });
 });
 

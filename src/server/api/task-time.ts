@@ -11,7 +11,7 @@ import { type Db, one, run } from "../db.ts";
 import { jsonBody, notFound } from "../http.ts";
 import { eventTitle, placementState } from "../planner/markers.ts";
 import { openTasks } from "../planner/now.ts";
-import { eventDescription, loadSnapshot, writeCalendar } from "../planner/replan.ts";
+import { eventDescription, planningSnapshot, writeCalendar } from "../planner/replan.ts";
 import {
   type LockedEvent,
   writableCalendar,
@@ -212,7 +212,7 @@ export function taskTimeRoutes(
         "SELECT planned_at FROM plan_reports WHERE user_id = ?",
         user.id,
       )?.planned_at ?? 0;
-    const { snapshot } = loadSnapshot(
+    const { snapshot } = planningSnapshot(
       db,
       user.id,
       planningZone(db, user.id),

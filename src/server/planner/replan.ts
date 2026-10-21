@@ -492,6 +492,124 @@ export function loadSnapshot(
   return { snapshot, rows, notes, titles, eventSettings, reopen };
 }
 
+type PlanCalendar = CalendarInfo & { ok: number };
+
+/**
+ * A chosen calendar that takes events. A calendar of a disconnected account
+ * stays chosen: the push writes nothing to it, so the item gets no new events
+ * until reconnect (accounts rule 16).
+ */
+function chosenCalendarOf(
+  calendars: Map<string, PlanCalendar>,
+  id: string | null | undefined,
+): string | undefined {
+  const cal = id ? calendars.get(id) : undefined;
+  return cal?.writable === 1 ? cal.id : undefined;
+}
+
+/**
+ * The snapshot that every plan() caller uses: loadSnapshot with the waiting
+ * rule (accounts rule 16). An item whose calendar is on a disconnected account
+ * waits: its new demands leave the plan, so they take no time from other
+ * items. The events it has stay as they are on every calendar: the push
+ * neither moves nor deletes them, and the busy ones block their time.
+ */
+export function planningSnapshot(
+  db: Db,
+  userId: string,
+  zone: string,
+  settings: Settings,
+  now: number,
+  lastPlannedAt: number,
+  guestBusy: Map<string, Interval[]> = new Map(),
+): ReturnType<typeof loadSnapshot> & {
+  /** The calendar of each hours set's task chunks, by hours set id. */
+  taskCalendar: Map<string, string | null>;
+  calendars: Map<string, PlanCalendar>;
+  /** The managed keys of the waiting items' future events. */
+  kept: Set<string>;
+  /** The waiting items, by `kind:id`. */
+  waitingItems: Set<string>;
+} {
+  const loaded = loadSnapshot(db, userId, zone, settings, now, lastPlannedAt, guestBusy);
+  const { snapshot, rows, eventSettings } = loaded;
+  const taskCalendar = new Map(
+    all<{ id: string; task_calendar_id: string | null }>(
+      db,
+      "SELECT id, task_calendar_id FROM hours_sets WHERE user_id = ?",
+      userId,
+    ).map((h) => [h.id, h.task_calendar_id]),
+  );
+  const calendars = new Map(
+    all<PlanCalendar>(
+      db,
+      `SELECT c.id, c.account_id, c.provider_id, c.is_primary, c.writable, c.check_availability,
+         a.status = 'ok' AS ok
+       FROM calendars c JOIN accounts a ON a.id = c.account_id WHERE a.user_id = ?`,
+      userId,
+    ).map((c) => [c.id, c]),
+  );
+  const kept = new Set<string>();
+  const left = new Set<string>();
+  if ([...calendars.values()].some((c) => c.ok !== 1)) {
+    // The main calendar, also while its account is disconnected: items that use
+    // it then wait instead of moving to another account.
+    const target = writeCalendar(db, userId, null, { anyStatus: true });
+    const waits = (id: string | undefined) => calendars.get(id ?? target?.id ?? "")?.ok !== 1;
+    const chosen = (id: string | null | undefined) => chosenCalendarOf(calendars, id);
+    const keep =
+      <T extends { id: string }>(kind: string, calendarOf: (i: T) => string | undefined) =>
+      (i: T) => {
+        if (!waits(calendarOf(i))) return true;
+        left.add(`${kind}:${i.id}`);
+        return false;
+      };
+    const settingsOf = (kind: string) => (i: { id: string }) =>
+      chosen(eventSettings.get(`${kind}:${i.id}`)?.calendarId);
+    snapshot.tasks = snapshot.tasks.filter(
+      keep("task", (t: { id: string; hours: string }) => chosen(taskCalendar.get(t.hours))),
+    );
+    snapshot.habits = snapshot.habits.filter(keep("habit", settingsOf("habit")));
+    snapshot.meetings = snapshot.meetings.filter(keep("meeting", settingsOf("meeting")));
+    snapshot.buffers = snapshot.buffers.filter(keep("buffer", settingsOf("buffer")));
+    snapshot.focus = snapshot.focus.filter(keep("focus", settingsOf("focus")));
+    // Meeting overload focus time goes to the main calendar.
+    if (snapshot.overloads)
+      snapshot.overloads = snapshot.overloads.filter(keep("focus", () => undefined));
+    // Rule 18: a habit dependency on a waiting habit or meeting keeps its rule;
+    // the target's kept events are its placements.
+    const waiting = new Map<string, { kind: "habit" | "meeting"; id: string; starts: number[] }>();
+    for (const key of left) {
+      const [kind, id] = key.split(":") as [string, string];
+      if (kind === "habit" || kind === "meeting") waiting.set(key, { kind, id, starts: [] });
+    }
+    for (const r of rows) {
+      if (r.end_ms <= now || !left.has(`${r.kind}:${r.source_id}`)) continue;
+      kept.add(r.key);
+      waiting.get(`${r.kind}:${r.source_id}`)?.starts.push(r.start_ms);
+      if (r.busy !== 1) continue;
+      snapshot.events.push({
+        id: `kept:${r.key}`,
+        start: r.start_ms,
+        end: r.end_ms,
+        allDay: false,
+        busy: true,
+        title: r.title,
+        description: "",
+        selfResponse: null,
+        organizerSelf: true,
+        attendeeCount: 0,
+        location: "",
+        eventType: "default",
+        bookedViaLink: false,
+        calendarId: r.calendar_id,
+      });
+    }
+    if (waiting.size > 0) snapshot.waiting = [...waiting.values()];
+  }
+  return { ...loaded, taskCalendar, calendars, kept, waitingItems: left };
+}
+
 /**
  * Tempoloom's own mirror copies as their calendars show them (buffers-travel.md
  * rule 13), with the category their title and description give.
@@ -649,98 +767,15 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
     now,
     schedulingWindowEnd(zone, now, settings.schedulingWindowWeeks),
   );
-  const { snapshot, rows, notes, titles, eventSettings, reopen } = loadSnapshot(
-    db,
-    userId,
-    zone,
-    settings,
-    now,
-    last,
-    guestBusy,
-  );
-  const taskCalendar = new Map(
-    all<{ id: string; task_calendar_id: string | null }>(
-      db,
-      "SELECT id, task_calendar_id FROM hours_sets WHERE user_id = ?",
-      userId,
-    ).map((h) => [h.id, h.task_calendar_id]),
-  );
-  const calendars = new Map(
-    all<CalendarInfo & { ok: number }>(
-      db,
-      `SELECT c.id, c.account_id, c.provider_id, c.is_primary, c.writable, c.check_availability,
-         a.status = 'ok' AS ok
-       FROM calendars c JOIN accounts a ON a.id = c.account_id WHERE a.user_id = ?`,
-      userId,
-    ).map((c) => [c.id, c]),
-  );
+  const { snapshot, rows, notes, titles, eventSettings, reopen, taskCalendar, calendars, kept } =
+    planningSnapshot(db, userId, zone, settings, now, last, guestBusy);
   // A calendar chosen for an item, while its account works and it takes events.
   const writable = (id: string | null | undefined) => {
     const cal = id ? calendars.get(id) : undefined;
     return cal?.writable === 1 && cal.ok === 1 ? cal.id : undefined;
   };
-  // A chosen calendar of a disconnected account stays chosen: the push writes
-  // nothing to it, so the item gets no new events until reconnect (accounts rule 16).
-  const chosen = (id: string | null | undefined) => {
-    const cal = id ? calendars.get(id) : undefined;
-    return cal?.writable === 1 ? cal.id : undefined;
-  };
+  const chosen = (id: string | null | undefined) => chosenCalendarOf(calendars, id);
   const chosenCalendar = (es: EventSettings | undefined) => chosen(es?.calendarId);
-  // Accounts rule 16: an item whose calendar is on a disconnected account
-  // waits. Its new demands leave the plan, so they take no time from other
-  // items. The events it has stay as they are on every calendar: the push
-  // neither moves nor deletes them, and the busy ones block their time.
-  const kept = new Set<string>();
-  if ([...calendars.values()].some((c) => c.ok !== 1)) {
-    const waits = (id: string | undefined) => calendars.get(id ?? target.id)?.ok !== 1;
-    const left = new Set<string>();
-    const keep =
-      <T extends { id: string }>(kind: string, calendarOf: (i: T) => string | undefined) =>
-      (i: T) => {
-        if (!waits(calendarOf(i))) return true;
-        left.add(`${kind}:${i.id}`);
-        return false;
-      };
-    const settings = (kind: string) => (i: { id: string }) =>
-      chosenCalendar(eventSettings.get(`${kind}:${i.id}`));
-    snapshot.tasks = snapshot.tasks.filter(
-      keep("task", (t: { id: string; hours: string }) => chosen(taskCalendar.get(t.hours))),
-    );
-    snapshot.habits = snapshot.habits.filter(keep("habit", settings("habit")));
-    snapshot.meetings = snapshot.meetings.filter(keep("meeting", settings("meeting")));
-    snapshot.buffers = snapshot.buffers.filter(keep("buffer", settings("buffer")));
-    snapshot.focus = snapshot.focus.filter(keep("focus", settings("focus")));
-    // Rule 18: a habit dependency on a waiting habit or meeting keeps its rule;
-    // the target's kept events are its placements.
-    const waiting = new Map<string, { kind: "habit" | "meeting"; id: string; starts: number[] }>();
-    for (const key of left) {
-      const [kind, id] = key.split(":") as [string, string];
-      if (kind === "habit" || kind === "meeting") waiting.set(key, { kind, id, starts: [] });
-    }
-    for (const r of rows) {
-      if (r.end_ms <= now || !left.has(`${r.kind}:${r.source_id}`)) continue;
-      kept.add(r.key);
-      waiting.get(`${r.kind}:${r.source_id}`)?.starts.push(r.start_ms);
-      if (r.busy !== 1) continue;
-      snapshot.events.push({
-        id: `kept:${r.key}`,
-        start: r.start_ms,
-        end: r.end_ms,
-        allDay: false,
-        busy: true,
-        title: r.title,
-        description: "",
-        selfResponse: null,
-        organizerSelf: true,
-        attendeeCount: 0,
-        location: "",
-        eventType: "default",
-        bookedViaLink: false,
-        calendarId: r.calendar_id,
-      });
-    }
-    if (waiting.size > 0) snapshot.waiting = [...waiting.values()];
-  }
   const result = plan(snapshot);
 
   const rowByKey = new Map(rows.map((r) => [r.key, r]));

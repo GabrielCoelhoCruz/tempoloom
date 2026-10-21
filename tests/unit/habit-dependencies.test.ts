@@ -400,6 +400,28 @@ describe("habit dependencies on a waiting target (rule 18, accounts rule 16)", (
     expect(days).toEqual([day(0), day(2), day(3), day(4)]);
   });
 
+  it("not-after: ends before the waiting habit's kept event on its days, free on the others", () => {
+    const review = habit({
+      id: "review",
+      dependencies: [{ rule: "not-after", kind: "habit", id: "standup" }],
+    });
+    const p = plan(
+      snapshot({
+        habits: [review],
+        waiting: [
+          { kind: "habit", id: "standup", starts: [at(day(1), "10:00"), at(day(3), "10:00")] },
+        ],
+      }),
+    );
+    expect(spans(p, "review")).toEqual([
+      `${day(0)}T12:00/12:30`,
+      `${day(1)}T09:30/10:00`,
+      `${day(2)}T12:00/12:30`,
+      `${day(3)}T09:30/10:00`,
+      `${day(4)}T12:00/12:30`,
+    ]);
+  });
+
   it("before: a waiting habit with no kept events leaves the dependent habit no day", () => {
     const review = habit({
       id: "review",

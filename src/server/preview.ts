@@ -12,7 +12,7 @@ import { all, type Db, one, run, tx } from "./db.ts";
 import type { LiveHub } from "./live.ts";
 import type { Mailer } from "./mail.ts";
 import { stripMarker } from "./planner/markers.ts";
-import { loadSnapshot, writeCalendar } from "./planner/replan.ts";
+import { planningSnapshot, writeCalendar } from "./planner/replan.ts";
 import { getSettings } from "./settings.ts";
 import { cacheEvent } from "./sync/pull.ts";
 import type { SyncService } from "./sync/service.ts";
@@ -308,7 +308,14 @@ export function plannedNow(db: Db, userId: string, now: number): Map<string, Pla
   const last =
     one<{ planned_at: number }>(db, "SELECT planned_at FROM plan_reports WHERE user_id = ?", userId)
       ?.planned_at ?? 0;
-  const { snapshot, titles } = loadSnapshot(db, userId, zoneOf(db, userId), settings, now, last);
+  const { snapshot, titles } = planningSnapshot(
+    db,
+    userId,
+    zoneOf(db, userId),
+    settings,
+    now,
+    last,
+  );
   const out = new Map<string, Placed>();
   if (settings.paused) return out;
   for (const p of plan(snapshot).placements) {

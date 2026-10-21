@@ -123,7 +123,11 @@ provider only for the permissions that the features in use need.
     "Waiting: <email> is disconnected" and get no new events; they do not move
     to the main calendar. Their events stay as they are. A booking on such a
     link is refused with "cannot take bookings right now". On reconnect the
-    next run writes the waiting events.
+    next run writes the waiting events. The focus time of a meeting overload
+    goes to the main calendar, so it waits while the main account is
+    disconnected. Every plan run uses this rule: the plan run, the dry-run
+    preview, a task's work blocks, the meeting preview and a meeting
+    reschedule.
 
 ### Provider permissions
 

@@ -28,7 +28,7 @@ import {
   meetingPeers,
 } from "../planner/meetings.ts";
 import { KEY_PROP, MANAGED_PROP, type ManagedRow } from "../planner/push.ts";
-import { loadSnapshot, meetingGuests } from "../planner/replan.ts";
+import { meetingGuests, planningSnapshot } from "../planner/replan.ts";
 import { waitingCalendars } from "../planner/write.ts";
 import type { ProviderPool } from "../providers/index.ts";
 import { getSettings } from "../settings.ts";
@@ -541,15 +541,27 @@ export function meetingRoutes(
         "SELECT planned_at FROM plan_reports WHERE user_id = ?",
         user.id,
       )?.planned_at ?? 0;
-    const { snapshot } = loadSnapshot(db, user.id, zone, getSettings(db, user.id), t, last);
+    const { snapshot, waitingItems } = planningSnapshot(
+      db,
+      user.id,
+      zone,
+      getSettings(db, user.id),
+      t,
+      last,
+    );
     if (body.hoursMode === "itemSpecific" && body.itemHours) {
       row.hours_set_id = "preview-hours";
       snapshot.hours = { ...snapshot.hours, [row.hours_set_id]: body.itemHours };
     }
     const item = meetingItem(db, user.id, row, attendees, t, snapshot.windowEnd, last, new Map());
+    // Accounts rule 16: a saved meeting on a disconnected account waits, so the
+    // preview shows no new times for it.
     const result = plan({
       ...snapshot,
-      meetings: [...snapshot.meetings.filter((m) => m.id !== id), item],
+      meetings: [
+        ...snapshot.meetings.filter((m) => m.id !== id),
+        ...(waitingItems.has(`meeting:${id}`) ? [] : [item]),
+      ],
     });
     const before = new Map(snapshot.current.map((p) => [p.key, p]));
     const moved = result.placements.filter((p) => {
