@@ -54,7 +54,10 @@ export function HoursField({
   /** The item-specific hours the fields start with, when `initial` is ITEM. */
   item?: ItemRange;
 }) {
-  const [chosen, setChosen] = useState(initial);
+  // Until the user picks, the menu follows `initial`, which can change when the
+  // sets load after the form shows; a pick is kept through such a change.
+  const [picked, setPicked] = useState<string | null>(null);
+  const chosen = picked ?? initial;
   const [preview, setPreview] = useState(false);
   const work = sets.find((s) => s.kind === "work");
   const set = chosen === "" ? work : sets.find((s) => s.id === chosen);
@@ -62,7 +65,7 @@ export function HoursField({
     <>
       <label>
         Hours
-        <select name="hoursSetId" value={chosen} onChange={(e) => setChosen(e.currentTarget.value)}>
+        <select name="hoursSetId" value={chosen} onChange={(e) => setPicked(e.currentTarget.value)}>
           <option value="">Work hours</option>
           {sets
             .filter((h) => h.kind !== "work")

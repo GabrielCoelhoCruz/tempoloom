@@ -16,6 +16,8 @@
 // - The edit form edits only some fields, or cannot save a total that is not
 //   a multiple of 15 minutes; an unknown id shows the create form with no
 //   message (edit form test).
+// - An hours choice made before the hours sets load is lost when they load
+//   (hours load test).
 import type { Locator, Page } from "@playwright/test";
 import { addDays } from "../../src/shared/time.ts";
 import { at, blockUntil, eventually, expect, local, test } from "./fixtures.ts";
@@ -326,4 +328,52 @@ test("the task edit form edits every field and saves a total that is not a multi
   // An id that is not an open task shows a message, not a silent create form.
   await page.goto("/tasks?edit=no-such-task");
   await expect(page.getByTestId("edit-missing")).toBeVisible();
+});
+
+test("an hours choice made in the task edit form before the hours sets load is saved (PRI-53, HRS-11)", async ({
+  page,
+  app,
+  cal,
+  signIn,
+}) => {
+  await blockUntil(cal, W);
+  await signIn();
+  await addTask(page, { title: "PF-Hours", hours: "Personal hours", split: false, due: "" });
+  const [{ id }] = app.query<{ id: string }>("SELECT id FROM tasks WHERE title = 'PF-Hours'") as [
+    { id: string },
+  ];
+  // Hold the hours sets, as on a busy runner, until the user chose work hours.
+  let release = () => {};
+  const held = new Promise<void>((r) => {
+    release = r;
+  });
+  await page.route("**/api/hours", async (route) => {
+    await held;
+    await route.continue();
+  });
+  await page.goto(`/tasks?edit=${id}`);
+  const form = page.getByTestId("task-edit");
+  await expect(form.getByLabel("Title")).toHaveValue("PF-Hours");
+  await form.getByLabel("Hours").selectOption({ label: "Work hours" });
+  const loaded = page.waitForResponse("**/api/hours");
+  release();
+  await (await loaded).finished();
+  await expect(
+    form.getByLabel("Hours").locator("option", { hasText: "Personal hours" }),
+  ).toHaveCount(1);
+  await expect(form.getByLabel("Hours")).toHaveValue("");
+  await page.unroute("**/api/hours");
+  const patched = page.waitForResponse(
+    (r) => r.request().method() === "PATCH" && new URL(r.url()).pathname === `/api/tasks/${id}`,
+  );
+  await form.getByRole("button", { name: "Save" }).click();
+  expect((await patched).ok()).toBe(true);
+  await expect
+    .poll(() =>
+      app.query(
+        "SELECT h.kind FROM tasks t JOIN hours_sets h ON h.id = t.hours_set_id WHERE t.id = ?",
+        id,
+      ),
+    )
+    .toEqual([{ kind: "work" }]);
 });
