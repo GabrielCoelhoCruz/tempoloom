@@ -26,9 +26,9 @@ Evidence ids (`E-…`) refer to the private evidence index. Spec links point to
 ## Summary
 
 - Rows: 963
-- done (CalDAV): 443
+- done (CalDAV): 444
 - done (Google): 222
-- partial: 5
+- partial: 4
 - blocked: 293
 
 "done (CalDAV)" means a full UI E2E test passes against a real CalDAV server (Radicale in a
