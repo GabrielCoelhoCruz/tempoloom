@@ -189,6 +189,8 @@ interface Preview {
   occurrences: { start: number; end: number; conflict: boolean }[];
   problems: { demandKey: string; status: string; reason: string }[];
   moved: number;
+  /** Accounts rule 16: the disconnected account that the meeting waits for. */
+  waiting: string | null;
 }
 
 const DEFENSE: Record<string, string> = {
@@ -824,7 +826,11 @@ export function Meetings() {
               <span class="warning">Not placed: {REASONS[p.reason] ?? p.reason}</span>
             </div>
           ))}
-          <p class="meta">{preview.moved} other events move to make room.</p>
+          {preview.waiting ? (
+            <CalendarDisconnected email={preview.waiting} />
+          ) : (
+            <p class="meta">{preview.moved} other events move to make room.</p>
+          )}
         </div>
       )}
       {error && (

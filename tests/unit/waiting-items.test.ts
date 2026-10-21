@@ -285,9 +285,13 @@ describe("every plan entry point keeps the waiting rule (accounts rule 16)", () 
     );
     run(db, "UPDATE hours_sets SET task_calendar_id = 'cal2' WHERE user_id = ?", userId);
     const call = routes(db, userId);
-    expect(((await call("/tasks/report/blocks/preview", {})).blocks as unknown[]).length).toBe(1);
+    const before = await call("/tasks/report/blocks/preview", {});
+    expect((before.blocks as unknown[]).length).toBe(1);
+    expect(before.waiting).toBeNull();
     run(db, "UPDATE accounts SET status = 'reauth_required' WHERE id = 'added'");
-    expect((await call("/tasks/report/blocks/preview", {})).blocks).toEqual([]);
+    const after = await call("/tasks/report/blocks/preview", {});
+    expect(after.blocks).toEqual([]);
+    expect(after.waiting).toBe("extra@example.com");
   });
 
   it("a meeting on a disconnected calendar has no preview times and no reschedule slot", async () => {
@@ -310,12 +314,30 @@ describe("every plan entry point keeps the waiting rule (accounts rule 16)", () 
     ) as ManagedRow;
     expect(row.calendar_id).toBe("cal2");
     const { eventSettings: _, ...edit } = body;
-    expect((await call(`/meetings/preview?id=${id}`, edit)).occurrences).not.toEqual([]);
+    const before = await call(`/meetings/preview?id=${id}`, edit);
+    expect(before.occurrences).not.toEqual([]);
+    expect(before.waiting).toBeNull();
     expect(rescheduleSlot(db, userId, row, "otherDay", NOW)).not.toBeNull();
 
     run(db, "UPDATE accounts SET status = 'reauth_required' WHERE id = 'added'");
-    expect((await call(`/meetings/preview?id=${id}`, edit)).occurrences).toEqual([]);
+    const after = await call(`/meetings/preview?id=${id}`, edit);
+    expect(after.occurrences).toEqual([]);
+    expect(after.waiting).toBe("extra@example.com");
     expect(rescheduleSlot(db, userId, row, "otherDay", NOW)).toBeNull();
+  });
+
+  it("a new meeting on the main calendar has no preview times while the main account is disconnected", async () => {
+    const { db, userId } = setup("reauth_required", "ok");
+    const call = routes(db, userId);
+    const preview = await call("/meetings/preview", {
+      title: "Sync",
+      attendees: [{ email: "dana@example.com" }],
+      frequency: { period: "weekly", everyWeeks: 1, idealDays: [2] },
+      idealTime: "10:00",
+      durationMinutes: 30,
+    });
+    expect(preview.occurrences).toEqual([]);
+    expect(preview.waiting).toBe("owner@example.com");
   });
 });
 

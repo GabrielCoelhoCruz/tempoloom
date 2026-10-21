@@ -82,3 +82,11 @@ export function readEventSettings(
   } catch {}
   return { ...base, ...stored };
 }
+
+/**
+ * Accounts rule 16: why an item gets no new events while the account of its
+ * calendar is disconnected. The lists, the previews and the reschedule action
+ * all give this text.
+ */
+export const waitingNote = (email: string) =>
+  `Waiting: ${email} is disconnected. Reconnect it on the Account page.`;

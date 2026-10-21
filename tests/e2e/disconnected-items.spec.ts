@@ -13,6 +13,9 @@
 // - focus time waits with no error                             -> the note on the automations list
 // - the events of a waiting item change while it waits          -> its focus events, read on the server
 // - the state is not stored                                    -> reload after each step
+// - a preview or a reschedule of a waiting item gives no reason,
+//   or a wrong one ("no time")                                -> the waiting note in the meeting
+//                                                                preview, Block time and the reschedule
 import type { Page } from "@playwright/test";
 import type { ProviderEvent } from "../../src/server/providers/types.ts";
 import { addDays } from "../../src/shared/time.ts";
@@ -27,9 +30,20 @@ import {
 import { week } from "./calendar-helpers.ts";
 import { addCalDavAccount, openAccount } from "./delegation-helpers.ts";
 import { at, BACKEND, blockUntil, eventually, expect, planNow, test } from "./fixtures.ts";
-import { addLink, addTask, claimPage, slot, titled, visitor, W } from "./helpers.ts";
+import {
+  addLink,
+  addTask,
+  claimPage,
+  openEvent,
+  openWeek,
+  slot,
+  titled,
+  visitor,
+  W,
+} from "./helpers.ts";
 import { editLink, saveLink } from "./link-helpers.ts";
 import { setPassword } from "./radicale-users.ts";
+import { chooseSetting } from "./s3-helpers.ts";
 
 test.skip(BACKEND === "google", "The test changes a password on the loopback CalDAV server.");
 
@@ -292,6 +306,99 @@ test("a booking link whose calendar is on a disconnected account shows an error 
       (l) => expect(booked(l)).toHaveLength(1),
     );
     expect(booked(await week(cal))).toHaveLength(0);
+  } finally {
+    setPassword(six.username, 6, six.password);
+  }
+});
+
+test("while the account is disconnected, the meeting preview, Block time and the reschedule action say that the item waits (accounts rule 16)", async ({
+  page,
+  cal,
+  signIn,
+  people,
+  radicale,
+}) => {
+  const six = radicale?.users[6];
+  if (!radicale || !six) throw new Error("This test needs the CalDAV backend.");
+  const extra = await people(6);
+  const theirs = `Work (${extra.email})`;
+  const meeting = page.locator('[data-meeting-title="Sync"]');
+  const mform = page.getByTestId("meeting-form");
+  const preview = page.getByTestId("meeting-preview");
+  const openPreview = async () => {
+    await page.getByRole("link", { name: "Meetings" }).click();
+    await meeting.getByRole("button", { name: "Edit" }).click();
+    await expect(mform.getByLabel("Title")).toHaveValue("Sync");
+    await mform.getByRole("button", { name: "Preview" }).click();
+    await expect(preview).toBeVisible();
+  };
+  const blockTime = async () => {
+    await page.getByRole("link", { name: "Planner" }).click();
+    await page.getByTestId("now-bar").getByRole("button", { name: "Tasks" }).click();
+    await page
+      .getByTestId("suggested-now")
+      .locator('[data-task-title="Report"]')
+      .getByRole("button", { name: "Block time" })
+      .click();
+  };
+  try {
+    await blockUntil(cal, W);
+    await signIn();
+    await addCalDavAccount(page, { ...six, email: extra.email });
+    await expect(accountRow(page, extra.email).getByTestId("account-status")).toHaveText(
+      "Connected",
+    );
+    // Block time is offered in the suggestions-only placement; task chunks of
+    // the work hours go to the added account's calendar.
+    await chooseSetting(page, "Task placement", "Suggestions only (no task events)");
+    await page.getByRole("link", { name: "Settings", exact: true }).click();
+    const work = page.getByTestId("hours-work");
+    await work.getByLabel("Calendar for task chunks").selectOption({ label: "Work" });
+    await expect(work.getByLabel("Calendar for task chunks")).toHaveValue(/.+/);
+    await addTask(page, { title: "Report", minutes: 60, split: false, due: "" });
+    await page.getByRole("link", { name: "Meetings" }).click();
+    await mform.getByLabel("Title").fill("Sync");
+    await mform.getByLabel("Guests (comma list)", { exact: true }).fill("dana@example.com");
+    await mform.getByLabel("Guests (comma list)", { exact: true }).blur();
+    await mform.getByLabel("Calendar", { exact: true }).selectOption({ label: theirs });
+    await mform.getByRole("button", { name: "Add meeting" }).click();
+    await expect(meeting).toBeVisible();
+    await eventually(
+      () => week(extra.cal),
+      (l) => expect(titled(l, "Sync")).toHaveLength(1),
+    );
+
+    // Connected: the preview shows times and Block time proposes blocks, with no note.
+    await openPreview();
+    await expect(preview.locator(".row").first()).toBeVisible();
+    await expect(preview.getByTestId("calendar-disconnected")).toHaveCount(0);
+    await blockTime();
+    await expect(page.getByTestId("block-preview")).toContainText("work blocks for Report");
+    await page.getByTestId("block-preview").getByRole("button", { name: "Discard" }).click();
+
+    await disconnect(page, six.username, extra.email);
+
+    // The meeting preview: no times, the note, and no "other events move" line.
+    await openPreview();
+    await expect(preview.getByTestId("calendar-disconnected")).toHaveText(note(extra.email));
+    await expect(preview.locator(".row")).toHaveCount(0);
+    await expect(preview).not.toContainText("other events move");
+
+    // Block time: the note, and no proposed blocks.
+    await blockTime();
+    await expect(page.getByTestId("tasks-panel").locator(".error")).toHaveText(note(extra.email));
+    await expect(page.getByTestId("block-preview")).toHaveCount(0);
+
+    // The reschedule action on the kept occurrence: the note, not "No other time fits".
+    await openWeek(page);
+    await openEvent(page, "Sync");
+    await page
+      .getByTestId("event-drawer")
+      .getByRole("button", { name: "Reschedule: same day" })
+      .click();
+    await expect(page.getByText(note(extra.email))).toBeVisible();
+    await expect(page.getByText("No other time fits in this period.")).toHaveCount(0);
+    expect(titled(await week(cal), "Sync")).toHaveLength(0);
   } finally {
     setPassword(six.username, 6, six.password);
   }

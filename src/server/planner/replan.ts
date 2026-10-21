@@ -521,17 +521,25 @@ export function planningSnapshot(
   settings: Settings,
   now: number,
   lastPlannedAt: number,
-  guestBusy: Map<string, Interval[]> = new Map(),
+  opts: {
+    /** Google free/busy of meeting guests who are not users here (guestFreeBusy). */
+    guestBusy?: Map<string, Interval[]>;
+    /** The main calendar, when the caller has it (writeCalendar with anyStatus). */
+    target?: CalendarInfo | undefined;
+  } = {},
 ): ReturnType<typeof loadSnapshot> & {
-  /** The calendar of each hours set's task chunks, by hours set id. */
+  /**
+   * The fields below are for the plan run (replanUser), which writes events;
+   * the previews read only the snapshot. The calendar of each hours set's task
+   * chunks, by hours set id.
+   */
   taskCalendar: Map<string, string | null>;
+  /** Each calendar of the user, with `ok` while its account is connected. */
   calendars: Map<string, PlanCalendar>;
-  /** The managed keys of the waiting items' future events. */
+  /** The managed keys of the waiting items' future events: the push keeps them. */
   kept: Set<string>;
-  /** The waiting items, by `kind:id`. */
-  waitingItems: Set<string>;
 } {
-  const loaded = loadSnapshot(db, userId, zone, settings, now, lastPlannedAt, guestBusy);
+  const loaded = loadSnapshot(db, userId, zone, settings, now, lastPlannedAt, opts.guestBusy);
   const { snapshot, rows, eventSettings } = loaded;
   const taskCalendar = new Map(
     all<{ id: string; task_calendar_id: string | null }>(
@@ -550,12 +558,15 @@ export function planningSnapshot(
     ).map((c) => [c.id, c]),
   );
   const kept = new Set<string>();
-  const left = new Set<string>();
   if ([...calendars.values()].some((c) => c.ok !== 1)) {
+    const left = new Set<string>();
     // The main calendar, also while its account is disconnected: items that use
     // it then wait instead of moving to another account.
-    const target = writeCalendar(db, userId, null, { anyStatus: true });
-    const waits = (id: string | undefined) => calendars.get(id ?? target?.id ?? "")?.ok !== 1;
+    const target =
+      "target" in opts ? opts.target : writeCalendar(db, userId, null, { anyStatus: true });
+    const mainCalendar = () => target?.id;
+    // An item with no chosen calendar writes to the main calendar.
+    const waits = (id: string | undefined) => calendars.get(id ?? mainCalendar() ?? "")?.ok !== 1;
     const chosen = (id: string | null | undefined) => chosenCalendarOf(calendars, id);
     const keep =
       <T extends { id: string }>(kind: string, calendarOf: (i: T) => string | undefined) =>
@@ -575,7 +586,7 @@ export function planningSnapshot(
     snapshot.focus = snapshot.focus.filter(keep("focus", settingsOf("focus")));
     // Meeting overload focus time goes to the main calendar.
     if (snapshot.overloads)
-      snapshot.overloads = snapshot.overloads.filter(keep("focus", () => undefined));
+      snapshot.overloads = snapshot.overloads.filter(keep("focus", mainCalendar));
     // Rule 18: a habit dependency on a waiting habit or meeting keeps its rule;
     // the target's kept events are its placements.
     const waiting = new Map<string, { kind: "habit" | "meeting"; id: string; starts: number[] }>();
@@ -607,7 +618,7 @@ export function planningSnapshot(
     }
     if (waiting.size > 0) snapshot.waiting = [...waiting.values()];
   }
-  return { ...loaded, taskCalendar, calendars, kept, waitingItems: left };
+  return { ...loaded, taskCalendar, calendars, kept };
 }
 
 /**
@@ -768,7 +779,7 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
     schedulingWindowEnd(zone, now, settings.schedulingWindowWeeks),
   );
   const { snapshot, rows, notes, titles, eventSettings, reopen, taskCalendar, calendars, kept } =
-    planningSnapshot(db, userId, zone, settings, now, last, guestBusy);
+    planningSnapshot(db, userId, zone, settings, now, last, { guestBusy, target });
   // A calendar chosen for an item, while its account works and it takes events.
   const writable = (id: string | null | undefined) => {
     const cal = id ? calendars.get(id) : undefined;
