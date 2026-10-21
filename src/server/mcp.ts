@@ -6,6 +6,7 @@
 // mode (docs/specs/assistant-preview-mode.md).
 import { Hono } from "hono";
 import { z } from "zod";
+import { TAG_FOCUS } from "../scheduler/blocking.ts";
 import { addDays, utcToLocal, weekdayOf } from "../shared/time.ts";
 import { hashToken, type User } from "./accounts.ts";
 import { AUTOMATION_TYPES, listAutomationsPage, listKeySchema } from "./api/automations.ts";
@@ -24,6 +25,7 @@ import {
   ToolError,
   tool,
 } from "./mcp/rpc.ts";
+import { oauthUser, resourceMetadataUrl } from "./oauth.ts";
 import {
   openChanges,
   openChangesPage,
@@ -81,6 +83,12 @@ const minutes = z.object(
     z.ZodNumber
   >,
 );
+
+const RSVP_WORDS = {
+  accepted: "Accept",
+  declined: "Decline",
+  tentative: "Answer maybe to",
+} as const;
 
 /** Monday of the week of an instant, for the planner link. */
 function reviewUrl(baseUrl: string, zone: string, t: number): string {
@@ -466,6 +474,130 @@ export function mcpRoutes(deps: McpDeps): Hono {
       },
     }),
     tool({
+      name: "propose_rsvp",
+      title: "Propose an answer to an invitation",
+      description:
+        "Stages the user's answer (accepted, declined or tentative) to an invitation from someone else (an id from list_events). The organizer sees the answer only when the user applies it.",
+      effect: "stage",
+      input: z.object({
+        event_id: z.string().min(1),
+        response: z.enum(["accepted", "declined", "tentative"]),
+        reason: z.string().max(1000).optional(),
+      }),
+      output: stagedOutput,
+      run: (caller, a) => {
+        const ev = cached(db, caller.user.id, a.event_id);
+        if (!ev) throw new ToolError(`No event ${a.event_id} on your calendars`);
+        if (ev.organizer_self || ev.attendee_count === 0 || ev.self_response === null)
+          throw new ToolError(
+            "This event is not an invitation to you; change it with propose_update_event instead",
+          );
+        if (!ev.writable) throw new ToolError("This calendar is read-only");
+        const zone = zoneOf(db, caller.user.id);
+        return staged(
+          caller,
+          {
+            kind: "event_rsvp",
+            target: a.event_id,
+            before: { title: ev.summary, start: ev.start_ms, end: ev.end_ms },
+            after: { response: a.response },
+            impact: [],
+            summary: `${RSVP_WORDS[a.response]} “${ev.summary}” · ${when(zone, ev.start_ms, ev.end_ms)}`,
+            reason: a.reason ?? "",
+          },
+          ev.start_ms,
+        );
+      },
+    }),
+    tool({
+      name: "propose_focus_time",
+      title: "Propose a focus time block",
+      description:
+        "Stages a busy focus time event of the given length in the first free time of the user's hours between start and end, for example two hours of deep work before noon. It counts as focus time in the stats. Nothing is written until the user applies it.",
+      effect: "stage",
+      input: z.object({
+        duration_minutes: z.number().int().min(15).max(480),
+        start: datetime.optional().describe("Earliest start. Default: now"),
+        end: datetime.optional().describe("Latest end. Default: 7 days after start"),
+        title: z.string().trim().min(1).max(255).optional().describe("Default: Focus time"),
+        reason: z.string().max(1000).optional(),
+      }),
+      output: stagedOutput,
+      run: (caller, a) => {
+        const [slot] = findFree(caller.user, {
+          duration_minutes: a.duration_minutes,
+          start: a.start,
+          end: a.end,
+        }).slots;
+        if (!slot) throw new ToolError("No free time of that length in your hours in this range");
+        const start = toMs(slot.start);
+        const end = toMs(slot.end);
+        const title = a.title ?? "Focus time";
+        const zone = zoneOf(db, caller.user.id);
+        return staged(
+          caller,
+          {
+            kind: "event_create",
+            after: {
+              title,
+              start,
+              end,
+              attendees: [],
+              // The focus tag makes it focus time in stats and summaries (events-tags.md).
+              description: TAG_FOCUS,
+              location: "",
+            },
+            impact: [{ op: "create", title, start, end }],
+            summary: `Focus time “${title}” · ${when(zone, start, end)}`,
+            reason: a.reason ?? "",
+          },
+          start,
+        );
+      },
+    }),
+    tool({
+      name: "propose_log_task_time",
+      title: "Propose a work session on a task",
+      description:
+        "Stages a past work session on a task (an id from list_tasks): a locked task event from start for the given minutes on the task's calendar. Nothing is written until the user applies it.",
+      effect: "stage",
+      input: z.object({
+        task_id: z.string().min(1),
+        start: datetime,
+        minutes: z.number().int().min(1).max(720),
+        reason: z.string().max(1000).optional(),
+      }),
+      output: stagedOutput,
+      run: (caller, a) => {
+        const task = one<{ title: string }>(
+          db,
+          "SELECT title FROM tasks WHERE id = ? AND user_id = ?",
+          a.task_id,
+          caller.user.id,
+        );
+        if (!task) throw new ToolError(`No task ${a.task_id}`);
+        const start = toMs(a.start);
+        const end = start + a.minutes * 60_000;
+        if (end > now()) throw new ToolError("A work session cannot end in the future");
+        const zone = zoneOf(db, caller.user.id);
+        return staged(
+          caller,
+          {
+            kind: "request",
+            after: {
+              method: "POST",
+              path: `/api/tasks/${a.task_id}/sessions`,
+              body: JSON.stringify({ start, minutes: a.minutes }),
+            },
+            impact: [{ op: "create", title: task.title, start, end }],
+            summary: `Work session on “${task.title}” · ${a.minutes} min · ${when(zone, start, end)}`,
+            reason: a.reason ?? "",
+          },
+          start,
+        );
+      },
+    }),
+    tool({
       name: "apply_staged_changes",
       title: "Apply staged changes",
       description:
@@ -633,6 +765,17 @@ export function mcpRoutes(deps: McpDeps): Hono {
 
   const handle = rpcHandler(tools, deps.writeEnabled);
 
+  /** A personal API key as the bearer token; the key's name labels the client. */
+  function keyCaller(auth: string | undefined): Caller | undefined {
+    const user = apiKeyUser(db, auth, now());
+    if (!user) return undefined;
+    const secret = /^Bearer (\S+)$/.exec(auth ?? "")?.[1] ?? "";
+    const client =
+      one<{ name: string }>(db, "SELECT name FROM api_keys WHERE token_hash = ?", hashToken(secret))
+        ?.name ?? "";
+    return { user, client };
+  }
+
   const r = new Hono();
 
   r.post("/", async (c) => {
@@ -640,28 +783,27 @@ export function mcpRoutes(deps: McpDeps): Hono {
     const from = c.req.header("origin");
     if (from && from !== origin) return c.json(fail(null, -32600, "Origin not allowed"), 403);
     const auth = c.req.header("authorization");
-    const user = apiKeyUser(db, auth, now());
-    if (!user) {
-      c.header("WWW-Authenticate", 'Bearer realm="tempoloom", error="invalid_token"');
+    const caller = oauthUser(db, auth, now()) ?? keyCaller(auth);
+    if (!caller) {
+      // The MCP authorization spec: the 401 names the protected resource metadata.
+      c.header(
+        "WWW-Authenticate",
+        `Bearer realm="tempoloom", error="invalid_token", resource_metadata="${resourceMetadataUrl(deps.baseUrl)}"`,
+      );
       return c.json(
-        fail(null, -32001, "Unauthorized: send a Tempoloom API key as a bearer token"),
+        fail(null, -32001, "Unauthorized: sign in with OAuth, or send a Tempoloom API key"),
         401,
       );
     }
     const version = c.req.header("mcp-protocol-version");
     if (version && !PROTOCOLS.includes(version))
       return c.json(fail(null, -32600, `Unsupported protocol version ${version}`), 400);
-    const secret = /^Bearer (\S+)$/.exec(auth ?? "")?.[1] ?? "";
-    const client =
-      one<{ name: string }>(db, "SELECT name FROM api_keys WHERE token_hash = ?", hashToken(secret))
-        ?.name ?? "";
     let body: unknown;
     try {
       body = await c.req.json();
     } catch {
       return c.json(fail(null, -32700, "Parse error"), 400);
     }
-    const caller = { user, client };
     if (Array.isArray(body)) {
       const out = (await Promise.all(body.map((m) => handle(caller, m as Message)))).filter(
         (x) => x !== null,

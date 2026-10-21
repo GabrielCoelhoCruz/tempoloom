@@ -1,6 +1,7 @@
 // Focus time options (mode, auto-decline, task search) and the meeting
 // overload automation (docs/specs/focus-time.md rules 1-16, 23, 24).
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
+import { DEFAULT_DECLINE_MESSAGE } from "../../shared/decline.ts";
 import { api } from "../lib/api.ts";
 import { duration } from "../lib/format.ts";
 import { templateFromUrl } from "../lib/library.ts";
@@ -16,8 +17,6 @@ interface FocusRow {
   task_search_id: string | null;
   offer_to_links: number;
 }
-
-const DEFAULT_MESSAGE = "Declined automatically: this time is protected for focus.";
 
 function FocusOptions({ focus }: { focus: FocusRow }) {
   const [mode, setMode] = useState(focus.mode);
@@ -67,7 +66,7 @@ function FocusOptions({ focus }: { focus: FocusRow }) {
         <input
           value={message}
           maxLength={500}
-          placeholder={DEFAULT_MESSAGE}
+          placeholder={DEFAULT_DECLINE_MESSAGE}
           onInput={(e) => setMessage(e.currentTarget.value)}
         />
       </label>
@@ -132,7 +131,7 @@ function summary(o: Overload): string {
     o.weekly_max_minutes !== null ? `${h(o.weekly_max_minutes)} a week` : null,
     o.heavy_day_minutes !== null ? `after a day with ${h(o.heavy_day_minutes)} of meetings` : null,
     `blocks of ${duration(o.min_block_minutes)} or more`,
-    o.decline_enabled ? `declines with “${o.decline_message || DEFAULT_MESSAGE}”` : null,
+    o.decline_enabled ? `declines with “${o.decline_message || DEFAULT_DECLINE_MESSAGE}”` : null,
     o.enabled ? null : "off",
   ]
     .filter(Boolean)
@@ -352,7 +351,7 @@ export function MeetingOverloadSection() {
           <input
             name="message"
             maxLength={500}
-            placeholder={DEFAULT_MESSAGE}
+            placeholder={DEFAULT_DECLINE_MESSAGE}
             defaultValue={editing?.decline_message ?? ""}
           />
         </label>

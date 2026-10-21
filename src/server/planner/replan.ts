@@ -7,6 +7,7 @@ import type {
   BufferFilter,
   CurrentPlacement,
   ExternalEvent,
+  HabitDependency,
   HabitItem,
   Level,
   OverloadItem,
@@ -48,6 +49,7 @@ import {
 import { recordMeetingChanges } from "./meeting-log.ts";
 import { attendeeOccurrences, attendeesOf, meetingItems } from "./meetings.ts";
 import { LABELS, mirrorCopies } from "./mirror.ts";
+import { doneMinutes, endedUnstarted, nextIndexAfter } from "./progress.ts";
 import { type DesiredEvent, type ManagedRow, type PushResult, pushSchedule } from "./push.ts";
 import { type Paint, type PaintJob, repaintRequest } from "./repaint.ts";
 
@@ -126,6 +128,8 @@ export function loadSnapshot(
   titles: Map<string, string>;
   /** Event settings of each automation, by `kind:id` (src/shared/event-settings.ts). */
   eventSettings: Map<string, EventSettings>;
+  /** Manual start mode: ended chunks and habit events nobody started, to place again. */
+  reopen: ManagedRow[];
 } {
   const windowEnd = schedulingWindowEnd(zone, now, settings.schedulingWindowWeeks);
   const hoursRows = all<{ id: string; kind: string; weekly: string }>(
@@ -156,6 +160,24 @@ export function loadSnapshot(
   ];
 
   const rows = all<ManagedRow>(db, "SELECT * FROM managed_events WHERE user_id = ?", userId);
+  // PRG-3, PRG-5: in manual start mode an ended chunk or habit event that nobody
+  // started goes back to the plan (src/server/planner/progress.ts).
+  const openItems = new Set([
+    ...all<{ id: string }>(
+      db,
+      "SELECT id FROM tasks WHERE user_id = ? AND status = 'open'",
+      userId,
+    ).map((t) => `task:${t.id}`),
+    ...all<{ id: string }>(
+      db,
+      "SELECT id FROM habits WHERE user_id = ? AND enabled = 1",
+      userId,
+    ).map((h) => `habit:${h.id}`),
+  ]);
+  const reopen = rows.filter(
+    (r) => endedUnstarted(r, now, settings) && openItems.has(`${r.kind}:${r.source_id}`),
+  );
+  const reopened = new Set(reopen.map((r) => r.id));
   const toPlacement = (r: ManagedRow): CurrentPlacement => ({
     key: r.key,
     itemId: r.source_id,
@@ -167,7 +189,10 @@ export function loadSnapshot(
   const weekStart = weekStartOf(zone, now, settings.weekStart);
   // An ended habit occurrence is done for its date, also when the user moved it to an earlier week.
   const past = rows
-    .filter((r) => r.end_ms <= now && (r.start_ms >= weekStart || r.kind === "habit"))
+    .filter(
+      (r) =>
+        r.end_ms <= now && (r.start_ms >= weekStart || r.kind === "habit") && !reopened.has(r.id),
+    )
     .map(toPlacement);
 
   const exclusions = new Map<string, { start: number; end: number }[]>();
@@ -189,25 +214,25 @@ export function loadSnapshot(
   const titles = new Map<string, string>();
   const today = utcToLocal(zone, now).date;
   const rescheduled = new Map<string, Partial<Record<LocalDate, number>>>();
-  for (const r of all<{ habit_id: string; date: string; minute: number }>(
+  const snoozed = new Map<string, Partial<Record<LocalDate, number>>>();
+  for (const r of all<{ habit_id: string; date: string; minute: number; not_before: number }>(
     db,
-    "SELECT habit_id, date, minute FROM habit_reschedules WHERE user_id = ? AND date >= ?",
+    "SELECT habit_id, date, minute, not_before FROM habit_reschedules WHERE user_id = ? AND date >= ?",
     userId,
     today,
   )) {
-    rescheduled.set(r.habit_id, { ...rescheduled.get(r.habit_id), [r.date]: r.minute });
+    const into = r.not_before ? snoozed : rescheduled;
+    into.set(r.habit_id, { ...into.get(r.habit_id), [r.date]: r.minute });
   }
   const eventSettings = new Map<string, EventSettings>();
   const hoursKind = new Map(hoursRows.map((h) => [h.id, h.kind]));
 
-  const consumed = new Map<string, number>();
+  // PRG-1: ended chunks are done work. A new chunk never takes the key of an ended one.
+  const consumed = doneMinutes(rows, now, settings);
+  const nextIndex = new Map<string, number>();
   for (const r of rows) {
-    if (r.kind === "task" && r.end_ms <= now) {
-      consumed.set(
-        r.source_id,
-        (consumed.get(r.source_id) ?? 0) + (r.end_ms - r.start_ms) / 60_000,
-      );
-    }
+    if (r.kind === "task")
+      nextIndex.set(r.source_id, nextIndexAfter(nextIndex.get(r.source_id) ?? 0, r));
   }
   const tasks = all<{
     id: string;
@@ -245,6 +270,7 @@ export function loadSnapshot(
       createdAt: t.created_at,
       exclusions: exclusions.get(`task:${t.id}`) ?? [],
       changed: t.rules_changed_at > lastPlannedAt,
+      nextIndex: nextIndex.get(t.id) ?? 0,
     };
   });
 
@@ -266,6 +292,7 @@ export function loadSnapshot(
     event_settings: string;
     created_at: number;
     rules_changed_at: number;
+    dependencies: string;
   }>(db, "SELECT * FROM habits WHERE user_id = ? AND enabled = 1", userId).map((h): HabitItem => {
     notes.set(`habit:${h.id}`, h.notes);
     titles.set(`habit:${h.id}`, h.title);
@@ -298,6 +325,10 @@ export function loadSnapshot(
       exclusions: exclusions.get(`habit:${h.id}`) ?? [],
       changed: h.rules_changed_at > lastPlannedAt,
       ...(rescheduled.has(h.id) ? { rescheduled: rescheduled.get(h.id) ?? {} } : {}),
+      ...(snoozed.has(h.id) ? { notBefore: snoozed.get(h.id) ?? {} } : {}),
+      ...(h.dependencies !== "[]"
+        ? { dependencies: JSON.parse(h.dependencies) as HabitDependency[] }
+        : {}),
       ...(chosen ? { work: es.category === "work" } : {}),
     };
   });
@@ -441,7 +472,7 @@ export function loadSnapshot(
     ...(buffers.length > 0 ? { mirrorCopies: copyAnchors(db, userId, now) } : {}),
     ...(fragmentation ? { fragmentation } : {}),
   };
-  return { snapshot, rows, notes, titles, eventSettings };
+  return { snapshot, rows, notes, titles, eventSettings, reopen };
 }
 
 /**
@@ -520,21 +551,35 @@ function reminderFields(
   };
 }
 
+/** CNT-15: what a calendar edit does to each kind of event (planning-calendar-edits.md). */
+export const EVENT_TIPS: Record<string, string> = {
+  task: "Tempoloom tip: move this event to lock it at the new time; delete it to place the work again later.",
+  habit:
+    "Tempoloom tip: move this event to lock it at the new time; delete it and Tempoloom finds another time.",
+  focus:
+    "Tempoloom tip: move this event to lock it at the new time; delete it to skip this focus time.",
+  meeting:
+    "Tempoloom tip: to reschedule, decline this event and Tempoloom finds the next common time; the organizer deletes it to skip this time.",
+};
+
 /**
- * CNT-10: the notes, a link that opens the item in the planner, and the
- * footer. Meetings get no link: their events go to guests.
+ * CNT-10: the notes, a tip when event tips are on (CNT-15), a link that opens
+ * the item in the planner, and the footer. Meetings get no link: their events
+ * go to guests.
  */
 export function eventDescription(
   notes: string,
   baseUrl: string,
   kind: string,
   itemId: string,
+  tips = false,
 ): string {
   const link =
     kind === "task" || kind === "habit" || kind === "focus"
       ? `Open in Tempoloom: ${baseUrl}/?item=${kind}:${itemId}`
       : "";
-  return [notes, link, FOOTER].filter(Boolean).join("\n\n");
+  const tip = tips ? (EVENT_TIPS[kind] ?? "") : "";
+  return [notes, tip, link, FOOTER].filter(Boolean).join("\n\n");
 }
 
 /** The organizer, guests and location of a meeting occurrence (rules 35, 41). */
@@ -552,6 +597,13 @@ export function meetingGuests(
   };
 }
 
+/** The guests of a habit occurrence: never the user, and written without notices. */
+function habitGuestFields(guests: string[], organizer: string, userEmail: string) {
+  const self = new Set([organizer, userEmail.toLowerCase()]);
+  const attendees = guests.filter((g) => !self.has(g));
+  return attendees.length > 0 ? { organizer, attendees, quietGuests: true } : {};
+}
+
 export async function replanUser(ctx: ReplanContext, userId: string): Promise<ReplanResult | null> {
   const { db, now } = ctx;
   const user = one<{ time_zone: string; email: string }>(
@@ -567,7 +619,7 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
   const last =
     one<{ planned_at: number }>(db, "SELECT planned_at FROM plan_reports WHERE user_id = ?", userId)
       ?.planned_at ?? 0;
-  const { snapshot, rows, notes, titles, eventSettings } = loadSnapshot(
+  const { snapshot, rows, notes, titles, eventSettings, reopen } = loadSnapshot(
     db,
     userId,
     planningZone(db, userId, user.time_zone),
@@ -586,6 +638,14 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
     ).map((h) => [h.id, h.task_calendar_id]),
   );
   const taskHours = new Map(snapshot.tasks.map((t) => [t.id, t.hours]));
+  // CNT-20, CNT-24: chunks of a private task are private events.
+  const privateTasks = new Set(
+    all<{ id: string }>(
+      db,
+      "SELECT id FROM tasks WHERE user_id = ? AND visibility = 'private'",
+      userId,
+    ).map((t) => t.id),
+  );
   // Guests and location of each flexible meeting (meetings-flexible.md rules 35, 41).
   const meetingRows = new Map(
     all<{ id: string; location: string }>(
@@ -619,6 +679,14 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
   const chosenCalendar = (es: EventSettings | undefined) => writable(es?.calendarId);
   const travelBuffers = new Set(
     snapshot.buffers.filter((b) => b.filter.travel || b.filter.flight).map((b) => b.id),
+  );
+  // Habit guests (habits concepts): attendees, with no availability check and no notices.
+  const habitGuests = new Map(
+    all<{ id: string; guests: string }>(
+      db,
+      "SELECT id, guests FROM habits WHERE user_id = ? AND guests <> '[]'",
+      userId,
+    ).map((h) => [h.id, JSON.parse(h.guests) as string[]]),
   );
   const desired: DesiredEvent[] = result.placements.map((p) => {
     const row = rowByKey.get(p.key);
@@ -656,11 +724,21 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
       description:
         keepUserTitle && row && p.kind !== "meeting"
           ? row.description
-          : eventDescription(itemNotes, ctx.baseUrl, p.kind, p.itemId),
+          : eventDescription(itemNotes, ctx.baseUrl, p.kind, p.itemId, settings.eventTips),
       busy: p.busy || p.locked,
       colorId: null,
       ...(p.kind === "habit" && es?.location ? { location: es.location } : {}),
       ...reminderFields(p.kind, es),
+      ...(p.kind === "habit" && habitGuests.has(p.itemId)
+        ? habitGuestFields(
+            habitGuests.get(p.itemId) ?? [],
+            accountEmail.get(calendars.get(calendarId)?.account_id ?? "") ?? user.email,
+            user.email,
+          )
+        : {}),
+      ...(p.kind === "task" && privateTasks.has(p.itemId)
+        ? { visibility: "private" as const }
+        : {}),
       ...(p.kind === "meeting"
         ? meetingGuests(
             meetingRows.get(p.itemId),
@@ -781,6 +859,7 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
       userId,
       now,
       fullCheck: ctx.fullMirror ?? false,
+      reopen,
       target: (calendarId) => {
         const c = calendars.get(calendarId);
         if (!c) throw new Error(`Unknown calendar ${calendarId}`);
@@ -833,11 +912,13 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
   await afterPush(db, userId, (accountId) => ctx.provider(accountId), now);
   run(
     db,
-    `INSERT INTO plan_reports (user_id, report, planned_at) VALUES (?, ?, ?)
-     ON CONFLICT (user_id) DO UPDATE SET report = excluded.report, planned_at = excluded.planned_at`,
+    `INSERT INTO plan_reports (user_id, report, planned_at, task_order) VALUES (?, ?, ?, ?)
+     ON CONFLICT (user_id) DO UPDATE SET report = excluded.report, planned_at = excluded.planned_at,
+       task_order = excluded.task_order`,
     userId,
     JSON.stringify(result.report),
     now,
+    JSON.stringify(result.taskOrder),
   );
   return { push, report: result.report, paint: { paints, requestedAt } };
 }

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { CATEGORIES } from "../../scheduler/categories.ts";
 import type { ReportEntry } from "../../scheduler/model.ts";
-import type { CalendarRef, PlannerEvent } from "../../server/api/planner.ts";
+import type { AllDayBusy, CalendarRef, PlannerEvent } from "../../server/api/planner.ts";
 import { addDays, localToUtc, utcToLocal, weekdayOf } from "../../shared/time.ts";
 import { api } from "../lib/api.ts";
 import { calendarList, displayName, loadCalendars } from "../lib/calendars.tsx";
@@ -9,9 +9,16 @@ import { CATEGORY_LABELS } from "../lib/categories.ts";
 import { formatWhen } from "../lib/format.ts";
 import { lazyComponent, settle, settled } from "../lib/lazy.ts";
 import { useLive } from "../lib/live.ts";
-import { blockPreview, conflictIds, extraZone, plannerReload } from "../lib/planner-signals.ts";
+import {
+  blockPreview,
+  conflictIds,
+  extraZone,
+  plannerReload,
+  sidePanel,
+  viewAs,
+} from "../lib/planner-signals.ts";
 import { overlay, withPreview } from "../lib/preview.ts";
-import { planNow, zone } from "../lib/state.ts";
+import { me, planNow, zone } from "../lib/state.ts";
 import { WeekView } from "./week.tsx";
 
 // The Issues and Recommendations panel loads on demand, after the week view.
@@ -56,6 +63,15 @@ function calendarName(ref: CalendarRef): string {
 const PreviewPanel = lazyComponent<{ onApplied: () => void }>(() =>
   import("./preview.tsx").then((m) => m.PreviewPanel),
 );
+// PLN-3, PLN-6, PLN-20: the gear menu, "view as" and the calendars panel.
+const PlannerOptions = lazyComponent(() =>
+  import("./planner-options.tsx").then((m) => m.PlannerOptions),
+);
+const TaskHereDialog = lazyComponent<{
+  start: number;
+  end: number;
+  onClose: (created: boolean) => void;
+}>(() => import("./task-here.tsx").then((m) => m.TaskHereDialog));
 const PlannerHints = lazyComponent(() => import("./hints.tsx").then((m) => m.PlannerHints));
 // Event actions, the running event's tasks and focus progress load on demand.
 const EventActions = lazyComponent<{
@@ -67,9 +83,17 @@ const EventActions = lazyComponent<{
 const CurrentTasks = lazyComponent(() =>
   import("./planner-extras.tsx").then((m) => m.CurrentTasks),
 );
+const LogWork = lazyComponent<{
+  start: number;
+  minutes?: number | undefined;
+  onClose: (saved: boolean) => void;
+}>(() => import("./planner-extras.tsx").then((m) => m.LogWork));
 const FocusProgress = lazyComponent<{ week: string }>(() =>
   import("./planner-extras.tsx").then((m) => m.FocusProgress),
 );
+
+/** PLN-3: the days the planner shows from the first day of the week. */
+const DAY_COUNT = { "all-days": 7, weekdays: 5, "rolling-9-days": 9 } as const;
 
 function mondayOf(z: string, t: number): string {
   const d = utcToLocal(z, t).date;
@@ -87,19 +111,40 @@ export function Planner() {
   });
   const [events, setEvents] = useState<PlannerEvent[]>([]);
   const [report, setReport] = useState<ReportEntry[]>([]);
-  const [selected, setSelected] = useState<PlannerEvent | null>(null);
+  const [allDay, setAllDay] = useState<AllDayBusy[]>([]);
+  const [selected, setSelectedEvent] = useState<PlannerEvent | null>(null);
+  // PLN-21: the event details are one mode of the side panel.
+  const setSelected = (e: PlannerEvent | null) => {
+    setSelectedEvent(e);
+    if (e) sidePanel.value = "details";
+  };
+  const settings = me.value?.settings;
+  const dayCount = DAY_COUNT[settings?.plannerDays ?? "all-days"];
+  const hidden = useMemo(() => new Set(settings?.hiddenCalendars ?? []), [settings]);
+  const others = viewAs.value === "others";
+  // PLN-6: others see no event details and no conflict titles, so a switch
+  // closes the open details and the conflicts panel.
+  useEffect(() => {
+    if (!others) return;
+    setSelectedEvent(null);
+    if (sidePanel.value === "details" || sidePanel.value === "conflicts") sidePanel.value = null;
+  }, [others]);
+  // PRG-20, PRG-21: the log work form, opened on a past time or from the toolbar.
+  const [logAt, setLogAt] = useState<{ start: number; minutes?: number | undefined } | null>(null);
   // The drawer names calendars as the calendar list does; that list loads on the first open.
   const external = selected?.kind === "external";
   useEffect(() => {
     if (external && calendarList.value.length === 0) void loadCalendars().catch(() => {});
   }, [external]);
   const [busy, setBusy] = useState(false);
+  // TSK-7: a range picked on free space, for a new locked task.
+  const [here, setHere] = useState<{ start: number; end: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
   // A planner link (?item=task:<id>, planning-event-content.md CNT-10) opens that item's event.
   const openItem = useRef(new URLSearchParams(location.search).get("item"));
   const days = useMemo(
-    () => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)),
-    [weekStart],
+    () => Array.from({ length: dayCount }, (_, i) => addDays(weekStart, i)),
+    [weekStart, dayCount],
   );
 
   // Answers can arrive out of order (another week, a live update): only the
@@ -108,13 +153,17 @@ export function Planner() {
   const load = useCallback(async () => {
     const n = ++loads.current;
     const from = localToUtc(z, weekStart, 0);
-    const to = localToUtc(z, addDays(weekStart, 7), 0);
+    const to = localToUtc(z, addDays(weekStart, dayCount), 0);
     const [ev, rep] = await Promise.all([
-      api<{ events: PlannerEvent[] }>("GET", `/api/planner/events?from=${from}&to=${to}`),
+      api<{ events: PlannerEvent[]; allDay: AllDayBusy[] }>(
+        "GET",
+        `/api/planner/events?from=${from}&to=${to}`,
+      ),
       api<{ report: ReportEntry[] }>("GET", "/api/planner/report"),
     ]);
     if (n !== loads.current) return;
     setEvents(ev.events);
+    setAllDay(ev.allDay);
     setReport(rep.report);
     settle();
     // An ?item= link opens its event once the week that holds it is drawn.
@@ -124,7 +173,7 @@ export function Planner() {
       openItem.current = null;
       setSelected(hit);
     }
-  }, [z, weekStart]);
+  }, [z, weekStart, dayCount]);
 
   useEffect(() => {
     void load();
@@ -179,11 +228,36 @@ export function Planner() {
           sourceId: null,
           manualCategory: null,
           description: "",
+          calendarId: "",
+          private: false,
         }),
       ) ?? []),
     ],
     [events, preview],
   );
+  // PLN-20: hidden calendars stay connected but are not drawn. PLN-6: others
+  // see busy time only, and no title of a private event.
+  const visible = useMemo(
+    () =>
+      shown
+        .filter((e) => !hidden.has(e.calendarId))
+        .filter((e) => !others || e.busy)
+        .map((e) =>
+          others ? { ...e, movable: false, ...(e.private ? { title: "Busy" } : {}) } : e,
+        ),
+    [shown, hidden, others],
+  );
+  // PLN-5: days that a busy all-day event uses get the busy pattern.
+  const busyDays = useMemo(() => {
+    const out = new Map<string, string>();
+    for (const d of days) {
+      const s = localToUtc(z, d, 0);
+      const e = localToUtc(z, addDays(d, 1), 0);
+      const hit = allDay.filter((a) => !hidden.has(a.calendarId) && a.start < e && a.end > s);
+      if (hit.length > 0) out.set(d, hit.map((a) => (others ? "Busy" : a.title)).join(", "));
+    }
+    return out;
+  }, [days, z, allDay, hidden, others]);
 
   const onMove = (id: string, start: number) => {
     if (preview && id.startsWith("preview:")) {
@@ -229,9 +303,18 @@ export function Planner() {
           Week of {weekStart}
         </span>
         {error && <span class="error">{error}</span>}
+        {settled.value && <PlannerOptions />}
         <span class="status">
           {busy ? "Planning…" : `${events.filter((e) => e.kind !== "external").length} planned`}
         </span>
+        <button
+          type="button"
+          onClick={() =>
+            setLogAt({ start: Math.floor((Date.now() - 3_600_000) / 900_000) * 900_000 })
+          }
+        >
+          Log work
+        </button>
         <button
           type="button"
           class="primary"
@@ -241,9 +324,24 @@ export function Planner() {
           Plan now
         </button>
       </div>
+      {logAt !== null && (
+        <LogWork
+          key={`${logAt.start}:${logAt.minutes}`}
+          start={logAt.start}
+          minutes={logAt.minutes}
+          onClose={(saved) => {
+            setLogAt(null);
+            // The new past event changes the plan: plan again, then draw the week.
+            if (saved) void planNow().then(load);
+          }}
+        />
+      )}
       <div class="now-bar" data-testid="now-bar">
         {settled.value && (
-          <NowBar from={localToUtc(z, weekStart, 0)} to={localToUtc(z, addDays(weekStart, 7), 0)} />
+          <NowBar
+            from={localToUtc(z, weekStart, 0)}
+            to={localToUtc(z, addDays(weekStart, dayCount), 0)}
+          />
         )}
       </div>
       {settled.value && (
@@ -258,13 +356,35 @@ export function Planner() {
       <WeekView
         days={days}
         zone={z}
-        events={withPreview(shown, overlay.value)}
+        events={withPreview(visible, overlay.value)}
         now={Date.now()}
         onMove={onMove}
-        onSelect={(id) => setSelected(events.find((e) => e.id === id) ?? null)}
+        onSelect={(id) => {
+          if (!others) setSelected(events.find((e) => e.id === id) ?? null);
+        }}
+        busyDays={busyDays}
+        onCreate={(start, end) => {
+          if (start < Date.now()) return;
+          const minutes = me.value?.settings.taskDefaults.minutes ?? 60;
+          setHere({ start, end: end ?? start + minutes * 60_000 });
+        }}
         flagged={conflictIds.value}
         extraZone={extraZone.value}
+        onPickPast={(start, minutes) => {
+          setSelected(null);
+          setLogAt({ start, minutes });
+        }}
       />
+      {here && (
+        <TaskHereDialog
+          start={here.start}
+          end={here.end}
+          onClose={(created) => {
+            setHere(null);
+            if (created) void load();
+          }}
+        />
+      )}
       {settled.value && <IssuesPanel />}
       {report.length > 0 && (
         <details class="issues" data-testid="issues">
@@ -279,7 +399,7 @@ export function Planner() {
           </ul>
         </details>
       )}
-      {selected && (
+      {selected && !others && sidePanel.value === "details" && (
         <aside class="drawer" data-testid="event-drawer">
           <h2>{selected.title}</h2>
           <div class="status">
@@ -441,7 +561,13 @@ export function Planner() {
             run={(fn) => void run(fn)}
             close={() => setSelected(null)}
           />
-          <button type="button" onClick={() => setSelected(null)}>
+          <button
+            type="button"
+            onClick={() => {
+              setSelected(null);
+              sidePanel.value = null;
+            }}
+          >
             Close
           </button>
         </aside>
