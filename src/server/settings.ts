@@ -27,6 +27,15 @@ const autoLockMode = z.enum(["off", "day", "week"]);
 export const settingsSchema = z.object({
   schedulingWindowWeeks: z.number().int().min(1).max(12).default(3),
   weekStart: z.union([z.literal(1), z.literal(7)]).default(1),
+  // The week start of the main Google account, shown on the profile page only: planning
+  // keeps weekStart (applying it to planning is not built; settings-profile.md PRF-6).
+  googleWeekStart: z
+    .union([z.literal(1), z.literal(7)])
+    .nullable()
+    .default(null),
+  // settings-profile.md PRF-2: read from the main Google account's calendar settings.
+  timeFormat: z.enum(["24h", "12h"]).default("24h"),
+  dateFormat: z.enum(["YMD", "DMY", "MDY"]).default("YMD"),
   urgencyMode: z
     .enum(["priority-only", "due-date", "due-date-and-work"])
     .default("due-date-and-work"),

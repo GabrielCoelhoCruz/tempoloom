@@ -289,6 +289,21 @@ export class GoogleCalendarApi {
     }
   }
 
+  /** The user's Calendar settings (weekStart, format24HourTime, dateFieldOrder, ...) by id. */
+  async settings(): Promise<Map<string, string>> {
+    const out = new Map<string, string>();
+    let pageToken: string | undefined;
+    do {
+      const page = await this.#request<{
+        items?: { id: string; value: string }[];
+        nextPageToken?: string;
+      }>("GET", "/users/me/settings", { pageToken });
+      for (const s of page.items ?? []) out.set(s.id, s.value);
+      pageToken = page.nextPageToken;
+    } while (pageToken);
+    return out;
+  }
+
   async freeBusy(
     calendarIds: string[],
     timeMin: number,
@@ -301,8 +316,10 @@ export class GoogleCalendarApi {
       timeMax: new Date(timeMax).toISOString(),
       items: calendarIds.map((id) => ({ id })),
     });
+    // A calendar with errors (not found, not shared) gives no data: it is left out, not free.
     const out = new Map<string, { start: number; end: number }[]>();
     for (const [id, cal] of Object.entries(res.calendars ?? {})) {
+      if (cal.errors?.length) continue;
       out.set(
         id,
         (cal.busy ?? []).map((b) => ({ start: Date.parse(b.start), end: Date.parse(b.end) })),

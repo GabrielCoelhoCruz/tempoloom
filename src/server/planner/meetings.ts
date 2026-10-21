@@ -4,11 +4,12 @@
 import { attends, hasTag, TAG_FREE } from "../../scheduler/blocking.ts";
 import { hoursToTimeSet, type WeeklyHours } from "../../scheduler/hours.ts";
 import type { ExternalEvent, Level, MeetingItem } from "../../scheduler/model.ts";
-import type { Interval, TimeSet } from "../../scheduler/timeset.ts";
+import { type Interval, TimeSet } from "../../scheduler/timeset.ts";
 import type { LocalDate } from "../../shared/time.ts";
 import { all, type Db, one, run } from "../db.ts";
 import { getPrefs } from "../meeting-prefs.ts";
-import { externalEvents } from "./events.ts";
+import type { CalendarProvider } from "../providers/types.ts";
+import { externalEvents, OFF_MAIN_TASK_CHUNK } from "./events.ts";
 import { meetingBoost } from "./meeting-log.ts";
 
 export interface MeetingRow {
@@ -71,6 +72,99 @@ export interface InstanceUser {
   time_zone: string;
 }
 
+/** Guests per Google free/busy request; Google refuses longer lists. */
+export const GUEST_FREE_BUSY_BATCH = 50;
+/** At most this many guests are asked per run; the rest are unknown. */
+const GUEST_FREE_BUSY_MAX = 4 * GUEST_FREE_BUSY_BATCH;
+/** A run waits this long for Google; after that the guests are unknown. */
+const GUEST_FREE_BUSY_TIMEOUT = 5_000;
+/** Runs this close together use the same answer (each sync tick and edit plans again). */
+export const GUEST_FREE_BUSY_TTL = 5 * 60_000;
+
+const guestCache = new WeakMap<
+  Db,
+  Map<string, { emails: string; at: number; busy: Map<string, Interval[]> }>
+>();
+
+/**
+ * Class `freebusy`: busy time of required guests who are not users here, read
+ * with Google free/busy from the organizer's Google account (concepts, attendee
+ * class). A guest with no data, a failed or slow query, or an organizer without
+ * a Google account gives no entry: class `none`, availability unknown.
+ */
+export async function guestFreeBusy(
+  db: Db,
+  provider: (accountId: string) => CalendarProvider,
+  userId: string,
+  from: number,
+  to: number,
+): Promise<Map<string, Interval[]>> {
+  const google = one<{ id: string }>(
+    db,
+    `SELECT id FROM accounts WHERE user_id = ? AND provider = 'google' AND status = 'ok'
+     ORDER BY is_main DESC, created_at LIMIT 1`,
+    userId,
+  );
+  if (!google) return new Map();
+  const emails = all<{ email: string }>(
+    db,
+    `SELECT DISTINCT a.email FROM meeting_attendees a JOIN meetings m ON m.id = a.meeting_id
+     WHERE m.user_id = ? AND m.enabled = 1 AND a.required = 1 ORDER BY a.email`,
+    userId,
+  )
+    .map((r) => r.email)
+    .filter((email) => !instanceUser(db, email))
+    .slice(0, GUEST_FREE_BUSY_MAX);
+  const source = provider(google.id);
+  if (emails.length === 0 || !source.freeBusy) return new Map();
+  const cache = guestCache.get(db) ?? new Map();
+  guestCache.set(db, cache);
+  const key = emails.join(",");
+  const hit = cache.get(userId);
+  if (hit && hit.emails === key && from - hit.at < GUEST_FREE_BUSY_TTL && from >= hit.at)
+    return hit.busy;
+  const batches: string[][] = [];
+  for (let i = 0; i < emails.length; i += GUEST_FREE_BUSY_BATCH)
+    batches.push(emails.slice(i, i + GUEST_FREE_BUSY_BATCH));
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const busy = await Promise.race([
+    Promise.all(batches.map((b) => source.freeBusy?.(b, from, to) ?? new Map())).then(
+      (maps) => new Map(maps.flatMap((m) => [...m])),
+    ),
+    new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error("timed out")), GUEST_FREE_BUSY_TIMEOUT);
+    }),
+  ])
+    .catch((err: unknown) => {
+      console.error("Google free/busy failed; guest availability is unknown", err);
+      return new Map<string, Interval[]>();
+    })
+    .finally(() => clearTimeout(timer));
+  // A failed query is kept too, so a slow or refusing Google is not asked on every run.
+  cache.set(userId, { emails: key, at: from, busy });
+  return busy;
+}
+
+/** Busy time minus the meeting's own placed occurrences (the guest's copy of its invitation). */
+function withoutOwnOccurrences(
+  db: Db,
+  userId: string,
+  meetingId: string,
+  busy: Interval[],
+): Interval[] {
+  if (busy.length === 0) return busy;
+  const set = TimeSet.from(busy);
+  for (const o of all<Interval>(
+    db,
+    `SELECT start_ms AS start, end_ms AS end FROM managed_events
+     WHERE user_id = ? AND kind = 'meeting' AND source_id = ?`,
+    userId,
+    meetingId,
+  ))
+    set.subtract(o);
+  return [...set.intervals()];
+}
+
 /** Class `user`: a user here with a connected calendar. Other emails are class `none`. */
 export function instanceUser(db: Db, email: string): InstanceUser | undefined {
   return one<InstanceUser>(
@@ -97,6 +191,8 @@ export function attendeesOf(db: Db, meetingId: string): Attendee[] {
  * Busy time of one attendee for a meeting (rule 13): busy events the attendee
  * attends, booking-link events, locked managed events, P1 managed events, and
  * occurrences of other meetings the attendee must join. Tags do not apply.
+ * Unlocked task chunks on a calendar other than the main calendar do not count
+ * (DEF-50); a locked one never moves (LCK-2), so it counts as any locked event.
  */
 function attendeeBusy(
   db: Db,
@@ -112,7 +208,7 @@ function attendeeBusy(
   const managed = all<{ start_ms: number; end_ms: number }>(
     db,
     `SELECT start_ms, end_ms FROM managed_events m WHERE m.user_id = ? AND m.end_ms > ? AND m.start_ms < ?
-       AND m.kind <> 'mirror' AND (
+       AND m.kind <> 'mirror' AND NOT (m.locked = 0 AND ${OFF_MAIN_TASK_CHUNK}) AND (
          m.locked = 1
          OR (m.kind = 'task' AND m.source_id IN (SELECT id FROM tasks WHERE level = 1))
          OR (m.kind = 'habit' AND m.source_id IN (SELECT id FROM habits WHERE level = 1))
@@ -178,6 +274,7 @@ export function meetingItem(
   windowEnd: number,
   lastPlannedAt: number,
   exclusions: Map<string, Interval[]>,
+  guestBusy: Map<string, Interval[]> = new Map(),
 ): MeetingItem {
   const boost = meetingBoost(db, userId, m, now);
   let window: TimeSet | null = null;
@@ -189,6 +286,7 @@ export function meetingItem(
   for (const a of attendees) {
     if (!a.required) continue;
     const user = instanceUser(db, a.email);
+    if (!user) busy.push(...withoutOwnOccurrences(db, userId, m.id, guestBusy.get(a.email) ?? []));
     if (!user || user.id === userId) continue;
     busy.push(...attendeeBusy(db, user, a.email, m.id, now, windowEnd));
     if (m.hours_mode === "everyone") {
@@ -271,6 +369,7 @@ export function meetingItems(
   windowEnd: number,
   lastPlannedAt: number,
   exclusions: Map<string, Interval[]>,
+  guestBusy: Map<string, Interval[]> = new Map(),
 ): { items: MeetingItem[]; rows: MeetingRow[] } {
   const rows = all<MeetingRow>(
     db,
@@ -291,7 +390,17 @@ export function meetingItems(
         m.id,
       );
     }
-    return meetingItem(db, userId, m, attendees, now, windowEnd, lastPlannedAt, exclusions);
+    return meetingItem(
+      db,
+      userId,
+      m,
+      attendees,
+      now,
+      windowEnd,
+      lastPlannedAt,
+      exclusions,
+      guestBusy,
+    );
   });
   return { items, rows };
 }

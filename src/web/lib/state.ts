@@ -9,7 +9,8 @@ export interface Person {
 }
 
 export interface Me {
-  user: { id: string; email: string; name: string; time_zone: string };
+  /** avatarUrl: the main Google account's picture; '' for none (settings-profile.md PRF-5). */
+  user: { id: string; email: string; name: string; time_zone: string; avatarUrl: string };
   /** The delegate behind an acting session; `user` is then the owner (delegated access). */
   actor: Person | null;
   /** The account's change mark when this was read (lib/live.ts). */

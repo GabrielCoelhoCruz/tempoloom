@@ -943,3 +943,19 @@ fieldset {
 .task-list {
   min-height: 32px;
 }
+
+/* The profile picture, or initials without one (settings-profile.md PRF-5, edge case 1). */
+.avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+.avatar-initials {
+  background: var(--line);
+  font-weight: 600;
+  font-size: 1.5rem;
+}
