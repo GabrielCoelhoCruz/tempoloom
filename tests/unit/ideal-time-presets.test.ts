@@ -12,6 +12,7 @@
 //  7. A time the user picked for one date loses to the end-of-hours ideal.
 //  8. A placed focus event outside the window moves into a free window on a
 //     save of other fields (changed: false).
+//  9. A snooze (rule 31) loses to the end-of-hours ideal.
 import { describe, expect, it } from "vitest";
 import type {
   ExternalEvent,
@@ -235,5 +236,13 @@ describe("habit ideal time at the end of the hours", () => {
     const placed = spans(of(r, "wrap"));
     expect(placed[0]).toBe(`${day(0)}T16:30/17:00`);
     expect(placed[1]).toBe(`${day(1)}T10:00/10:30`);
+  });
+
+  it("a snooze wins: the first free start at or after the not-before time", () => {
+    const r = plan(snapshot({ hours, habits: [habit({ notBefore: { [day(0)]: 600 } })] }));
+    const placed = spans(of(r, "wrap"));
+    // Monday's end-of-hours start is 17:30; the snooze to 10:00 places it at 10:00.
+    expect(placed[0]).toBe(`${day(0)}T10:00/10:30`);
+    expect(placed[1]).toBe(`${day(1)}T16:30/17:00`);
   });
 });
