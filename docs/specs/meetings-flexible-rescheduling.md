@@ -126,6 +126,17 @@ how Tempoloom reports occurrences it cannot place. Placement itself is in
     only. A change applied in Google Calendar to "following" or "all"
     events updates `duration` for the matching occurrences (E-0131).
     Proposed: a resize of one occurrence also locks it.
+    Tempoloom decision: the scope is read from the series on the calendar.
+    "This event" is an override of one instance: it is kept and locks.
+    "All events" changes the series master: its new length becomes
+    `duration` (and `canShortenTo` when that is above it), and every future
+    unlocked occurrence is placed again with it, also the ones that
+    Tempoloom moved. "This and following events" ends the series (RRULE
+    UNTIL) and starts a new series with `tl_meeting` of the meeting: the
+    meeting follows the new series, its length becomes `duration`, and the
+    occurrences before the split keep their own length. A series edit locks
+    nothing, and its changed instances are kept as the calendar shows them
+    (change log reason `ruleChanged`), not as a move by hand or a skip.
 19. Reschedule action (Planner, organizer): the user picks one of two
     options (E-0131, E-0046) (legacy evidence):
     - a different time, same day;
@@ -150,6 +161,16 @@ how Tempoloom reports occurrences it cannot place. Placement itself is in
       change.
     - Proposed: a series-level time change sets a new `idealTime`; a
       recurrence change sets a new `frequency`; a new guest is required.
+    Tempoloom decision: for a series (rule 18 says how the scope is read),
+    a change of the master's start time sets `idealTime`, a new RRULE sets
+    `frequency` and the ideal day (one day a week, every N days, weeks or
+    months; another rule keeps the frequency), a new master title sets the
+    meeting title, and the master's guests become the meeting's guests (a
+    new one is required, a removed one leaves the meeting). The other fields
+    of the series and of each instance stay as the organizer wrote them.
+    Privacy and free/busy stay Tempoloom's: an instance that shows another
+    value gets Tempoloom's value back in its override. A guest removed from
+    one occurrence stays removed.
 23. A description edit in the Tempoloom form applies to the chosen
     occurrence and all following ones. To change one occurrence only, or
     all past ones too, the user edits in Google Calendar (E-0039) (legacy

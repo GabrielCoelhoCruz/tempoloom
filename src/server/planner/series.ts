@@ -44,11 +44,9 @@ export function seriesRrule(f: MeetingFrequency, date: LocalDate): string {
     return `FREQ=WEEKLY${every(f.everyWeeks)};BYDAY=${BYDAY[weekdayOf(date) - 1]}`;
   if ("nth" in f)
     return `FREQ=MONTHLY${every(f.everyMonths)};BYDAY=${f.nth === "last" ? -1 : f.nth}${BYDAY[f.weekday - 1]}`;
-  // Day 29 to 31 is the month's last day in a shorter month (plan.ts monthlyDate).
-  const days =
-    f.dayOfMonth <= 28
-      ? `${f.dayOfMonth}`
-      : `${Array.from({ length: f.dayOfMonth - 27 }, (_, i) => 28 + i).join(",")};BYSETPOS=-1`;
+  // Day 31 is the month's last day (plan.ts monthlyDate). Day 29 or 30 has no
+  // instance in February; the push adds one there when the plan places it.
+  const days = f.dayOfMonth === 31 ? "-1" : `${f.dayOfMonth}`;
   return `FREQ=MONTHLY${every(f.everyMonths)};BYMONTHDAY=${days}`;
 }
 

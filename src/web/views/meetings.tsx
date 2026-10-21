@@ -56,7 +56,12 @@ interface Meeting extends Missed {
   }[];
   changes: Change[];
   series_event_id: string | null;
+  /** 1: Tempoloom writes the series (a meeting from the form); 0: an adopted series. */
+  series_owned: number;
 }
+
+/** Rules attached to the user's own recurring meeting (rule 1), not a series Tempoloom wrote. */
+const adopted = (m: Meeting) => m.series_event_id !== null && !m.series_owned;
 
 type Frequency =
   | { period: "daily"; everyDays?: number }
@@ -327,7 +332,7 @@ export function Meetings() {
   const fq = ed?.frequency ?? (seed ? seedFrequency(seed) : undefined);
   // A series repeats as its recurrence rule says, from its first instance (rules 1, 10):
   // adding and editing it show its frequency read-only, with the unit it has.
-  const locked = seed !== null || Boolean(ed?.series_event_id);
+  const locked = seed !== null || (ed ? adopted(ed) : false);
   const pick = (x: Series | null) => {
     const init = x ? everyOf(seedFrequency(x)) : { every: "1", unit: "weeks" };
     setSeed(x);
@@ -961,10 +966,10 @@ export function Meetings() {
                     </button>
                     {deleting === m.id ? (
                       <div class="warning" data-testid="meeting-delete">
-                        {m.series_event_id
+                        {adopted(m)
                           ? `Delete the rules of ${m.title}? The recurring meeting stays on the calendar.`
                           : `Delete ${m.title} and its future times?`}
-                        {(m.series_event_id
+                        {(adopted(m)
                           ? [["0", "Delete rules"]]
                           : mailConfigured
                             ? [

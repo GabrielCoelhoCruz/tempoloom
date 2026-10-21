@@ -108,6 +108,26 @@ Attendee class, computed each time the meeting is placed:
 2. The user can also create a meeting from an empty form. Tempoloom then
    creates a new recurring series on `targetCalendar` with the attendees as
    guests (E-0177, E-0046) (legacy evidence).
+   Tempoloom decision: at the first plan run that places the meeting,
+   Tempoloom writes one series master: an RRULE from `frequency` (one
+   instance per period: weekly on the first ideal day, daily, or monthly on
+   the ideal day; day 29 to 31 is the last day of a shorter month), DTSTART at
+   `idealTime` on the ideal day of the first planned period, in the user's
+   time zone (TZID with a VTIMEZONE, so the local time stays across DST), the
+   length `duration`, and the private properties `tl`, `tl_user` and
+   `tl_meeting`. The master takes the fields of the last planned occurrence,
+   as the instances after the planning window will be (rule 20). Each
+   occurrence is an instance of the series: a move or a resize is an override
+   (RECURRENCE-ID), a skip or `remove` is an EXDATE, and a period that gets an
+   occurrence again gets an RDATE with an override. A meeting saved before
+   this change keeps its single events; its series begins in the first
+   planned period, with an EXDATE for each period that already has its own
+   event, so no period has two events. Turning the meeting off, deleting it,
+   or a new frequency or start date in the form ends the series (RRULE UNTIL
+   at that time): past instances stay, later ones go; locked later instances
+   stay (each as an RDATE with its override), except on delete. The next run
+   after a turn-on or a new frequency writes a new series. A calendar backend
+   without series support (no instance list) keeps one event per occurrence.
 3. Only series organized by the user can be adopted. A series where the user
    is only a guest is not listed (Proposed; E-0046 requires the user to own
    the series).

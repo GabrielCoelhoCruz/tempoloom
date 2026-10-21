@@ -232,6 +232,32 @@ export class GoogleCalendarApi {
     }
   }
 
+  /** The instances of a recurring event in [from, to). */
+  async instances(
+    calendarId: string,
+    eventId: string,
+    from: number,
+    to: number,
+  ): Promise<GoogleEvent[]> {
+    const events: GoogleEvent[] = [];
+    let pageToken: string | undefined;
+    for (;;) {
+      const page = await this.#request<{ items?: GoogleEvent[]; nextPageToken?: string }>(
+        "GET",
+        `/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}/instances`,
+        {
+          timeMin: new Date(from).toISOString(),
+          timeMax: new Date(to).toISOString(),
+          maxResults: "2500",
+          pageToken,
+        },
+      );
+      events.push(...(page.items ?? []));
+      if (!page.nextPageToken) return events;
+      pageToken = page.nextPageToken;
+    }
+  }
+
   getEvent(calendarId: string, eventId: string): Promise<GoogleEvent> {
     return this.#request(
       "GET",

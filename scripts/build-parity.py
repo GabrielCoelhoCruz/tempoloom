@@ -273,7 +273,6 @@ E2E_NOTES = {
 
 # Row id -> reason, for rows implemented in part (some behavior has E2E, some does not).
 PARTIAL = StatusMap("PARTIAL", {
-    320: "A meeting is created from a form, with E2E on CalDAV; each occurrence is its own event, not an instance of one recurring series",
 })
 
 # Row id -> reason, for rows that cannot work yet because a feature they build on is missing.
@@ -864,10 +863,6 @@ E2E_NOTES.update({
     389: "The date replaces the rolling days; it is not limited to 100 days",
     390: "Recovery buffers: \u201ca team link keeps the longest recovery buffer among its organizers free\u201d; travel time uses the person's travel buffer automations and applies when the chosen or default location option is of kind address",
     420: "CC guests are invited to the event and get the booked, rescheduled and cancelled emails (they need SMTP_URL); the location choice shows when the link has several",
-})
-PARTIAL.update({
-    364: "A resize of one occurrence in the calendar is kept and locks it, with full UI E2E on CalDAV (\u201c" + T["u7_manual"] + "\u201d). A resize of the following or all occurrences is not built: that scope is a choice of a recurring-series edit, and Tempoloom writes each occurrence as its own event (row 320), so no calendar offers the scope on its events",
-    368: "Full UI E2E on CalDAV proves: a title edit and a resize are kept and lock the occurrence (\u201c" + T["u7_manual"] + "\u201d); privacy (CLASS) and free/busy edits are written back from the meeting's event settings, and the organizer's edits of description, location, color (COLOR), note (COMMENT) and an added guest stay through that write-back (\u201c" + T["u25_privacy"] + "\u201d), through an automatic move, a lock and an unlock (\u201c" + T["u25_move"] + "\u201d), and through a visibility change and a guest removal in the meeting settings (\u201c" + T["u25_settings"] + "\u201d); a description edit alone does not lock and gets no write, and a later description edit in the form replaces it on every following occurrence (rule 23; \u201c" + T["u25_description"] + "\u201d). Tempoloom writes only the fields it changed, through the provider's patch call, also on Google and on instances of an adopted series; these two have no E2E here. Not tested: a guest removed by the organizer. Not built: recurrence edits and the scope choice (one, following or all occurrences), because Tempoloom writes each occurrence as its own event, not as one recurring series (row 320)",
 })
 BLOCKED.update({
 })
@@ -1570,6 +1565,27 @@ E2E_NOTES[700] = ("The MCP URL with Copy (a visible fallback when the browser gi
 BLOCKED[949] = ("Needs a Claude account (Claude Desktop or the Claude web app) to add a custom connector; " + _SERVER
                 + ". The Claude guide on the Account page, with the connector steps and the troubleshooting text of rule 15, passes E2E (\u201c" + T["u57_guides"] + "\u201d)")
 # --- end U57 ---
+
+# --- U68: a meeting from the form is one recurring series; series edits in the calendar ---
+T["u68_series"] = "a meeting from the form is one recurring series on the calendar: one event with a weekly rule, and a moved occurrence is an override of it (MEET-01 rule 2)"
+T["u68_following"] = "a calendar resize of this and the following occurrences sets the meeting length from that occurrence on; the earlier occurrence keeps its length and nothing locks (MEET-02 rule 18)"
+T["u68_all"] = "a calendar resize of all occurrences sets the meeting length for every occurrence, also the one Tempoloom moved, and nothing locks (MEET-02 rule 18)"
+T["u68_edits"] = "series edits in the calendar are kept: a new day and time set the meeting's ideal day and time, a new title and guest list reach the meeting, nothing locks, and privacy and free/busy are written back; a guest the organizer removes from one occurrence stays removed (MEET-02 rule 22)"
+E2E[320] = ["u68_series"]
+E2E_NOTES[320] = ("The E2E reads the Radicale object: one VEVENT with a weekly RRULE and a local DTSTART (TZID), and an override "
+                  "(RECURRENCE-ID) for the occurrence that moved; reload, plan runs and a server restart keep it. A meeting saved before "
+                  "keeps its single events, and its series EXDATEs those periods (unit test). Turning off, delete and a new "
+                  "frequency end the series with an RRULE UNTIL")
+E2E[364] = ["u7_manual", "u68_following", "u68_all"]
+E2E_NOTES[364] = ("One occurrence: an override, kept and locked. Following: the calendar ends the series and starts a new one; the "
+                  "meeting takes the new length from there and the earlier occurrence keeps its own. All: the master's new length is "
+                  "the meeting length for every occurrence, also one Tempoloom moved. A series edit locks nothing")
+E2E[368] = ["u7_manual", "u25_privacy", "u25_move", "u25_settings", "u25_description", "u68_edits", "u68_following", "u68_all"]
+E2E_NOTES[368] = ("One occurrence: title, resize, description, location, color, note and guest edits are kept, privacy and free/busy "
+                  "are written back, and a guest the organizer removed stays removed through plan runs and a lock. The series: a new "
+                  "day, time, RRULE, title and guest list become the meeting's rules and lock nothing; the scope (one, following or "
+                  "all) decides which occurrences change. Tempoloom writes only the fields it changed, through the provider's patch call")
+# --- end U68 ---
 
 # Google Calendar proof. docs/e2e-google-run.tsv records a full E2E run on Google
 # (a "# commit <sha>" line, then status, test id, title per line; docs/e2e-google-run.md
