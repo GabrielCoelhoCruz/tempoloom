@@ -8,8 +8,10 @@
 // - an edited field is not saved, or only until reload      -> reload
 // - the saved values do not survive a server restart        -> restart
 // - choices for size and use case are free text             -> select options
+// - without a picture nothing shows instead of initials     -> initials on profile and booking page
 import type { Page } from "@playwright/test";
 import { EMAIL, expect, test, ZONE } from "./fixtures.ts";
+import { claimPage, visitor } from "./helpers.ts";
 
 async function openProfile(page: Page) {
   await page.getByRole("button", { name: "Account menu" }).click();
@@ -51,4 +53,31 @@ test("the profile shows account fields read-only and saves job title, company, s
   await page.goto("/");
   await openProfile(page);
   await check();
+});
+
+test("without a picture from the calendar account the profile and booking pages show initials (edge case 1)", async ({
+  page,
+  browser,
+  signIn,
+}) => {
+  await signIn();
+  await openProfile(page);
+  const fixed = page.getByTestId("profile-fixed");
+  const name = (
+    await fixed.locator(".row", { hasText: "Name" }).locator("strong").innerText()
+  ).trim();
+  const words = name.split(/[\s@._-]+/).filter(Boolean);
+  const expected =
+    `${words[0]?.[0] ?? ""}${words.length > 1 ? (words.at(-1)?.[0] ?? "") : ""}`.toUpperCase();
+  expect(expected).not.toBe("");
+  await expect(page.getByTestId("profile-picture-initials")).toHaveText(expected);
+  await expect(page.getByTestId("profile-picture")).toHaveCount(0);
+
+  await claimPage(page, "initials");
+  const v = await visitor(browser);
+  await v.goto("/book/initials");
+  await expect(v.getByTestId("public-page")).toBeVisible();
+  await expect(v.getByTestId("owner-picture-initials")).toHaveText(expected);
+  await v.reload();
+  await expect(v.getByTestId("owner-picture-initials")).toHaveText(expected);
 });

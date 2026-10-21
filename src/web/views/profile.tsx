@@ -5,7 +5,14 @@ import { useState } from "preact/hooks";
 import type { Settings } from "../../server/settings.ts";
 import { COMPANY_SIZES, USE_CASES } from "../../shared/profile.ts";
 import { api } from "../lib/api.ts";
+import { Avatar } from "../lib/avatar.tsx";
 import { loadMe, me } from "../lib/state.ts";
+
+const DATE_FORMATS: Record<Settings["dateFormat"], string> = {
+  YMD: "Year-month-day",
+  DMY: "Day-month-year",
+  MDY: "Month-day-year",
+};
 
 const USE_CASE_LABELS: Record<(typeof USE_CASES)[number], string> = {
   work: "Work",
@@ -38,6 +45,11 @@ export function ProfilePage() {
       )}
       <section data-testid="profile-fixed">
         <h2>From your calendar account</h2>
+        <Avatar
+          url={m.user.avatarUrl}
+          name={m.user.name || m.user.email}
+          testId="profile-picture"
+        />
         <div class="list">
           <div class="row">
             <span>Name</span>
@@ -54,6 +66,20 @@ export function ProfilePage() {
           <div class="row">
             <span>Week starts on</span>
             <strong>{m.settings.weekStart === 7 ? "Sunday" : "Monday"}</strong>
+          </div>
+          {m.settings.googleWeekStart !== null && (
+            <div class="row">
+              <span>Week start in your Google calendar</span>
+              <strong>{m.settings.googleWeekStart === 7 ? "Sunday" : "Monday"}</strong>
+            </div>
+          )}
+          <div class="row">
+            <span>Time format</span>
+            <strong>{m.settings.timeFormat === "12h" ? "12-hour" : "24-hour"}</strong>
+          </div>
+          <div class="row">
+            <span>Date format</span>
+            <strong>{DATE_FORMATS[m.settings.dateFormat]}</strong>
           </div>
         </div>
         <p class="status">

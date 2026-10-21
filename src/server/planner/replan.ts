@@ -15,6 +15,7 @@ import type {
   Snapshot,
 } from "../../scheduler/model.ts";
 import { plan } from "../../scheduler/plan.ts";
+import type { Interval } from "../../scheduler/timeset.ts";
 import {
   defaultEventSettings,
   type EventSettings,
@@ -48,7 +49,7 @@ import {
   TRAVEL_MARKER,
 } from "./markers.ts";
 import { recordMeetingChanges, recordMissedPeriods } from "./meeting-log.ts";
-import { attendeeOccurrences, attendeesOf, meetingItems } from "./meetings.ts";
+import { attendeeOccurrences, attendeesOf, guestFreeBusy, meetingItems } from "./meetings.ts";
 import { LABELS, mirrorCopies } from "./mirror.ts";
 import { doneMinutes, endedUnstarted, nextIndexAfter } from "./progress.ts";
 import { type DesiredEvent, type ManagedRow, type PushResult, pushSchedule } from "./push.ts";
@@ -128,6 +129,8 @@ export function loadSnapshot(
   settings: Settings,
   now: number,
   lastPlannedAt: number,
+  /** Google free/busy of meeting guests who are not users here (guestFreeBusy). */
+  guestBusy: Map<string, Interval[]> = new Map(),
 ): {
   snapshot: Snapshot;
   rows: ManagedRow[];
@@ -444,7 +447,7 @@ export function loadSnapshot(
     };
   });
 
-  const meetings = meetingItems(db, userId, now, windowEnd, lastPlannedAt, exclusions);
+  const meetings = meetingItems(db, userId, now, windowEnd, lastPlannedAt, exclusions, guestBusy);
   const fragmentation = fragmentationPreference(db, userId);
   for (const m of meetings.rows) {
     notes.set(`meeting:${m.id}`, m.description);
@@ -638,13 +641,22 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
     userId,
   );
   const last = lastRun?.planned_at ?? 0;
+  const zone = planningZone(db, userId, user.time_zone);
+  const guestBusy = await guestFreeBusy(
+    db,
+    ctx.provider,
+    userId,
+    now,
+    schedulingWindowEnd(zone, now, settings.schedulingWindowWeeks),
+  );
   const { snapshot, rows, notes, titles, eventSettings, reopen } = loadSnapshot(
     db,
     userId,
-    planningZone(db, userId, user.time_zone),
+    zone,
     settings,
     now,
     last,
+    guestBusy,
   );
   const taskCalendar = new Map(
     all<{ id: string; task_calendar_id: string | null }>(
