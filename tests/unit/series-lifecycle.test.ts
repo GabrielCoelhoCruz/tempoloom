@@ -376,7 +376,7 @@ function api(pending: (db: Db) => void = () => undefined) {
     setSeriesProps: spy("setSeriesProps"),
   };
   const pool = { get: () => provider };
-  const clock = { t: T0, onRead: () => undefined as void };
+  const clock = { t: T0, onRead: (): void => {} };
   const sync = {
     request() {},
     exclusive: async (_u: string, fn: (p: typeof pool) => Promise<unknown>) => {
