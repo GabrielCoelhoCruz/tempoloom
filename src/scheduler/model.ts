@@ -96,6 +96,8 @@ export interface HabitItem {
   dependencies?: HabitDependency[];
   /** Category work or personal (habits concepts); missing: it counts as work when its hours are work hours. */
   work?: boolean;
+  /** The ideal start is the end of the day's last range of `hours` minus `maxMinutes` (`ideal_at_end`). */
+  idealAtEnd?: boolean;
 }
 
 /**
@@ -236,6 +238,8 @@ export interface FocusItem {
   changed: boolean;
   /** focus-time.md rules 1-10; proactive when absent. */
   mode?: "proactive" | "reactive";
+  /** Minutes of the day that proactive focus fills first (focus-time.md `preferred_window`). */
+  preferred?: { from: number; to: number };
 }
 
 /** The meeting overload automation (focus-time.md rules 11-16); its events are focus events. */
