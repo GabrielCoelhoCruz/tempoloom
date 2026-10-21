@@ -337,6 +337,8 @@ interface LinkInfo {
   owner: { name: string; picture: string } | null;
   branding: Branding;
   oneOff: { expiresAt: number; expired: boolean } | null;
+  /** The link takes no new bookings: its account for booked events is lost. */
+  paused?: boolean;
 }
 
 const LOCATION_KINDS = { address: "Address", phone: "Phone", custom: "Other" } as const;
@@ -618,6 +620,17 @@ function BookingPage({ page, link }: { page: string; link: string }) {
       </div>
     );
   }
+  if (info.paused) {
+    return (
+      <div data-testid="booking-page">
+        <Brand b={info.branding} />
+        <h1>{info.link.title}</h1>
+        <p data-testid="paused">
+          This link takes no bookings right now. Ask the organizer for another way to meet.
+        </p>
+      </div>
+    );
+  }
   const preselect =
     params.day && params.time
       ? {
@@ -856,11 +869,21 @@ function Manage({ token }: { token: string }) {
             void api("POST", `/pub/bookings/${token}/reschedule`, {
               start: t.start,
               timeZone: view.zone,
-            }).then(() => {
-              setMode("view");
-              setMessage("Your booking has a new time.");
-              load();
             })
+              .then(() => {
+                setMode("view");
+                setMessage("Your booking has a new time.");
+                load();
+              })
+              .catch((err) => {
+                setMode("view");
+                setMessage(
+                  err instanceof ApiError &&
+                    (err.body as { error?: string } | null)?.error === "account_disconnected"
+                    ? "This booking cannot move now: the organizer's calendar account that holds it is disconnected. Try again later, or ask the organizer."
+                    : "The new time could not be saved. Please try again.",
+                );
+              })
           }
         />
       )}

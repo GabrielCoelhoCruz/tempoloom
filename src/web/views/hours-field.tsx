@@ -14,7 +14,7 @@ export interface HoursChoice {
   weekly: Record<string, [number, number][]>;
 }
 
-const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+export const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 export const ITEM = "item";
 
 /** "Tue, Thu 07:00–08:00; Sat 09:00–12:00": days grouped by equal ranges. */
@@ -106,34 +106,57 @@ export function HoursField({
   );
 }
 
-/** The days and one time range of item-specific hours; itemHoursFrom() reads them. */
+/**
+ * The days and one time range of item-specific hours. Uncontrolled in a form
+ * (itemHoursFrom() reads the fields), or controlled with `value` and `onChange`.
+ */
 export function ItemHoursFields({
   initial,
+  value,
+  onChange,
 }: {
   /** The range the fields start with; none means 09:00-17:00 on no days. */
   initial?: ItemRange | undefined;
+  value?: ItemRange;
+  onChange?: (r: ItemRange) => void;
 }) {
+  const set = (change: Partial<ItemRange>) => value && onChange?.({ ...value, ...change });
+  const day = (n: number) =>
+    value
+      ? {
+          checked: value.days.includes(n),
+          onChange: (e: { currentTarget: HTMLInputElement }) =>
+            set({
+              days: e.currentTarget.checked
+                ? [...value.days, n].sort((a, b) => a - b)
+                : value.days.filter((x) => x !== n),
+            }),
+        }
+      : { name: "itemDays", value: n, defaultChecked: initial?.days.includes(n) ?? false };
+  const time = (key: "from" | "to", name: string, start: string) =>
+    value
+      ? {
+          value: value[key],
+          onInput: (e: { currentTarget: HTMLInputElement }) =>
+            set({ [key]: e.currentTarget.value }),
+        }
+      : { name, defaultValue: initial?.[key] ?? start };
   return (
     <fieldset class="wide item-hours" data-testid="item-hours">
       <legend>Item-specific hours</legend>
       {DAYS.map((d, i) => (
         <label class="inline" key={d}>
-          <input
-            type="checkbox"
-            name="itemDays"
-            value={i + 1}
-            defaultChecked={initial?.days.includes(i + 1) ?? false}
-          />
+          <input type="checkbox" {...day(i + 1)} />
           {d}
         </label>
       ))}
       <label class="inline">
         From
-        <input name="itemFrom" type="time" step={900} defaultValue={initial?.from ?? "09:00"} />
+        <input type="time" step={900} {...time("from", "itemFrom", "09:00")} />
       </label>
       <label class="inline">
         To
-        <input name="itemTo" type="time" step={900} defaultValue={initial?.to ?? "17:00"} />
+        <input type="time" step={900} {...time("to", "itemTo", "17:00")} />
       </label>
     </fieldset>
   );

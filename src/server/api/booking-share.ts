@@ -7,6 +7,7 @@ import { z } from "zod";
 import type { AppEnv } from "../app.ts";
 import { all, type Db, one, run, tx } from "../db.ts";
 import { jsonBody, notFound } from "../http.ts";
+import { dropItemHours } from "../item-hours.ts";
 import { pageSlugTaken, slugify } from "./booking.ts";
 
 interface GroupRow {
@@ -120,7 +121,14 @@ export function bookingShareRoutes(db: Db, now: () => number): Hono<AppEnv> {
     tx(db, () => {
       if (q.data.links === "delete") {
         // Booked events stay (booking-links rule 20).
+        const sets = all<{ id: string }>(
+          db,
+          `SELECT p.hours_set_id AS id FROM booking_link_people p
+           JOIN booking_links l ON l.id = p.link_id WHERE l.group_id = ? AND p.hours_set_id IS NOT NULL`,
+          g.id,
+        );
         run(db, "DELETE FROM booking_links WHERE group_id = ?", g.id);
+        for (const { id } of sets) dropItemHours(db, id);
       } else {
         run(
           db,
