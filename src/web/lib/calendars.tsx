@@ -1,6 +1,7 @@
 // The user's calendars, shared by the connected-calendar list and the
 // mirroring form on the Settings page.
 import { signal } from "@preact/signals";
+import { waitingNote } from "../../shared/event-settings.ts";
 import { ApiError, api } from "./api.ts";
 
 export interface CalendarRow {
@@ -80,7 +81,7 @@ export function CalendarDisconnected({ email }: { email: string | null | undefin
   if (!email) return null;
   return (
     <div class="status error" role="alert" data-testid="calendar-disconnected">
-      Waiting: {email} is disconnected. Reconnect it on the Account page.
+      {waitingNote(email)}
     </div>
   );
 }

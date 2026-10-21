@@ -4,7 +4,11 @@ import { Hono } from "hono";
 import { z } from "zod";
 import type { WeeklyHours } from "../../scheduler/hours.ts";
 import { plan } from "../../scheduler/plan.ts";
-import { defaultEventSettings, readEventSettings } from "../../shared/event-settings.ts";
+import {
+  defaultEventSettings,
+  readEventSettings,
+  waitingNote,
+} from "../../shared/event-settings.ts";
 import { addDays, type LocalDate, weekdayOf } from "../../shared/time.ts";
 import type { AppEnv } from "../app.ts";
 import { all, type Db, one, run, tx } from "../db.ts";
@@ -28,7 +32,7 @@ import {
   meetingPeers,
 } from "../planner/meetings.ts";
 import { KEY_PROP, MANAGED_PROP, type ManagedRow } from "../planner/push.ts";
-import { loadSnapshot, meetingGuests } from "../planner/replan.ts";
+import { meetingGuests, planningSnapshot } from "../planner/replan.ts";
 import { waitingCalendars } from "../planner/write.ts";
 import type { ProviderPool } from "../providers/index.ts";
 import { getSettings } from "../settings.ts";
@@ -605,7 +609,17 @@ export function meetingRoutes(
         "SELECT planned_at FROM plan_reports WHERE user_id = ?",
         user.id,
       )?.planned_at ?? 0;
-    const { snapshot } = loadSnapshot(db, user.id, zone, getSettings(db, user.id), t, last);
+    // Accounts rule 16: a meeting on a disconnected account waits, also a new
+    // one on the main calendar, so the preview shows no times and says why.
+    const waiting = waitingCalendars(
+      db,
+      user.id,
+    )(
+      old
+        ? readEventSettings(old.event_settings, defaultEventSettings("meeting")).calendarId
+        : (body.eventSettings?.calendarId ?? null),
+    );
+    const { snapshot } = planningSnapshot(db, user.id, zone, getSettings(db, user.id), t, last);
     if (body.hoursMode === "itemSpecific" && body.itemHours) {
       row.hours_set_id = "preview-hours";
       snapshot.hours = { ...snapshot.hours, [row.hours_set_id]: body.itemHours };
@@ -613,7 +627,7 @@ export function meetingRoutes(
     const item = meetingItem(db, user.id, row, attendees, t, snapshot.windowEnd, last, new Map());
     const result = plan({
       ...snapshot,
-      meetings: [...snapshot.meetings.filter((m) => m.id !== id), item],
+      meetings: [...snapshot.meetings.filter((m) => m.id !== id), ...(waiting ? [] : [item])],
     });
     const before = new Map(snapshot.current.map((p) => [p.key, p]));
     const moved = result.placements.filter((p) => {
@@ -630,6 +644,7 @@ export function meetingRoutes(
         .filter((e) => e.itemKind === "meeting" && e.itemId === id)
         .slice(0, 4),
       moved,
+      waiting,
     });
   });
 
@@ -856,6 +871,12 @@ export function meetingRoutes(
       const row = one<ManagedRow>(db, "SELECT * FROM managed_events WHERE id = ?", found.id);
       if (!row?.event_id) return "missing" as const;
       if (row.start_ms <= now()) return "started" as const;
+      // Accounts rule 16: a meeting on a disconnected account waits.
+      const waiting = waitingCalendars(
+        db,
+        m.user_id,
+      )(readEventSettings(m.event_settings, defaultEventSettings("meeting")).calendarId);
+      if (waiting) return { waiting };
       const slot = rescheduleSlot(db, m.user_id, row, option, now());
       if (!slot) return "none" as const;
       const busy = row.busy === 1;
@@ -902,6 +923,8 @@ export function meetingRoutes(
     });
     if (result === "missing") notFound("occurrence");
     if (result === "started") return c.json({ error: "started" }, 409);
+    if (typeof result === "object")
+      return c.json({ error: "waiting", message: waitingNote(result.waiting) }, 409);
     if (result === "none")
       return c.json({ error: "no_time", message: "No other time fits in this period." }, 409);
     changed(m.user_id);
