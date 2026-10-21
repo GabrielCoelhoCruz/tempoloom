@@ -41,6 +41,8 @@ const REASONS: Record<string, string> = {
   "rules-changed": "its settings changed",
   rearranged: "the plan changed around it",
   snoozed: "you snoozed it",
+  "time-used-done": "its time was used for the wait days, so it is done",
+  "time-used-readd": "its time was used for the wait days, so its time was added again",
 };
 
 export function ItemChanges({ kind, id }: { kind: string; id: string }) {

@@ -120,19 +120,22 @@ export function taskProgressRoutes(
    * Start on one event, inside the user's sync queue. PRG-10: a later event
    * moves to now, rounded down to 5 minutes, with its length. PRG-4: in manual
    * mode a running event starts now. Edge case 2: in auto mode a running event
-   * does not change. Either way the event is started (PRG-3) and gets the lock.
+   * does not change. PRG-12: Restart moves a running event to now in either
+   * mode. Either way the event is started (PRG-3) and gets the lock.
    */
-  const startRow = async (pool: ProviderPool, userId: string, row: Row) => {
+  const startRow = async (pool: ProviderPool, userId: string, row: Row, restart = false) => {
     const t = now();
     const at = Math.floor(t / FIVE) * FIVE;
     const running = row.start_ms <= t;
-    const move = !running || (getSettings(db, userId).startMode === "manual" && at > row.start_ms);
+    const move =
+      !running ||
+      ((restart || getSettings(db, userId).startMode === "manual") && at > row.start_ms);
     if (!move) {
       run(db, "UPDATE managed_events SET locked = 1, started = 1 WHERE id = ?", row.id);
       return;
     }
     const end = firstConflict(userId, at, at + (row.end_ms - row.start_ms));
-    await retime(pool, userId, row, at, end, "started");
+    await retime(pool, userId, row, at, end, restart ? "restarted" : "started");
   };
 
   r.post("/tasks/:id/start", async (c) => {
@@ -218,11 +221,7 @@ export function taskProgressRoutes(
     return c.json({ ok: true });
   });
 
-  /**
-   * PRG-12: the running chunk starts again now, rounded down to 5 minutes, and
-   * keeps its length (up to the first busy event, edge case 3). In auto and
-   * manual mode alike; the chunk is started and gets the lock.
-   */
+  /** PRG-12: the running chunk starts again now, rounded down to 5 minutes, with its length. */
   r.post("/tasks/:id/restart", async (c) => {
     const user = c.get("user");
     const id = c.req.param("id");
@@ -230,13 +229,7 @@ export function taskProgressRoutes(
       const t = now();
       const row = chunks(user.id, id).find((ch) => ch.start_ms <= t);
       if (!row?.event_id) return false;
-      const at = Math.floor(t / FIVE) * FIVE;
-      if (at <= row.start_ms) {
-        run(db, "UPDATE managed_events SET locked = 1, started = 1 WHERE id = ?", row.id);
-        return true;
-      }
-      const end = firstConflict(user.id, at, at + (row.end_ms - row.start_ms));
-      await retime(pool, user.id, row, at, end, "restarted");
+      await startRow(pool, user.id, row, true);
       return true;
     });
     if (!restarted)

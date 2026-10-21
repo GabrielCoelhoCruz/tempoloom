@@ -1365,9 +1365,14 @@ export const MIGRATIONS: readonly string[] = [
   ALTER TABLE events ADD COLUMN organizer_email TEXT NOT NULL DEFAULT '';
   UPDATE calendars SET sync_token = NULL;
   `,
-  // 48: the total that the time-used action "re-add" adds again
-  // (planning-task-progress.md PRG-41). NULL: total_minutes is that total.
+  // 48: the time-used action (planning-task-progress.md PRG-41, PRG-42).
+  // base_minutes: the first total, that "re-add" adds again; NULL until it is
+  // frozen (then total_minutes is that total). readds: how many times "re-add"
+  // ran. minutes_changed_at: the last time the user changed the total, so a
+  // lower total gets the full wait from the edit.
   `
   ALTER TABLE tasks ADD COLUMN base_minutes INTEGER;
+  ALTER TABLE tasks ADD COLUMN readds INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE tasks ADD COLUMN minutes_changed_at INTEGER;
   `,
 ];

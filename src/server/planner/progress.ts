@@ -28,6 +28,10 @@ export function endedUnstarted(r: ProgressRow, now: number, s: StartSettings): b
   );
 }
 
+/** PRG-1: the row is a task event that ended and counts as done work. */
+const counts = (r: ProgressRow, now: number, s: StartSettings) =>
+  r.kind === "task" && r.end_ms <= now && !endedUnstarted(r, now, s);
+
 /** Minutes of done work per task id, from managed rows (PRG-1). */
 export function doneMinutes(
   rows: Iterable<ProgressRow>,
@@ -36,10 +40,44 @@ export function doneMinutes(
 ): Map<string, number> {
   const done = new Map<string, number>();
   for (const r of rows) {
-    if (r.kind !== "task" || r.end_ms > now || endedUnstarted(r, now, s)) continue;
+    if (!counts(r, now, s)) continue;
     done.set(r.source_id, (done.get(r.source_id) ?? 0) + (r.end_ms - r.start_ms) / 60_000);
   }
   return done;
+}
+
+/** The done work of one task: its ended, counted events, in the order they ended. */
+export type DoneWork = { end: number; minutes: number }[];
+
+/** The done work per task id, from managed rows (PRG-1, same rule as doneMinutes). */
+export function doneWork(
+  rows: Iterable<ProgressRow>,
+  now: number,
+  s: StartSettings,
+): Map<string, DoneWork> {
+  const done = new Map<string, DoneWork>();
+  for (const r of rows) {
+    if (!counts(r, now, s)) continue;
+    const list = done.get(r.source_id) ?? [];
+    list.push({ end: r.end_ms, minutes: (r.end_ms - r.start_ms) / 60_000 });
+    done.set(r.source_id, list);
+  }
+  for (const list of done.values()) list.sort((a, b) => a.end - b.end);
+  return done;
+}
+
+/** PRG-40: an open task is time-used when no work is left and no chunk is to come. */
+export const isTimeUsed = (remainingMinutes: number, scheduledMinutes: number): boolean =>
+  remainingMinutes <= 0 && scheduledMinutes <= 0;
+
+/** When the done work first reached `total` minutes, or null if it did not. */
+export function reachedAt(work: DoneWork, total: number): number | null {
+  let sum = 0;
+  for (const w of work) {
+    sum += w.minutes;
+    if (sum >= total) return w.end;
+  }
+  return null;
 }
 
 /** Minutes of done work per task of one user, or of one task. */

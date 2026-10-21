@@ -13,6 +13,7 @@
 // - mark-done changes the events                                        -> event at its time
 // - re-add adds nothing, or adds the current total instead of the first -> 60, then 60 again
 // - manual start mode shows the setting, or the action still runs       -> hidden; still open
+// - Restart skips manual mode, or moves an ended chunk                   -> 09:20; 409
 import type { Page } from "@playwright/test";
 import { addDays, localToUtc } from "../../src/shared/time.ts";
 import type { AppServer, CalendarDriver } from "./fixtures.ts";
@@ -135,7 +136,63 @@ test("Restart moves the running chunk to now, rounded down to 5 minutes, with it
   expect(titled(l, "AT-Restart")[0]?.summary).toContain("🔒");
 });
 
-test("time-used action: Nothing keeps a time-used task open; Mark done waits the days, also for a task already time-used, and changes no event (PRG-40, PRG-42, PRG-43; AT 6)", async ({
+test("Restart in manual start mode moves the started chunk to now, and Restart with no running chunk is refused (PRG-12)", async ({
+  page,
+  cal,
+  app,
+  signIn,
+}) => {
+  await clockAt(app, at(D, "08:00"));
+  await signIn();
+  await alwaysHours(page);
+  await page.getByRole("link", { name: "Settings" }).click();
+  await setting(page, () =>
+    page
+      .getByLabel("Start mode")
+      .selectOption({ label: "Count only after I press Start" })
+      .then(() => undefined),
+  );
+  await addTask(page, {
+    title: "AT-RestartM",
+    minutes: 30,
+    split: false,
+    due: "",
+    hours: "AT-Always",
+    startAfter: `${D}T09:00`,
+  });
+  await eventually(
+    () => weekEvents(cal),
+    (l) => expect(times(l, "AT-RestartM")).toEqual([`${D} 09:00-09:30`]),
+  );
+  // Start at 09:12 (manual mode) moves it to 09:10; Restart at 09:22 moves it to 09:20.
+  await clockAt(app, at(D, "09:12"));
+  let row = await taskRow(page, "AT-RestartM");
+  await row.getByRole("button", { name: "Start now" }).click();
+  await eventually(
+    () => weekEvents(cal),
+    (l) => expect(times(l, "AT-RestartM")).toEqual([`${D} 09:10-09:40`]),
+  );
+  await clockAt(app, at(D, "09:22"));
+  row = await taskRow(page, "AT-RestartM");
+  await row.getByRole("button", { name: "Restart" }).click();
+  await eventually(
+    () => weekEvents(cal),
+    (l) => expect(times(l, "AT-RestartM")).toEqual([`${D} 09:20-09:50`]),
+  );
+  // 10:00: the chunk ended, so Restart has nothing to move.
+  await clockAt(app, at(D, "10:00"));
+  row = await taskRow(page, "AT-RestartM");
+  await expect(row.getByRole("button", { name: "Restart" })).toBeHidden();
+  const [task] = app.query<{ id: string }>("SELECT id FROM tasks WHERE title = 'AT-RestartM'");
+  const status = await page.evaluate(
+    (id) => fetch(`/api/tasks/${id}/restart`, { method: "POST" }).then((r) => r.status),
+    task?.id ?? "",
+  );
+  expect(status).toBe(409);
+  expect(times(await weekEvents(cal), "AT-RestartM")).toEqual([`${D} 09:20-09:50`]);
+});
+
+test("time-used action: Nothing keeps a time-used task open after the wait; Mark done waits the days, also for a task already time-used, and changes no event (PRG-40, PRG-42, PRG-43; AT 6)", async ({
   page,
   cal,
   app,
@@ -163,15 +220,12 @@ test("time-used action: Nothing keeps a time-used task open; Mark done waits the
   let row = await taskRow(page, "AT-MarkDone");
   await expect(row.getByTestId("task-state")).toHaveText("time-used");
 
-  // Two days later with the default "Nothing", and a plan run: it stays open (PRG-40).
+  // Two days later: the defaults are "Nothing" and 3 days.
   await clockAt(app, at(D, "09:30") + 2 * DAY);
   await page.reload();
   await page.getByRole("link", { name: "Settings" }).click();
   await expect(page.getByLabel("When a task's time is used")).toHaveValue("nothing");
   await expect(page.getByLabel("Days to wait")).toHaveValue("3");
-  await planRun(page);
-  row = await taskRow(page, "AT-MarkDone");
-  await expect(row.getByTestId("task-state")).toHaveText("time-used");
 
   // Mark done after the default 3 days: 2 days in time-used are not enough.
   await timeUsedAction(page, "Mark it done");
@@ -179,8 +233,21 @@ test("time-used action: Nothing keeps a time-used task open; Mark done waits the
   row = await taskRow(page, "AT-MarkDone");
   await expect(row.getByTestId("task-state")).toHaveText("time-used");
 
-  // 3 days and 1 hour after the chunk ended: the task is under Done (PRG-42, PRG-43).
-  await clockAt(app, at(D, "09:15") + 3 * DAY + 60 * MIN);
+  // Back to "Nothing": after the wait ends, and a day later, the task stays open (PRG-40).
+  await timeUsedAction(page, "Nothing (it stays open)");
+  for (const t of [3 * DAY + 60 * MIN, 4 * DAY]) {
+    await clockAt(app, at(D, "09:15") + t);
+    await planRun(page);
+    row = await taskRow(page, "AT-MarkDone");
+    await expect(row.getByTestId("task-state")).toHaveText("time-used");
+  }
+  expect(app.query("SELECT status FROM tasks WHERE title = 'AT-MarkDone'")).toEqual([
+    { status: "open" },
+  ]);
+
+  // "Mark it done" for a task already past the wait: it goes under Done (PRG-42, PRG-43).
+  await page.reload();
+  await timeUsedAction(page, "Mark it done");
   await planRun(page);
   await expect
     .poll(() => app.query("SELECT status FROM tasks WHERE title = 'AT-MarkDone'"))

@@ -114,6 +114,18 @@ Restart (legacy evidence, E-0132).
   `time-used` and to later ones (legacy evidence, E-0048).
 - **PRG-44.** With `startMode` `manual`, the `timeUsedAction` setting is
   hidden and has no effect (legacy evidence, E-0048).
+- **PRG-45.** Tempoloom decision: the first total (the minutes that `re-add`
+  adds) is the total of the task when it is created. A user edit of the
+  minutes sets it to the new total while no `re-add` has run yet. A `re-add`
+  and "Add N min" do not change it; a minutes edit after a `re-add` changes
+  the full total only. A `re-add` leaves exactly the first total as work, also
+  when the done work is more than the total.
+- **PRG-46.** Tempoloom decision: the wait days count from the time the task
+  became `time-used`: the end of the done work that first reached the total,
+  or the time of the user's last change of the total if that is later. So a
+  total lowered below the done work gets the full wait from the edit. Each
+  automatic `mark-done` or `re-add` writes an entry to the task's change log,
+  with its reason.
 
 ## Outputs
 
