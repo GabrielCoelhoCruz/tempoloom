@@ -102,9 +102,11 @@ async function autoDecline(db: Db, userId: string, provider: Provider, now: numb
     private_props: string;
     account_id: string;
     provider_id: string;
+    organizer_email: string;
   }>(
     db,
-    `SELECT e.calendar_id, e.event_id, e.start_ms, e.end_ms, e.etag, e.private_props, c.account_id, c.provider_id
+    `SELECT e.calendar_id, e.event_id, e.start_ms, e.end_ms, e.etag, e.private_props, c.account_id, c.provider_id,
+       e.organizer_email
      FROM events e JOIN calendars c ON c.id = e.calendar_id JOIN accounts a ON a.id = c.account_id
      WHERE a.user_id = ? AND a.status = 'ok' AND c.check_availability = 1
        AND e.self_response = 'needsAction' AND e.organizer_self = 0 AND e.all_day = 0 AND e.end_ms > ?
@@ -114,8 +116,12 @@ async function autoDecline(db: Db, userId: string, provider: Provider, now: numb
     now,
     userId,
   );
+  // The user's own meeting seen from another account or calendar of the user
+  // (Google: no organizer.self on that copy) is not an invitation from others.
+  const own = ownAddresses(db, userId);
   for (const e of invitations) {
     if ((JSON.parse(e.private_props) as Record<string, string>)[MANAGED_PROP] === "1") continue;
+    if (own.has(e.organizer_email.toLowerCase())) continue;
     const block = blocks.find((b) => b.start_ms < e.end_ms && e.start_ms < b.end_ms);
     if (!block) continue;
     try {
@@ -142,4 +148,28 @@ async function autoDecline(db: Db, userId: string, provider: Provider, now: numb
       now,
     );
   }
+}
+
+/**
+ * Every address of the user: sign-in email, account emails (a Google primary
+ * calendar's id is its account's email) and the ids of the user's Google
+ * secondary calendars. Calendars of other people that the user added keep
+ * their owner's email as id, so other calendar ids do not count.
+ */
+function ownAddresses(db: Db, userId: string): Set<string> {
+  return new Set(
+    all<{ address: string }>(
+      db,
+      `SELECT email AS address FROM users WHERE id = ?
+       UNION SELECT email FROM accounts WHERE user_id = ?
+       UNION SELECT c.provider_id FROM calendars c JOIN accounts a ON a.id = c.account_id
+         WHERE a.user_id = ? AND a.provider = 'google' AND c.writable = 1
+           AND c.provider_id LIKE '%@group.calendar.google.com'`,
+      userId,
+      userId,
+      userId,
+    )
+      .map((r) => r.address.toLowerCase())
+      .filter(Boolean),
+  );
 }

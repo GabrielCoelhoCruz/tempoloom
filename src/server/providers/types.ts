@@ -33,6 +33,8 @@ export interface ProviderEvent {
   /** Attendee emails, lower case. */
   attendees: string[];
   organizerSelf: boolean;
+  /** The organizer's email, lower case; "" when the event names none. */
+  organizerEmail?: string;
   recurringId: string | null;
   colorId: string | null;
   updated: number | null;

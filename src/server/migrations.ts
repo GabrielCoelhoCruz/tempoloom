@@ -1356,4 +1356,13 @@ export const MIGRATIONS: readonly string[] = [
   `
   ALTER TABLE users ADD COLUMN avatar_url TEXT NOT NULL DEFAULT '';
   `,
+  // 47: the organizer's email, so auto-decline skips the user's own meetings on
+  // other calendars (focus-time.md rule 23). Google events read before stored
+  // organizer_self = 1 for every event, and CalDAV events missed the user's other
+  // addresses (SCH-21): each calendar is read in full once. Another clear of the
+  // sync tokens (as in migration 40) only adds one more full read.
+  `
+  ALTER TABLE events ADD COLUMN organizer_email TEXT NOT NULL DEFAULT '';
+  UPDATE calendars SET sync_token = NULL;
+  `,
 ];
