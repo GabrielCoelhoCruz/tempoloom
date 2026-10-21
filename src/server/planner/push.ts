@@ -418,9 +418,7 @@ export async function pushSchedule(
     }
   }
 
-  const reopen = (ctx.reopen ?? []).filter(
-    (r) => !frozen.has(r.calendar_id) && !ctx.keep?.has(r.key),
-  );
+  const reopen = (ctx.reopen ?? []).filter((r) => !frozen.has(r.calendar_id));
   for (const d of creates) {
     const row = byKey.get(d.key);
     if (row && (row.locked || row.start_ms <= now)) continue;
