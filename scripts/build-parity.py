@@ -1175,7 +1175,7 @@ BLOCKED[770] = "Not needed: no legacy users (platform-current-version rule 11)"
 
 # Buildable rows that no unit has built yet. Rows that units U31 to U33 and PR #23 build now keep their text.
 PLANNED = "Buildable; not built yet (planned)"
-for n in [36, 40, 102, 118, 326, 327, 340, 361, 362, 365, 370, 375]:
+for n in [36, 40, 102, 118, 361]:
     BLOCKED[n] = PLANNED
 BLOCKED[92] = PLANNED + ": the reason for each move and skip, and a view per item; the change log of every calendar write is built (src/server/change-log.ts)"
 BLOCKED[507] = PLANNED + ": the link's events go to the calendar chosen on the link (\u201c" + T["u7_locations"] + "\u201d); the choice of an added account, whose primary calendar gets the events and sends the invitations, is not built"
@@ -1369,6 +1369,36 @@ E2E_NOTES.update({
     347: "The meeting form edits the rules of habits on that meeting; the habit form shows them too",
 })
 # --- end U40 ---
+
+# --- U39: flexible meetings part C (meeting-extras.spec.ts) ---
+T.update({
+    "u39_map": "the availability map shows each guest's meeting hours in my time zone and the overlap; hours I set for one guest replace theirs in the map and in placement (rules 6-7, 11)",
+    "u39_cadence": "cadence: after an occurrence moves late in its week, the next one keeps at least half a week away instead of its ideal day (rule 18)",
+    "u39_resched": "the reschedule action moves an occurrence to another time the same day or to another day of its period, never its current time, and leaves it unlocked (MEET-02 rule 19)",
+    "u39_resched_kept": "after a Friday occurrence, a reschedule to another day that is less than half a week later stays where I put it, also after the next plan (MEET-02 rule 19)",
+    "u39_guest": "in a 1:1 the guest reschedules or skips an occurrence from the guest's planner; a guest of a group meeting gets no such action (MEET-02 rules 20, 26)",
+    "u39_boost": "a daily meeting lists the days skipped for lack of time; after a missed day the next day uses one level higher and takes the time of a habit at that level, and the boost ends once a day is held (MEET-02 rules 16, 34)",
+    "u39_conflict": "a daily meeting kept in conflict counts each day it stayed in conflict as missed: after two such days it uses P1 and takes a P1 habit's time, and the boost ends once a day is held (MEET-02 rule 16)",
+})
+E2E.update({
+    326: ["u39_map"],
+    327: ["u39_map"],
+    340: ["u39_cadence"],
+    362: ["u39_boost", "u39_conflict"],
+    365: ["u39_resched", "u39_resched_kept"],
+    370: ["u39_guest"],
+    375: ["u39_boost"],
+})
+E2E_NOTES.update({
+    326: "The map shows next week, one row per day; a guest who is not a user here shows as unknown",
+    327: "The hours are one range on chosen weekdays, in the guest's time zone; they apply to a guest who is a user here",
+    340: "Tempoloom decision on the Proposed rule: when the previous occurrence is not on an ideal day of its period, starts in the next period less than half a period after it are skipped when another start exists, also for an occurrence placed before",
+    362: "A period counts as missed when it ended with no time (removed, or kept in conflict); a period with no hours, or skipped by hand, neither counts nor breaks the run",
+    365: "The result stays unlocked and is logged as a move by hand; the lead time and the move limit do not apply; the cadence does not move it back",
+    370: "The guest sees the occurrence in the guest's own planner; Tempoloom writes the change on the organizer's calendar and logs the guest",
+    375: "Periods removed for lack of time stay listed after they end, for 90 days or the last three periods when longer; a period that gets a time later leaves the list",
+})
+# --- end U39 ---
 
 # --- U46: focus and buffers, integrations page, weekly report part B
 # (focus-buffer-extras.spec.ts, integrations.spec.ts, weekly-report-extras.spec.ts) ---

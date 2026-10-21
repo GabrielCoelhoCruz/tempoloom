@@ -1287,7 +1287,22 @@ export const MIGRATIONS: readonly string[] = [
   -- 1: the minute is a snooze time (first legal start at or after it), not a reschedule.
   ALTER TABLE habit_reschedules ADD COLUMN not_before INTEGER NOT NULL DEFAULT 0;
   `,
-  // 42: focus time hidden from booking links (focus-time.md offer_to_booking_links),
+  // 42: the organizer's hours for one guest (meetings-flexible.md rule 7), as weekly
+  // ranges in the guest's time zone; NULL: the guest's own meeting hours. And the
+  // periods of a meeting that had no time (meetings-flexible-rescheduling.md rules
+  // 16, 34): status 'unplaced' (removed) or 'conflict' (kept in conflict).
+  `
+  ALTER TABLE meeting_attendees ADD COLUMN hours_override TEXT;
+  CREATE TABLE meeting_missed (
+    meeting_id TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+    period TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('unplaced', 'conflict')),
+    reason TEXT NOT NULL,
+    at INTEGER NOT NULL,
+    PRIMARY KEY (meeting_id, period)
+  ) STRICT;
+  `,
+  // 43: focus time hidden from booking links (focus-time.md offer_to_booking_links),
   // and the share pages of weekly reports (analytics-weekly-reports.md rules 10-12):
   // the top part and the display name (null: none to show) as sent, public
   // while shared_at is set: the user confirmed a share and did not stop it.

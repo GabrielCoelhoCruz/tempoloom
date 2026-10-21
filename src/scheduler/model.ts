@@ -174,6 +174,12 @@ export interface MeetingItem {
   startMinutes?: number[];
   /** An adopted series: only these periods (start dates) have an instance to place. */
   periods?: LocalDate[];
+  /** Rule 18: the start of the last occurrence before now. */
+  previousStart?: number;
+  /** MEET-02 rule 19: occurrences whose last change was a move by hand; the cadence keeps them. */
+  manualKeys?: string[];
+  /** MEET-02 rule 16: after missed periods, this period is placed at this higher level. */
+  boost?: { period: LocalDate; level: Level };
 }
 
 export type Comparison = ">=" | "<=" | "=" | ">" | "<";

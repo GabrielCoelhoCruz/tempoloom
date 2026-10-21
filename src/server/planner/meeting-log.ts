@@ -5,9 +5,16 @@
 // 31-32) with the guest update emails it asks for (planning-notifications.md
 // NTF-20 to NTF-22).
 import { randomUUID } from "node:crypto";
-import type { MeetingFrequency } from "../../scheduler/model.ts";
+import type { Level, MeetingFrequency, Plan } from "../../scheduler/model.ts";
 import { meetingAnchor, meetingPeriodStart } from "../../scheduler/plan.ts";
-import { addLocalDays, type LocalDate, schedulingWindowEnd } from "../../shared/time.ts";
+import {
+  addDays,
+  addLocalDays,
+  type LocalDate,
+  localToUtc,
+  schedulingWindowEnd,
+  utcToLocal,
+} from "../../shared/time.ts";
 import { all, type Db, one, run, tx } from "../db.ts";
 import { getPrefs } from "../meeting-prefs.ts";
 import { seriesInstanceDate } from "../meeting-series.ts";
@@ -345,6 +352,18 @@ export function recordMeetingChanges(
         userId,
         b.key,
       );
+      // A guest's skip (MEET-02 rule 26) is logged when it happens, with the guest.
+      if (
+        !a &&
+        skipped &&
+        one(
+          db,
+          "SELECT 1 FROM meeting_changes WHERE user_id = ? AND occurrence_key = ? AND reason = 'manualSkip'",
+          userId,
+          b.key,
+        )
+      )
+        continue;
       logChange(
         db,
         userId,
@@ -369,4 +388,143 @@ export function recordMeetingChanges(
       );
     }
   });
+}
+
+/** MEET-02 rule 11: flags that keep an occurrence although another time exists. */
+const FLAGGED = new Set(["budget-reached", "policy-none"]);
+
+/**
+ * MEET-02 rules 16 and 34: after each plan, the periods of a meeting with no
+ * time (removed, or kept in conflict) are kept; a period placed later is not.
+ * Periods that ended stay as they were last seen.
+ */
+export function recordMissedPeriods(db: Db, userId: string, result: Plan, now: number): void {
+  const period = (key: string) => key.slice(key.lastIndexOf(":") + 1);
+  tx(db, () => {
+    for (const e of result.report) {
+      if (e.itemKind !== "meeting" || FLAGGED.has(e.reason)) continue;
+      run(
+        db,
+        `INSERT INTO meeting_missed (meeting_id, period, status, reason, at)
+         SELECT id, ?, ?, ?, ? FROM meetings WHERE id = ? AND user_id = ?
+         ON CONFLICT (meeting_id, period) DO UPDATE SET status = excluded.status,
+           reason = excluded.reason, at = excluded.at`,
+        period(e.demandKey),
+        e.status === "unplaced" ? "unplaced" : "conflict",
+        e.reason,
+        now,
+        e.itemId,
+        userId,
+      );
+    }
+    for (const p of result.placements)
+      if (p.kind === "meeting" && !p.conflict)
+        run(
+          db,
+          "DELETE FROM meeting_missed WHERE meeting_id = ? AND period = ?",
+          p.itemId,
+          period(p.key),
+        );
+    run(
+      db,
+      `DELETE FROM meeting_missed WHERE meeting_id IN (SELECT id FROM meetings WHERE user_id = ?)
+         AND 'meeting:' || meeting_id || ':' || period IN (SELECT key FROM dismissed_keys WHERE user_id = ?)`,
+      userId,
+      userId,
+    );
+    const today = utcToLocal(planningZone(db, userId), now).date;
+    for (const m of all<{ id: string; frequency: string }>(
+      db,
+      "SELECT id, frequency FROM meetings WHERE user_id = ?",
+      userId,
+    ))
+      run(
+        db,
+        "DELETE FROM meeting_missed WHERE meeting_id = ? AND period < ?",
+        m.id,
+        missedSince(JSON.parse(m.frequency) as MeetingFrequency, today),
+      );
+  });
+}
+
+/**
+ * The history of missed periods that is kept and listed: 90 days, or the
+ * last three periods when they are longer, so the boost can count two.
+ */
+function missedSince(f: MeetingFrequency, today: LocalDate): LocalDate {
+  let p = today;
+  for (let i = 0; i < 3; i++) p = stepPeriod(f, p, -1);
+  const days90 = addDays(today, -90);
+  return p < days90 ? p : days90;
+}
+
+/** The periods of a meeting removed for lack of time (MEET-02 rule 34), oldest first. */
+export const skippedPeriods = (db: Db, meetingId: string) =>
+  all<{ period: string; reason: string }>(
+    db,
+    "SELECT period, reason FROM meeting_missed WHERE meeting_id = ? AND status = 'unplaced' ORDER BY period",
+    meetingId,
+  );
+
+/** The start of the period after (`n` 1) or before (`n` -1) the period that starts on `p`. */
+function stepPeriod(f: MeetingFrequency, p: LocalDate, n: 1 | -1): LocalDate {
+  if (f.period === "daily") return addDays(p, n * (f.everyDays ?? 1));
+  if (f.period === "weekly") return addDays(p, n * 7 * f.everyWeeks);
+  let out = p;
+  for (let i = 0; i < (f.everyMonths ?? 1); i++)
+    out = `${addDays(out, n === 1 ? 32 : -1).slice(0, 8)}01`;
+  return out;
+}
+
+export interface Boost {
+  period: LocalDate;
+  level: Level;
+  missed: number;
+}
+
+/**
+ * MEET-02 rule 16: when periods ended with no time, the next period uses one
+ * level higher, and P1 after two in a row. A period that ended with no
+ * occurrence and no record (no hours, or skipped by hand) neither counts nor
+ * breaks the run; a held one ends the boost. The stored level stays.
+ */
+export function meetingBoost(
+  db: Db,
+  userId: string,
+  m: MeetingRow,
+  now: number,
+): Boost | undefined {
+  const missed = new Set(
+    all<{ period: string }>(db, "SELECT period FROM meeting_missed WHERE meeting_id = ?", m.id).map(
+      (r) => r.period,
+    ),
+  );
+  if (missed.size === 0) return undefined;
+  const f = JSON.parse(m.frequency) as MeetingFrequency;
+  const zone = planningZone(db, userId);
+  const ended = (p: LocalDate) => localToUtc(zone, stepPeriod(f, p, 1), 0) <= now;
+  const last = [...missed].filter(ended).sort().at(-1);
+  if (!last) return undefined;
+  // A period kept in conflict has a managed row but no time: it is missed, not held.
+  const held = new Set(
+    all<{ key: string }>(
+      db,
+      "SELECT key FROM managed_events WHERE user_id = ? AND kind = 'meeting' AND source_id = ?",
+      userId,
+      m.id,
+    )
+      .map((r) => r.key.slice(r.key.lastIndexOf(":") + 1))
+      .filter((p) => !missed.has(p)),
+  );
+  let period = stepPeriod(f, last, 1);
+  for (let i = 0; i < 400 && ended(period); i++) {
+    if (held.has(period) || missed.has(period)) return undefined;
+    period = stepPeriod(f, period, 1);
+  }
+  const first = [...missed].sort()[0] as LocalDate;
+  let count = 0;
+  for (let p = last; count < 2 && p >= first && !held.has(p); p = stepPeriod(f, p, -1))
+    if (missed.has(p)) count++;
+  const level = (count >= 2 ? 1 : Math.max(1, m.level - 1)) as Level;
+  return level < m.level ? { period, level, missed: count } : undefined;
 }
