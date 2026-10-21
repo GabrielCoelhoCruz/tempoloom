@@ -260,7 +260,14 @@ const READ = [
   "list_automations",
   "list_staged_changes",
 ];
-const STAGE = ["propose_create_event", "propose_update_event", "propose_delete_event"];
+const STAGE = [
+  "propose_create_event",
+  "propose_update_event",
+  "propose_delete_event",
+  "propose_rsvp",
+  "propose_focus_time",
+  "propose_log_task_time",
+];
 
 describe("MCP tool annotations", () => {
   it("marks apply as destructive, the propose tools as non-destructive writes, and the read tools as read-only and idempotent", async () => {
@@ -338,6 +345,20 @@ describe("MCP output schemas", () => {
       title: "Dentist (moved)",
     })) as { id: string };
     await check("propose_delete_event", { event_id: "ext:c1:review" });
+    run(
+      s.db,
+      `INSERT INTO events (calendar_id, event_id, summary, start_ms, end_ms, attendees, attendee_count, organizer_self, self_response)
+       VALUES ('c1', 'invite', 'Budget sync', ?, ?, '[]', 2, 0, 'needsAction')`,
+      T0 + 3 * DAY,
+      T0 + 3 * DAY + HOUR,
+    );
+    await check("propose_rsvp", { event_id: "ext:c1:invite", response: "declined" });
+    await check("propose_focus_time", { duration_minutes: 60, ...day });
+    await check("propose_log_task_time", {
+      task_id: "t-open",
+      start: new Date(T0 - 3 * HOUR).toISOString(),
+      minutes: 90,
+    });
     await check("list_staged_changes");
     // m1 moves after its move was staged: that change is stale.
     run(s.db, "UPDATE managed_events SET start_ms = start_ms + 900000 WHERE id = 'm1'");

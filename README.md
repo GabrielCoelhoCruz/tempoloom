@@ -107,6 +107,15 @@ npm start
 
 Open `BASE_URL` and sign in with Google or with a CalDAV account.
 
+Behind a reverse proxy or tunnel (for example for the https URL that remote
+AI tool connectors need), set `TRUSTED_PROXIES` to the proxy's addresses,
+comma-separated, for example `TRUSTED_PROXIES=127.0.0.1,::1`. Only for a
+request from one of these addresses does Tempoloom read the client address
+from `X-Forwarded-For`; it takes the rightmost address that is not a trusted
+proxy. Without it, every request has the proxy's address, and limits per
+address (AI tool registration: 20 per hour, IPv6 counted per /64) apply to the
+whole server. Do not list an address that clients can reach directly.
+
 Webhooks go only to public `https` hosts. To send them to a receiver on a
 private network, set `WEBHOOK_ALLOW_PRIVATE=true`.
 

@@ -109,6 +109,8 @@ export function Automations() {
   const [filter, setFilter] = useState(
     () => new URLSearchParams(location.search).get("type") ?? "",
   );
+  // Habits rule 7: a search box filters the list by title.
+  const [query, setQuery] = useState("");
   const [confirming, setConfirming] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [over, setOver] = useState<number | null>(null);
@@ -158,7 +160,10 @@ export function Automations() {
   };
 
   if (!list) return null;
-  const shown = list.filter((a) => !filter || a.type === filter);
+  const words = query.trim().toLowerCase();
+  const shown = list.filter(
+    (a) => (!filter || a.type === filter) && (!words || a.name.toLowerCase().includes(words)),
+  );
   const quality = shown.filter((a) => a.level === null);
 
   const entry = (a: Automation, group: Automation[]) => {
@@ -314,6 +319,16 @@ export function Automations() {
             </option>
           ))}
         </select>
+        <label class="inline" for="automation-search">
+          Search
+        </label>
+        <input
+          id="automation-search"
+          type="search"
+          placeholder="Title"
+          value={query}
+          onInput={(e) => setQuery(e.currentTarget.value)}
+        />
       </div>
       {error && (
         <p class="error" role="alert">
@@ -344,7 +359,9 @@ export function Automations() {
           >
             <h2>{LEVEL_NAMES[level]}</h2>
             <ol class="list">{group.map((a) => entry(a, group))}</ol>
-            {group.length === 0 && <p class="meta">No automations</p>}
+            {group.length === 0 && (
+              <p class="meta">{words ? "No automations match" : "No automations"}</p>
+            )}
           </section>
         );
       })}

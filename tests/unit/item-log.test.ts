@@ -130,6 +130,7 @@ describe("recordItemChanges", () => {
         },
       ],
       report: [entry({})],
+      taskOrder: [],
     };
     log(
       db,
@@ -164,10 +165,25 @@ describe("recordItemChanges", () => {
     ]);
     const skipped = entry({ demandKey: "habit:h1:2026-11-06", reason: "away" });
     const changed = snapshot({ habits: [{ id: "h1", changed: true }] as Snapshot["habits"] });
-    log(db, userId, before, written, changed, { placements: [], report: [skipped] }, NOW);
-    log(db, userId, before, new Map(), snapshot(), { placements: [], report: [skipped] }, NOW + 1, [
-      skipped,
-    ]);
+    log(
+      db,
+      userId,
+      before,
+      written,
+      changed,
+      { placements: [], report: [skipped], taskOrder: [] },
+      NOW,
+    );
+    log(
+      db,
+      userId,
+      before,
+      new Map(),
+      snapshot(),
+      { placements: [], report: [skipped], taskOrder: [] },
+      NOW + 1,
+      [skipped],
+    );
     expect(
       itemChanges(db, userId, "habit", "h1", NOW).map((c) => [c.demand_key, c.action, c.reason]),
     ).toEqual([
@@ -209,6 +225,7 @@ describe("recordItemChanges", () => {
         },
       ],
       report: [conflict, late],
+      taskOrder: [],
     };
     log(
       db,
@@ -251,7 +268,7 @@ describe("recordItemChanges", () => {
       rows(db, userId),
       new Map(),
       snapshot(),
-      { placements: [], report: [skipped] },
+      { placements: [], report: [skipped], taskOrder: [] },
       NOW,
       [skipped],
     );
@@ -270,11 +287,19 @@ describe("recordItemChanges", () => {
       [],
       new Map(),
       snapshot(),
-      { placements: [], report: [old] },
+      { placements: [], report: [old], taskOrder: [] },
       NOW - 31 * 24 * H,
     );
     expect(itemChanges(db, userId, "habit", "h1", NOW - 31 * 24 * H)).toHaveLength(1);
-    log(db, userId, [], new Map(), snapshot(), { placements: [], report: [entry({})] }, NOW);
+    log(
+      db,
+      userId,
+      [],
+      new Map(),
+      snapshot(),
+      { placements: [], report: [entry({})], taskOrder: [] },
+      NOW,
+    );
     expect(
       all<{ k: string }>(db, "SELECT demand_key AS k FROM item_changes").map((r) => r.k),
     ).toEqual(["habit:h1:2026-11-03"]);
