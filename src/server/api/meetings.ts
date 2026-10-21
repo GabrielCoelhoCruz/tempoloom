@@ -12,6 +12,7 @@ import { editedEventSettings, eventSettingsInput, newEventSettings } from "../ev
 import { jsonBody, notFound } from "../http.ts";
 import { createItemHours, dropItemHours, itemHoursSchema, saveItemHours } from "../item-hours.ts";
 import type { Mailer } from "../mail.ts";
+import { isPublicMailDomain } from "../mail-domains.ts";
 import { availabilityMap } from "../meeting-availability.ts";
 import { notifyMeetingCancelled } from "../meeting-mail.ts";
 import { adoptableSeries, type Series } from "../meeting-series.ts";
@@ -33,6 +34,7 @@ import type { ProviderPool } from "../providers/index.ts";
 import { getSettings } from "../settings.ts";
 import { cacheEvent } from "../sync/pull.ts";
 import type { SyncService } from "../sync/service.ts";
+import { domainOf, membership } from "../teams.ts";
 import { homeZone } from "../travel.ts";
 import { badRequest, hhmm, hoursSetId, nextRank } from "./items.ts";
 
@@ -98,8 +100,51 @@ const meetingInput = z.object({
   eventSettings: eventSettingsInput.optional(),
   /** Attach the rules to this recurring series (meetings-flexible.md rule 1). */
   series: z.object({ calendarId: z.string(), seriesId: z.string() }).optional(),
+  /**
+   * Guests from outside only (automations-library.md entry 32): no guest on the
+   * user's own mail domain and no user of this instance. Checked on create.
+   */
+  externalOnly: z.boolean().optional(),
 });
 type MeetingInput = z.infer<typeof meetingInput>;
+
+/**
+ * Refuses a guest on the user's own domain or a person of the user's team
+ * (library entry 32). Own domains come from the user's mail addresses: the
+ * main email and the added calendar accounts, not ICS feeds (their name is a
+ * feed title), and not public mail services. Only the user's team is checked,
+ * so the refusal tells nothing about users of other teams.
+ */
+function checkExternal(db: Db, userId: string, attendees: { email: string }[]) {
+  const own = new Set(
+    all<{ email: string }>(
+      db,
+      `SELECT email FROM users WHERE id = ?
+       UNION SELECT email FROM accounts WHERE user_id = ? AND provider <> 'ics'`,
+      userId,
+      userId,
+    )
+      .map((r) => domainOf(r.email))
+      .filter((d) => d !== "" && !isPublicMailDomain(d)),
+  );
+  const why = "Recurring client meetings take external guests only.";
+  for (const { email } of attendees) {
+    const d = domainOf(email);
+    // A subdomain counts too: eu.acme.com for a user at acme.com.
+    if ([...own].some((o) => d === o || d.endsWith(`.${o}`)))
+      badRequest("attendees", `${email.toLowerCase()} is on your own domain. ${why}`);
+    if (
+      one(
+        db,
+        `SELECT 1 FROM users u JOIN team_members m ON m.user_id = u.id
+         WHERE u.email = ? COLLATE NOCASE AND m.team_id = ?`,
+        email,
+        membership(db, userId).team.id,
+      )
+    )
+      badRequest("attendees", `${email.toLowerCase()} is in your team. ${why}`);
+  }
+}
 
 function rowFrom(
   db: Db,
@@ -526,6 +571,7 @@ export function meetingRoutes(
   r.post("/meetings", async (c) => {
     const user = c.get("user");
     const body = await jsonBody(c, meetingInput);
+    if (body.externalOnly) checkExternal(db, user.id, body.attendees);
     const id = randomUUID();
     const series = body.series
       ? adoptableSeries(db, user.id, now()).find(

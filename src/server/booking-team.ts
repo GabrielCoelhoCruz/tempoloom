@@ -196,11 +196,18 @@ interface Previous {
   eventId: string | null;
 }
 
-/** Thrown before any write when the host's calendar is on a disconnected account (accounts rule 16). */
+/**
+ * Thrown before any write when the host's calendar is on a disconnected
+ * account (accounts rule 16). A move of a booking whose event is on that
+ * account says "account_disconnected" (accounts rules 19, 22).
+ */
 export class CalendarDisconnected extends Error {
   readonly email: string;
-  constructor(email: string) {
-    super("calendar_disconnected");
+  constructor(
+    email: string,
+    message: "calendar_disconnected" | "account_disconnected" = "calendar_disconnected",
+  ) {
+    super(message);
     this.email = email;
   }
 }
@@ -249,10 +256,16 @@ export async function writeBookingEvents(
 ): Promise<{ calendarId: string; eventId: string } | null> {
   const touched = new Set<string>();
   const calendarOf = (id: string) =>
-    one<{ account_id: string; provider_id: string; provider: string }>(
+    one<{
+      account_id: string;
+      provider_id: string;
+      provider: string;
+      email: string;
+      status: string;
+    }>(
       db,
-      `SELECT c.account_id, c.provider_id, a.provider FROM calendars c JOIN accounts a ON a.id = c.account_id
-       WHERE c.id = ?`,
+      `SELECT c.account_id, c.provider_id, a.provider, a.email, a.status FROM calendars c
+       JOIN accounts a ON a.id = c.account_id WHERE c.id = ?`,
       id,
     );
   const remove = async (userId: string, calendarId: string, eventId: string) => {
@@ -295,16 +308,27 @@ export async function writeBookingEvents(
   let placed: { calendarId: string; eventId: string } | null = null;
   const sameHost = prev && next && prev.hostId === next.hostId && prev.calendarId && prev.eventId;
   const oldEmail = prev?.eventId ? frozenEmail(db, prev.calendarId) : null;
-  if (oldEmail) throw new CalendarDisconnected(oldEmail);
+  if (oldEmail)
+    throw new CalendarDisconnected(
+      oldEmail,
+      next ? "account_disconnected" : "calendar_disconnected",
+    );
   const target =
     next && !sameHost ? hostCalendar(db, next.hostId, next.event.calendarId ?? null) : undefined;
   if (prev?.calendarId && prev.eventId && !sameHost) {
     await remove(prev.hostId, prev.calendarId, prev.eventId);
   }
+  // The old event's account was removed: the booking moves to a new event, so
+  // the booker can still change it. A disconnected account still holds the old
+  // event, which Tempoloom cannot delete now: the move waits for the reconnect,
+  // or the booking would show twice after it (connected calendars rules 19, 22).
+  const old = sameHost && prev?.calendarId ? calendarOf(prev.calendarId) : undefined;
+  if (old && old.status !== "ok") throw new Error("account_disconnected");
   if (next && write) {
-    if (sameHost && prev?.calendarId && prev.eventId) {
-      const cal = calendarOf(prev.calendarId);
-      if (!cal) throw new Error("no_calendar");
+    // The account of the host's calendar sends the invitations (connected calendars rule 22).
+    if (sameHost && prev?.calendarId && prev.eventId && old?.status === "ok") {
+      const cal = old;
+      write.organizer = cal.email;
       const ev = await sync
         .pool(next.hostId)
         .get(cal.account_id)
@@ -312,13 +336,17 @@ export async function writeBookingEvents(
       cacheEvent(db, prev.calendarId, ev);
       placed = { calendarId: prev.calendarId, eventId: ev.id };
     } else {
-      if (!target) throw new Error("no_calendar");
+      // The old event's account was removed: a new event on the host's calendar.
+      const cal = target ?? hostCalendar(db, next.hostId, next.event.calendarId ?? null);
+      if (!cal) throw new Error("no_calendar");
+      const sender = calendarOf(cal.id)?.email;
+      if (sender) write.organizer = sender;
       const ev = await sync
         .pool(next.hostId)
-        .get(target.account_id)
-        .insertEvent(target.provider_id, write);
-      cacheEvent(db, target.id, ev);
-      placed = { calendarId: target.id, eventId: ev.id };
+        .get(cal.account_id)
+        .insertEvent(cal.provider_id, write);
+      cacheEvent(db, cal.id, ev);
+      placed = { calendarId: cal.id, eventId: ev.id };
     }
     touched.add(next.hostId);
   }

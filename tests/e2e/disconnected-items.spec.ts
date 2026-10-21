@@ -257,34 +257,34 @@ test("a booking link whose calendar is on a disconnected account shows an error 
     const link = page.locator('[data-link-title="Chat"]');
 
     await disconnect(page, six.username, extra.email);
+    // The link's error (accounts rules 16, 19): one message, with the account.
+    const why = `Paused: ${extra.email} is disconnected. Reconnect it on the Account page, or choose another account for booked events.`;
     await page.getByRole("link", { name: "Booking links" }).click();
-    await expect(link.getByTestId("calendar-disconnected")).toHaveText(note(extra.email));
+    await expect(link.getByTestId("link-target-error")).toHaveText(why);
+    await expect(link.getByTestId("calendar-disconnected")).toHaveCount(0);
     await page.reload();
-    await expect(link.getByTestId("calendar-disconnected")).toHaveText(note(extra.email));
+    await expect(link.getByTestId("link-target-error")).toHaveText(why);
 
-    // A booker is refused; no event is written to any calendar.
+    // A booker is refused: the page offers no times; no event is written to any calendar.
     const v = await visitor(browser);
     await v.goto("/book/zed/chat");
-    await slot(v, at(tue, "10:00")).click();
-    const form = v.getByTestId("book-form");
-    await form.getByLabel("Your name").fill("Ann");
-    await form.getByLabel("Your email").fill("ann@example.com");
-    const refused = v.waitForResponse(
-      (r) => r.url().endsWith("/book") && r.request().method() === "POST",
+    await expect(v.getByTestId("paused")).toHaveText(
+      "This link takes no bookings right now. Ask the organizer for another way to meet.",
     );
-    await form.getByRole("button", { name: "Book" }).click();
-    expect((await refused).status()).toBe(503);
-    await expect(form.getByRole("alert")).toHaveText(
-      "This booking link cannot take bookings right now. Please try again later.",
-    );
-    await expect(v.getByTestId("booked")).toHaveCount(0);
+    await expect(v.getByTestId("times")).toHaveCount(0);
     expect(booked(await week(cal))).toHaveLength(0);
 
     // Reconnect: the error goes and the booking goes to the added calendar.
     await reconnect(page, six, extra.email);
     await page.getByRole("link", { name: "Booking links" }).click();
     await expect(link).toBeVisible();
+    await expect(link.getByTestId("link-target-error")).toHaveCount(0);
     await expect(link.getByTestId("calendar-disconnected")).toHaveCount(0);
+    await v.goto("/book/zed/chat");
+    await slot(v, at(tue, "10:00")).click();
+    const form = v.getByTestId("book-form");
+    await form.getByLabel("Your name").fill("Ann");
+    await form.getByLabel("Your email").fill("ann@example.com");
     await form.getByRole("button", { name: "Book" }).click();
     await expect(v.getByTestId("booked")).toBeVisible();
     await eventually(

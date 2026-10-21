@@ -151,7 +151,7 @@ describe("bookings and disconnected accounts (accounts rule 16)", () => {
         parties: [],
         event: event("o-cal2"),
       }),
-    ).rejects.toThrow("calendar_disconnected");
+    ).rejects.toThrow("account_disconnected");
     await expect(writeBookingEvents(db, sync, "bk", prev, null)).rejects.toThrow(
       "calendar_disconnected",
     );

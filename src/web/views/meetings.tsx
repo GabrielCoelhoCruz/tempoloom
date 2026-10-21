@@ -416,6 +416,7 @@ export function Meetings() {
       description: text("description"),
       location: text("location"),
       ...(seed ? { series: { calendarId: seed.calendarId, seriesId: seed.seriesId } } : {}),
+      ...(!ed && preset?.externalOnly ? { externalOnly: true } : {}),
     };
   };
 

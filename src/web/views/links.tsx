@@ -239,7 +239,13 @@ export function Links() {
             </a>
           </div>
           {peopleLine(l) && <div class="meta">{peopleLine(l)}</div>}
-          <CalendarDisconnected email={l.disconnected} />
+          {l.targetError ? (
+            <p class="error" role="alert" data-testid="link-target-error">
+              {l.targetError}
+            </p>
+          ) : (
+            <CalendarDisconnected email={l.disconnected} />
+          )}
           {endpoints.length > 0 && (
             <div class="meta" data-testid="link-webhooks">
               Send webhooks to:{" "}

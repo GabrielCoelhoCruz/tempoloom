@@ -56,11 +56,12 @@ of ranges instead of a named set. It is not saved as a named set and other
 items cannot use it. Tasks cannot use item-specific hours (E-0172, E-0077,
 E-0081, E-0176).
 
-Tempoloom decision: habits have item-specific hours: the chosen weekdays,
-each with one range. Tempoloom keeps them as a hidden set that no hours menu
-or hours page lists and no other item can use; it goes with the habit. Focus
-time, flexible meetings and booking links do not offer item-specific hours
-yet.
+Tempoloom decision: habits, focus time, flexible meetings and booking links
+have item-specific hours: the chosen weekdays, each with one range (stored
+hours with more ranges stay until the user changes the range). Tempoloom
+keeps them as a hidden set that no hours menu or hours page lists and no
+other item can use; it goes with its item. On a booking link each person
+(organizer or pool member) has their own item-specific hours.
 
 ## Behavior
 
