@@ -88,9 +88,13 @@ export interface HabitItem {
   skips: LocalDate[];
   exclusions: Interval[];
   changed: boolean;
-  /** Occurrence date -> the time of day the user chose for it (habits rule 30). */
+  /**
+   * Occurrence date -> the time the user chose for it (habits rule 30), in
+   * minutes from that date: 1440 or more is a later day, below 0 an earlier one
+   * (the day its event is on).
+   */
   rescheduled?: Partial<Record<LocalDate, number>>;
-  /** Occurrence date -> the snooze time of day: the first legal start at or after it (habits rule 31). */
+  /** Occurrence date -> the snooze time, as `rescheduled`: the first legal start at or after it (habits rule 31). */
   notBefore?: Partial<Record<LocalDate, number>>;
   /** Order rules relative to other habits and flexible meetings (habits rule 18). */
   dependencies?: HabitDependency[];

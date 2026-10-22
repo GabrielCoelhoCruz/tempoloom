@@ -211,6 +211,21 @@ export function weekdayOf(date: LocalDate): IsoWeekday {
   return (js === 0 ? 7 : js) as IsoWeekday;
 }
 
+/**
+ * A habit occurrence's chosen time (habits-automation.md rules 30, 31), stored
+ * in minutes from the start of the occurrence's date: each 1440 minutes is one
+ * day on, so the time can be on the day its event moved to. localToUtc(zone,
+ * date, minute) gives the instant.
+ */
+export function chosenMinute(date: LocalDate, day: LocalDate, minuteOfDay: number): number {
+  return diffDays(date, day) * 1440 + minuteOfDay;
+}
+
+/** The day of a chosen time (see chosenMinute). */
+export function chosenDay(date: LocalDate, minute: number): LocalDate {
+  return addDays(date, Math.floor(minute / 1440));
+}
+
 export function diffDays(from: LocalDate, to: LocalDate): number {
   const [y1, m1, d1] = parseDate(from);
   const [y2, m2, d2] = parseDate(to);
