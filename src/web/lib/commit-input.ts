@@ -37,21 +37,25 @@ export function useCommit(
 /**
  * The same for a checkbox that saves on change: until its save ends it shows
  * the value the user clicked, also when the page draws again with the stored
- * value meanwhile. Saves run one after the other, so a fast second click
- * saves the value it shows and that save ends last.
+ * value meanwhile. Saves run one after the other (unlike `useCommit`), so a
+ * fast second click saves the value it shows and that save ends last.
  */
 export function useCommitCheck(value: boolean, onCommit: (checked: boolean) => Promise<unknown>) {
   const [draft, setDraft] = useState<boolean | null>(null);
-  const [queue] = useState(() => ({ last: Promise.resolve() as Promise<unknown> }));
+  const [queue] = useState(() => ({ last: Promise.resolve() as Promise<unknown>, waiting: 0 }));
   return {
     checked: draft ?? value,
     onChange: (e: TargetedEvent<HTMLInputElement>) => {
       const checked = e.currentTarget.checked;
       setDraft(checked);
+      queue.waiting++;
+      // The draft ends with the last queued save, not with an earlier save of the same value.
       queue.last = queue.last
         .then(() => onCommit(checked))
         .catch(() => {})
-        .finally(() => setDraft((d) => (d === checked ? null : d)));
+        .finally(() => {
+          if (--queue.waiting === 0) setDraft(null);
+        });
     },
   };
 }

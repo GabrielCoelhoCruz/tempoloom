@@ -5,10 +5,13 @@
 // Ways it can fail:
 // 1. An older GET answer that comes last overwrites the newer one, so the page
 //    shows the data from before a change (and an edit starts from it).
-// 2. A newer GET that fails takes the older answer down with it.
-// 3. Other requests (writes) or other URLs wait for or take another answer.
+// 2. A newer GET that fails on the network or with a 5xx takes the older
+//    answer down with it; a newer 401 or 404 loses to an older 200.
+// 3. An older GET waits for a newer one, so a burst of polls stalls the page.
+// 4. Other requests (writes) or other URLs wait for or take another answer.
+// 5. The page keeps an entry for each URL it ever read.
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { api } from "../../src/web/lib/api.ts";
+import { api, getsInFlight } from "../../src/web/lib/api.ts";
 
 /** A fetch whose answers the test sends, in any order. */
 function fakeFetch() {
@@ -42,18 +45,47 @@ describe("GET answers out of order", () => {
     expect(await before).toEqual({ n: 2 });
   });
 
-  it("waits for the newer GET when the older answer comes first", async () => {
+  it("does not wait for a newer GET that is still on its way", async () => {
     const calls = fakeFetch();
     const before = api<{ n: number }>("GET", "/api/meetings");
     const after = api<{ n: number }>("GET", "/api/meetings");
     await tick();
     calls[0]?.answer(200, { n: 1 });
+    expect(await before).toEqual({ n: 1 });
     calls[1]?.answer(200, { n: 2 });
-    expect(await before).toEqual({ n: 2 });
     expect(await after).toEqual({ n: 2 });
   });
 
-  it("keeps the older answer when the newer GET fails", async () => {
+  it("gives a newer 404 to an older GET that answers 200 after it", async () => {
+    const calls = fakeFetch();
+    const before = api("GET", "/api/me");
+    const after = api("GET", "/api/me");
+    await tick();
+    calls[1]?.answer(404, {});
+    await expect(after).rejects.toThrow("API error 404");
+    calls[0]?.answer(200, { n: 1 });
+    await expect(before).rejects.toThrow("API error 404");
+  });
+
+  it("keeps no entry for a URL once its GETs ended", async () => {
+    const calls = fakeFetch();
+    const a = api("GET", "/api/planner/events?from=1");
+    const b = api("GET", "/api/planner/events?from=1");
+    const c = api("GET", "/api/planner/events?from=2");
+    await tick();
+    expect(getsInFlight()).toBe(2);
+    calls[1]?.answer(200, { n: 2 });
+    await b;
+    // The older GET of the first URL still needs the newer answer.
+    expect(getsInFlight()).toBe(2);
+    calls[0]?.answer(200, { n: 1 });
+    expect(await a).toEqual({ n: 2 });
+    calls[2]?.answer(500, {});
+    await expect(c).rejects.toThrow("API error 500");
+    expect(getsInFlight()).toBe(0);
+  });
+
+  it("keeps the older answer when the newer GET fails with a 5xx", async () => {
     const calls = fakeFetch();
     const before = api<{ n: number }>("GET", "/api/meetings");
     const after = api<{ n: number }>("GET", "/api/meetings");

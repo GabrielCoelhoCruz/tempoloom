@@ -11,23 +11,47 @@ export class ApiError extends Error {
 /** Identifies this page, so live updates skip the changes it made itself. */
 export const CLIENT_ID = `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`;
 
-/** The answer of the newest GET of each URL (one entry per URL the page read). */
-const newest = new Map<string, Promise<unknown>>();
+/** The GETs of one URL: how many started and are on their way, and the newest answer so far. */
+interface Gets {
+  started: number;
+  pending: number;
+  done: { seq: number; answer: () => unknown } | null;
+}
+
+/** One entry per URL with a GET on its way; the entry goes when the last one ends. */
+const gets = new Map<string, Gets>();
+
+/** The URLs with a GET on its way (for the tests). */
+export const getsInFlight = () => gets.size;
+
+/** An answer of the server; a network error or a 5xx is no answer and never wins. */
+const answered = (err: unknown) => err instanceof ApiError && err.status < 500;
 
 /**
- * Sends a request. A GET whose answer comes after a newer GET of the same URL
- * started gives the newer answer: a page that read its data again (a live
- * update, then its own save) never shows an older answer that came last.
+ * Sends a request. A GET gives the answer of the newest GET of the same URL
+ * that has ended: an older answer that comes after a newer one gives the newer
+ * one (also a newer 401 or 404), so a page that read its data again (a live
+ * update, then its own save) never shows the older data. A GET never waits for
+ * a newer one: the newest answer already there is used.
  */
 export function api<T>(method: string, url: string, body?: unknown): Promise<T> {
   if (method !== "GET") return send<T>(method, url, body);
-  const answer: Promise<T> = send<T>(method, url, body).then((data) => {
-    const last = newest.get(url) as Promise<T> | undefined;
-    // When the newer GET fails, this answer is the newest one there is.
-    return last === undefined || last === answer ? data : last.catch(() => data);
-  });
-  newest.set(url, answer);
-  return answer;
+  const g = gets.get(url) ?? { started: 0, pending: 0, done: null };
+  gets.set(url, g);
+  const seq = ++g.started;
+  g.pending++;
+  const end = (answer: () => T, counts: boolean): T => {
+    if (counts && (g.done === null || g.done.seq < seq)) g.done = { seq, answer };
+    if (--g.pending === 0) gets.delete(url);
+    return (g.done && g.done.seq > seq ? g.done.answer : answer)() as T;
+  };
+  return send<T>(method, url, body).then(
+    (data) => end(() => data, true),
+    (err: unknown) =>
+      end(() => {
+        throw err;
+      }, answered(err)),
+  );
 }
 
 async function send<T>(method: string, url: string, body?: unknown): Promise<T> {

@@ -136,6 +136,17 @@ describe("meeting edits", () => {
     ]);
   });
 
+  it("refuses an invalid number in a partial edit and keeps the meeting", async () => {
+    const { db, call, status } = setup();
+    const { id } = (await call("POST", "/meetings", sync1("Sync"))) as { id: string };
+    // NaN from the form is null in JSON.
+    expect(await status("PUT", `/meetings/${id}`, { durationMinutes: null })).toBe(400);
+    expect(await status("PUT", `/meetings/${id}`, { shortestMinutes: 60 })).toBe(400);
+    expect(
+      one<{ d: number }>(db, "SELECT duration_minutes AS d FROM meetings WHERE id = ?", id)?.d,
+    ).toBe(30);
+  });
+
   it("previews an edit in place of the saved meeting, with its creation day", async () => {
     const { clock, call } = setup();
     const { id } = (await call("POST", "/meetings", sync1("Sync"))) as { id: string };

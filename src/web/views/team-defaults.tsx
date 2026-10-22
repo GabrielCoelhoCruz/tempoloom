@@ -2,6 +2,7 @@
 // new member (docs/specs/teams-settings-templates.md rules 3-11).
 import { useCallback, useEffect, useState } from "preact/hooks";
 import { api } from "../lib/api.ts";
+import { changedFields } from "../lib/changed.ts";
 import { onLinkClick } from "../lib/router.ts";
 import { LEVEL_NAMES } from "../lib/state.ts";
 import { HoursEditor } from "./settings.tsx";
@@ -233,8 +234,11 @@ export function TeamDefaults() {
         onCancel={() => setEditing(null)}
         onSave={(t) =>
           void act(async () => {
-            if (editing) await api("PUT", `/api/team/habit-templates/${editing.id}`, t);
-            else await api("POST", "/api/team/habit-templates", t);
+            if (editing) {
+              // Only the changed fields, so a change saved elsewhere stays.
+              const { id, ...opened } = editing;
+              await api("PUT", `/api/team/habit-templates/${id}`, changedFields(opened, t));
+            } else await api("POST", "/api/team/habit-templates", t);
             setEditing(null);
           }, "Template saved.")
         }

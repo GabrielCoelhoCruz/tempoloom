@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import { DEFAULT_DECLINE_MESSAGE } from "../../shared/decline.ts";
 import { api } from "../lib/api.ts";
+import { useFirstBody } from "../lib/changed.ts";
 import { duration } from "../lib/format.ts";
 import { templateFromUrl } from "../lib/library.ts";
 import { planNow } from "../lib/state.ts";
@@ -151,6 +152,7 @@ export function MeetingOverloadSection() {
   const [editing, setEditing] = useState<Overload | null>(null);
   const [error, setError] = useState<string | null>(null);
   const section = useRef<HTMLElement>(null);
+  const first = useFirstBody<ReturnType<typeof read>>();
 
   const startEdit = (o: Overload, kinds: { id: string; kind: string }[]) => {
     setEditing(o);
@@ -201,9 +203,8 @@ export function MeetingOverloadSection() {
     }
   };
 
-  const submit = (e: Event) => {
-    e.preventDefault();
-    const f = new FormData(e.currentTarget as HTMLFormElement);
+  const read = (form: HTMLFormElement) => {
+    const f = new FormData(form);
     const minutes = (k: string) => {
       const v = String(f.get(k) ?? "").trim();
       return v === "" ? null : Math.round(Number(v) * 60);
@@ -212,7 +213,7 @@ export function MeetingOverloadSection() {
     const chosen =
       String(f.get("hoursSetId") ?? "") ||
       (editing ? hours.find((x) => x.kind === "work")?.id : undefined);
-    const body = {
+    return {
       title: String(f.get("title") ?? "").trim(),
       dailyMaxMinutes: minutes("daily"),
       weeklyMaxMinutes: minutes("weekly"),
@@ -222,10 +223,16 @@ export function MeetingOverloadSection() {
       autoDecline: { enabled: decline, message: String(f.get("message") ?? "").trim() },
       taskSearchId: searchId,
     };
+  };
+  const submit = (e: Event) => {
+    e.preventDefault();
+    const form = e.currentTarget as HTMLFormElement;
+    const body = read(form);
     const id = editing?.id;
     void act(async () => {
       if (!id) return api("POST", "/api/meeting-overloads", body);
-      await api("PATCH", `/api/meeting-overloads/${id}`, body);
+      // Only the changed fields, so a change saved elsewhere stays.
+      await api("PATCH", `/api/meeting-overloads/${id}`, first.changed(form, body));
       stopEdit();
     });
   };
@@ -241,6 +248,7 @@ export function MeetingOverloadSection() {
         class="form"
         data-testid="overload-form"
         onSubmit={submit}
+        ref={first.ref(read)}
         key={editing?.id ?? template?.slug ?? "new"}
       >
         {editing && <p class="status wide">Changing {editing.title}</p>}
