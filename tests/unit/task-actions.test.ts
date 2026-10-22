@@ -9,7 +9,11 @@
 //    not move (a task made on the planner has one locked chunk, TSK-7).
 // 3. Snooze unlocks a chunk that has started.
 // 4. Bulk start puts the start after a due date.
-// 5. A "due in 0 days" default (or a start delay as long as due-in) is saved,
+// 5. Bulk done keeps a next-up task in the queue (NXT-11), so it still takes
+//    the first free time.
+// 6. Bulk priority down keeps the other tasks' placements, so the lowered
+//    task keeps its early slot (PRI-50, NXT-10).
+// 7. A "due in 0 days" default (or a start delay as long as due-in) is saved,
 //    and every new task then fails.
 import { Hono } from "hono";
 import { describe, expect, it } from "vitest";
@@ -157,6 +161,57 @@ describe("bulk edit", () => {
     expect(JSON.stringify(await res.json())).toContain("Due date must be after the start date (A)");
     expect(task(a)?.start_after).toBe(T0);
     expect(task(b)?.start_after).toBe(T0);
+  });
+});
+
+describe("bulk order changes", () => {
+  const rows = (db: ReturnType<typeof setup>["db"]) =>
+    Object.fromEntries(
+      all<{ title: string; next_up_rank: number | null; rules_changed_at: number }>(
+        db,
+        "SELECT title, next_up_rank, rules_changed_at FROM tasks",
+      ).map((r) => [r.title, r]),
+    );
+
+  it("takes a next-up task that is marked done out of the queue; the others keep their ranks", async () => {
+    const { db, call, create, task } = setup();
+    const first = await create({ title: "First", nextUp: true });
+    await create({ title: "Second", nextUp: true });
+    expect(rows(db).First?.next_up_rank).toBe(0);
+    expect(rows(db).Second?.next_up_rank).toBe(1);
+    const res = await call("POST", "/tasks/bulk", { ids: [first], change: { action: "done" } });
+    expect(res.status).toBe(200);
+    expect(task(first)?.status).toBe("done");
+    expect(rows(db).First?.next_up_rank).toBeNull();
+    expect(rows(db).Second?.next_up_rank).toBe(1);
+  });
+
+  it("places the other open tasks again on a priority down, and only the moved task on a priority up", async () => {
+    const { db, call, create } = setup();
+    const low = await create({ title: "Low", level: 2 });
+    await create({ title: "Other", level: 2 });
+    const done = await create({ title: "Done", level: 2 });
+    expect(
+      (await call("POST", "/tasks/bulk", { ids: [done], change: { action: "done" } })).status,
+    ).toBe(200);
+    run(db, "UPDATE tasks SET rules_changed_at = 0");
+    // Up (P2 to P1): the others keep their placements (SCH-88).
+    expect(
+      (await call("POST", "/tasks/bulk", { ids: [low], change: { action: "level", level: 1 } }))
+        .status,
+    ).toBe(200);
+    expect(rows(db).Low?.rules_changed_at).toBe(T0);
+    expect(rows(db).Other?.rules_changed_at).toBe(0);
+    run(db, "UPDATE tasks SET rules_changed_at = 0");
+    // Down (P1 to P3): every other open task is placed again, so it can take the freed time.
+    expect(
+      (await call("POST", "/tasks/bulk", { ids: [low], change: { action: "level", level: 3 } }))
+        .status,
+    ).toBe(200);
+    expect(rows(db).Low?.rules_changed_at).toBe(T0);
+    expect(rows(db).Other?.rules_changed_at).toBe(T0);
+    // A done task is not placed again.
+    expect(rows(db).Done?.rules_changed_at).toBe(0);
   });
 });
 

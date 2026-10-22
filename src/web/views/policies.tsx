@@ -1,7 +1,8 @@
 // Team policies (docs/specs/teams-policies.md): what applies to me, agenda
 // reminders, and for admins the policies, agenda templates and reports.
-import { useCallback, useEffect, useState } from "preact/hooks";
+import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import { ApiError, api } from "../lib/api.ts";
+import { changedFields } from "../lib/changed.ts";
 import { dateText, formatWhen } from "../lib/format.ts";
 import { zone } from "../lib/state.ts";
 
@@ -234,6 +235,14 @@ function goalOf(d: Draft): Record<string, unknown> {
   }
 }
 
+function bodyOf(draft: Draft) {
+  const scope =
+    draft.attribute.trim() && draft.value.trim()
+      ? [{ attribute: draft.attribute.trim(), value: draft.value.trim() }]
+      : [];
+  return { name: draft.name, scope, goal: goalOf(draft), enabled: draft.enabled };
+}
+
 function PolicyForm({
   draft,
   setDraft,
@@ -248,16 +257,21 @@ function PolicyForm({
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
   const set = <K extends keyof Draft>(k: K, v: Draft[K]) => setDraft({ ...draft, [k]: v });
   const num = (e: Event) => Number((e.currentTarget as HTMLInputElement).value);
+  // The body of the policy as the form opened: an edit sends only the fields
+  // it changed, so a change saved elsewhere stays.
+  const opened = useRef<{ id: string | null; body: ReturnType<typeof bodyOf> } | null>(null);
+  if (opened.current?.id !== draft.id) opened.current = { id: draft.id, body: bodyOf(draft) };
   const save = async (e: Event) => {
     e.preventDefault();
     setMessage(null);
-    const scope =
-      draft.attribute.trim() && draft.value.trim()
-        ? [{ attribute: draft.attribute.trim(), value: draft.value.trim() }]
-        : [];
-    const body = { name: draft.name, scope, goal: goalOf(draft), enabled: draft.enabled };
+    const body = bodyOf(draft);
     try {
-      if (draft.id) await api("PATCH", `/api/policies/${draft.id}`, body);
+      if (draft.id)
+        await api(
+          "PATCH",
+          `/api/policies/${draft.id}`,
+          opened.current ? changedFields(opened.current.body, body) : body,
+        );
       else await api("POST", "/api/policies", { ...body, type: draft.type });
       setDraft(EMPTY);
       await onSaved();
