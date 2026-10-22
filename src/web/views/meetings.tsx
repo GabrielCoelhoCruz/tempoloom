@@ -33,6 +33,7 @@ import {
 
 import {
   Attention,
+  AUTO_LOCK,
   adopted,
   CHANGE_REASONS,
   DEFENSE,
@@ -229,6 +230,7 @@ export function Meetings() {
       whenUnplaceable: text("whenUnplaceable"),
       leadHours: Number(f.get("leadHours")),
       autoReschedule: text("autoReschedule"),
+      autoLock: text("autoLock") || null,
       starting: text("starting") || null,
       description: text("description"),
       location: text("location"),
@@ -548,6 +550,16 @@ export function Meetings() {
           <select name="autoReschedule">
             {MOVES.map(([v, l]) => (
               <option value={v} key={v} selected={v === (ed?.auto_reschedule ?? "moderate")}>
+                {l}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Auto-lock
+          <select name="autoLock">
+            {AUTO_LOCK.map(([v, l]) => (
+              <option value={v} key={v} selected={v === (ed?.auto_lock ?? "")}>
                 {l}
               </option>
             ))}

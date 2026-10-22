@@ -22,6 +22,7 @@ export interface Meeting extends Missed {
   when_unplaceable: string;
   lead_minutes: number;
   auto_reschedule: string;
+  auto_lock: string | null;
   defense: string;
   frequency: Frequency;
   item_hours: string | null;
@@ -150,6 +151,7 @@ export interface Series {
 export const FLAGS: Record<string, string> = {
   "budget-reached": "Move limit reached: Tempoloom used today's automatic moves.",
   "policy-none": "No automatic moves: this meeting has a conflict at its time.",
+  "locked-conflict": "Locked: this occurrence has a conflict at its time and does not move.",
 };
 export const CHANGE_REASONS: Record<string, string> = {
   conflict: "moved for a conflict",
@@ -160,6 +162,13 @@ export const CHANGE_REASONS: Record<string, string> = {
   manualSkip: "skipped",
   seriesDeleted: "series deleted in the calendar; turned off",
 };
+/** MEET-02 rule 14: "" follows the setting for flexible meetings (Settings, Auto-lock). */
+export const AUTO_LOCK: [string, string][] = [
+  ["", "As in settings"],
+  ["off", "Off"],
+  ["day", "Each day"],
+  ["week", "Each week"],
+];
 export const MOVES: [string, string][] = [
   ["none", "No automatic moves"],
   ["conservative", "1 per day"],

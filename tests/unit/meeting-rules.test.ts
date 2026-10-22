@@ -113,6 +113,7 @@ describe("meeting edits", () => {
         idealTime: "10:30",
         level: 3,
         leadHours: 24,
+        autoLock: "week",
       }),
     )) as { id: string };
     const before = one<Record<string, unknown>>(db, "SELECT * FROM meetings WHERE id = ?", id);
