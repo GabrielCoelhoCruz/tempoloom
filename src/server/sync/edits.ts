@@ -1,8 +1,38 @@
 // Reads user edits of managed events from the event cache after a pull
 // (docs/specs/planning-calendar-edits.md).
-import { addDays, localToUtc, utcToLocal } from "../../shared/time.ts";
+import { addDays, chosenMinute, localToUtc, utcToLocal } from "../../shared/time.ts";
 import { all, type Db, one, run, tx } from "../db.ts";
 import type { ManagedRow } from "../planner/push.ts";
+import { planningZone } from "../travel.ts";
+
+/**
+ * `habit_reschedules.not_before` of a stored event day, not a chosen time:
+ * the occurrence's event on that day was deleted (habits rule 29), and the
+ * occurrence's date has passed. The plan places it again on that day.
+ */
+export const REOPENED_CHOICE = 2;
+
+/**
+ * Habits rule 29 for an occurrence whose date has passed: its event's day
+ * keeps it in the plan (see passedOpen in plan.ts). A choice of the user wins.
+ */
+function keepDeletedOccurrence(db: Db, userId: string, row: ManagedRow, zone: string, now: number) {
+  const date = row.key.slice(`habit:${row.source_id}:`.length);
+  const day = utcToLocal(zone, row.start_ms).date;
+  const today = utcToLocal(zone, now).date;
+  if (date >= today || day < today) return;
+  run(
+    db,
+    `INSERT INTO habit_reschedules (user_id, habit_id, date, minute, not_before) VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT (habit_id, date) DO UPDATE SET minute = excluded.minute WHERE not_before = ?`,
+    userId,
+    row.source_id,
+    date,
+    chosenMinute(date, day, 0),
+    REOPENED_CHOICE,
+    REOPENED_CHOICE,
+  );
+}
 
 export interface EditSummary {
   moved: number;
@@ -92,6 +122,8 @@ export function applyCalendarEdits(
     if (!w || w.window_start === null || w.window_end === null) return false;
     return row.end_ms <= w.window_start || row.start_ms >= w.window_end;
   };
+  let zoneOfPlan: string | undefined;
+  const planZone = () => (zoneOfPlan ??= planningZone(db, userId, zone));
   tx(db, () => {
     for (const row of rows) {
       const cached = one<{
@@ -143,6 +175,7 @@ export function applyCalendarEdits(
             );
           } else {
             exclude(db, userId, row.kind, row.source_id, row.start_ms, row.end_ms);
+            if (row.kind === "habit") keepDeletedOccurrence(db, userId, row, planZone(), now);
           }
         } else if (
           row.kind === "task" &&

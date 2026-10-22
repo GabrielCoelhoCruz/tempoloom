@@ -36,6 +36,7 @@ import { all, type Db, one, run } from "../db.ts";
 import { fragmentationPreference } from "../policies/model.ts";
 import type { CalendarProvider } from "../providers/types.ts";
 import { getSettings, type Settings } from "../settings.ts";
+import { REOPENED_CHOICE } from "../sync/edits.ts";
 import { planningZone } from "../travel.ts";
 import { afterPush } from "./after-push.ts";
 import { categoryContext, colorFor, externalPaints } from "./categories.ts";
@@ -227,17 +228,32 @@ export function loadSnapshot(
   const today = utcToLocal(zone, now).date;
   const rescheduled = new Map<string, Partial<Record<LocalDate, number>>>();
   const snoozed = new Map<string, Partial<Record<LocalDate, number>>>();
+  const reopenedOn = new Map<string, Partial<Record<LocalDate, LocalDate>>>();
   // Each choice whose day is today or later, also when the occurrence's date
   // has passed: a minute of 1440 or more is on a later day (chosenMinute).
   for (const r of all<{ habit_id: string; date: string; minute: number; not_before: number }>(
     db,
-    "SELECT habit_id, date, minute, not_before FROM habit_reschedules WHERE user_id = ? AND (date >= ? OR minute >= 1440)",
+    `SELECT habit_id, date, minute, not_before FROM habit_reschedules WHERE user_id = ?
+       AND (date >= ? OR (minute >= 1440 AND date(date, '+' || (minute / 1440) || ' days') >= ?))`,
     userId,
     today,
+    today,
   )) {
-    if (chosenDay(r.date, r.minute) < today) continue;
+    const day = chosenDay(r.date, r.minute);
+    if (day < today) continue;
+    if (r.not_before === REOPENED_CHOICE) {
+      reopenedOn.set(r.habit_id, { ...reopenedOn.get(r.habit_id), [r.date]: day });
+      continue;
+    }
     const into = r.not_before ? snoozed : rescheduled;
     into.set(r.habit_id, { ...into.get(r.habit_id), [r.date]: r.minute });
+  }
+  // Rule 33: a passed occurrence whose event today nobody started goes back to today.
+  for (const r of reopen) {
+    const date = r.key.slice(`habit:${r.source_id}:`.length);
+    if (r.kind !== "habit" || date >= today || utcToLocal(zone, r.start_ms).date !== today)
+      continue;
+    reopenedOn.set(r.source_id, { ...reopenedOn.get(r.source_id), [date]: today });
   }
   const eventSettings = new Map<string, EventSettings>();
   const hoursKind = new Map(hoursRows.map((h) => [h.id, h.kind]));
@@ -342,6 +358,7 @@ export function loadSnapshot(
       changed: h.rules_changed_at > lastPlannedAt,
       ...(rescheduled.has(h.id) ? { rescheduled: rescheduled.get(h.id) ?? {} } : {}),
       ...(snoozed.has(h.id) ? { notBefore: snoozed.get(h.id) ?? {} } : {}),
+      ...(reopenedOn.has(h.id) ? { reopened: reopenedOn.get(h.id) ?? {} } : {}),
       ...(h.dependencies !== "[]"
         ? { dependencies: JSON.parse(h.dependencies) as HabitDependency[] }
         : {}),
@@ -755,6 +772,26 @@ function habitGuestFields(guests: string[], organizer: string, userEmail: string
   return attendees.length > 0 ? { organizer, attendees, quietGuests: true } : {};
 }
 
+/**
+ * Clean-up of stored habit choices (habits-automation.md rules 30, 31): a
+ * choice whose day is more than two days before today (a margin for a change
+ * of the planning zone) and whose occurrence has no event that has not ended
+ * is never read again (loadSnapshot reads a choice only from its day on).
+ */
+export function pruneHabitChoices(db: Db, userId: string, zone: string, now: number): void {
+  run(
+    db,
+    `DELETE FROM habit_reschedules AS c WHERE c.user_id = ?
+       AND (CASE WHEN c.minute >= 1440 THEN date(c.date, '+' || (c.minute / 1440) || ' days')
+            ELSE c.date END) < ?
+       AND NOT EXISTS (SELECT 1 FROM managed_events m WHERE m.user_id = c.user_id
+         AND m.key = 'habit:' || c.habit_id || ':' || c.date AND m.end_ms > ?)`,
+    userId,
+    addDays(utcToLocal(zone, now).date, -2),
+    now,
+  );
+}
+
 export async function replanUser(ctx: ReplanContext, userId: string): Promise<ReplanResult | null> {
   const { db, now } = ctx;
   const user = one<{ time_zone: string; email: string }>(
@@ -1046,6 +1083,7 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
   logChanges(true);
   recordMeetingChanges(db, userId, rows, now, last);
   recordMissedPeriods(db, userId, result, now);
+  pruneHabitChoices(db, userId, zone, now);
   // Rule 8: a new color also repaints managed events that ended, up to 90 days back.
   // Rule 12, "repaint all": every managed event gets its color again, also where
   // the user changed the color in the calendar. The run only lists the paints;
