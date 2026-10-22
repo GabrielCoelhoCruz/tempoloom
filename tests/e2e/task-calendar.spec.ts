@@ -148,7 +148,15 @@ test("task chunks on a secondary calendar hold their time against other items bu
   await expect(slot(v, nine)).toBeVisible();
 
   // A colleague's flexible meeting with the user takes the chunk's time; the chunk moves.
-  await addMeeting(other, { title: "DEF-Sync", guests: EMAIL, idealTime: "09:00", days: ["Mon"] });
+  // It starts in the test week: an occurrence in the rest of the real week
+  // (a Friday run) would push Monday's away (cadence, meetings-flexible.md rule 18).
+  await addMeeting(other, {
+    title: "DEF-Sync",
+    guests: EMAIL,
+    idealTime: "09:00",
+    days: ["Mon"],
+    more: (form) => form.getByLabel("Starting").fill(W),
+  });
   await eventually(
     () => range(colleague.cal),
     (l) => expect(titled(l, "DEF-Sync").map(span)).toEqual([`${W} 09:00-09:30`]),
