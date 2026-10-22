@@ -16,6 +16,21 @@ const WINDOW_PAST = 84 * DAY;
 const WINDOW_FUTURE = 120 * DAY;
 /** A full read runs again when less than this much future remains in the window. */
 const WINDOW_REFRESH = 90 * DAY;
+
+/**
+ * Was a row read by the last pull of its calendar? The providers return the
+ * events that overlap [window_start, window_end) (CalDAV time-range, Google
+ * timeMin/timeMax), so a row that ends at window_start or starts at
+ * window_end was not read. A calendar without a window (never read) counts as
+ * all read. Only a row that was read can be gone from the cache because the
+ * user deleted it. The window is the stored one of the last read, never one
+ * from the current time: the time decides only what the next read asks for.
+ * SQL over a row alias `m` (start_ms, end_ms) and a calendars alias `c`.
+ */
+export function readByLastPullSql(m: string, c: string): string {
+  return `(${c}.window_start IS NULL OR ${c}.window_end IS NULL
+    OR (${m}.end_ms > ${c}.window_start AND ${m}.start_ms < ${c}.window_end))`;
+}
 /**
  * Mirroring keeps copies 12 months ahead, longer than the planning window
  * (sync-calendar-mirroring.md rule 14; planning-scheduling-window.md WIN-7).
