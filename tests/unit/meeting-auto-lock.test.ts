@@ -10,13 +10,18 @@
 //    a meeting that follows the setting locks the other meetings too.
 // 4. A locked occurrence in conflict moves, or keeps its time with no flag and
 //    no suggested times; one with no conflict, or in the past, is flagged.
+
+import { Hono } from "hono";
 import { describe, expect, it } from "vitest";
 import type { ExternalEvent, MeetingItem, Snapshot } from "../../src/scheduler/model.ts";
 import { plan } from "../../src/scheduler/plan.ts";
 import { ensureUser } from "../../src/server/accounts.ts";
+import { meetingRoutes } from "../../src/server/api/meetings.ts";
+import type { AppEnv } from "../../src/server/app.ts";
 import { all, type Db, openDb, run } from "../../src/server/db.ts";
-import { autoLock, meetingTurnedOn } from "../../src/server/planner/auto-lock.ts";
+import { autoLock, lockMeetingNow, meetingTurnsOn } from "../../src/server/planner/auto-lock.ts";
 import { settingsSchema } from "../../src/server/settings.ts";
+import type { SyncService } from "../../src/server/sync/service.ts";
 import { localToUtc } from "../../src/shared/time.ts";
 
 const ZONE = "Europe/Berlin";
@@ -87,6 +92,19 @@ const lockedKeys = (db: Db) =>
   all<{ key: string }>(db, "SELECT key FROM managed_events WHERE locked = 1 ORDER BY key").map(
     (r) => r.key,
   );
+type Choice = "off" | "day" | "week" | null;
+/** The edit path without a plan run between its two steps. */
+const meetingTurnedOn = (
+  db: Db,
+  userId: string,
+  s: ReturnType<typeof settings>,
+  before: Choice,
+  after: Choice,
+  id: string,
+  now: number,
+) => {
+  if (meetingTurnsOn(s, before, after)) lockMeetingNow(db, userId, s, after, id, now);
+};
 const settings = (meeting: "off" | "day" | "week") =>
   settingsSchema.parse({ weekStart: 7, autoLock: { meeting } });
 
@@ -245,5 +263,115 @@ describe("a locked occurrence in conflict (MEET-02 rule 7, acceptance test 9)", 
     expect(flags(started)).toEqual([]);
     const open = plan(snapshot({ meetings: [meeting], current: current(false), events: ev }));
     expect([at10(open), flags(open)]).toEqual([[[false, false]], []]);
+  });
+});
+
+describe("more conflicts of a locked occurrence (MEET-02 rule 7)", () => {
+  it("is flagged in a period with no meeting hours left, with no suggested times", () => {
+    const ev = [busy(at(MON, "10:00"), at(MON, "11:00"))];
+    const noHours = { work: { ...WORK, 1: [] } };
+    const r = plan(
+      snapshot({ meetings: [meeting], current: current(true), events: ev, hours: noHours }),
+    );
+    expect(r.report.map((e) => [e.reason, e.suggestions?.length ?? 0])).toEqual([
+      ["locked-conflict", 0],
+    ]);
+    expect(r.placements.filter((p) => p.itemId === "m").map((p) => p.conflict)).toEqual([true]);
+  });
+
+  it("is flagged when another locked Tempoloom event overlaps it", () => {
+    const other = { ...meeting, id: "n", title: "n" };
+    const both = [
+      ...current(true),
+      {
+        key: `meeting:n:${MON}`,
+        itemId: "n",
+        start: at(MON, "10:15"),
+        end: at(MON, "10:45"),
+        locked: true,
+      },
+    ];
+    const r = plan(snapshot({ meetings: [meeting, other], current: both }));
+    expect(r.report.map((e) => [e.itemId, e.reason]).sort()).toEqual([
+      ["m", "locked-conflict"],
+      ["n", "locked-conflict"],
+    ]);
+    // One locked occurrence alone: no flag.
+    const alone = plan(snapshot({ meetings: [meeting, other], current: both.slice(0, 1) }));
+    expect(alone.report.filter((e) => e.itemId === "m")).toEqual([]);
+  });
+});
+
+describe("PUT /api/meetings/:id: a new time and auto-lock on in one save (LCK-32, MEET-02 rule 4)", () => {
+  it("places the occurrence with the new rules first, then locks it at its new time", async () => {
+    const db = openDb(":memory:");
+    const NOW = at(TUE, "08:00");
+    const user = ensureUser(db, "owner@example.com", "Owner", NOW);
+    run(db, "UPDATE users SET time_zone = ? WHERE id = ?", ZONE, user.id);
+    run(db, "PRAGMA foreign_keys = OFF");
+    run(
+      db,
+      "INSERT INTO calendars (id, account_id, provider_id, name) VALUES ('cal', 'acc', 'p', 'Cal')",
+    );
+    const steps: string[] = [];
+    const sync = {
+      request() {},
+      exclusive: async (_u: string, fn: (pool: unknown) => Promise<unknown>) => fn({}),
+      // The plan run: the unlocked occurrence takes the new ideal time.
+      async runNow() {
+        steps.push("plan");
+        const m = all<{ ideal_minute: number }>(db, "SELECT ideal_minute FROM meetings")[0];
+        const start = localToUtc(ZONE, TUE, m?.ideal_minute ?? 0);
+        run(
+          db,
+          "UPDATE managed_events SET start_ms = ?, end_ms = ? WHERE locked = 0",
+          start,
+          start + 1_800_000,
+        );
+      },
+    } as unknown as SyncService;
+    const app = new Hono<AppEnv>();
+    app.use("*", async (c, next) => {
+      c.set("user", user as never);
+      await next();
+    });
+    app.route(
+      "/api",
+      meetingRoutes(db, sync, () => NOW),
+    );
+    const body = (idealTime: string, autoLock: Choice) => ({
+      title: "M",
+      attendees: [{ email: "dana@example.com" }],
+      frequency: { period: "daily" },
+      idealTime,
+      durationMinutes: 30,
+      autoLock,
+    });
+    const send = (method: string, path: string, b: unknown) =>
+      app.request(`/api${path}`, {
+        method,
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(b),
+      });
+    const created = await send("POST", "/meetings", body("15:00", "off"));
+    expect(created.status).toBe(201);
+    const { id } = (await created.json()) as { id: string };
+    run(
+      db,
+      `INSERT INTO managed_events (id, user_id, calendar_id, event_id, key, kind, source_id, start_ms, end_ms, busy, title)
+       VALUES ('occ', ?, 'cal', 'ev', ?, 'meeting', ?, ?, ?, 1, 'M')`,
+      user.id,
+      `meeting:${id}:${TUE}`,
+      id,
+      at(TUE, "15:00"),
+      at(TUE, "15:30"),
+    );
+    expect((await send("PUT", `/meetings/${id}`, body("16:00", "day"))).status).toBe(200);
+    expect(steps).toEqual(["plan"]);
+    const occ = all<{ start_ms: number; locked: number }>(
+      db,
+      "SELECT start_ms, locked FROM managed_events",
+    );
+    expect(occ).toEqual([{ start_ms: at(TUE, "16:00"), locked: 1 }]);
   });
 });

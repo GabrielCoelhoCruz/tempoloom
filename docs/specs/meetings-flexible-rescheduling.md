@@ -112,8 +112,9 @@ how Tempoloom reports occurrences it cannot place. Placement itself is in
     default: the setting for flexible meetings in `planning-locks.md`, `day`
     by default), `off`, `day` and `week`. The week is the planning week (the
     week start set in Tempoloom). An edit from `off` to `day` or `week` locks
-    the current day or week at once (LCK-32). A locked occurrence that a
-    conflict overlaps keeps its time and is flagged with reason
+    the current day or week at once (LCK-32), after the occurrences take the
+    other rules of that edit (rule 4). A locked occurrence that a conflict
+    (also another locked event) overlaps keeps its time and is flagged with reason
     `lockedConflict` and suggested times (rule 11).
 15. An occurrence that Tempoloom places after the auto-lock ran for its day
     or week is not locked by that run (E-0045; `planning-locks.md` LCK-32)

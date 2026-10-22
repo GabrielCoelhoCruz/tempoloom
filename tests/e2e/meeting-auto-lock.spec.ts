@@ -14,7 +14,8 @@
 // - "As in settings" does not follow the setting, or turning the
 //   setting on locks the meetings with their own choice too    -> AL-S, AL-O
 // - an occurrence placed after the run is locked by it (rule 15),
-//   or a meeting turned from off to each day waits a day       -> AL-L
+//   or a meeting turned from off to each day waits a day, or
+//   locks at its old time when the same save moves it          -> AL-L, AL-K
 // - an auto-locked occurrence moves on a conflict, or stays with no
 //   flag and no suggested times (rule 7, acceptance test 9)    -> AL-D Tuesday
 // - the choices are lost after a reload                        -> edit form
@@ -191,6 +192,14 @@ test("auto-lock per meeting: each week locks the planning week on its first day,
   await expect(page.locator('[data-meeting-title="AL-S"]').getByTestId("meeting-flag")).toHaveCount(
     0,
   );
+  // Acceptance test 9: the same state after a reload.
+  await page.reload();
+  await page.getByRole("link", { name: "Meetings" }).click();
+  await expect(flag).toContainText(`${day(1)} 10:00`, LONG);
+  await expect(flag.getByTestId("suggestion").first()).toBeVisible();
+  await expect(
+    page.getByTestId("attention-item").and(page.locator('[data-reason="locked-conflict"]')),
+  ).toContainText("AL-D");
 
   // The setting for all flexible meetings goes from off to each day: the
   // meetings "as in settings" lock today at once; "off" stays open.
@@ -209,18 +218,30 @@ test("auto-lock per meeting: each week locks the planning week on its first day,
     60_000,
   );
 
-  // Rule 15: a meeting made after today's run is placed open and stays open.
+  // Rule 15: meetings made after today's run (each day) and this week's run
+  // (each week) are placed open and stay open.
   await meeting("AL-L", "15:00", "Each day");
-  const late = (tue: "open" | "locked") => (l: Evs) =>
-    expect(states(l, "AL-L", 1)).toEqual(
-      daily("15:00", "15:30", (d) => (d === 1 ? tue : "open"), 1),
-    );
-  await eventually(() => twoWeeks(cal), late("open"), 60_000);
+  await meeting("AL-K", "12:00", "Each week");
+  const late =
+    (tue: "open" | "locked", hhmm = "15:00", end = "15:30") =>
+    (l: Evs) =>
+      expect(states(l, "AL-L", 1)).toEqual(daily(hhmm, end, (d) => (d === 1 ? tue : "open"), 1));
+  const weekly = (l: Evs) =>
+    expect(states(l, "AL-K", 1)).toEqual(daily("12:00", "12:30", all("open"), 1));
+  await eventually(
+    () => twoWeeks(cal),
+    (l) => {
+      late("open")(l);
+      weekly(l);
+    },
+    60_000,
+  );
   await planNow(page);
   await planNow(page);
   late("open")(await twoWeeks(cal));
+  weekly(await twoWeeks(cal));
   // Off and then each day again locks today at once (LCK-32).
-  const editLock = async (title: string, label: string) => {
+  const editLock = async (title: string, label: string, idealTime?: string) => {
     await page.getByRole("link", { name: "Meetings" }).click();
     await page
       .locator(`[data-meeting-title="${title}"]`)
@@ -228,6 +249,7 @@ test("auto-lock per meeting: each week locks the planning week on its first day,
       .click();
     const form = page.getByTestId("meeting-form");
     await form.getByLabel("Auto-lock").selectOption({ label });
+    if (idealTime) await form.getByLabel("Ideal time").fill(idealTime);
     const saved = page.waitForResponse(
       (r) =>
         r.request().method() === "PUT" && new URL(r.url()).pathname.startsWith("/api/meetings/"),
@@ -238,8 +260,10 @@ test("auto-lock per meeting: each week locks the planning week on its first day,
   await editLock("AL-L", "Off");
   await planNow(page);
   late("open")(await twoWeeks(cal));
-  await editLock("AL-L", "Each day");
-  await eventually(() => twoWeeks(cal), late("locked"), 60_000);
+  // The same save also moves the ideal time: the occurrences take the new
+  // time first, then today's locks there, not at the old time (MEET-02 rule 4).
+  await editLock("AL-L", "Each day", "16:00");
+  await eventually(() => twoWeeks(cal), late("locked", "16:00", "16:30"), 60_000);
 
   // Apply a suggested time to the flagged occurrence: a move by hand, locked.
   await page.getByRole("link", { name: "Meetings" }).click();
@@ -265,6 +289,7 @@ test("auto-lock per meeting: each week locks the planning week on its first day,
     ["AL-S", ""],
     ["AL-O", "off"],
     ["AL-L", "day"],
+    ["AL-K", "week"],
   ] as const) {
     await page
       .locator(`[data-meeting-title="${title}"]`)

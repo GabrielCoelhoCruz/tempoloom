@@ -28,10 +28,12 @@ export function turnedOn(before: Modes, after: Modes): AutoLockKind[] {
   return AUTO_LOCK_KINDS.filter((k) => before[k] === "off" && after[k] !== "off");
 }
 
+/** The auto_lock_runs key: a kind, or one flexible meeting with its own choice. */
+export type LockKey = AutoLockKind | `meeting:${string}`;
+
 /** A lock schedule: a kind, or one flexible meeting with its own choice (MEET-02 rule 14). */
 interface Target {
-  /** The auto_lock_runs key: the kind, or `meeting:<id>`. */
-  key: string;
+  key: LockKey;
   kind: AutoLockKind;
   mode: Modes[AutoLockKind];
   /** The SQL filter on source_id, and its arguments. */
@@ -59,7 +61,7 @@ function targets(db: Db, userId: string, modes: Modes): Target[] {
       args: kind === "meeting" ? ids : [],
     })),
     ...own.map((m) => ({
-      key: `meeting:${m.id}`,
+      key: `meeting:${m.id}` as const,
       kind: "meeting" as const,
       mode: m.auto_lock,
       where: "AND source_id = ?",
@@ -86,7 +88,7 @@ export function autoLock(
   userId: string,
   settings: Pick<Settings, "autoLock" | "weekStart">,
   now: number,
-  force: readonly string[] = [],
+  force: readonly LockKey[] = [],
 ): void {
   const zone = planningZone(db, userId);
   const today = utcToLocal(zone, now).date;
@@ -139,30 +141,34 @@ function lockPeriod(
   );
 }
 
+/** LCK-32 for one flexible meeting (MEET-02 rule 14): true when an edit turns its auto-lock from off to on. */
+export function meetingTurnsOn(
+  settings: Pick<Settings, "autoLock">,
+  before: Modes["meeting"] | null,
+  after: Modes["meeting"] | null,
+): boolean {
+  const mode = (m: Modes["meeting"] | null) => m ?? settings.autoLock.meeting;
+  return mode(before) === "off" && mode(after) !== "off";
+}
+
 /**
- * LCK-32 for one flexible meeting (MEET-02 rule 14): an edit that turns its
- * auto-lock from off to day or week locks its current day or week at once. A
- * meeting with its own choice gets its own run; one that follows the setting
- * locks without a record, as the setting's run covers it from then on.
+ * LCK-32 for one flexible meeting: locks its current day or week at once. A
+ * meeting with its own choice also records the run, so the hour from 01:00 does
+ * not run again in that period; one that follows the setting is covered by the
+ * setting's run from then on.
  */
-export function meetingTurnedOn(
+export function lockMeetingNow(
   db: Db,
   userId: string,
   settings: Pick<Settings, "autoLock" | "weekStart">,
-  before: Modes["meeting"] | null,
-  after: Modes["meeting"] | null,
+  choice: Modes["meeting"] | null,
   meetingId: string,
   now: number,
 ): void {
-  const mode = (m: Modes["meeting"] | null) => m ?? settings.autoLock.meeting;
-  const next = mode(after);
-  if (mode(before) !== "off" || next === "off") return;
-  if (after !== null) {
-    autoLock(db, userId, settings, now, [`meeting:${meetingId}`]);
-    return;
-  }
+  const mode = choice ?? settings.autoLock.meeting;
+  if (mode === "off") return;
   const zone = planningZone(db, userId);
-  const p = period(zone, utcToLocal(zone, now).date, next, settings.weekStart);
+  const p = period(zone, utcToLocal(zone, now).date, mode, settings.weekStart);
   lockPeriod(
     db,
     userId,
@@ -170,4 +176,13 @@ export function meetingTurnedOn(
     p,
     now,
   );
+  if (choice !== null)
+    run(
+      db,
+      `INSERT INTO auto_lock_runs (user_id, kind, period) VALUES (?, ?, ?)
+       ON CONFLICT (user_id, kind) DO UPDATE SET period = excluded.period`,
+      userId,
+      `meeting:${meetingId}`,
+      p.key,
+    );
 }

@@ -1630,9 +1630,9 @@ E2E[361] = ["u72_autolock", "u32_autolock"]
 E2E_NOTES[361] = ("Each meeting has its own auto-lock choice in the meeting form: as in settings (the default; the setting for "
                   "flexible meetings is each day by default), off, each day or each week. The run is in the hour from 01:00 in the "
                   "planning zone; each week runs on the first day of the planning week (the week start set in Tempoloom). An "
-                  "occurrence placed after the run stays open; an edit from off to on locks the current day or week at once (LCK-32). "
-                  "A locked occurrence keeps its time on a conflict and is flagged with up to 3 suggested times (reason "
-                  "locked-conflict); applying one is a move by hand and locks")
+                  "occurrence placed after the run stays open; an edit from off to on locks the current day or week at once (LCK-32), after the occurrences take the new rules of that edit. "
+                  "A locked occurrence keeps its time on a conflict (also with another locked event, or in a period with no "
+                  "meeting hours left) and is flagged with up to 3 suggested times (reason locked-conflict); applying one is a move by hand and locks")
 # --- end U72 ---
 
 # Google Calendar proof. docs/e2e-google-run.tsv records a full E2E run on Google

@@ -20,7 +20,7 @@ import { isPublicMailDomain } from "../mail-domains.ts";
 import { availabilityMap } from "../meeting-availability.ts";
 import { notifyMeetingCancelled } from "../meeting-mail.ts";
 import { adoptableSeries, type Series } from "../meeting-series.ts";
-import { meetingTurnedOn } from "../planner/auto-lock.ts";
+import { lockMeetingNow, meetingTurnsOn } from "../planner/auto-lock.ts";
 import { withState } from "../planner/markers.ts";
 import { logChange, meetingBoost, skippedPeriods } from "../planner/meeting-log.ts";
 import { rescheduleSlot } from "../planner/meeting-reschedule.ts";
@@ -640,6 +640,7 @@ export function meetingRoutes(
     const body = await jsonBody(c, meetingInput);
     // Read in the queue: a plan run may write the series meanwhile (rule 2).
     // The edit is saved here; the plan run writes it to the series master.
+    let turnsOn = false;
     await sync.exclusive(user.id, async () => {
       const old = own(c.req.param("id"), user.id);
       const t = now();
@@ -675,17 +676,24 @@ export function meetingRoutes(
           false,
         );
         if (row.hours_set_id !== old.hours_set_id) dropItemHours(db, old.hours_set_id);
-        meetingTurnedOn(
-          db,
-          user.id,
-          getSettings(db, user.id),
-          old.auto_lock,
-          row.auto_lock,
-          old.id,
-          t,
-        );
+        turnsOn = meetingTurnsOn(getSettings(db, user.id), old.auto_lock, row.auto_lock);
       });
     });
+    if (turnsOn) {
+      // LCK-32: the occurrences take the new rules first (MEET-02 rule 4), then
+      // the current day or week locks at their new times.
+      await sync.runNow(user.id);
+      await sync.exclusive(user.id, async () => {
+        // Read again: the meeting may be gone or changed meanwhile.
+        const m = one<MeetingRow>(
+          db,
+          "SELECT * FROM meetings WHERE id = ? AND user_id = ?",
+          c.req.param("id"),
+          user.id,
+        );
+        if (m) lockMeetingNow(db, user.id, getSettings(db, user.id), m.auto_lock, m.id, now());
+      });
+    }
     changed(user.id);
     return c.json({ ok: true });
   });
@@ -946,6 +954,12 @@ export function meetingRoutes(
       if (adopted(cur)) await releaseSeries(db, pool, cur);
       else await endOwnSeries(db, (id) => pool.get(id), cur, now(), []);
       run(db, "DELETE FROM meetings WHERE id = ?", m.id);
+      run(
+        db,
+        "DELETE FROM auto_lock_runs WHERE user_id = ? AND kind = ?",
+        user.id,
+        `meeting:${m.id}`,
+      );
       dropItemHours(db, m.hours_set_id);
       return future.map((o) => ({ start: o.start_ms, end: o.end_ms }));
     });
