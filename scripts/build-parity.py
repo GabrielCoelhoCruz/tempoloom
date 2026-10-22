@@ -1402,6 +1402,15 @@ E2E_NOTES.update({
 })
 # --- end U40 ---
 
+# --- U45: habit snooze and reschedule on the event's day (habit-extras.spec.ts) ---
+T.update({
+    "u45_moved_day": "snooze and reschedule keep the occurrence on the day its event moved to (rules 30, 31)",
+})
+E2E[182] = E2E[182] + ["u45_moved_day"]
+E2E[183] = E2E[183] + ["u45_moved_day"]
+E2E_NOTES[183] = E2E_NOTES[183] + ". Reschedule and snooze use the day the occurrence's event is on, also when rule 14 or the user moved it to another day"
+# --- end U45 ---
+
 # --- U39: flexible meetings part C (meeting-extras.spec.ts) ---
 T.update({
     "u39_map": "the availability map shows each guest's meeting hours in my time zone and the overlap; hours I set for one guest replace theirs in the map and in placement (rules 6-7, 11)",

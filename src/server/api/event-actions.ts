@@ -3,7 +3,7 @@
 // details panel needs to offer them (habits-automation.md rules 6, 8, 30).
 import { type Context, Hono } from "hono";
 import { z } from "zod";
-import { localToUtc, utcToLocal, weekdayOf } from "../../shared/time.ts";
+import { diffDays, localToUtc, utcToLocal, weekdayOf } from "../../shared/time.ts";
 import type { AppEnv } from "../app.ts";
 import { all, type Db, one, run } from "../db.ts";
 import { jsonBody, notFound } from "../http.ts";
@@ -96,19 +96,39 @@ export function eventActionRoutes(db: Db, sync: SyncService, now: () => number):
     return c.json({ series: info });
   });
 
+  /**
+   * The chosen time of one occurrence, on the day its event is on (rules 30,
+   * 31: "the same day"). The event of an occurrence can be on another day than
+   * its date (rule 14, or a move by hand). `minute` counts from the occurrence
+   * date: each 1440 minutes is one day on (plan.ts chosenDay).
+   */
   const occurrenceTime = async (c: Context<AppEnv>, id: string) => {
     const user = c.get("user");
     const body = await jsonBody(c, z.object({ date: z.iso.date(), time: hhmm }));
     if (!one(db, "SELECT 1 FROM habits WHERE id = ? AND user_id = ?", id, user.id))
       notFound("habit");
     const [h, m] = body.time.split(":").map(Number) as [number, number];
-    return { user, date: body.date, minute: h * 60 + m };
+    const event = one<{ start_ms: number }>(
+      db,
+      "SELECT start_ms FROM managed_events WHERE user_id = ? AND key = ?",
+      user.id,
+      `habit:${id}:${body.date}`,
+    );
+    const day = event ? utcToLocal(user.time_zone, event.start_ms).date : body.date;
+    return {
+      user,
+      event,
+      date: body.date,
+      minute: diffDays(body.date, day) * 1440 + h * 60 + m,
+    };
   };
 
   /**
    * Stores the chosen time of one occurrence. A locked occurrence follows the
    * new choice (Tempoloom decision: reschedule and snooze unlock it); `from`:
-   * only an occurrence that starts after it is unlocked.
+   * only an occurrence that starts after it is unlocked. Tempoloom decision:
+   * the occurrence is no longer started (PRG-3), so in manual start mode a
+   * snoozed occurrence that nobody starts again goes back to the plan.
    */
   const saveTime = (
     userId: string,
@@ -129,7 +149,7 @@ export function eventActionRoutes(db: Db, sync: SyncService, now: () => number):
     );
     run(
       db,
-      "UPDATE managed_events SET locked = 0, user_edited = 0 WHERE user_id = ? AND key = ? AND start_ms > ?",
+      "UPDATE managed_events SET locked = 0, user_edited = 0, started = 0 WHERE user_id = ? AND key = ? AND start_ms > ?",
       userId,
       `habit:${id}:${o.date}`,
       from,
@@ -156,13 +176,7 @@ export function eventActionRoutes(db: Db, sync: SyncService, now: () => number):
     const id = c.req.param("id");
     const o = await occurrenceTime(c, id);
     const at = localToUtc(o.user.time_zone, o.date, o.minute);
-    const event = one<{ start_ms: number }>(
-      db,
-      "SELECT start_ms FROM managed_events WHERE user_id = ? AND key = ?",
-      o.user.id,
-      `habit:${id}:${o.date}`,
-    );
-    if (event && at <= event.start_ms)
+    if (o.event && at <= o.event.start_ms)
       badRequest("time", "Pick a time after the occurrence's current start");
     if (at < now()) badRequest("time", "Pick a time that is not in the past");
     saveTime(o.user.id, id, o, true, Number.NEGATIVE_INFINITY);

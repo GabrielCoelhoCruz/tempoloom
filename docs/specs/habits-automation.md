@@ -141,6 +141,10 @@ a fifth such weekday; `last` always selects the month's last such weekday.
 30. Reschedule: the user picks a target time. Tempoloom places the occurrence at the legal slot nearest to that time on the same day (E-0130, E-0181).
     Tempoloom decision: the user picks a time of day in the planner's details panel. The chosen time replaces `ideal_time` for that one date, so later runs keep the occurrence there while the slot stays legal; a tie goes to the earlier start. Rescheduling a locked occurrence unlocks it. Other dates do not change.
 31. Snooze: the user picks a "not before" time. Tempoloom places the occurrence at the first legal slot at or after that time on the same day (E-0181). Proposed snooze choices: 15 minutes, 30 minutes, 1 hour, 2 hours, later today.
+    Tempoloom decisions for rules 30 and 31:
+    - "The same day" is the day the occurrence's event is on. This can be another day than the occurrence's date, when rule 14 or the user moved the event. The chosen time applies to that day, and later runs keep the occurrence on that day.
+    - A snooze is a user action, so it also moves an occurrence that has started (an exception to `planning-scheduler.md` SCH-60a). The snooze makes the occurrence not started again: in manual start mode (rule 33), the user presses Start again, and a missed occurrence goes back to the plan.
+    - Only a habit occurrence moves after its start. Other managed events that have started keep their times, also a mirroring copy whose source event moves (SCH-60a).
 32. Log work: on a past date, the user drags or clicks a time range, picks a habit, and confirms. Tempoloom records the time against the habit and writes a past event for it (legacy evidence, E-0082, E-0130).
 33. Start mode (legacy evidence, E-0048). A user-level setting chooses one of:
     - Start when placed (default): an occurrence counts as done when its end passes.
