@@ -14,7 +14,7 @@ import { stripMarker } from "./markers.ts";
 import { logChange, periodOf } from "./meeting-log.ts";
 import type { MeetingRow } from "./meetings.ts";
 import type { ManagedRow } from "./push.ts";
-import { type Baseline, BYDAY, formKey, instanceDate } from "./series.ts";
+import { type Baseline, BYDAY, formKey, instanceDate, ruleKey } from "./series.ts";
 
 interface Instance {
   event_id: string;
@@ -29,18 +29,6 @@ const factsOf = (json: string): SeriesFacts | null =>
   json ? (JSON.parse(json) as SeriesFacts | null) : null;
 
 /** The fields of a master that a series edit changes. */
-const ruleKey = (f: SeriesFacts | null) =>
-  f
-    ? JSON.stringify([
-        f.start,
-        f.end,
-        f.rrule,
-        f.summary,
-        [...f.attendees].sort(),
-        [...f.optional].sort(),
-      ])
-    : "";
-
 /**
  * The meeting frequency of a series rule (rule 22, Proposed: a recurrence
  * change sets a new frequency), or null when the rule is not one a meeting

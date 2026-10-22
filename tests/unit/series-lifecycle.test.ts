@@ -597,3 +597,29 @@ describe("the newer value of each field, also for the title", () => {
     expect(cal.calls.filter((c) => c.name === "endSeries" || c.name === "insert")).toEqual([]);
   });
 });
+
+describe("a plan made before a series edit was read", () => {
+  it("writes nothing to the series for a period whose instance the organizer's edit moved: the next run reads the edit first", async () => {
+    const s = setup();
+    const cal = fakeCalendar();
+    const push = pusher(s, cal.provider);
+    const desired = [
+      occurrence("2026-10-19", "2026-10-20"),
+      occurrence("2026-10-26", "2026-10-27"),
+    ];
+    await push(desired);
+    // The organizer moves the series to Thursday 14:00 while a run with the old plan is under
+    // way: the old instance ids are gone, so that run has no rows for these periods.
+    const w = cal.objects.get("http://dav/1.ics") as EventWrite;
+    cal.objects.set("http://dav/1.ics", {
+      ...w,
+      start: at("2026-10-22", 840),
+      end: at("2026-10-22", 870),
+      recurrence: "FREQ=WEEKLY;BYDAY=TH",
+    });
+    run(s.db, "DELETE FROM managed_events WHERE source_id = 'm1'");
+    cal.calls.length = 0;
+    await push(desired);
+    expect(cal.calls.filter((c) => c.name !== "delete")).toEqual([]);
+  });
+});

@@ -148,6 +148,19 @@ export function baselineOf(w: EventWrite, organizer: string): Baseline {
   };
 }
 
+/** The fields of a series master that a series edit changes. */
+export const ruleKey = (f: SeriesFacts | null) =>
+  f
+    ? JSON.stringify([
+        f.start,
+        f.end,
+        f.rrule,
+        f.summary,
+        [...f.attendees].sort(),
+        [...f.optional].sort(),
+      ])
+    : "";
+
 /** The form fields that make a series rule: a change of one of them needs a new series. */
 export const formKey = (m: MeetingRow) =>
   JSON.stringify([m.frequency, m.starting, m.duration_minutes, m.ideal_minute]);
@@ -363,7 +376,7 @@ export async function moveRuleInstance(
   series: string,
   d: DesiredEvent,
   row: ManagedRow | undefined,
-): Promise<boolean> {
+): Promise<boolean | "stale"> {
   if (!provider.seriesInstances) return false;
   const { db, userId, now } = ctx;
   const m = one<MeetingRow>(db, "SELECT * FROM meetings WHERE id = ?", d.sourceId);
@@ -387,6 +400,10 @@ export async function moveRuleInstance(
       periodOf(m, instanceDate(db, userId, e.id, e.start), weekStart, zone) === period,
   );
   if (!inst) return false;
+  // A series edit that no pull has read yet (this plan is older than it):
+  // write nothing for the period now; the next run reads the edit first.
+  const base = (m.series_rule ? JSON.parse(m.series_rule) : null) as Baseline | null;
+  if (base && inst.series && ruleKey(base) !== ruleKey(inst.series)) return "stale";
   cacheEvent(db, d.calendarId, inst);
   const seen = {
     ...d,

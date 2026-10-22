@@ -468,7 +468,14 @@ export async function pushSchedule(
     try {
       // The period's rule instance may start after the planning window, so no
       // row holds it yet: move that instance, never add a second one.
-      if (series && (await moveRuleInstance(ctx, provider, providerCalendarId, series, d, row))) {
+      const moved = series
+        ? await moveRuleInstance(ctx, provider, providerCalendarId, series, d, row)
+        : false;
+      if (moved === "stale") {
+        result.conflicts++;
+        continue;
+      }
+      if (moved) {
         result.created++;
         continue;
       }
