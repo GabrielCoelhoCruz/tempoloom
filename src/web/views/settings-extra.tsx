@@ -9,7 +9,7 @@ import { signal } from "@preact/signals";
 import { useEffect, useState } from "preact/hooks";
 import type { Settings } from "../../server/settings.ts";
 import { ApiError, api } from "../lib/api.ts";
-import { useCommit } from "../lib/commit-input.ts";
+import { useCommit, useCommitCheck } from "../lib/commit-input.ts";
 import { dateText } from "../lib/format.ts";
 import { planNow } from "../lib/state.ts";
 
@@ -123,18 +123,32 @@ export function AutoLockSettings({ settings, act }: { settings: Settings; act: A
   );
 }
 
-export function AlertSettings({ settings, act }: { settings: Settings; act: Act }) {
-  const flag = (key: "tabAlert" | "startChime", label: string) => (
+/** A settings checkbox that shows the clicked value until its save ends. */
+function SettingCheck({
+  settings,
+  act,
+  name,
+  label,
+}: {
+  settings: Settings;
+  act: Act;
+  name: "tabAlert" | "startChime" | "eventTips";
+  label: string;
+}) {
+  const check = useCommitCheck(settings[name], (checked) =>
+    act(() => api("PATCH", "/api/settings", { [name]: checked })),
+  );
+  return (
     <label class="inline">
-      <input
-        type="checkbox"
-        checked={settings[key]}
-        onChange={(e) =>
-          void act(() => api("PATCH", "/api/settings", { [key]: e.currentTarget.checked }))
-        }
-      />
+      <input type="checkbox" {...check} />
       {label}
     </label>
+  );
+}
+
+export function AlertSettings({ settings, act }: { settings: Settings; act: Act }) {
+  const flag = (key: "tabAlert" | "startChime", label: string) => (
+    <SettingCheck settings={settings} act={act} name={key} label={label} />
   );
   return (
     <section>
@@ -154,16 +168,12 @@ export function EventTipsSetting({ settings, act }: { settings: Settings; act: A
     <section>
       <h2>Event descriptions</h2>
       <div class="form">
-        <label class="inline">
-          <input
-            type="checkbox"
-            checked={settings.eventTips}
-            onChange={(e) =>
-              void act(() => api("PATCH", "/api/settings", { eventTips: e.currentTarget.checked }))
-            }
-          />
-          Add tips to event descriptions
-        </label>
+        <SettingCheck
+          settings={settings}
+          act={act}
+          name="eventTips"
+          label="Add tips to event descriptions"
+        />
         <p class="meta wide">
           A short tip after your notes says how to move, skip or reschedule the event from your
           calendar.

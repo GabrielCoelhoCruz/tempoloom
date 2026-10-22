@@ -8,7 +8,7 @@ import { HTTPException } from "hono/http-exception";
 import { z } from "zod";
 import type { AppEnv } from "../app.ts";
 import { all, type Db, one, run } from "../db.ts";
-import { jsonBody, notFound } from "../http.ts";
+import { editBody, jsonBody, notFound, rawBody } from "../http.ts";
 import {
   type FocusTemplate,
   focusTemplateSchema,
@@ -101,10 +101,20 @@ export function teamDefaultRoutes(db: Db, now: () => number): Hono<AppEnv> {
   // Habits made from a template keep their own fields (edge cases 1, 2).
   r.put("/team/habit-templates/:id", async (c) => {
     const { team } = admin(c);
-    const { title, ...fields } = await jsonBody(c, templateInput);
     const id = c.req.param("id");
-    if (!one(db, "SELECT 1 FROM team_habit_templates WHERE id = ? AND team_id = ?", id, team.id))
-      notFound("template");
+    const cur = one<TemplateRow>(
+      db,
+      "SELECT id, title, fields FROM team_habit_templates WHERE id = ? AND team_id = ?",
+      id,
+      team.id,
+    );
+    if (!cur) notFound("template");
+    // Fields the body leaves out keep their stored value (an edit sends only what it changed).
+    const { title, ...fields } = editBody(
+      templateInput,
+      { title: cur.title, ...(JSON.parse(cur.fields) as Record<string, unknown>) },
+      await rawBody(c),
+    );
     run(
       db,
       "UPDATE team_habit_templates SET title = ?, fields = ? WHERE id = ?",

@@ -13,6 +13,7 @@ import {
 } from "../../shared/event-settings.ts";
 import { changedHours, fitsOneRange, itemRangeOf, type Weekly } from "../../shared/item-hours.ts";
 import { api } from "../lib/api.ts";
+import { useFirstBody } from "../lib/changed.ts";
 import { hhmm } from "../lib/format.ts";
 import { readFrequency } from "../lib/frequency.ts";
 import { type BufferPreset, entry, freeName, type LibraryEntry } from "../lib/library.ts";
@@ -574,6 +575,8 @@ export function AutomationForm() {
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [choice, setChoice] = useState<string | null>(null);
+  // An edit sends only the fields it changed, so a change saved elsewhere stays.
+  const first = useFirstBody<Record<string, unknown>>();
 
   useEffect(() => {
     if (!kind) return;
@@ -611,19 +614,23 @@ export function AutomationForm() {
     : { ...defaults, emoji: template?.emoji ?? "" };
   const title = row ? row.title : template ? freeName(template.name, taken) : "";
 
+  const read = (form: HTMLFormElement): Record<string, unknown> => {
+    const f = new FormData(form);
+    return {
+      title: String(f.get("title") ?? "").trim(),
+      ...rulesBody(kind, f, kept, hours, row),
+      eventSettings: eventSettingsFrom(f),
+      ...(!row && template ? { templateId: template.slug } : {}),
+    };
+  };
   const submit = async (e: Event) => {
     e.preventDefault();
-    const f = new FormData(e.currentTarget as HTMLFormElement);
+    const form = e.currentTarget as HTMLFormElement;
     setError(null);
     setSaving(true);
     try {
-      const body = {
-        title: String(f.get("title") ?? "").trim(),
-        ...rulesBody(kind, f, kept, hours, row),
-        eventSettings: eventSettingsFrom(f),
-        ...(!row && template ? { templateId: template.slug } : {}),
-      };
-      if (row) await api("PATCH", `${KINDS[kind].list}/${row.id}`, body);
+      const body = read(form);
+      if (row) await api("PATCH", `${KINDS[kind].list}/${row.id}`, first.changed(form, body));
       else await api("POST", KINDS[kind].list, body);
       await planNow();
       navigate("/automations");
@@ -640,7 +647,7 @@ export function AutomationForm() {
       <h1>
         {row ? "Edit" : "New"} {KINDS[kind].name}
       </h1>
-      <form class="form" data-testid="automation-form" onSubmit={submit}>
+      <form class="form" data-testid="automation-form" onSubmit={submit} ref={first.ref(read)}>
         <label class="wide">
           Title
           <input name="title" required maxLength={255} defaultValue={title} />
