@@ -1,8 +1,36 @@
 // Reads user edits of managed events from the event cache after a pull
 // (docs/specs/planning-calendar-edits.md).
-import { addDays, localToUtc, utcToLocal } from "../../shared/time.ts";
+import { chosenDaySql, HabitChoice } from "../../shared/habit-choice.ts";
+import { addDays, chosenMinute, localToUtc, utcToLocal } from "../../shared/time.ts";
 import { all, type Db, one, run, tx } from "../db.ts";
 import type { ManagedRow } from "../planner/push.ts";
+import { planningZone } from "../travel.ts";
+
+/**
+ * Habits rule 29 for an occurrence whose date has passed: its event's day
+ * keeps it in the plan (see passedOpen in plan.ts). A choice of the user wins
+ * while its day is today or later; an older choice is no longer read, so the
+ * event's day replaces it.
+ */
+function keepDeletedOccurrence(db: Db, userId: string, row: ManagedRow, zone: string, now: number) {
+  const date = row.key.slice(`habit:${row.source_id}:`.length);
+  const day = utcToLocal(zone, row.start_ms).date;
+  const today = utcToLocal(zone, now).date;
+  if (date >= today || day < today) return;
+  run(
+    db,
+    `INSERT INTO habit_reschedules (user_id, habit_id, date, minute, not_before) VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT (habit_id, date) DO UPDATE SET minute = excluded.minute, not_before = excluded.not_before
+       WHERE habit_reschedules.not_before = ? OR ${chosenDaySql("habit_reschedules")} < ?`,
+    userId,
+    row.source_id,
+    date,
+    chosenMinute(date, day, 0),
+    HabitChoice.eventDay,
+    HabitChoice.eventDay,
+    today,
+  );
+}
 
 export interface EditSummary {
   moved: number;
@@ -92,6 +120,8 @@ export function applyCalendarEdits(
     if (!w || w.window_start === null || w.window_end === null) return false;
     return row.end_ms <= w.window_start || row.start_ms >= w.window_end;
   };
+  let zoneOfPlan: string | undefined;
+  const planZone = () => (zoneOfPlan ??= planningZone(db, userId, zone));
   tx(db, () => {
     for (const row of rows) {
       const cached = one<{
@@ -143,6 +173,7 @@ export function applyCalendarEdits(
             );
           } else {
             exclude(db, userId, row.kind, row.source_id, row.start_ms, row.end_ms);
+            if (row.kind === "habit") keepDeletedOccurrence(db, userId, row, planZone(), now);
           }
         } else if (
           row.kind === "task" &&

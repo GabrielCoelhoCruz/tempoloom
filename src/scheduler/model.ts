@@ -96,6 +96,12 @@ export interface HabitItem {
   rescheduled?: Partial<Record<LocalDate, number>>;
   /** Occurrence date -> the snooze time, as `rescheduled`: the first legal start at or after it (habits rule 31). */
   notBefore?: Partial<Record<LocalDate, number>>;
+  /**
+   * Passed occurrence date -> the day its event was on, for an occurrence that
+   * goes back to the plan after a delete (rule 29) or a missed manual start
+   * (rule 33). It is placed again on that day first, then on rule 14 days.
+   */
+  reopened?: Partial<Record<LocalDate, LocalDate>>;
   /** Order rules relative to other habits and flexible meetings (habits rule 18). */
   dependencies?: HabitDependency[];
   /** Category work or personal (habits concepts); missing: it counts as work when its hours are work hours. */
