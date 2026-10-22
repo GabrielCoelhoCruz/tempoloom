@@ -214,8 +214,8 @@ describe("rank in the meeting preview, with a gap in the ranks", () => {
     await add.habit("H", 2);
     // A gap, as after a delete: M 0, M2 5, H 6. A new meeting gets rank 2 and
     // the save moves M2 to 1 and H to 3, so M2 still comes first.
-    run(db, "UPDATE meetings SET rank = 5 WHERE id = ? AND user_id = ?", ids.M2?.id, user.id);
-    run(db, "UPDATE habits SET rank = 6 WHERE id = ? AND user_id = ?", ids.H?.id, user.id);
+    run(db, "UPDATE meetings SET rank = 5 WHERE title = 'M2' AND user_id = ?", user.id);
+    run(db, "UPDATE habits SET rank = 6 WHERE title = 'H' AND user_id = ?", user.id);
     const starts = async (url: string) =>
       ((await send("POST", url, meetingBody("New", 2))).occurrences as { start: number }[]).map(
         (o) => o.start,
