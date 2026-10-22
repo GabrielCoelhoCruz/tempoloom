@@ -219,7 +219,9 @@ async function caldavCalendar(
   const byId = async (id: string) => {
     const all = await provider.listEvents(calendarId, {
       syncToken: null,
-      timeMin: Date.now() - 86_400_000,
+      // From two weeks back: a test with a server clock in the current week
+      // writes events from its Monday on, whatever the real day and time.
+      timeMin: Date.now() - 14 * 86_400_000,
       timeMax: Date.now() + 90 * 86_400_000,
     });
     const ev = all.events.find((e) => e.id === id);
