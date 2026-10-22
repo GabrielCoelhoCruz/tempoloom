@@ -1,5 +1,6 @@
 // Settings added for tasks, alerts, hours and travel: task placement
-// (planning-tasks.md TSK-70), auto-lock (planning-locks.md LCK-30), in-app alerts (planning-notifications.md),
+// (planning-tasks.md TSK-70), the time-used action (planning-task-progress.md
+// PRG-40 to PRG-44), auto-lock (planning-locks.md LCK-30), in-app alerts (planning-notifications.md),
 // deleting a custom hours set with a replacement (planning-hours.md HRS-10),
 // the zone that hours apply in (HRS-13, HRS-14, edge case 6), travel time
 // zones (timezones-home-and-travel.md rules 6, 7, 12) and the focus time
@@ -8,6 +9,7 @@ import { signal } from "@preact/signals";
 import { useEffect, useState } from "preact/hooks";
 import type { Settings } from "../../server/settings.ts";
 import { ApiError, api } from "../lib/api.ts";
+import { useCommit } from "../lib/commit-input.ts";
 import { planNow } from "../lib/state.ts";
 
 type Act = (fn: () => Promise<unknown>, done?: string) => Promise<unknown>;
@@ -44,6 +46,39 @@ export function StartModeSetting({ settings, act }: { settings: Settings; act: A
         <option value="manual">Count only after I press Start</option>
       </select>
     </label>
+  );
+}
+
+/**
+ * planning-task-progress.md PRG-40 to PRG-44: what happens to a task whose time
+ * is used. Manual start mode hides it, as it has no effect there.
+ */
+export function TimeUsedSetting({ settings, act }: { settings: Settings; act: Act }) {
+  // useCommit keeps a typed value while a live update draws Settings again.
+  const waitDays = useCommit(settings.timeUsedWaitDays, (v) =>
+    act(() => api("PATCH", "/api/settings", { timeUsedWaitDays: Number(v) })),
+  );
+  if (settings.startMode === "manual") return null;
+  return (
+    <>
+      <label>
+        When a task's time is used
+        <select
+          value={settings.timeUsedAction}
+          onChange={(e) =>
+            void act(() => api("PATCH", "/api/settings", { timeUsedAction: e.currentTarget.value }))
+          }
+        >
+          <option value="nothing">Nothing (it stays open)</option>
+          <option value="re-add">Add the time again</option>
+          <option value="mark-done">Mark it done</option>
+        </select>
+      </label>
+      <label>
+        Days to wait
+        <input type="number" min={1} max={30} {...waitDays} />
+      </label>
+    </>
   );
 }
 

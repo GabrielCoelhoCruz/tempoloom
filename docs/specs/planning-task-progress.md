@@ -114,6 +114,20 @@ Restart (legacy evidence, E-0132).
   `time-used` and to later ones (legacy evidence, E-0048).
 - **PRG-44.** With `startMode` `manual`, the `timeUsedAction` setting is
   hidden and has no effect (legacy evidence, E-0048).
+- **PRG-45.** Tempoloom decision: the first total (the minutes that `re-add`
+  adds) is the total of the task when it is created. While no `re-add` has
+  run, a user edit of the minutes changes the first total by the same amount;
+  the minutes that "Add N min" added stay out of it (at least 15 minutes, at
+  most the new total). A `re-add` and "Add N min" do not change it, and a
+  minutes edit after a `re-add` changes the full total only. A `re-add`
+  leaves exactly the first total as work, also when the done work is more
+  than the total.
+- **PRG-46.** Tempoloom decision: the wait days count from the first plan run
+  that finds the task `time-used` (no work left, no chunk to come), whatever
+  made it so: chunks that passed, logged work with an old date, a longer past
+  chunk or a lower total. A run that finds the task no longer `time-used`
+  clears that time. Each automatic `mark-done` or `re-add` writes an entry to
+  the task's change log, with its reason, in the same write as the change.
 
 ## Outputs
 
