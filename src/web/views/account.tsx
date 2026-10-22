@@ -7,7 +7,7 @@ import type { ComponentChildren } from "preact";
 import { useCallback, useEffect, useState } from "preact/hooks";
 import { utcToLocal } from "../../shared/time.ts";
 import { ApiError, api } from "../lib/api.ts";
-import { toLocalInput } from "../lib/format.ts";
+import { dateText, dateTimeText } from "../lib/format.ts";
 import { lazyComponent } from "../lib/lazy.ts";
 import { useLive } from "../lib/live.ts";
 import { onLinkClick } from "../lib/router.ts";
@@ -180,7 +180,7 @@ export function AccountPage() {
   };
 
   if (!m) return null;
-  const when = (t: number) => toLocalInput(zone(), t).replace("T", " ");
+  const when = (t: number) => dateTimeText(zone(), t);
   return (
     <div class="page" data-testid="account-page">
       <h1>Account</h1>
@@ -500,7 +500,7 @@ export function AccountPage() {
                   ·{" "}
                   {k.expires_at === null
                     ? "never expires"
-                    : `expires ${utcToLocal(zone(), k.expires_at).date}`}{" "}
+                    : `expires ${dateText(utcToLocal(zone(), k.expires_at).date)}`}{" "}
                   · {k.last_used_at === null ? "never used" : `last used ${when(k.last_used_at)}`}
                 </span>
               </span>

@@ -6,7 +6,14 @@ import { addDays, localToUtc, utcToLocal, weekdayOf } from "../../shared/time.ts
 import { api } from "../lib/api.ts";
 import { calendarList, displayName, loadCalendars } from "../lib/calendars.tsx";
 import { CATEGORY_LABELS } from "../lib/categories.ts";
-import { formatWhen } from "../lib/format.ts";
+import {
+  clockText,
+  dateText,
+  displayWeekOf,
+  formatWhen,
+  sameWeekShown,
+  userFormats,
+} from "../lib/format.ts";
 import { lazyComponent, settle, settled } from "../lib/lazy.ts";
 import { useLive } from "../lib/live.ts";
 import {
@@ -97,12 +104,21 @@ const FocusProgress = lazyComponent<{ week: string }>(() =>
   import("./planner-extras.tsx").then((m) => m.FocusProgress),
 );
 
-/** PLN-3: the days the planner shows from the first day of the week. */
-const DAY_COUNT = { "all-days": 7, weekdays: 5, "rolling-9-days": 9 } as const;
+/**
+ * PLN-3: the days the planner shows for a week that starts on `first`: 7 days,
+ * 9 days, or Monday to Friday of that week (also when it starts on Sunday).
+ */
+function shownDays(first: string, mode: "all-days" | "weekdays" | "rolling-9-days"): string[] {
+  if (mode === "weekdays") {
+    const monday = addDays(first, (8 - weekdayOf(first)) % 7);
+    return Array.from({ length: 5 }, (_, i) => addDays(monday, i));
+  }
+  return Array.from({ length: mode === "rolling-9-days" ? 9 : 7 }, (_, i) => addDays(first, i));
+}
 
-function mondayOf(z: string, t: number): string {
-  const d = utcToLocal(z, t).date;
-  return addDays(d, 1 - weekdayOf(d));
+/** The first day of the display week that holds `t` (PRF-6: the user's week start). */
+function weekOf(z: string, t: number): string {
+  return displayWeekOf(utcToLocal(z, t).date);
 }
 
 export function Planner() {
@@ -115,9 +131,7 @@ export function Planner() {
   });
   const [weekStart, setWeekStart] = useState(() => {
     const q = focusDay ?? new URLSearchParams(location.search).get("week");
-    return q && /^\d{4}-\d{2}-\d{2}$/.test(q)
-      ? addDays(q, 1 - weekdayOf(q))
-      : mondayOf(z, Date.now());
+    return q && /^\d{4}-\d{2}-\d{2}$/.test(q) ? displayWeekOf(q) : weekOf(z, Date.now());
   });
   const [events, setEvents] = useState<PlannerEvent[]>([]);
   const [report, setReport] = useState<ReportEntry[]>([]);
@@ -129,7 +143,10 @@ export function Planner() {
     if (e) sidePanel.value = "details";
   };
   const settings = me.value?.settings;
-  const dayCount = DAY_COUNT[settings?.plannerDays ?? "all-days"];
+  const plannerDays = settings?.plannerDays ?? "all-days";
+  // The week start can change with the next read of the account (PRF-6, planner edge case 4).
+  const first = userFormats().weekStart;
+  useEffect(() => setWeekStart((w) => sameWeekShown(w)), [first]);
   const hidden = useMemo(() => new Set(settings?.hiddenCalendars ?? []), [settings]);
   const others = viewAs.value === "others";
   // PLN-6: others see no event details and no conflict titles, so a switch
@@ -152,18 +169,18 @@ export function Planner() {
   const [error, setError] = useState<string | null>(null);
   // A planner link (?item=task:<id>, planning-event-content.md CNT-10) opens that item's event.
   const openItem = useRef(new URLSearchParams(location.search).get("item"));
-  const days = useMemo(
-    () => Array.from({ length: dayCount }, (_, i) => addDays(weekStart, i)),
-    [weekStart, dayCount],
-  );
+  const days = useMemo(() => shownDays(weekStart, plannerDays), [weekStart, plannerDays]);
+  // The loaded range: from the first to the end of the last day shown.
+  const fromDay = days[0] ?? weekStart;
+  const toDay = addDays(days.at(-1) ?? weekStart, 1);
 
   // Answers can arrive out of order (another week, a live update): only the
   // newest load may draw.
   const loads = useRef(0);
   const load = useCallback(async () => {
     const n = ++loads.current;
-    const from = localToUtc(z, weekStart, 0);
-    const to = localToUtc(z, addDays(weekStart, dayCount), 0);
+    const from = localToUtc(z, fromDay, 0);
+    const to = localToUtc(z, toDay, 0);
     const [ev, rep] = await Promise.all([
       api<{ events: PlannerEvent[]; allDay: AllDayBusy[] }>(
         "GET",
@@ -183,7 +200,7 @@ export function Planner() {
       openItem.current = null;
       setSelected(hit);
     }
-  }, [z, weekStart, dayCount]);
+  }, [z, fromDay, toDay]);
 
   useEffect(() => {
     void load();
@@ -203,7 +220,7 @@ export function Planner() {
     ).then(({ event }) => {
       if (!event) return;
       openItem.current = `event:${event.id}`;
-      const week = mondayOf(z, event.start);
+      const week = weekOf(z, event.start);
       if (week === weekStart) void load();
       else setWeekStart(week);
     });
@@ -299,7 +316,7 @@ export function Planner() {
         >
           ‹
         </button>
-        <button type="button" onClick={() => setWeekStart(mondayOf(z, Date.now()))}>
+        <button type="button" onClick={() => setWeekStart(weekOf(z, Date.now()))}>
           Today
         </button>
         <button
@@ -310,7 +327,7 @@ export function Planner() {
           ›
         </button>
         <span class="title" data-testid="week-label">
-          Week of {weekStart}
+          Week of {dateText(weekStart)}
         </span>
         {error && <span class="error">{error}</span>}
         {settled.value && <PlannerOptions />}
@@ -347,19 +364,15 @@ export function Planner() {
         />
       )}
       <div class="now-bar" data-testid="now-bar">
-        {settled.value && (
-          <NowBar
-            from={localToUtc(z, weekStart, 0)}
-            to={localToUtc(z, addDays(weekStart, dayCount), 0)}
-          />
-        )}
+        {settled.value && <NowBar from={localToUtc(z, fromDay, 0)} to={localToUtc(z, toDay, 0)} />}
       </div>
       {settled.value && (
         <>
           <TravelPrompt />
           <PlannerHints />
           <PreviewPanel onApplied={() => void load()} />
-          <FocusProgress week={weekStart} />
+          {/* The planning week that holds most of the days shown (planning keeps its own week start). */}
+          <FocusProgress week={addDays(weekStart, 3)} />
           <CurrentTasks />
         </>
       )}
@@ -414,7 +427,10 @@ export function Planner() {
         <aside class="drawer" data-testid="event-drawer">
           <h2>{selected.title}</h2>
           <div class="status">
-            {formatWhen(z, selected.start)} – {formatWhen(z, selected.end)}
+            {formatWhen(z, selected.start)} –{" "}
+            {utcToLocal(z, selected.end - 1).date === utcToLocal(z, selected.start).date
+              ? clockText(z, selected.end)
+              : formatWhen(z, selected.end)}
           </div>
           <div class="status">
             {selected.kind} · {selected.busy ? "busy" : "free"}

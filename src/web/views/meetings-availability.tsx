@@ -5,7 +5,8 @@
 import { useEffect, useState } from "preact/hooks";
 import { type ItemRange, itemHoursOf, itemRangeOf, type Weekly } from "../../shared/item-hours.ts";
 import { api } from "../lib/api.ts";
-import { hhmm } from "../lib/format.ts";
+import { dateText } from "../lib/format.ts";
+import { rangesText } from "./hours-field.tsx";
 
 /** The emails of a comma or space list, lowercased. */
 export const emails = (text: string) =>
@@ -58,15 +59,14 @@ export interface Missed {
   boost: { period: string; level: number; missed: number } | null;
 }
 
-const rangesText = (ranges: [number, number][]) =>
-  ranges.length ? ranges.map(([s, e]) => `${hhmm(s)}–${hhmm(e)}`).join(", ") : "none";
+const rangesOrNone = (ranges: [number, number][]) => (ranges.length ? rangesText(ranges) : "none");
 
 /** Rule 6: for each day, the organizer's hours, each required guest's hours and the overlap. */
 export function AvailabilityMap({ map }: { map: AvailabilityData }) {
   return (
     <table class="wide meta" data-testid="availability-map" data-week={map.week}>
       <caption>
-        Meeting hours in the week of {map.week}, in {map.zone}
+        Meeting hours in the week of {dateText(map.week)}, in {map.zone}
       </caption>
       <thead>
         <tr>
@@ -82,13 +82,13 @@ export function AvailabilityMap({ map }: { map: AvailabilityData }) {
         {map.days.map((d) => (
           <tr key={d.date} data-day={d.day}>
             <th>{DAY_NAMES[d.day - 1]}</th>
-            <td data-person="you">{rangesText(d.you)}</td>
+            <td data-person="you">{rangesOrNone(d.you)}</td>
             {d.people.map((r, i) => (
               <td key={map.people[i]?.email} data-person={map.people[i]?.email}>
-                {r ? rangesText(r) : "unknown"}
+                {r ? rangesOrNone(r) : "unknown"}
               </td>
             ))}
-            <td data-person="overlap">{rangesText(d.overlap)}</td>
+            <td data-person="overlap">{rangesOrNone(d.overlap)}</td>
           </tr>
         ))}
       </tbody>
@@ -220,8 +220,8 @@ export function MissedPeriods({ m, reason }: { m: Missed; reason: (code: string)
     <>
       {m.boost && (
         <div class="meta warning" data-testid="meeting-boost">
-          Priority boost: {m.boost.period} uses P{m.boost.level} after {m.boost.missed} missed
-          period{m.boost.missed === 1 ? "" : "s"}
+          Priority boost: {dateText(m.boost.period)} uses P{m.boost.level} after {m.boost.missed}{" "}
+          missed period{m.boost.missed === 1 ? "" : "s"}
         </div>
       )}
       {m.skipped.length > 0 && (
@@ -230,7 +230,7 @@ export function MissedPeriods({ m, reason }: { m: Missed; reason: (code: string)
           <ul data-testid="skipped-periods">
             {m.skipped.map((p) => (
               <li key={p.period}>
-                {p.period}: {reason(p.reason)}
+                {dateText(p.period)}: {reason(p.reason)}
               </li>
             ))}
           </ul>

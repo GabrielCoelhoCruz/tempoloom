@@ -3,7 +3,10 @@
 // the Tempoloom account it connects, and has "Allow access" and "Cancel". Both
 // answers go back to the tool. A bad request stays on the page, with a link back.
 import { useEffect, useState } from "preact/hooks";
+import { utcToLocal } from "../../shared/time.ts";
 import { ApiError, api } from "../lib/api.ts";
+import { dateText } from "../lib/format.ts";
+import { zone } from "../lib/state.ts";
 
 interface Request {
   client: string;
@@ -84,8 +87,8 @@ export function OAuthConsent() {
                 </>
               )}
               After your answer, Tempoloom sends you to <strong>{req.host}</strong>. The app was
-              registered on {new Date(req.registeredAt).toLocaleDateString()}. Allow access only if
-              you started this connection in that app.
+              registered on {dateText(utcToLocal(zone(), req.registeredAt).date)}. Allow access only
+              if you started this connection in that app.
             </p>
             <p class="status">
               It can read your schedule, tasks and stats, and stage changes in preview mode. Nothing

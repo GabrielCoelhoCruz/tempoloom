@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 import { Hono } from "hono";
 import { z } from "zod";
 import type { ReportEntry } from "../../scheduler/model.ts";
+import { dateText, type Formats, timeText } from "../../shared/formats.ts";
 import { addDays, type LocalDate, localToUtc, utcToLocal, weekdayOf } from "../../shared/time.ts";
 import type { AppEnv } from "../app.ts";
 import { scheduleDaily } from "../daily-mail.ts";
@@ -14,6 +15,7 @@ import { jsonBody, notFound } from "../http.ts";
 import { companyChecks, evaluate, HORIZON, openIssues } from "../meeting-checks.ts";
 import { CHECK_IDS, getPrefs, updatePrefs } from "../meeting-prefs.ts";
 import { writeCalendar } from "../planner/replan.ts";
+import { userFormatsOf } from "../preview.ts";
 import { cacheEvent } from "../sync/pull.ts";
 import type { SyncService } from "../sync/service.ts";
 
@@ -73,15 +75,15 @@ function meetingMinutes(
   return out;
 }
 
-const pad = (n: number) => String(n).padStart(2, "0");
 const minutesText = (m: number) => {
   const h = Math.floor(m / 60);
   const r = Math.round(m % 60);
   return h && r ? `${h} h ${r} min` : h ? `${h} h` : `${r} min`;
 };
-const localText = (zone: string, t: number) => {
+/** "2026-11-10 08:00" in the user's formats (settings-profile.md PRF-6). */
+const localText = (zone: string, t: number, f: Formats) => {
   const l = utcToLocal(zone, t);
-  return `${l.date} ${pad(Math.floor(l.minuteOfDay / 60))}:${pad(l.minuteOfDay % 60)}`;
+  return `${dateText(l.date, f)} ${timeText(l.minuteOfDay, f)}`;
 };
 
 /** Tempoloom decision: a day with 6 hours of meetings or more is too full. */
@@ -103,6 +105,9 @@ export function recommendations(db: Db, userId: string, now: number): Recommenda
   ) as ReportEntry[];
   const title = (table: string, id: string) =>
     one<{ title: string }>(db, `SELECT title FROM ${table} WHERE id = ?`, id)?.title ?? "";
+  const f = userFormatsOf(db, userId);
+  // A key's date in the user's date format (PRF-6); `date` keeps the key's value.
+  const shown = (d: string | null) => (d && /^\d{4}-\d{2}-\d{2}$/.test(d) ? dateText(d, f) : d);
   const out: Recommendation[] = [];
   for (const e of report) {
     const date = e.demandKey.split(":")[2] ?? null;
@@ -110,13 +115,13 @@ export function recommendations(db: Db, userId: string, now: number): Recommenda
       out.push({
         kind: "habit",
         date,
-        text: `${title("habits", e.itemId)} was ${e.status === "conflict" ? "kept in conflict" : "skipped"} on ${date}`,
+        text: `${title("habits", e.itemId)} was ${e.status === "conflict" ? "kept in conflict" : "skipped"} on ${shown(date)}`,
       });
     } else if (e.itemKind === "focus") {
       out.push({
         kind: "focus",
         date,
-        text: `${title("focus_goals", e.itemId)} is ${minutesText(e.missingMinutes)} short of its goal in the week of ${date}`,
+        text: `${title("focus_goals", e.itemId)} is ${minutesText(e.missingMinutes)} short of its goal in the week of ${shown(date)}`,
       });
     } else if (e.itemKind === "task") {
       out.push({
@@ -131,7 +136,7 @@ export function recommendations(db: Db, userId: string, now: number): Recommenda
       out.push({
         kind: "meeting",
         date,
-        text: `${title("meetings", e.itemId)} ${e.status === "conflict" ? "is kept in conflict" : "has no time"} in the period of ${date}`,
+        text: `${title("meetings", e.itemId)} ${e.status === "conflict" ? "is kept in conflict" : "has no time"} in the period of ${shown(date)}`,
       });
     }
   }
@@ -165,7 +170,7 @@ export function recommendations(db: Db, userId: string, now: number): Recommenda
       out.push({
         kind: "heavy_day",
         date,
-        text: `${date} has ${minutesText(minutes)} of meetings`,
+        text: `${shown(date)} has ${minutesText(minutes)} of meetings`,
       });
   }
   return out;
@@ -188,7 +193,7 @@ export function meetingCheckRoutes(db: Db, sync: SyncService, now: () => number)
       prefs: getPrefs(db, user.id),
       company: companyChecks(db, user.id),
       admin: adminTeam(db, user.id) !== null,
-      nextDigest: next ? localText(zoneOf(user.id), next) : null,
+      nextDigest: next ? localText(zoneOf(user.id), next, userFormatsOf(db, user.id)) : null,
     });
   });
 

@@ -2,10 +2,12 @@
 import { randomUUID } from "node:crypto";
 import { Hono } from "hono";
 import { z } from "zod";
+import { dateText } from "../../shared/formats.ts";
 import { addDays, isValidTimeZone, utcToLocal } from "../../shared/time.ts";
 import type { AppEnv } from "../app.ts";
 import { type Db, one, run } from "../db.ts";
 import { jsonBody, notFound } from "../http.ts";
+import { userFormatsOf } from "../preview.ts";
 import type { SyncService } from "../sync/service.ts";
 import { activeTrip, homeZone, travelEntries, tripEnd, tripStart } from "../travel.ts";
 import { badRequest } from "./items.ts";
@@ -45,11 +47,13 @@ export function travelRoutes(db: Db, sync: SyncService, now: () => number): Hono
     const clash = travelEntries(db, user.id).find(
       (e) => e.start_date <= body.endDate && body.startDate <= e.end_date,
     );
-    if (clash)
+    if (clash) {
+      const f = userFormatsOf(db, user.id);
       badRequest(
         "startDate",
-        `This trip overlaps the trip to ${clash.tz} (${clash.start_date} to ${clash.end_date}).`,
+        `This trip overlaps the trip to ${clash.tz} (${dateText(clash.start_date, f)} to ${dateText(clash.end_date, f)}).`,
       );
+    }
     const id = randomUUID();
     run(
       db,

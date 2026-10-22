@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "preact/hooks";
 import type { Recommendation } from "../../server/api/meeting-checks.ts";
 import type { Issue } from "../../server/meeting-checks.ts";
 import { api } from "../lib/api.ts";
+import { dateTimeText } from "../lib/format.ts";
 import { useLive } from "../lib/live.ts";
 import { messageOf } from "../lib/save.ts";
 import { zone } from "../lib/state.ts";
@@ -17,22 +18,6 @@ const CHECK_LABELS: Record<Issue["checkId"], string> = {
   agenda: "No agenda",
   company: "Company check",
 };
-
-const pad = (n: number) => String(n).padStart(2, "0");
-function when(z: string, t: number): string {
-  const d = new Date(t);
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: z,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23",
-  }).formatToParts(d);
-  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
-  return `${get("year")}-${get("month")}-${get("day")} ${pad(Number(get("hour")))}:${get("minute")}`;
-}
 
 export function IssuesPanel() {
   const z = zone();
@@ -108,7 +93,7 @@ export function IssuesPanel() {
                       {i.checkId === "company" ? "🔒 " : ""}
                       {CHECK_LABELS[i.checkId]}
                     </span>{" "}
-                    {i.title} · {when(z, i.start)}
+                    {i.title} · {dateTimeText(z, i.start)}
                   </div>
                   <div class="meta">{i.message}</div>
                   {draftFor === id && i.draft && (

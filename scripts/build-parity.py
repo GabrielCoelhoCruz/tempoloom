@@ -1574,16 +1574,6 @@ E2E_NOTES.update({
     102: "Booking links and other people's flexible meetings read main-calendar availability: an unlocked task chunk on another calendar does not block them; a locked one blocks booking links, as every locked event does (LCK-1), because it never moves (Tempoloom decision); the user's own plan keeps the chunk's time",
 })
 GOOGLE_CONSENT = "Needs a Google E2E run with the owner's OAuth consent (a Google account that signs in through Tempoloom's OAuth client, row 510)"
-PARTIAL[145] = ("Not built: PRF-6, the planner, hours page and date displays do not use the time format, date format and week start "
-                "(only the profile page shows them), and applying the Google week start to planning (the planning week start stays the "
-                "one set in Tempoloom; edge case 3). Built, with unit tests against a fake Google API (tests/unit/google-profile.test.ts): "
-                "the name and picture of the main Google account are kept at each sign-in and "
-                "each token refresh (at least daily; a refresh without the claims keeps them; only https pictures), a picture hidden at "
-                "sign-in shows none, and the picture shows on the profile page and booking pages; week start, time format and date "
-                "format are read from the Google Calendar settings (scope calendar.settings.readonly) at each calendar list sync, and the "
-                "profile page shows them (the Google week start as information only); each sync takes the time zone from the primary Google calendar. E2E on "
-                "CalDAV: initials without a picture (\u201c" + T["u56_initials"] + "\u201d) and the editable profile fields (row 146). "
-                "The Google reads also wait for a Google E2E run" + GOOGLE_CONSENT[len("Needs a Google E2E run"):])
 BLOCKED[322] = (GOOGLE_CONSENT + " and a second Google account that is not a Tempoloom user, as a guest. Built, with unit tests against a "
                 "fake Google API (tests/unit/guest-free-busy.test.ts): the organizer's Google account asks Google free/busy for required "
                 "guests who are not users here (at most 50 per request, a 5-second limit, the answer kept for 5 minutes), the meeting "
@@ -1602,6 +1592,25 @@ E2E_NOTES[700] = ("The MCP URL with Copy (a visible fallback when the browser gi
 BLOCKED[949] = ("Needs a Claude account (Claude Desktop or the Claude web app) to add a custom connector; " + _SERVER
                 + ". The Claude guide on the Account page, with the connector steps and the troubleshooting text of rule 15, passes E2E (\u201c" + T["u57_guides"] + "\u201d)")
 # --- end U57 ---
+
+# --- U59: PRF-6 formats and week start in the planner, hours page and date displays ---
+T["u59_formats"] = "the planner, the hours page and the task and habit lists use the time format, date format and week start from the calendar account, also after a reload (PRF-6)"
+T["u59_live_week"] = "a week start change from the calendar account moves an open planner to the week that keeps most of its days (PRF-6, planner edge case 4)"
+BLOCKED[145] = (GOOGLE_CONSENT + ": the reads from Google (name, picture, time zone, week start, time and date format) have unit tests "
+                "against a fake Google API only (tests/unit/google-profile.test.ts). Built, with full UI E2E on CalDAV, with the values "
+                "stored as the Google sync stores them: PRF-6, the planner (first day of the week, week label, day headers, hour labels, "
+                "event times, event details), the hours page (day order, ranges), the travel dates in Settings and the task and habit lists use "
+                "the time format (12 or 24 hours), the date format and the Google week start, also after a reload, and a weekly meeting "
+                "keeps its planning period from Monday (\u201c" + T["u59_formats"] + "\u201d); an open planner follows a week start change "
+                "through the live signal (\u201c" + T["u59_live_week"] + "\u201d); initials without a picture (\u201c" + T["u56_initials"] + "\u201d); the editable profile fields (row 146). "
+                "Built, with unit tests: one set of format rules (tests/unit/formats.test.ts) for the times and dates the user reads in "
+                "the app; the meeting list, change logs, help page, recommendations, error texts and the preview texts (also of the MCP "
+                "tools, unit test in tests/unit/mcp.test.ts) use them too, with E2E of the default formats only. Tempoloom decision (settings-profile.md, "
+                "\u201cWhich week each feature uses\u201d): the Google week start sets the display week only; planning periods (habits, "
+                "meetings with their skips, missed periods and cadence, focus goals, auto-lock, policy reports) keep the week start set "
+                "in Tempoloom, so a Google change never moves a period key; edge case 3 applies to that planning week start. Mail keeps "
+                "the default formats")
+# --- end U59 ---
 
 # Google Calendar proof. docs/e2e-google-run.tsv records a full E2E run on Google
 # (a "# commit <sha>" line, then status, test id, title per line; docs/e2e-google-run.md

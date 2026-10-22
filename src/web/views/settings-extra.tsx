@@ -10,6 +10,7 @@ import { useEffect, useState } from "preact/hooks";
 import type { Settings } from "../../server/settings.ts";
 import { ApiError, api } from "../lib/api.ts";
 import { useCommit } from "../lib/commit-input.ts";
+import { dateText } from "../lib/format.ts";
 import { planNow } from "../lib/state.ts";
 
 type Act = (fn: () => Promise<unknown>, done?: string) => Promise<unknown>;
@@ -269,7 +270,7 @@ export function HoursZoneNote() {
   return (
     <p class="status" data-testid="hours-zone">
       {t.active
-        ? `Hours apply in ${t.active.tz} until ${t.active.end_date} (travel time zone), then in ${t.home}.`
+        ? `Hours apply in ${t.active.tz} until ${dateText(t.active.end_date)} (travel time zone), then in ${t.home}.`
         : `Hours apply in ${t.home}.`}
     </p>
   );
@@ -343,7 +344,7 @@ export function TravelSettings() {
         {t?.entries.map((e) => (
           <div class="row" key={e.id} data-travel-zone={e.tz}>
             <span>
-              {e.tz} · {e.start_date} to {e.end_date}
+              {e.tz} · {dateText(e.start_date)} to {dateText(e.end_date)}
               {e.active ? " · now" : e.past ? " · past" : ""}
             </span>
             <button

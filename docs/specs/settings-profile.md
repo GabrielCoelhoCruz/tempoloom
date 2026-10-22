@@ -41,6 +41,22 @@ Google. The user edits a few other profile fields in Tempoloom.
   it and shows no picture (E-0199).
 - **PRF-6.** The planner, hours page and all date displays use `timeFormat`,
   `dateFormat` and `weekStart` (E-0199).
+  Tempoloom decision: one set of rules writes every time and date that the
+  user reads in the app (src/shared/formats.ts, src/web/lib/format.ts).
+  `timeFormat` 24h writes "14:30", 12h writes "2:30 PM" (hour labels of the
+  planner grid "2 PM"). `dateFormat` writes numeric dates as `2026-11-09`
+  (YMD), `09/11/2026` (DMY) or `11/09/2026` (MDY); a time with its day is
+  "Mon 09/11/2026 2:30 PM". Dates written with a month name ("9 Nov" in the
+  Pomodoro and analytics charts) have no field order to choose and stay so.
+  The display week (see "Which week each feature uses") sets the first day of
+  the planner week, the "Today" and week links, the day order of the hours
+  page, the hours previews and the item-specific days. The Pomodoro timer is
+  a public page that reads no account (`tools-pomodoro-timer.md`), so it
+  keeps the browser's clock and weeks from Monday.
+  Values of form inputs (time and date pickers) stay in the browser's format.
+  Mail keeps the default formats: guests read most of it, and they have
+  their own settings. Without a Google account (CalDAV) the values are the
+  defaults (24h, YMD, week from Monday) until they are set.
 - **PRF-7.** Hours sets use `timeZone` (E-0172; `planning-hours.md` HRS-13).
 - **PRF-8.** `jobTitle`, `company`, `companySize` and `useCase` are saved when
   the user changes them (E-0199).
@@ -49,6 +65,32 @@ Google. The user edits a few other profile fields in Tempoloom.
   in the calendar account, and the four fields, saved as each one changes.
   Choices: `companySize` 1, 2-10, 11-50, 51-200, 201-1000, 1001+; `useCase`
   work, personal, both (open question 2).
+
+### Which week each feature uses
+
+Tempoloom decision. Two week starts exist, and each feature uses one:
+
+| Week | Value | Features |
+|---|---|---|
+| Display week | `weekStart` of the Google account (`googleWeekStart`), else the planning week start | planner week view (first day, "Today", week links, "weekdays only" stays Monday to Friday), hours page day order, hours previews, item-specific days |
+| Planning period | the planning week start set in Tempoloom (`weekStart`, default Monday) | weekly habit periods, flexible meeting periods, cadence, skips and missed periods (`meetings-flexible.md`), meeting series, focus goals and focus progress, weekly auto-lock (LCK-30, LCK-33), policy reports, the meeting availability map, booking link weekly limits, "next week" snooze of a task |
+| Calendar week | Monday to Sunday | the weekly report mail and its share page (`analytics-weekly-reports.md`), the Pomodoro week counts (a public page with no account), not changed here |
+
+The planner's focus progress shows the planning week that holds most of
+the days shown (the display week's Thursday).
+
+The Google week start does not change the planning period. A period key
+(for example `meeting:<id>:<week start>`) names each placed, skipped,
+missed or done period. A new week start moves every key, and a switch must
+move each of them with no gap and no double period: placed occurrences,
+skips, pending declines and guest mail, and the cadence phase of meetings
+that repeat every 2 or more weeks. A first attempt (PR 47) failed on these
+points: a skipped week came back, this week's meeting was cancelled when
+last Sunday held one, and a biweekly meeting anchored on a Sunday changed
+its cadence. Until period keys do not depend on the week start, the
+planning week stays the one set in Tempoloom, and the profile page shows
+both values ("Planning week starts on", "Week start in your Google
+calendar (planner and dates)").
 
 ## Outputs
 
@@ -64,6 +106,9 @@ Google. The user edits a few other profile fields in Tempoloom.
    (E-0222; time zone spec owns travel zones).
 3. The week start changes from Monday to Sunday: weekly goals and weekly
    auto-lock use the new start from the next week on. Proposed default.
+   Tempoloom decision: this applies to the planning week start set in
+   Tempoloom. A change of the Google week start changes only the display
+   week, at the next calendar list sync ("Which week each feature uses").
 
 ## Observed API shapes
 
