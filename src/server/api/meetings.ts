@@ -42,7 +42,7 @@ import { cacheEvent } from "../sync/pull.ts";
 import type { SyncService } from "../sync/service.ts";
 import { domainOf, membership } from "../teams.ts";
 import { homeZone } from "../travel.ts";
-import { endRank, insertRank } from "./automations.ts";
+import { endRank, insertRank, rankShift } from "./automations.ts";
 import { badRequest, hhmm, hoursSetId } from "./items.ts";
 
 const fiveMinutes = z.number().int().min(5).max(480).multipleOf(5);
@@ -541,6 +541,10 @@ export function meetingRoutes(
     const old = editId ? own(editId, user.id) : null;
     const id = old?.id ?? "preview";
     const { row, attendees } = rowFrom(db, user.id, id, body, t, old?.rank ?? 0);
+    // The rank the save gives (SCH-71, rule 7), and the ranks it moves.
+    const shift = old ? null : rankShift(db, "flexible_meeting", user.id, row.level);
+    if (shift) row.rank = shift.at;
+    else if (old && row.level !== old.level) row.rank = endRank(db, user.id, row.level);
     if (old) {
       row.created_at = old.created_at;
       row.rules_changed_at = rulesChangedAt(db, old, row, attendees, body, t);
@@ -560,13 +564,15 @@ export function meetingRoutes(
       )?.planned_at ?? 0;
     // Accounts rule 16: a meeting on a disconnected account waits, also a new
     // one on the main calendar, so the preview shows no times and says why.
+    // The calendar is the form's (null: the main one), else the saved one, else the main one.
+    const formCalendar = body.eventSettings?.calendarId;
     const waiting = waitingCalendars(
       db,
       user.id,
     )(
-      old
-        ? readEventSettings(old.event_settings, defaultEventSettings("meeting")).calendarId
-        : (body.eventSettings?.calendarId ?? null),
+      formCalendar !== undefined || !old
+        ? formCalendar
+        : readEventSettings(old.event_settings, defaultEventSettings("meeting")).calendarId,
     );
     const { snapshot } = planningSnapshot(db, user.id, zone, getSettings(db, user.id), t, last);
     if (body.hoursMode === "itemSpecific" && body.itemHours) {
@@ -574,9 +580,17 @@ export function meetingRoutes(
       snapshot.hours = { ...snapshot.hours, [row.hours_set_id]: body.itemHours };
     }
     const item = meetingItem(db, user.id, row, attendees, t, snapshot.windowEnd, last, new Map());
+    const shifted = new Map(shift?.moved.map((a) => [a.id, a.rank]));
+    const ranked = <T extends { id: string; rank: number }>(xs: T[]) =>
+      xs.map((x) => ({ ...x, rank: shifted.get(x.id) ?? x.rank }));
     const result = plan({
       ...snapshot,
-      meetings: [...snapshot.meetings.filter((m) => m.id !== id), ...(waiting ? [] : [item])],
+      meetings: [
+        ...ranked(snapshot.meetings).filter((m) => m.id !== id),
+        ...(waiting ? [] : [item]),
+      ],
+      buffers: ranked(snapshot.buffers),
+      habits: ranked(snapshot.habits),
     });
     const before = new Map(snapshot.current.map((p) => [p.key, p]));
     const moved = result.placements.filter((p) => {

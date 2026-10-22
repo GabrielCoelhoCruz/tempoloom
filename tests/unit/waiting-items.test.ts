@@ -12,7 +12,8 @@
 // 4. Another item is placed over an event that a waiting item keeps.
 // 5. A preview, a task's work blocks, a meeting preview or a meeting
 //    reschedule plans without the waiting rule: it shows or picks times that
-//    the real run does not use.
+//    the real run does not use. A meeting edit preview checks the saved
+//    calendar, not the one picked in the form.
 // 6. Meeting overload focus time on a disconnected calendar does not wait, or
 //    its moves get no "rules-changed" reason in the change log.
 import { Hono } from "hono";
@@ -324,6 +325,39 @@ describe("every plan entry point keeps the waiting rule (accounts rule 16)", () 
     expect(after.occurrences).toEqual([]);
     expect(after.waiting).toBe("extra@example.com");
     expect(rescheduleSlot(db, userId, row, "otherDay", NOW)).toBeNull();
+  });
+
+  it("the edit preview checks the calendar picked in the form, then the saved one", async () => {
+    const { db, userId } = setup("ok", "ok");
+    const call = routes(db, userId);
+    const body = {
+      title: "Sync",
+      attendees: [{ email: "dana@example.com" }],
+      frequency: { period: "weekly", everyWeeks: 1, idealDays: [2] },
+      idealTime: "10:00",
+      durationMinutes: 30,
+      eventSettings: { calendarId: "cal2" },
+    };
+    const { id } = (await call("/meetings", body)) as { id: string };
+    run(db, "UPDATE accounts SET status = 'reauth_required' WHERE id = 'added'");
+    const saved = await call(`/meetings/preview?id=${id}`, body);
+    expect(saved.occurrences).toEqual([]);
+    expect(saved.waiting).toBe("extra@example.com");
+    // Moved to the connected main calendar in the form: it no longer waits.
+    const moved = await call(`/meetings/preview?id=${id}`, {
+      ...body,
+      eventSettings: { calendarId: "cal" },
+    });
+    expect(moved.waiting).toBeNull();
+    expect(moved.occurrences).not.toEqual([]);
+    // No calendar in the form's settings: the saved one; a null calendar: the main one.
+    const { eventSettings: _, ...kept } = body;
+    expect((await call(`/meetings/preview?id=${id}`, kept)).waiting).toBe("extra@example.com");
+    const main = await call(`/meetings/preview?id=${id}`, {
+      ...body,
+      eventSettings: { calendarId: null },
+    });
+    expect(main.waiting).toBeNull();
   });
 
   it("a new meeting on the main calendar has no preview times while the main account is disconnected", async () => {

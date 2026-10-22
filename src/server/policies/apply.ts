@@ -89,8 +89,8 @@ function insertItem(db: Db, userId: string, d: Desired, now: number): string | n
     run(
       db,
       `INSERT INTO focus_goals (id, user_id, title, enabled, hours_set_id, weekly_goal_minutes, daily_min_minutes,
-         daily_max_minutes, min_block_minutes, max_block_minutes, busy, created_at, rules_changed_at)
-       VALUES (?, ?, 'Focus time', 1, ?, ?, 0, ?, 60, 240, 1, ?, ?)`,
+         daily_max_minutes, min_block_minutes, max_block_minutes, busy, created_at, rules_changed_at, rank)
+       VALUES (?, ?, 'Focus time', 1, ?, ?, 0, ?, 60, 240, 1, ?, ?, ?)`,
       id,
       userId,
       hours,
@@ -98,6 +98,7 @@ function insertItem(db: Db, userId: string, d: Desired, now: number): string | n
       dailyMax(d.minutes),
       now,
       now,
+      insertRank(db, "focus_time", userId, 4),
     );
   } else if (d.kind === "buffer") {
     run(
