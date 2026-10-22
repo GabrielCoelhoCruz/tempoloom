@@ -3,7 +3,15 @@ import { defaultEventSettings, type EventSettings } from "../../shared/event-set
 import { itemRangeOf, type Weekly } from "../../shared/item-hours.ts";
 import { api } from "../lib/api.ts";
 import { CalendarDisconnected } from "../lib/calendars.tsx";
-import { duration, formatWhen, hhmm } from "../lib/format.ts";
+import {
+  clockText,
+  dateText,
+  dateTimeText,
+  duration,
+  formatWhen,
+  hhmm,
+  timeText,
+} from "../lib/format.ts";
 import { freeName, templateFromUrl } from "../lib/library.ts";
 import { useLive } from "../lib/live.ts";
 import { LEVEL_NAMES, planNow, zone } from "../lib/state.ts";
@@ -170,21 +178,6 @@ const MOVES: [string, string][] = [
   ["moderate", "3 per day"],
   ["aggressive", "5 per day"],
 ];
-const pad2 = (n: number) => String(n).padStart(2, "0");
-function localWhen(z: string, t: number): string {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: z,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23",
-  }).formatToParts(new Date(t));
-  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
-  return `${get("year")}-${get("month")}-${get("day")} ${pad2(Number(get("hour")))}:${get("minute")}`;
-}
-
 interface Preview {
   occurrences: { start: number; end: number; conflict: boolean }[];
   problems: { demandKey: string; status: string; reason: string }[];
@@ -234,8 +227,8 @@ function Attention({ meetings, zone: z }: { meetings: Meeting[]; zone: string })
           >
             {m.title} ·{" "}
             {occurrence
-              ? localWhen(z, occurrence.start_ms)
-              : `${p.period.kind === "day" ? "day" : "week of"} ${p.period.start}`}{" "}
+              ? dateTimeText(z, occurrence.start_ms)
+              : `${p.period.kind === "day" ? "day" : "week of"} ${dateText(p.period.start)}`}{" "}
             · {p.status === "conflict" ? "Conflict" : "Not placed"}:{" "}
             {FLAGS[p.reason] ?? REASONS[p.reason] ?? p.reason}
           </li>
@@ -816,7 +809,7 @@ export function Meetings() {
           {preview.occurrences.map((o) => (
             <div class="row" key={o.start}>
               <span>
-                {formatWhen(z, o.start)} to {formatWhen(z, o.end).slice(-5)}
+                {formatWhen(z, o.start)} to {clockText(z, o.end)}
                 {o.conflict ? " · conflict" : ""}
               </span>
             </div>
@@ -853,7 +846,7 @@ export function Meetings() {
                       {m.title} {m.enabled ? null : <span class="badge">off</span>}
                     </div>
                     <div class="meta">
-                      {describeFrequency(m.frequency)} at {hhmm(m.ideal_minute)} ·{" "}
+                      {describeFrequency(m.frequency)} at {timeText(m.ideal_minute)} ·{" "}
                       {duration(m.duration_minutes)}
                       {m.shortest_minutes < m.duration_minutes
                         ? ` (or ${duration(m.shortest_minutes)})`
@@ -867,7 +860,7 @@ export function Meetings() {
                         : m.hours_mode === "organizer"
                           ? "My meeting hours only"
                           : "Everyone's meeting hours"}
-                      {m.starting ? ` · starting ${m.starting}` : ""} ·{" "}
+                      {m.starting ? ` · starting ${dateText(m.starting)}` : ""} ·{" "}
                       {VISIBILITY[m.event_settings.visibility]} ·{" "}
                       {m.event_settings.reminders === "default"
                         ? "calendar default reminders"
@@ -890,7 +883,7 @@ export function Meetings() {
                     <ul class="meta" data-testid="meeting-occurrences">
                       {m.occurrences.slice(0, 4).map((o) => (
                         <li key={o.key}>
-                          {formatWhen(z, o.start_ms)} to {formatWhen(z, o.end_ms).slice(-5)}
+                          {formatWhen(z, o.start_ms)} to {clockText(z, o.end_ms)}
                           {o.locked ? " · locked" : ""}
                         </li>
                       ))}
@@ -909,7 +902,7 @@ export function Meetings() {
                         const occurrence = m.occurrences.find((o) => o.key === p.demandKey);
                         return (
                           <div key={p.demandKey} class="warning" data-testid="meeting-flag">
-                            {occurrence ? `${localWhen(z, occurrence.start_ms)}: ` : ""}
+                            {occurrence ? `${dateTimeText(z, occurrence.start_ms)}: ` : ""}
                             {FLAGS[p.reason]}
                             <div class="actions">
                               {occurrence &&
@@ -927,7 +920,7 @@ export function Meetings() {
                                       )
                                     }
                                   >
-                                    Move to {localWhen(z, t.start)}
+                                    Move to {dateTimeText(z, t.start)}
                                   </button>
                                 ))}
                             </div>
@@ -942,9 +935,12 @@ export function Meetings() {
                         <ul data-testid="meeting-changes">
                           {m.changes.map((ch) => (
                             <li key={ch.id} data-testid="change" data-reason={ch.reason}>
-                              {ch.old_start !== null ? localWhen(z, ch.old_start) : ""} →{" "}
-                              {ch.new_start !== null ? localWhen(z, ch.new_start) : "no new time"} ·{" "}
-                              {CHANGE_REASONS[ch.reason] ?? ch.reason} · by {ch.detail || ch.actor}
+                              {ch.old_start !== null ? dateTimeText(z, ch.old_start) : ""} →{" "}
+                              {ch.new_start !== null
+                                ? dateTimeText(z, ch.new_start)
+                                : "no new time"}{" "}
+                              · {CHANGE_REASONS[ch.reason] ?? ch.reason} · by{" "}
+                              {ch.detail || ch.actor}
                             </li>
                           ))}
                         </ul>

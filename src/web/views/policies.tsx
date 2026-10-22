@@ -2,7 +2,7 @@
 // reminders, and for admins the policies, agenda templates and reports.
 import { useCallback, useEffect, useState } from "preact/hooks";
 import { ApiError, api } from "../lib/api.ts";
-import { formatWhen } from "../lib/format.ts";
+import { dateText, formatWhen } from "../lib/format.ts";
 import { zone } from "../lib/state.ts";
 
 type PolicyType = "focus_time" | "buffers" | "meeting_agendas" | "fragmentation";
@@ -540,7 +540,7 @@ function ReportView({
                 class={w.baseline ? "baseline" : undefined}
                 title={w.baseline ? "Baseline" : undefined}
               >
-                {w.start}
+                {dateText(w.start)}
               </th>
             ))}
           </tr>

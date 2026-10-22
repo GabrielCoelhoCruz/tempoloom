@@ -5,7 +5,7 @@
 // 10-21).
 import { useCallback, useEffect, useState } from "preact/hooks";
 import { ApiError, api } from "../lib/api.ts";
-import { toLocalInput } from "../lib/format.ts";
+import { dateTimeText } from "../lib/format.ts";
 import { zone } from "../lib/state.ts";
 import { Copyable, McpGuides } from "./mcp-guides.tsx";
 
@@ -18,7 +18,7 @@ interface Grant {
   host: string;
 }
 
-const when = (t: number) => toLocalInput(zone(), t).replace("T", " ");
+const when = (t: number) => dateTimeText(zone(), t);
 
 export function McpSection() {
   const [info, setInfo] = useState<{ url: string; writeEnabled: boolean } | null>(null);

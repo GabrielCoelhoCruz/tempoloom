@@ -4,7 +4,7 @@
 import "./parts.css";
 import { useState } from "preact/hooks";
 import type { ItemRange } from "../../shared/item-hours.ts";
-import { hhmm } from "../lib/format.ts";
+import { timeText, weekdaysInOrder } from "../lib/format.ts";
 import { onLinkClick } from "../lib/router.ts";
 
 export interface HoursChoice {
@@ -17,15 +17,22 @@ export interface HoursChoice {
 export const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 export const ITEM = "item";
 
-/** "Tue, Thu 07:00–08:00; Sat 09:00–12:00": days grouped by equal ranges. */
+/** "08:00–12:00, 13:00–17:00" in the user's time format (PRF-6). */
+export const rangesText = (ranges: [number, number][]) =>
+  ranges.map(([s, e]) => `${timeText(s)}–${timeText(e)}`).join(", ");
+
+/**
+ * "Tue, Thu 07:00–08:00; Sat 09:00–12:00": days grouped by equal ranges, in
+ * the order of the user's week (PRF-6).
+ */
 export function describeWeekly(weekly: Record<string, [number, number][]>): string {
   const groups = new Map<string, string[]>();
-  DAYS.forEach((d, i) => {
-    const ranges = weekly[String(i + 1)] ?? [];
-    if (ranges.length === 0) return;
-    const key = ranges.map(([s, e]) => `${hhmm(s)}–${hhmm(e)}`).join(", ");
-    groups.set(key, [...(groups.get(key) ?? []), d]);
-  });
+  for (const day of weekdaysInOrder()) {
+    const ranges = weekly[String(day)] ?? [];
+    if (ranges.length === 0) continue;
+    const key = rangesText(ranges);
+    groups.set(key, [...(groups.get(key) ?? []), DAYS[day - 1] as string]);
+  }
   return [...groups].map(([ranges, days]) => `${days.join(", ")} ${ranges}`).join("; ");
 }
 
@@ -86,14 +93,12 @@ export function HoursField({
             {chosen === ITEM ? (
               <span>The days and times below, for this item only.</span>
             ) : (
-              DAYS.map((d, i) => {
-                const ranges = set?.weekly[String(i + 1)] ?? [];
+              weekdaysInOrder().map((day) => {
+                const d = DAYS[day - 1] as string;
+                const ranges = set?.weekly[String(day)] ?? [];
                 return (
                   <span class="hours-line" key={d}>
-                    {d}{" "}
-                    {ranges.length
-                      ? ranges.map(([s, e]) => `${hhmm(s)}–${hhmm(e)}`).join(", ")
-                      : "off"}
+                    {d} {ranges.length ? rangesText(ranges) : "off"}
                   </span>
                 );
               })
@@ -147,10 +152,10 @@ export function ItemHoursFields({
   return (
     <fieldset class="wide item-hours" data-testid="item-hours">
       <legend>Item-specific hours</legend>
-      {DAYS.map((d, i) => (
-        <label class="inline" key={d}>
-          <input type="checkbox" {...day(i + 1)} />
-          {d}
+      {weekdaysInOrder().map((n) => (
+        <label class="inline" key={n}>
+          <input type="checkbox" {...day(n)} />
+          {DAYS[n - 1]}
         </label>
       ))}
       <label class="inline">

@@ -2,6 +2,7 @@
 // the plan runs of the last 30 days did to its events, and why (SCH-116 codes).
 import { useState } from "preact/hooks";
 import { api } from "../lib/api.ts";
+import { dateText } from "../lib/format.ts";
 
 interface Change {
   at: string;
@@ -76,7 +77,7 @@ export function ItemChanges({ kind, id }: { kind: string; id: string }) {
               {c.at} · {ACTIONS[c.action] ?? c.action}
               {c.from ? ` · ${c.from}` : ""}
               {c.to ? (c.from ? ` → ${c.to}` : ` · ${c.to}`) : ""}
-              {!c.from && !c.to && c.period ? ` · period of ${c.period}` : ""}
+              {!c.from && !c.to && c.period ? ` · period of ${dateText(c.period)}` : ""}
               {c.reason ? ` · ${REASONS[c.reason] ?? c.reason}` : ""}
             </li>
           ))}

@@ -32,6 +32,7 @@ import {
   type Preview,
   plainTitle,
   SOURCES,
+  userFormatsOf,
   when,
   zoneOf,
 } from "./preview.ts";
@@ -402,6 +403,7 @@ export function mcpRoutes(deps: McpDeps): Hono {
         if (end <= start) throw new ToolError("end must be after start");
         if (end - start > DAY) throw new ToolError("An event can last at most 24 hours");
         const zone = zoneOf(db, caller.user.id);
+        const f = userFormatsOf(db, caller.user.id);
         const attendees = [...new Set((a.attendees ?? []).map((x) => x.toLowerCase()))];
         return staged(
           caller,
@@ -416,7 +418,7 @@ export function mcpRoutes(deps: McpDeps): Hono {
               location: a.location ?? "",
             },
             impact: [{ op: "create", title: a.title, start, end }],
-            summary: `Create “${a.title}” · ${when(zone, start, end)}${attendees.length ? ` · invites ${attendees.join(", ")}` : ""}`,
+            summary: `Create “${a.title}” · ${when(zone, start, end, f)}${attendees.length ? ` · invites ${attendees.join(", ")}` : ""}`,
             reason: a.reason ?? "",
           },
           start,
@@ -450,6 +452,7 @@ export function mcpRoutes(deps: McpDeps): Hono {
       run: (caller, a) => {
         const ev = editable(caller.user, a.event_id);
         const zone = zoneOf(db, caller.user.id);
+        const f = userFormatsOf(db, caller.user.id);
         return staged(
           caller,
           {
@@ -466,7 +469,7 @@ export function mcpRoutes(deps: McpDeps): Hono {
                 eventId: a.event_id,
               },
             ],
-            summary: `Delete “${ev.summary}” · ${when(zone, ev.start_ms, ev.end_ms)}`,
+            summary: `Delete “${ev.summary}” · ${when(zone, ev.start_ms, ev.end_ms, f)}`,
             reason: a.reason ?? "",
           },
           ev.start_ms,
@@ -494,6 +497,7 @@ export function mcpRoutes(deps: McpDeps): Hono {
           );
         if (!ev.writable) throw new ToolError("This calendar is read-only");
         const zone = zoneOf(db, caller.user.id);
+        const f = userFormatsOf(db, caller.user.id);
         return staged(
           caller,
           {
@@ -502,7 +506,7 @@ export function mcpRoutes(deps: McpDeps): Hono {
             before: { title: ev.summary, start: ev.start_ms, end: ev.end_ms },
             after: { response: a.response },
             impact: [],
-            summary: `${RSVP_WORDS[a.response]} “${ev.summary}” · ${when(zone, ev.start_ms, ev.end_ms)}`,
+            summary: `${RSVP_WORDS[a.response]} “${ev.summary}” · ${when(zone, ev.start_ms, ev.end_ms, f)}`,
             reason: a.reason ?? "",
           },
           ev.start_ms,
@@ -534,6 +538,7 @@ export function mcpRoutes(deps: McpDeps): Hono {
         const end = toMs(slot.end);
         const title = a.title ?? "Focus time";
         const zone = zoneOf(db, caller.user.id);
+        const f = userFormatsOf(db, caller.user.id);
         return staged(
           caller,
           {
@@ -548,7 +553,7 @@ export function mcpRoutes(deps: McpDeps): Hono {
               location: "",
             },
             impact: [{ op: "create", title, start, end }],
-            summary: `Focus time “${title}” · ${when(zone, start, end)}`,
+            summary: `Focus time “${title}” · ${when(zone, start, end, f)}`,
             reason: a.reason ?? "",
           },
           start,
@@ -580,6 +585,7 @@ export function mcpRoutes(deps: McpDeps): Hono {
         const end = start + a.minutes * 60_000;
         if (end > now()) throw new ToolError("A work session cannot end in the future");
         const zone = zoneOf(db, caller.user.id);
+        const f = userFormatsOf(db, caller.user.id);
         return staged(
           caller,
           {
@@ -590,7 +596,7 @@ export function mcpRoutes(deps: McpDeps): Hono {
               body: JSON.stringify({ start, minutes: a.minutes }),
             },
             impact: [{ op: "create", title: task.title, start, end }],
-            summary: `Work session on “${task.title}” · ${a.minutes} min · ${when(zone, start, end)}`,
+            summary: `Work session on “${task.title}” · ${a.minutes} min · ${when(zone, start, end, f)}`,
             reason: a.reason ?? "",
           },
           start,
@@ -686,6 +692,7 @@ export function mcpRoutes(deps: McpDeps): Hono {
     },
   ) {
     const zone = zoneOf(db, caller.user.id);
+    const f = userFormatsOf(db, caller.user.id);
     const managed = one<{ id: string; title: string; start_ms: number; end_ms: number }>(
       db,
       "SELECT id, title, start_ms, end_ms FROM managed_events WHERE id = ? AND user_id = ?",
@@ -724,7 +731,7 @@ export function mcpRoutes(deps: McpDeps): Hono {
               eventId: managed.id,
             },
           ],
-          summary: `Move “${title}” to ${when(zone, start, end)}`,
+          summary: `Move “${title}” to ${when(zone, start, end, f)}`,
           reason: a.reason ?? "",
         },
         start,
@@ -755,7 +762,7 @@ export function mcpRoutes(deps: McpDeps): Hono {
           },
         ],
         summary: moved
-          ? `Move “${ev.summary}” to ${when(zone, start, end)}${a.title ? ` as “${a.title}”` : ""}`
+          ? `Move “${ev.summary}” to ${when(zone, start, end, f)}${a.title ? ` as “${a.title}”` : ""}`
           : `Rename “${ev.summary}” to “${title}”`,
         reason: a.reason ?? "",
       },

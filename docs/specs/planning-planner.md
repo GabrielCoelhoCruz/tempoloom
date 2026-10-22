@@ -126,6 +126,9 @@ assistant chat.
    still blocks scheduling (PLN-20).
 4. The user's week start changes in Google Calendar: the week view and weekly
    rules use the new start after the next sync (E-0199).
+   Tempoloom decision: the week view follows it after the next sync; weekly
+   rules keep the planning week start set in Tempoloom
+   (`settings-profile.md`, "Which week each feature uses").
 5. The planner is open in two tabs: a change in one shows in the other within
    15 seconds. Proposed default.
 

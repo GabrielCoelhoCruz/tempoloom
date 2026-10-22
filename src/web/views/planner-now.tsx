@@ -11,7 +11,7 @@ import type { PlannerEvent } from "../../server/api/planner.ts";
 import { waitingNote } from "../../shared/event-settings.ts";
 import { addDays, utcToLocal } from "../../shared/time.ts";
 import { api } from "../lib/api.ts";
-import { formatWhen, hhmm } from "../lib/format.ts";
+import { clockText, dateText, formatWhen } from "../lib/format.ts";
 import { lazyComponent } from "../lib/lazy.ts";
 import { useLive } from "../lib/live.ts";
 import { Markdown } from "../lib/markdown.tsx";
@@ -67,9 +67,9 @@ interface Conflict {
 const reason = (err: unknown) =>
   (err as { body?: { message?: string } }).body?.message ?? "That did not work. Try again.";
 
-/** A plain time range: "Tue 27 Oct, 11:00–12:00". */
+/** A plain time range: "Tue 2026-10-27 11:00–12:00", in the user's formats. */
 function span(z: string, start: number, end: number) {
-  return `${formatWhen(z, start)}–${hhmm(utcToLocal(z, end).minuteOfDay)}`;
+  return `${formatWhen(z, start)}–${clockText(z, end)}`;
 }
 
 function TaskRow({ t, children }: { t: TaskLite; children?: ComponentChildren }) {
@@ -497,7 +497,7 @@ export function TravelPrompt() {
     return (
       <div class="banner" data-testid="travel-prompt">
         <span>
-          Back home? Tempoloom still plans in {active.tz} until {active.end_date}.
+          Back home? Tempoloom still plans in {active.tz} until {dateText(active.end_date)}.
         </span>
         <button
           type="button"
