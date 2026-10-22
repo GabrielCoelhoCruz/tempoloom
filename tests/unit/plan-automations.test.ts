@@ -261,6 +261,107 @@ describe("rescheduled occurrences", () => {
     );
     expect(spans(of(r, "lunch"))).toEqual(["2026-11-04T14:00/15:00"]);
   });
+
+  // The Wednesday occurrence's event is on Thursday (rule 14, or a move by
+  // hand). The chosen time counts from Wednesday: 1440 minutes on is Thursday.
+  const moved = (over: Partial<HabitItem>) =>
+    habit({ id: "lunch", idealMinute: 720, frequency: { period: "weekly", days: [3] }, ...over });
+
+  it("a reschedule on the day the event moved to stays on that day", () => {
+    const r = plan(
+      snapshot(
+        "2026-11-02T08:00",
+        { habits: [moved({ rescheduled: { "2026-11-04": 1440 + 900 } })] },
+        1,
+      ),
+    );
+    expect(spans(of(r, "lunch"))).toEqual(["2026-11-05T15:00/16:00"]);
+  });
+
+  it("a snooze on the day the event moved to goes to the first free slot after it that day", () => {
+    const r = plan(
+      snapshot(
+        "2026-11-02T08:00",
+        {
+          habits: [moved({ notBefore: { "2026-11-04": 1440 + 900 } })],
+          events: [ext(at("2026-11-05", "15:00"), at("2026-11-05", "16:00"))],
+        },
+        1,
+      ),
+    );
+    expect(spans(of(r, "lunch"))).toEqual(["2026-11-05T16:00/17:00"]);
+  });
+
+  it("a snooze moves a started occurrence on the day the event moved to, also an earlier day", () => {
+    // The Wednesday occurrence runs on Tuesday: 1440 minutes back is Tuesday.
+    const current = [
+      {
+        key: "habit:lunch:2026-11-04",
+        itemId: "lunch",
+        start: at("2026-11-03", "12:00"),
+        end: at("2026-11-03", "13:00"),
+        locked: false,
+      },
+    ];
+    const r = plan(
+      snapshot("2026-11-03T12:05", {
+        current,
+        habits: [moved({ notBefore: { "2026-11-04": -1440 + 735 } })],
+      }),
+    );
+    expect(spans(of(r, "lunch"))[0]).toBe("2026-11-03T12:15/13:15");
+  });
+
+  // On the later day the occurrence's date has passed; the plan still has it.
+  const onThursday = (start: string, end: string) => [
+    {
+      key: "habit:lunch:2026-11-04",
+      itemId: "lunch",
+      start: at("2026-11-05", start),
+      end: at("2026-11-05", end),
+      locked: false,
+    },
+  ];
+  const wednesday = (r: ReturnType<typeof plan>) =>
+    spans(of(r, "lunch").filter((p) => p.key === "habit:lunch:2026-11-04"));
+
+  it("a reschedule to a later day stays there on runs on that day", () => {
+    const lunch = moved({ rescheduled: { "2026-11-04": 1440 + 600 } });
+    const before = plan(snapshot("2026-11-04T08:00", { habits: [lunch] }, 1));
+    expect(wednesday(before)).toEqual(["2026-11-05T10:00/11:00"]);
+    const after = plan(
+      snapshot("2026-11-05T08:00", { habits: [lunch], current: onThursday("10:00", "11:00") }, 1),
+    );
+    expect(wednesday(after)).toEqual(["2026-11-05T10:00/11:00"]);
+  });
+
+  it("a snooze on the later day, on that day, moves the occurrence there", () => {
+    const lunch = moved({ notBefore: { "2026-11-04": 1440 + 780 } });
+    const r = plan(
+      snapshot("2026-11-05T11:00", { habits: [lunch], current: onThursday("12:00", "13:00") }, 1),
+    );
+    expect(wednesday(r)).toEqual(["2026-11-05T13:00/14:00"]);
+  });
+
+  it("an occurrence placed on a later alternative day (rule 14) keeps it on that day", () => {
+    const events = ["2026-11-03", "2026-11-04"].map((d) => ext(at(d, "09:00"), at(d, "17:00")));
+    const lunch = moved({});
+    const before = plan(snapshot("2026-11-02T08:00", { habits: [lunch], events }, 1));
+    expect(wednesday(before)).toEqual(["2026-11-05T12:00/13:00"]);
+    const after = plan(
+      snapshot(
+        "2026-11-05T08:00",
+        { habits: [lunch], events, current: onThursday("12:00", "13:00") },
+        1,
+      ),
+    );
+    expect(wednesday(after)).toEqual(["2026-11-05T12:00/13:00"]);
+  });
+
+  it("an occurrence of a passed date with no event and no choice is not placed again", () => {
+    const r = plan(snapshot("2026-11-05T08:00", { habits: [moved({})] }, 1));
+    expect(wednesday(r)).toEqual([]);
+  });
 });
 
 describe("reactive focus", () => {
