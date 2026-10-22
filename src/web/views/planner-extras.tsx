@@ -5,7 +5,7 @@ import { useCallback, useEffect, useState } from "preact/hooks";
 import type { PlannerEvent } from "../../server/api/planner.ts";
 import { utcToLocal } from "../../shared/time.ts";
 import { api } from "../lib/api.ts";
-import { fromLocalInput, hhmm, toLocalInput } from "../lib/format.ts";
+import { fromLocalInput, hhmm, timeText, toLocalInput } from "../lib/format.ts";
 import { useLive } from "../lib/live.ts";
 import { navigate, onLinkClick } from "../lib/router.ts";
 import { zone } from "../lib/state.ts";
@@ -235,7 +235,7 @@ function SnoozeForm({
         e.preventDefault();
         const [h, m] = time.split(":").map(Number) as [number, number];
         if (h * 60 + m <= base) {
-          setError(`Pick a time after ${hhmm(base)}`);
+          setError(`Pick a time after ${timeText(base)}`);
           return;
         }
         snooze(time);

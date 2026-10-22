@@ -7,7 +7,7 @@ import { changesOf } from "./change-log.ts";
 import { all, type Db, one } from "./db.ts";
 import { ACTIVE, mirrorKey, TAG_NOSYNC } from "./planner/mirror.ts";
 import { MANAGED_PROP } from "./planner/push.ts";
-import { userFormatsOf, when, zoneOf } from "./preview.ts";
+import { userFormatsOf, when, whenAt, zoneOf } from "./preview.ts";
 
 export type LookupError = "unreadable" | "unknown_calendar" | "not_found";
 
@@ -326,7 +326,7 @@ export function lookupEvent(db: Db, userId: string, q: string, now: number) {
     calendar: {
       name: calendar.name,
       account: calendar.email,
-      lastRead: calendar.synced_at === null ? null : when(zone, calendar.synced_at, undefined, f),
+      lastRead: calendar.synced_at === null ? null : whenAt(zone, calendar.synced_at, f),
       lastError:
         calendar.status === "reauth_required" ? "The account needs you to sign in again" : null,
     },
@@ -334,7 +334,7 @@ export function lookupEvent(db: Db, userId: string, q: string, now: number) {
     copy,
     policies: policies.map(({ key: _, ...p }) => p),
     changes: changesOf(db, userId, e.calendar_id, e.event_id, managed?.key ?? null).map((c) => ({
-      at: when(zone, c.at, undefined, f),
+      at: whenAt(zone, c.at, f),
       action: c.action,
       reason: c.reason,
       title: c.title,

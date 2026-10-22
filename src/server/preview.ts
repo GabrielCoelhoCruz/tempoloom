@@ -12,7 +12,7 @@ import {
   timeText,
   weekdayText,
 } from "../shared/formats.ts";
-import { utcToLocal, weekdayOf } from "../shared/time.ts";
+import { utcToLocal } from "../shared/time.ts";
 import { createSession, deleteSession } from "./accounts.ts";
 import type { AppEnv } from "./app.ts";
 import { logChange } from "./change-log.ts";
@@ -295,6 +295,9 @@ export function when(
   const b = utcToLocal(zone, end);
   return `${head}–${b.date === a.date ? "" : `${dateText(b.date, f)} `}${timeText(b.minuteOfDay, f)}`;
 }
+
+/** One time: "Tue 2026-10-27 15:30", in the formats `f`. */
+export const whenAt = (zone: string, t: number, f: Formats) => when(zone, t, undefined, f);
 
 /** The formats of a user's own texts (PRF-6). */
 export const userFormatsOf = (db: Db, userId: string) => formatsOf(getSettings(db, userId));

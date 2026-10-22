@@ -228,7 +228,7 @@ function Attention({ meetings, zone: z }: { meetings: Meeting[]; zone: string })
             {m.title} ·{" "}
             {occurrence
               ? dateTimeText(z, occurrence.start_ms)
-              : `${p.period.kind === "day" ? "day" : "week of"} ${p.period.start}`}{" "}
+              : `${p.period.kind === "day" ? "day" : "week of"} ${dateText(p.period.start)}`}{" "}
             · {p.status === "conflict" ? "Conflict" : "Not placed"}:{" "}
             {FLAGS[p.reason] ?? REASONS[p.reason] ?? p.reason}
           </li>
