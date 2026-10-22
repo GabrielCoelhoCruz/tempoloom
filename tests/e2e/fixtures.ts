@@ -25,7 +25,7 @@ import {
   serviceAccountToken,
 } from "../../src/server/google/service-account.ts";
 import { ownTestCalendar } from "../../src/server/google/test-calendar.ts";
-import { CalDavProvider, retryRead } from "../../src/server/providers/caldav.ts";
+import { CalDavProvider, eventsFromObject, retryRead } from "../../src/server/providers/caldav.ts";
 import { GoogleProvider } from "../../src/server/providers/google.ts";
 import type { ProviderEvent } from "../../src/server/providers/types.ts";
 import { addDays, localToUtc, utcToLocal, weekdayOf } from "../../src/shared/time.ts";
@@ -216,15 +216,17 @@ async function caldavCalendar(
     ZONE,
   );
   const attendeesOf = new Map<string, string[]>();
+  // Reads the event's object by its URL: no time window, so a test finds an
+  // event of any week, whatever the real day and time (order 29).
   const byId = async (id: string) => {
-    const all = await provider.listEvents(calendarId, {
-      syncToken: null,
-      // From two weeks back: a test with a server clock in the current week
-      // writes events from its Monday on, whatever the real day and time.
-      timeMin: Date.now() - 14 * 86_400_000,
-      timeMax: Date.now() + 90 * 86_400_000,
-    });
-    const ev = all.events.find((e) => e.id === id);
+    const auth = Buffer.from(`${env.username}:${env.password}`).toString("base64");
+    const res = await fetch(id, { headers: { authorization: `Basic ${auth}` } });
+    const data = res.ok ? await res.text() : "";
+    const ev = data
+      ? eventsFromObject(data, id, res.headers.get("etag"), -Infinity, Infinity, ZONE, [
+          email,
+        ]).find((e) => e.id === id)
+      : undefined;
     if (!ev) throw new Error(`No event ${id}`);
     return ev;
   };
