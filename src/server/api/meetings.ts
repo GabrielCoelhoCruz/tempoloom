@@ -20,6 +20,7 @@ import { isPublicMailDomain } from "../mail-domains.ts";
 import { availabilityMap } from "../meeting-availability.ts";
 import { notifyMeetingCancelled } from "../meeting-mail.ts";
 import { adoptableSeries, type Series } from "../meeting-series.ts";
+import { meetingTurnedOn } from "../planner/auto-lock.ts";
 import { withState } from "../planner/markers.ts";
 import { logChange, meetingBoost, skippedPeriods } from "../planner/meeting-log.ts";
 import { rescheduleSlot } from "../planner/meeting-reschedule.ts";
@@ -102,6 +103,8 @@ const meetingInput = z.object({
   whenUnplaceable: z.enum(["remove", "keep_as_conflict"]).default("keep_as_conflict"),
   leadHours: z.number().int().min(0).max(168).default(12),
   autoReschedule: z.enum(["none", "conservative", "moderate", "aggressive"]).default("moderate"),
+  /** MEET-02 rule 14; null: as the setting for flexible meetings (LCK-30). */
+  autoLock: z.enum(["off", "day", "week"]).nullable().default(null),
   /** Visibility, reminders and the calendar of the occurrences (`visibility`, `reminders`, `targetCalendar`). */
   eventSettings: eventSettingsInput.optional(),
   /** Attach the rules to this recurring series (meetings-flexible.md rule 1). */
@@ -200,6 +203,7 @@ function rowFrom(
       created_at: t,
       rules_changed_at: t,
       auto_reschedule: b.autoReschedule,
+      auto_lock: b.autoLock,
       series_calendar_id: b.series?.calendarId ?? null,
       series_event_id: b.series?.seriesId ?? null,
       // A meeting from the form gets its own series at the next plan run (rule 2).
@@ -231,6 +235,7 @@ function save(db: Db, row: MeetingRow, attendees: Attendee[], insert: boolean): 
     "lead_minutes",
     "rules_changed_at",
     "auto_reschedule",
+    "auto_lock",
     "event_settings",
   ] as const;
   const values = cols.map((k) => row[k]);
@@ -670,6 +675,15 @@ export function meetingRoutes(
           false,
         );
         if (row.hours_set_id !== old.hours_set_id) dropItemHours(db, old.hours_set_id);
+        meetingTurnedOn(
+          db,
+          user.id,
+          getSettings(db, user.id),
+          old.auto_lock,
+          row.auto_lock,
+          old.id,
+          t,
+        );
       });
     });
     changed(user.id);

@@ -56,6 +56,8 @@ interface Ctx {
   breakMs: number;
   /** External blocking time plus locked and started managed events. */
   fixed: TimeSet;
+  /** External blocking time only (MEET-02 rule 7: a conflict of a locked occurrence). */
+  external: TimeSet;
   /** Time away: busy all-day and out-of-office events (events-out-of-office.md). */
   away: TimeSet;
   /** Free time for task and habit demands (break gaps applied). */
@@ -159,6 +161,7 @@ function init(s: Snapshot): Ctx {
     end,
     breakMs,
     fixed,
+    external: TimeSet.from(external),
     away: TimeSet.from(awayBlocks(s.events)),
     freeTH,
     freeOther,
@@ -1178,6 +1181,20 @@ function previousStart(ctx: Ctx, m: MeetingItem, key: string, periodStart: numbe
     : prev;
 }
 
+/**
+ * MEET-02 rule 7 and acceptance test 9: the placement of a future locked
+ * occurrence that a required attendee's busy time, a declined time or the
+ * organizer's own blocking event overlaps; undefined when it has no conflict.
+ */
+function lockedConflict(ctx: Ctx, m: MeetingItem, key: string): Placement | undefined {
+  const c = ctx.current.get(key);
+  if (!c?.locked || c.start <= ctx.s.now) return undefined;
+  const hit = (iv: Interval) => iv.start < c.end && iv.end > c.start;
+  if (!ctx.external.overlaps(c) && !m.attendeeBusy.some(hit) && !m.exclusions.some(hit))
+    return undefined;
+  return ctx.placements.find((p) => p.key === key);
+}
+
 /** `boosted`: place only the boosted period (MEET-02 rule 16); else every other period. */
 function placeMeeting(ctx: Ctx, item: MeetingItem, boosted = false): void {
   const { s } = ctx;
@@ -1197,7 +1214,10 @@ function placeMeeting(ctx: Ctx, item: MeetingItem, boosted = false): void {
         ? item
         : { ...item, durationMinutes: kept, shortestMinutes: Math.min(item.shortestMinutes, kept) };
     const required = m.durationMinutes;
-    if (done.has(key) || ctx.fixedKeys.has(key) || ctx.dismissed.has(key)) continue;
+    if (done.has(key) || ctx.dismissed.has(key)) continue;
+    // MEET-02 rule 7: a locked occurrence keeps its time; on a conflict it is flagged.
+    const lockedCur = ctx.fixedKeys.has(key) ? lockedConflict(ctx, m, key) : undefined;
+    if (ctx.fixedKeys.has(key) && !lockedCur) continue;
     if (periods && !periods.has(period.start)) continue;
     if (boosted !== (m.boost?.period === period.start)) continue;
     const own = period.days.map((d) => dayWindow(ctx, m.hours, d));
@@ -1211,6 +1231,20 @@ function placeMeeting(ctx: Ctx, item: MeetingItem, boosted = false): void {
       free: minus((windows[i] as TimeSet).intersect(ctx.freeOther), blocked),
       window: windows[i] as TimeSet,
     }));
+    if (lockedCur) {
+      lockedCur.conflict = true;
+      report(ctx, {
+        itemKind: "meeting",
+        itemId: m.id,
+        demandKey: key,
+        requiredMinutes: required,
+        placedMinutes: 0,
+        status: "conflict",
+        reason: "locked-conflict",
+        suggestions: suggestMeeting(ctx, m, frees),
+      });
+      continue;
+    }
     // MEET-02 rule 8: an automatic move keeps the lead time.
     const lead = cur ? ctx.earliest + m.leadMinutes * MINUTE : ctx.earliest;
     const open = frees.map((f) => ({ ...f, free: f.free.clip(lead, ctx.end) }));

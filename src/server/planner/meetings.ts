@@ -34,6 +34,8 @@ export interface MeetingRow {
   created_at: number;
   rules_changed_at: number;
   auto_reschedule: AutoReschedule;
+  /** MEET-02 rule 14: this meeting's auto-lock; null: as the setting for flexible meetings. */
+  auto_lock: "off" | "day" | "week" | null;
   series_calendar_id: string | null;
   series_event_id: string | null;
   /** 1: Tempoloom writes the series (a meeting from the form, rule 2); 0: an adopted series. */

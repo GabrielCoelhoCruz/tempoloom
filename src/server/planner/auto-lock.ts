@@ -1,6 +1,6 @@
 // The auto-lock schedule per item kind (docs/specs/planning-locks.md LCK-30 to LCK-33).
 import { addDays, localToUtc, utcToLocal, weekdayOf } from "../../shared/time.ts";
-import { type Db, one, run } from "../db.ts";
+import { all, type Db, one, run } from "../db.ts";
 import type { Settings } from "../settings.ts";
 import { planningZone } from "../travel.ts";
 
@@ -28,59 +28,146 @@ export function turnedOn(before: Modes, after: Modes): AutoLockKind[] {
   return AUTO_LOCK_KINDS.filter((k) => before[k] === "off" && after[k] !== "off");
 }
 
+/** A lock schedule: a kind, or one flexible meeting with its own choice (MEET-02 rule 14). */
+interface Target {
+  /** The auto_lock_runs key: the kind, or `meeting:<id>`. */
+  key: string;
+  kind: AutoLockKind;
+  mode: Modes[AutoLockKind];
+  /** The SQL filter on source_id, and its arguments. */
+  where: string;
+  args: string[];
+}
+
+/** The meetings with their own auto-lock choice; the others follow the setting. */
+function targets(db: Db, userId: string, modes: Modes): Target[] {
+  const own = all<{ id: string; auto_lock: Target["mode"] }>(
+    db,
+    "SELECT id, auto_lock FROM meetings WHERE user_id = ? AND auto_lock IS NOT NULL",
+    userId,
+  );
+  const ids = own.map((m) => m.id);
+  return [
+    ...AUTO_LOCK_KINDS.map((kind) => ({
+      key: kind,
+      kind,
+      mode: modes[kind],
+      where:
+        kind === "meeting" && ids.length > 0
+          ? `AND source_id NOT IN (${ids.map(() => "?").join(", ")})`
+          : "",
+      args: kind === "meeting" ? ids : [],
+    })),
+    ...own.map((m) => ({
+      key: `meeting:${m.id}`,
+      kind: "meeting" as const,
+      mode: m.auto_lock,
+      where: "AND source_id = ?",
+      args: [m.id],
+    })),
+  ];
+}
+
 /**
  * LCK-30 to LCK-32: locks every managed event of a kind that starts in the
  * current day or week and has not ended. The run happens once per period, in
  * the hour from 01:00 (for `week`, on the first day of the week), in the
  * planning zone of that date (home zone or travel zone). An event placed after
- * that run stays unlocked. `force` lists kinds that the user just turned on:
- * they run at once, at any hour. The first run of a kind without a record
- * only records the current period, so a new server or a new user never locks
- * outside the hour.
+ * that run stays unlocked. A flexible meeting with its own choice has its own
+ * run (MEET-02 rule 14); the setting for flexible meetings covers the others.
+ * `force` lists keys (kinds, or `meeting:<id>`) that the user just turned on:
+ * they run at once, at any hour. The first run of a key without a record only
+ * records the current period, so a new server, user or meeting never locks
+ * outside the hour; before the hour on the first day of the period it records
+ * an empty period, so that hour still runs.
  */
 export function autoLock(
   db: Db,
   userId: string,
   settings: Pick<Settings, "autoLock" | "weekStart">,
   now: number,
-  force: readonly AutoLockKind[] = [],
+  force: readonly string[] = [],
 ): void {
   const zone = planningZone(db, userId);
   const today = utcToLocal(zone, now).date;
   const runFrom = localToUtc(zone, today, RUN_MINUTE);
   const inHour = now >= runFrom && now < runFrom + RUN_HOUR_MS;
-  for (const kind of AUTO_LOCK_KINDS) {
-    const mode = settings.autoLock[kind];
-    if (mode === "off") continue;
-    const p = period(zone, today, mode, settings.weekStart);
+  for (const t of targets(db, userId, settings.autoLock)) {
+    if (t.mode === "off") continue;
+    const p = period(zone, today, t.mode, settings.weekStart);
     const last = one<{ period: string }>(
       db,
       "SELECT period FROM auto_lock_runs WHERE user_id = ? AND kind = ?",
       userId,
-      kind,
+      t.key,
     )?.period;
-    const forced = force.includes(kind);
+    const forced = force.includes(t.key);
     if (!forced && last === p.key) continue;
     const due = forced || (last !== undefined && inHour && p.first === today);
     if (!due && last !== undefined) continue;
+    // Before the hour on the first day: an empty record, so that hour runs.
+    const waits = !due && p.first === today && now < runFrom;
     run(
       db,
       `INSERT INTO auto_lock_runs (user_id, kind, period) VALUES (?, ?, ?)
        ON CONFLICT (user_id, kind) DO UPDATE SET period = excluded.period`,
       userId,
-      kind,
-      p.key,
+      t.key,
+      waits ? "" : p.key,
     );
-    if (!due) continue;
-    run(
-      db,
-      `UPDATE managed_events SET locked = 1 WHERE user_id = ? AND kind = ? AND locked = 0
-         AND event_id IS NOT NULL AND start_ms >= ? AND start_ms < ? AND end_ms > ?`,
-      userId,
-      kind,
-      p.from,
-      p.to,
-      now,
-    );
+    if (due) lockPeriod(db, userId, t, p, now);
   }
+}
+
+function lockPeriod(
+  db: Db,
+  userId: string,
+  t: Pick<Target, "kind" | "where" | "args">,
+  p: { from: number; to: number },
+  now: number,
+): void {
+  run(
+    db,
+    `UPDATE managed_events SET locked = 1 WHERE user_id = ? AND kind = ? AND locked = 0
+       AND event_id IS NOT NULL AND start_ms >= ? AND start_ms < ? AND end_ms > ? ${t.where}`,
+    userId,
+    t.kind,
+    p.from,
+    p.to,
+    now,
+    ...t.args,
+  );
+}
+
+/**
+ * LCK-32 for one flexible meeting (MEET-02 rule 14): an edit that turns its
+ * auto-lock from off to day or week locks its current day or week at once. A
+ * meeting with its own choice gets its own run; one that follows the setting
+ * locks without a record, as the setting's run covers it from then on.
+ */
+export function meetingTurnedOn(
+  db: Db,
+  userId: string,
+  settings: Pick<Settings, "autoLock" | "weekStart">,
+  before: Modes["meeting"] | null,
+  after: Modes["meeting"] | null,
+  meetingId: string,
+  now: number,
+): void {
+  const mode = (m: Modes["meeting"] | null) => m ?? settings.autoLock.meeting;
+  const next = mode(after);
+  if (mode(before) !== "off" || next === "off") return;
+  if (after !== null) {
+    autoLock(db, userId, settings, now, [`meeting:${meetingId}`]);
+    return;
+  }
+  const zone = planningZone(db, userId);
+  const p = period(zone, utcToLocal(zone, now).date, next, settings.weekStart);
+  lockPeriod(
+    db,
+    userId,
+    { kind: "meeting", where: "AND source_id = ?", args: [meetingId] },
+    p,
+    now,
+  );
 }

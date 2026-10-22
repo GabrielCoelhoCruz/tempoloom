@@ -108,6 +108,13 @@ how Tempoloom reports occurrences it cannot place. Placement itself is in
     The lock job and its time follow `planning-locks.md` LCK-30 and LCK-31,
     in the organizer's time zone. The legacy pages give two times: between
     01:00 and 02:00 (E-0045) and 04:00 (E-0108).
+    Tempoloom decision: the meeting form offers "As in settings" (the
+    default: the setting for flexible meetings in `planning-locks.md`, `day`
+    by default), `off`, `day` and `week`. The week is the planning week (the
+    week start set in Tempoloom). An edit from `off` to `day` or `week` locks
+    the current day or week at once (LCK-32). A locked occurrence that a
+    conflict overlaps keeps its time and is flagged with reason
+    `lockedConflict` and suggested times (rule 11).
 15. An occurrence that Tempoloom places after the auto-lock ran for its day
     or week is not locked by that run (E-0045; `planning-locks.md` LCK-32)
     (legacy evidence).

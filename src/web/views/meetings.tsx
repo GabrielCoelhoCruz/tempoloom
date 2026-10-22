@@ -48,6 +48,7 @@ interface Meeting extends Missed {
   when_unplaceable: string;
   lead_minutes: number;
   auto_reschedule: string;
+  auto_lock: string | null;
   defense: string;
   frequency: Frequency;
   item_hours: string | null;
@@ -168,6 +169,7 @@ interface Series {
 const FLAGS: Record<string, string> = {
   "budget-reached": "Move limit reached: Tempoloom used today's automatic moves.",
   "policy-none": "No automatic moves: this meeting has a conflict at its time.",
+  "locked-conflict": "Locked: this occurrence has a conflict at its time and does not move.",
 };
 const CHANGE_REASONS: Record<string, string> = {
   conflict: "moved for a conflict",
@@ -178,6 +180,13 @@ const CHANGE_REASONS: Record<string, string> = {
   manualSkip: "skipped",
   seriesDeleted: "series deleted in the calendar; turned off",
 };
+/** MEET-02 rule 14: "" follows the setting for flexible meetings (Settings, Auto-lock). */
+const AUTO_LOCK: [string, string][] = [
+  ["", "As in settings"],
+  ["off", "Off"],
+  ["day", "Each day"],
+  ["week", "Each week"],
+];
 const MOVES: [string, string][] = [
   ["none", "No automatic moves"],
   ["conservative", "1 per day"],
@@ -413,6 +422,7 @@ export function Meetings() {
       whenUnplaceable: text("whenUnplaceable"),
       leadHours: Number(f.get("leadHours")),
       autoReschedule: text("autoReschedule"),
+      autoLock: text("autoLock") || null,
       starting: text("starting") || null,
       description: text("description"),
       location: text("location"),
@@ -731,6 +741,16 @@ export function Meetings() {
           <select name="autoReschedule">
             {MOVES.map(([v, l]) => (
               <option value={v} key={v} selected={v === (ed?.auto_reschedule ?? "moderate")}>
+                {l}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Auto-lock
+          <select name="autoLock">
+            {AUTO_LOCK.map(([v, l]) => (
+              <option value={v} key={v} selected={v === (ed?.auto_lock ?? "")}>
                 {l}
               </option>
             ))}
