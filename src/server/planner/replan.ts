@@ -54,6 +54,7 @@ import { LABELS, mirrorCopies } from "./mirror.ts";
 import { doneMinutes, endedUnstarted, nextIndexAfter } from "./progress.ts";
 import { type DesiredEvent, type ManagedRow, type PushResult, pushSchedule } from "./push.ts";
 import { type Paint, type PaintJob, repaintRequest } from "./repaint.ts";
+import { applyTimeUsed } from "./time-used.ts";
 
 export interface ReplanContext {
   db: Db;
@@ -770,6 +771,8 @@ export async function replanUser(ctx: ReplanContext, userId: string): Promise<Re
     userId,
   );
   const last = lastRun?.planned_at ?? 0;
+  // PRG-41, PRG-42: before the snapshot, so re-added time is placed in this run.
+  applyTimeUsed(db, userId, now, settings);
   const zone = planningZone(db, userId, user.time_zone);
   const guestBusy = await guestFreeBusy(
     db,

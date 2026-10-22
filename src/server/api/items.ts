@@ -17,7 +17,7 @@ import { jsonBody, notFound } from "../http.ts";
 import { createItemHours, dropItemHours, itemHoursSchema, saveItemHours } from "../item-hours.ts";
 import { automationCount, limitRefusal } from "../limits.ts";
 import { itemChanges } from "../planner/item-log.ts";
-import { taskDoneMinutes } from "../planner/progress.ts";
+import { isTimeUsed, taskDoneMinutes } from "../planner/progress.ts";
 import { when, zoneOf } from "../preview.ts";
 import { getSettings } from "../settings.ts";
 import type { SyncService } from "../sync/service.ts";
@@ -236,11 +236,11 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
         const state =
           task.status === "done"
             ? "done"
-            : scheduled > 0
-              ? "scheduled"
-              : remaining > 0
-                ? "unscheduled"
-                : "time-used";
+            : isTimeUsed(remaining, scheduled)
+              ? "time-used"
+              : scheduled > 0
+                ? "scheduled"
+                : "unscheduled";
         return {
           ...task,
           // PRG-10, PRG-11: a chunk is running now, so Stop applies.
@@ -277,6 +277,7 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
     if (!task) notFound("task");
     const body = await jsonBody(c, taskInput.partial());
     const total = body.minutes ?? task.total_minutes;
+    const minutesChanged = total !== task.total_minutes;
     const split = body.splitUp ?? task.min_chunk_minutes !== task.max_chunk_minutes;
     const min = split ? (body.minChunkMinutes ?? Math.min(task.min_chunk_minutes, total)) : total;
     const max = split
@@ -291,7 +292,9 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
     run(
       db,
       `UPDATE tasks SET title = ?, notes = ?, level = ?, total_minutes = ?, min_chunk_minutes = ?, max_chunk_minutes = ?,
-         start_after = ?, due_at = ?, hours_set_id = ?, rules_changed_at = ?, color = ?, visibility = ? WHERE id = ?`,
+         start_after = ?, due_at = ?, hours_set_id = ?, rules_changed_at = ?, color = ?, visibility = ?,
+         base_minutes = CASE WHEN ? AND readds = 0 AND base_minutes IS NOT NULL
+           THEN MIN(?, MAX(15, ? - (total_minutes - base_minutes))) ELSE base_minutes END WHERE id = ?`,
       body.title ?? task.title,
       body.notes ?? task.notes,
       body.level ?? task.level,
@@ -304,6 +307,12 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
       now(),
       body.color ?? task.color,
       body.visibility ?? task.visibility,
+      // PRG-45: before the first re-add, a minutes edit changes the first total
+      // by the same amount; the minutes that "Add N min" added stay out of it.
+      // (NULL: the first total is the total, so it follows the edit.)
+      minutesChanged ? 1 : 0,
+      total,
+      total,
       task.id,
     );
     changed(user.id);
@@ -328,6 +337,8 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
     const task = one<TaskRow>(db, "SELECT * FROM tasks WHERE id = ? AND user_id = ?", id, user.id);
     if (!task) notFound("task");
     // A task that is not split keeps one chunk, so the chunk grows with the total.
+    // The first total is frozen first, so the added minutes never come again by
+    // "re-add" (PRG-41).
     const single =
       task.min_chunk_minutes === task.max_chunk_minutes &&
       task.max_chunk_minutes >= task.total_minutes;
@@ -335,7 +346,7 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
     run(
       db,
       `UPDATE tasks SET total_minutes = ?, min_chunk_minutes = ?, max_chunk_minutes = ?, status = 'open',
-         rules_changed_at = ? WHERE id = ?`,
+         rules_changed_at = ?, base_minutes = COALESCE(base_minutes, total_minutes) WHERE id = ?`,
       total,
       single ? total : task.min_chunk_minutes,
       single ? total : task.max_chunk_minutes,

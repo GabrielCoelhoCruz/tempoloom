@@ -1138,7 +1138,7 @@ BLOCKED[770] = "Not needed: no legacy users (platform-current-version rule 11)"
 
 # Buildable rows that no unit has built yet. Rows that units U31 to U33 and PR #23 build now keep their text.
 PLANNED = "Buildable; not built yet (planned)"
-for n in [36, 40, 361]:
+for n in [361]:
     BLOCKED[n] = PLANNED
 # --- end U30 ---
 
@@ -1329,6 +1329,25 @@ BLOCKED[35] = ("Stop from " + VENDOR_STARTS + " (PRG-13) needs those vendor apps
                "with full UI E2E on CalDAV (E2E: \u201c" + T["pg_start"] + "\u201d; \u201c" + T["pg_planner"] + "\u201d; \u201c"
                + T["pg_edge"] + "\u201d; \u201c" + T["pg_twice"] + "\u201d)")
 # --- end U31 ---
+
+# --- U67: Restart and the time-used action (tests/e2e/task-time-used.spec.ts) ---
+T.update({
+    "u67_restart": 'Restart moves the running chunk to now, rounded down to 5 minutes, with its length, in the task list and the planner (PRG-12, PRG-13)',
+    "u67_done": 'time-used action: Nothing keeps a time-used task open after the wait; Mark done waits the days, also for a task already time-used, and changes no event (PRG-40, PRG-42, PRG-43; AT 6)',
+    "u67_readd": 'time-used action: Add the time again adds the first total after the wait days, and the scheduler places it (PRG-41; AT 7)',
+    "u67_manual": 'time-used action: manual start mode hides the setting, and the action has no effect (PRG-44)',
+    "u67_wait_typed": "Days to wait typed while the page reads the account again is saved (PRG-41, PRG-42)",
+    "u67_restart_manual": 'Restart in manual start mode moves the started chunk to now, and Restart with no running chunk is refused (PRG-12)',
+})
+E2E.update({
+    40: ["u67_done", "u67_readd", "u67_manual", "u67_wait_typed"],
+})
+E2E_NOTES.update({
+    40: "Settings has the action and the wait days (1 to 30, default 3); the wait counts from the first plan run that finds the task time-used (PRG-46), and a plan run applies the action and writes it to the task's change log",
+})
+BLOCKED[36] = ("Restart from " + VENDOR_STARTS + " (PRG-13) needs those vendor apps; Restart in the task list and in the planner is built, "
+               "with full UI E2E on CalDAV (E2E: \u201c" + T["u67_restart"] + "\u201d; \u201c" + T["u67_restart_manual"] + "\u201d)")
+# --- end U67 ---
 
 # --- U41: planner views and event content (planner-views.spec.ts, event-tips.spec.ts, support-guidance.spec.ts) ---
 T.update({

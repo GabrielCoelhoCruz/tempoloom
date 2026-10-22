@@ -1365,7 +1365,17 @@ export const MIGRATIONS: readonly string[] = [
   ALTER TABLE events ADD COLUMN organizer_email TEXT NOT NULL DEFAULT '';
   UPDATE calendars SET sync_token = NULL;
   `,
-  // 48: a meeting made from the form is one recurring series that Tempoloom
+  // 48: the time-used action (planning-task-progress.md PRG-41, PRG-42).
+  // base_minutes: the first total, that "re-add" adds again; NULL until it is
+  // frozen (then total_minutes is that total). readds: how many times "re-add"
+  // ran. time_used_since: when a plan run first found the task time-used, the
+  // start of the wait (PRG-46); NULL while it is not time-used.
+  `
+  ALTER TABLE tasks ADD COLUMN base_minutes INTEGER;
+  ALTER TABLE tasks ADD COLUMN readds INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE tasks ADD COLUMN time_used_since INTEGER;
+  `,
+  // 49: a meeting made from the form is one recurring series that Tempoloom
   // writes (meetings-flexible.md rule 2): series_owned. Meetings made before
   // keep their single events and get a series at the next plan run.
   // series_rule: the master facts last seen, so a series edit in the calendar
