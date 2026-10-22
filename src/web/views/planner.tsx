@@ -107,9 +107,14 @@ function weekOf(z: string, t: number): string {
 
 export function Planner() {
   const z = zone();
-  // ?week=YYYY-MM-DD opens that week, so a week can be linked.
+  // ?week=YYYY-MM-DD opens that week, so a week can be linked; ?day= opens
+  // the week of that day and marks the day (the weekly report's preview links).
+  const [focusDay] = useState(() => {
+    const q = new URLSearchParams(location.search).get("day");
+    return q && /^\d{4}-\d{2}-\d{2}$/.test(q) ? q : null;
+  });
   const [weekStart, setWeekStart] = useState(() => {
-    const q = new URLSearchParams(location.search).get("week");
+    const q = focusDay ?? new URLSearchParams(location.search).get("week");
     return q && /^\d{4}-\d{2}-\d{2}$/.test(q) ? displayWeekOf(q) : weekOf(z, Date.now());
   });
   const [events, setEvents] = useState<PlannerEvent[]>([]);
@@ -365,6 +370,7 @@ export function Planner() {
       <WeekView
         days={days}
         zone={z}
+        focusDay={focusDay}
         events={withPreview(visible, overlay.value)}
         now={Date.now()}
         onMove={onMove}

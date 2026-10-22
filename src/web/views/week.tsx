@@ -37,6 +37,8 @@ interface Props {
    * start, rounded down to 15 minutes, and for a drag its length in minutes.
    */
   onPickPast?: (t: number, minutes?: number) => void;
+  /** A day to mark (a link to the planner at that day). */
+  focusDay?: LocalDate | null;
 }
 
 /** PLN-5: a grey dashed pattern across a day with a busy all-day event. */
@@ -121,6 +123,7 @@ export function WeekView({
   extraZone,
   busyDays,
   onPickPast,
+  focusDay,
 }: Props) {
   const boxes = useMemo(() => layout(days, zone, events), [days, zone, events]);
   const gridRef = useRef<HTMLDivElement>(null);
@@ -268,7 +271,11 @@ export function WeekView({
           <div />
         )}
         {days.map((d, i) => (
-          <div class={i === todayIdx ? "day-name today" : "day-name"} key={d} data-date={d}>
+          <div
+            class={`day-name${i === todayIdx ? " today" : ""}${d === focusDay ? " focus" : ""}`}
+            key={d}
+            data-date={d}
+          >
             {weekdayText(d)} {Number(d.slice(8))}
           </div>
         ))}

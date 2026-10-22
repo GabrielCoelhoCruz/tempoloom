@@ -4,7 +4,7 @@
 //
 // Ways this can fail, each covered below:
 // - next week's events are missing or on the wrong day, or this week's show;
-// - the busiest or the lightest day is wrong, or a day or event has no planner link;
+// - the busiest or the lightest day is wrong, or a day or event has no link to the planner at that day;
 // - a done task shows, the order is not by priority, or a habit with no plan next week shows;
 // - an item link does not open that item;
 // - the share page exists before a confirmed share (a mail scanner opens every
@@ -135,14 +135,22 @@ test("the weekly report previews next week's calendar by day with the busiest an
     "  P3 Gym",
   ]);
 
-  // The links open the planner at that day and the item.
+  // The links open the planner at that day (its week, with that day marked) and the item.
   const a = links(report.html);
-  expect(a.get(`Monday ${next}`)).toMatch(new RegExp(`/\\?week=${next}$`));
+  expect(a.get(`Monday ${next}`)).toMatch(new RegExp(`/\\?day=${next}$`));
   const eventLink = [...a.entries()].find(([t]) => t.includes("Board meeting"))?.[1] ?? "";
-  expect(eventLink).toMatch(new RegExp(`/\\?week=${next}$`));
+  expect(eventLink).toMatch(new RegExp(`/\\?day=${next}$`));
   await page.goto(eventLink);
   await expect(page.getByTestId("week-label")).toContainText(next);
   await expect(page.locator(".ev", { hasText: "Board meeting" })).toBeVisible();
+  await expect(page.locator(".day-name.focus")).toHaveAttribute("data-date", next);
+  // A day that is not the first of the week: the planner opens its week and marks it.
+  const wednesday = a.get(`Wednesday ${day(9)}`) ?? "";
+  expect(wednesday).toMatch(new RegExp(`/\\?day=${day(9)}$`));
+  await page.goto(wednesday);
+  await expect(page.getByTestId("week-label")).toContainText(next);
+  await expect(page.locator(".day-name.focus")).toHaveAttribute("data-date", day(9));
+  await expect(page.locator(".ev", { hasText: "Dentist" })).toBeVisible();
   await page.goto(a.get("Ship release") ?? "");
   await expect(page.getByTestId("task-edit").getByLabel("Title")).toHaveValue("Ship release");
   await page.goto(a.get("Reading") ?? "");
