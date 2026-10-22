@@ -147,7 +147,11 @@ Attendee class, computed each time the meeting is placed:
    still written; a calendar value equal to the form edit counts as written.
    Only an HTTP 404 or 410 for the series object means "gone"; a server error,
    a refused login or a lost connection changes nothing, and turning off or
-   deleting the meeting then fails and keeps the meeting as it was. The rule is written in the user's home zone: DTSTART, BYDAY
+   deleting the meeting then fails and keeps the meeting as it was.
+   On CalDAV, if the organizer edits the new series before Tempoloom has
+   read back its first write, the run that wrote it writes nothing more for
+   the meeting, and the next run reads the edit as a series edit: the history
+   shows the organizer's move from the time Tempoloom wrote. The rule is written in the user's home zone: DTSTART, BYDAY
    and the EXDATEs are all in that zone. A trip (travel zone) does not change
    the rule: the plan moves the occurrences of the trip with overrides. A new
    home zone ends the series, and the next run writes one in the new zone. A
@@ -157,8 +161,9 @@ Attendee class, computed each time the meeting is placed:
    Tempoloom writes the series there too, but it reads no series edit back
    (no master facts), so a "this and following" or "all events" edit counts as
    edits of single occurrences; it has no instance add, so a period that comes
-   back gets a single event; and ending a series drops the locked later
-   instances.
+   back gets a single event; ending a series drops the locked later
+   instances; and an edit of a new series made before Tempoloom reads back
+   its first write can be written over by that run.
 3. Only series organized by the user can be adopted. A series where the user
    is only a guest is not listed (Proposed; E-0046 requires the user to own
    the series).
