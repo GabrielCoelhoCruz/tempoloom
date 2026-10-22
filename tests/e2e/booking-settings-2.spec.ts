@@ -21,9 +21,19 @@
 // - preferred times have no dot or legend, or a time next to a free
 //   event is marked preferred                                          -> preferred
 import type { Page } from "@playwright/test";
-import { addDays } from "../../src/shared/time.ts";
-import { at, BACKEND, blockUntil, EMAIL, eventually, expect, local, test } from "./fixtures.ts";
-import { addLink, book, claimPage, serverClockAt, slot, titled, visitor, W } from "./helpers.ts";
+import { addDays, utcToLocal } from "../../src/shared/time.ts";
+import {
+  at,
+  BACKEND,
+  blockUntil,
+  EMAIL,
+  eventually,
+  expect,
+  local,
+  test,
+  ZONE,
+} from "./fixtures.ts";
+import { addLink, book, claimPage, slot, titled, visitor, W } from "./helpers.ts";
 import { editLink, offered, saveLink } from "./link-helpers.ts";
 
 const HOUR = 3_600_000;
@@ -95,22 +105,17 @@ test("URL names: a title in use gets -2; the owner renames the URL, the old one 
 
 test("notice and range: no time inside the notice; the last day is a fixed date or today plus the rolling days; both survive a reload (booking-links rangeStart, rangeEnd; availability rule 6)", async ({
   page,
-  app,
   browser,
   cal,
   signIn,
 }) => {
-  // The server clock starts on Sunday 12:00 before the test week: "today" and
-  // the notice do not change with the real day and time of the run.
-  const today = addDays(W, -1);
-  const now = await serverClockAt(app, at(today, "12:00"));
   await blockUntil(cal, W);
   await signIn();
   await claimPage(page, "vera");
   await addLink(page, { title: "Soon", durations: "30" });
   // The notice ends between 11:00 and 12:00 on the first day of the test week.
-  const notice = Math.ceil((at(W, "11:00") - now()) / HOUR);
-  const earliest = now() + notice * HOUR;
+  const notice = Math.ceil((at(W, "11:00") - Date.now()) / HOUR);
+  const earliest = Date.now() + notice * HOUR;
   let ed = await editLink(page, "Soon");
   await ed.getByLabel("Notice (hours)").fill(String(notice));
   await ed.getByLabel("Or up to a date").fill(day(1));
@@ -126,6 +131,7 @@ test("notice and range: no time inside the notice; the last day is a fixed date 
   expect(times.some((t) => t >= `${day(2)} 00:00`)).toBe(false);
 
   // Rolling days: the last day is today plus N days.
+  const today = utcToLocal(ZONE, Date.now()).date;
   let n = 0;
   while (addDays(today, n) < day(2)) n++;
   ed = await editLink(page, "Soon");
