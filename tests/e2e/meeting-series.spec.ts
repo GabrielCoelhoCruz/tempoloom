@@ -16,6 +16,9 @@
 //   is written back, or leaves the meeting rules as they were; privacy and
 //   free/busy edits on the series are kept instead of written back; a guest
 //   the organizer removed from one occurrence comes back              -> edits
+// - a move rewrites the occurrence or the series: attachments, conference
+//   data, an agenda-tool link or hand-added Zoom details on the series or on
+//   one occurrence are lost                                           -> kept fields
 
 import type { Page } from "@playwright/test";
 import { addDays } from "../../src/shared/time.ts";
@@ -325,4 +328,120 @@ test("series edits in the calendar are kept: a new day and time set the meeting'
   const final = await twoWeeks(cal);
   expect(times(final, "Review board")).toEqual(expected);
   expect(objects(final, "Review board").size).toBe(1);
+});
+
+/**
+ * Puts `extra` lines into one VEVENT block: each DESCRIPTION gets `note` at
+ * its end (one is added when the block has none), the rest go before END:VEVENT.
+ */
+const withFields = (note: string, extra: string[]) => (lines: string[]) => {
+  const has = lines.some((l) => /^DESCRIPTION[:;]/.test(l));
+  return lines.flatMap((l) => {
+    if (/^DESCRIPTION[:;]/.test(l)) return [`${l}\\n${note}`];
+    if (l === "END:VEVENT") return [...extra, ...(has ? [] : [`DESCRIPTION:${note}`]), l];
+    return [l];
+  });
+};
+
+test("a move keeps the fields Tempoloom does not own: attachments, conference data, an agenda-tool link and hand-added Zoom details on the series and on one occurrence stay after both occurrences move and after a reload (MEET-01 rules 39, 40; video conferencing rule 14)", async ({
+  page,
+  cal,
+  signIn,
+}) => {
+  await blockUntil(cal, W);
+  await signIn();
+  const [first, second] = await weekly(page, cal, "Agenda sync", 30);
+
+  // The organizer pastes Zoom details into the series (all events), as a
+  // calendar app writes them without the Zoom integration (rule 14) ...
+  const zoom = "https://zoom.us/j/5550001111";
+  const series = [
+    `CONFERENCE;VALUE=URI;FEATURE=VIDEO;LABEL=Zoom:${zoom}`,
+    `LOCATION:${zoom}`,
+    "ATTACH;FMTTYPE=application/pdf:https://files.example.com/series-brief.pdf",
+  ];
+  await editMaster(cal.calendarId, first.id, (lines) =>
+    withFields(`Join Zoom: ${zoom}`, series)(lines.filter((l) => !/^LOCATION[:;]/.test(l))),
+  );
+  // ... and an agenda tool links its notes to next week's occurrence only (rule 39).
+  const agenda = "https://agenda.example.com/notes/agenda-sync-week-2";
+  await editInstance(
+    cal.calendarId,
+    second,
+    withFields(`Agenda: ${agenda}`, [
+      "ATTACH;FMTTYPE=text/html:https://agenda.example.com/notes/agenda-sync-week-2",
+    ]),
+  );
+  const kept = (block: string) => ({
+    conference: blockProp(block, "CONFERENCE"),
+    location: blockProp(block, "LOCATION"),
+    attach: [...block.matchAll(/^ATTACH(?:;[^:\n]*)?:(.*)$/gm)].map((m) => m[1]?.trim()).sort(),
+    zoom: (blockProp(block, "DESCRIPTION") ?? "").includes(`Join Zoom: ${zoom}`),
+    agenda: (blockProp(block, "DESCRIPTION") ?? "").includes(`Agenda: ${agenda}`),
+  });
+  const onSeries = {
+    conference: zoom,
+    location: zoom,
+    attach: ["https://files.example.com/series-brief.pdf"],
+    zoom: true,
+    agenda: false,
+  };
+  const onSecond = {
+    ...onSeries,
+    attach: [
+      "https://agenda.example.com/notes/agenda-sync-week-2",
+      "https://files.example.com/series-brief.pdf",
+    ],
+    agenda: true,
+  };
+
+  // New commitments take 09:00 to 11:00 on both days: Tempoloom moves both occurrences.
+  for (const n of [1, 8])
+    await cal.addEvent({
+      title: "Board call",
+      start: at(day(n), "09:00"),
+      end: at(day(n), "11:00"),
+    });
+  const moved = await eventually(
+    async () => {
+      await planNow(page);
+      return twoWeeks(cal);
+    },
+    (l) =>
+      expect(times(l, "Agenda sync")).toEqual([`${day(1)} 11:00-11:30`, `${day(8)} 11:00-11:30`]),
+    60_000,
+  );
+  const check = async () => {
+    const ics = await rawObject(cal.calendarId, first.id);
+    return {
+      master: kept(masterOf(ics)),
+      // The first occurrence had no override: the move made one from the series.
+      first: kept(overrideOf(ics, first.id) ?? ""),
+      second: kept(overrideOf(ics, second.id) ?? ""),
+      times: [first.id, second.id].map((id) => blockProp(overrideOf(ics, id) ?? "", "DTSTART")),
+    };
+  };
+  const expected = {
+    master: onSeries,
+    first: onSeries,
+    second: onSecond,
+    times: [1, 8].map((n) =>
+      new Date(at(day(n), "11:00"))
+        .toISOString()
+        .replace(/[-:]/g, "")
+        .replace(/\.\d{3}/, ""),
+    ),
+  };
+  expect(await check()).toEqual(expected);
+  expect(objects(moved, "Agenda sync").size).toBe(1);
+
+  // A reload, the Meetings page and more plan runs keep every field.
+  await expectShown(page, "Agenda sync", [/11:00 to 11:30$/, /11:00 to 11:30$/]);
+  await planNow(page);
+  await planNow(page);
+  expect(await check()).toEqual(expected);
+  expect(times(await twoWeeks(cal), "Agenda sync")).toEqual([
+    `${day(1)} 11:00-11:30`,
+    `${day(8)} 11:00-11:30`,
+  ]);
 });

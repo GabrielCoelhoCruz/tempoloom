@@ -2,6 +2,7 @@
 // from the event cache each time they are read, so an issue resolves as soon
 // as its condition ends (rule 5) and a disabled check closes its issues
 // (rule 2). Only ignores are stored (rule 3). Checks never change an event (rule 7).
+import { hasVideo } from "../shared/meeting-checks.ts";
 import { DAY } from "../shared/time.ts";
 import { all, type Db, one } from "./db.ts";
 import { type CheckId, getPrefs } from "./meeting-prefs.ts";
@@ -67,24 +68,8 @@ interface Ev {
   booking: boolean;
 }
 
-const VIDEO_HOST =
-  /(zoom|meet|teams|webex|whereby|jit\.?si|gotomeet|chime|bluejeans|skype|bigbluebutton|video|call)/i;
-
-/** A URL whose host names a video service (Tempoloom decision, video_link). */
-export function hasVideoLink(text: string): boolean {
-  for (const m of text.matchAll(/https?:\/\/[^\s<>"')]+/gi)) {
-    try {
-      if (VIDEO_HOST.test(new URL(m[0]).hostname)) return true;
-    } catch {}
-  }
-  return false;
-}
-
 /** A street address: two or more commas, as buffers-travel.md reads it. */
 const isAddress = (location: string) => (location.match(/,/g) ?? []).length >= 2;
-
-const video = (e: Ev) =>
-  e.conference !== "" || hasVideoLink(e.location) || hasVideoLink(e.description);
 
 function eventsOf(db: Db, userId: string, from: number, to: number): Ev[] {
   const email =
@@ -193,7 +178,7 @@ function companyFails(c: CompanyConditions, e: Ev, teamDomain: string): boolean 
   const people = e.others.length + 1;
   if (c.minAttendees !== undefined && people < c.minAttendees) return false;
   if (c.descriptionEmpty && e.description.trim() !== "") return false;
-  if (c.noVideoLink && video(e)) return false;
+  if (c.noVideoLink && hasVideo(e)) return false;
   if (c.externalGuests && !e.others.some((o) => domainOf(o) !== teamDomain)) return false;
   if (c.longerThanMinutes !== undefined && e.end - e.start <= c.longerThanMinutes * 60_000)
     return false;
@@ -203,10 +188,10 @@ function companyFails(c: CompanyConditions, e: Ev, teamDomain: string): boolean 
 }
 
 /** Every issue of the user's meetings in the horizon, ignored ones included. */
-export function evaluate(db: Db, userId: string, now: number): Issue[] {
+export function evaluate(db: Db, userId: string, now: number, to = now + HORIZON): Issue[] {
   const prefs = getPrefs(db, userId);
   const on = prefs.checks;
-  const events = eventsOf(db, userId, now, now + HORIZON).filter((e) => e.start >= now);
+  const events = eventsOf(db, userId, now, to).filter((e) => e.start >= now);
   const out: Issue[] = [];
   const base = (e: Ev) => ({
     eventKey: e.key,
@@ -272,7 +257,7 @@ export function evaluate(db: Db, userId: string, now: number): Issue[] {
         ignoreId: "rsvp_reminder",
         message: "You have not answered this invitation",
       });
-    if (on.video_link && !video(e) && !isAddress(e.location))
+    if (on.video_link && !hasVideo(e) && !isAddress(e.location))
       out.push({
         ...base(e),
         checkId: "video_link",
@@ -314,8 +299,11 @@ export function evaluate(db: Db, userId: string, now: number): Issue[] {
   return out.sort((a, b) => a.start - b.start || a.checkId.localeCompare(b.checkId));
 }
 
-/** Open issues: the ones the user has not ignored for the event or its series (rule 3). */
-export function openIssues(db: Db, userId: string, now: number): Issue[] {
+/**
+ * Open issues: the ones the user has not ignored for the event or its series
+ * (rule 3), of events that start before `to` (default: the 7-day horizon).
+ */
+export function openIssues(db: Db, userId: string, now: number, to = now + HORIZON): Issue[] {
   const ignores = new Set(
     all<{ check_id: string; scope: string; target: string }>(
       db,
@@ -323,7 +311,7 @@ export function openIssues(db: Db, userId: string, now: number): Issue[] {
       userId,
     ).map((i) => `${i.check_id}\n${i.scope}\n${i.target}`),
   );
-  return evaluate(db, userId, now).filter(
+  return evaluate(db, userId, now, to).filter(
     (i) =>
       !ignores.has(`${i.ignoreId}\nevent\n${i.eventKey}`) &&
       !(i.seriesId && ignores.has(`${i.ignoreId}\nseries\n${i.seriesId}`)),

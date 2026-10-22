@@ -1,10 +1,12 @@
 // Flexible meetings in the scheduler snapshot (docs/specs/meetings-flexible.md).
 // The organizer's run places the meeting; an attendee who is a user here gives
 // hours and busy time (rules 11, 13), and sees each occurrence as fixed (rule 27).
+
 import { attends, hasTag, TAG_FREE } from "../../scheduler/blocking.ts";
 import { hoursToTimeSet, type WeeklyHours } from "../../scheduler/hours.ts";
 import type { ExternalEvent, Level, MeetingItem } from "../../scheduler/model.ts";
 import { type Interval, TimeSet } from "../../scheduler/timeset.ts";
+import { hasVideoLink } from "../../shared/meeting-checks.ts";
 import type { LocalDate } from "../../shared/time.ts";
 import { all, type Db, one, run } from "../db.ts";
 import { getPrefs } from "../meeting-prefs.ts";
@@ -436,9 +438,9 @@ export function attendeeOccurrences(
 ): ExternalEvent[] {
   const email = one<{ email: string }>(db, "SELECT email FROM users WHERE id = ?", userId)?.email;
   if (!email) return [];
-  return all<{ id: string; title: string; start_ms: number; end_ms: number }>(
+  return all<{ id: string; title: string; location: string; start_ms: number; end_ms: number }>(
     db,
-    `SELECT m.id, mt.title, m.start_ms, m.end_ms FROM managed_events m
+    `SELECT m.id, mt.title, mt.location, m.start_ms, m.end_ms FROM managed_events m
        JOIN meetings mt ON mt.id = m.source_id AND m.kind = 'meeting'
        JOIN meeting_attendees a ON a.meeting_id = mt.id
      WHERE a.email = ? AND a.required = 1 AND m.user_id <> ? AND m.end_ms > ? AND m.start_ms < ?`,
@@ -457,7 +459,9 @@ export function attendeeOccurrences(
     selfResponse: null,
     organizerSelf: true,
     attendeeCount: 2,
+    // Only a video link of the meeting's location: travel time comes from the invitation itself.
     location: "",
+    conference: hasVideoLink(m.location) ? m.location : "",
     eventType: "default",
     bookedViaLink: false,
   }));

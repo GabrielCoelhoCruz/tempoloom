@@ -49,6 +49,7 @@ interface Conditions {
   categories: Category[];
   travel: boolean;
   flight: boolean;
+  video: boolean;
   run: string;
 }
 
@@ -65,6 +66,7 @@ const EMPTY: Conditions = {
   categories: [],
   travel: false,
   flight: false,
+  video: false,
   run: "",
 };
 
@@ -89,6 +91,7 @@ function filterOf(c: Conditions): BufferFilter {
   if (c.categories.length) f.categories = c.categories;
   if (c.travel) f.travel = true;
   if (c.flight) f.flight = true;
+  if (c.video) f.videoLink = true;
   if (Number(c.run) >= 1) f.runLongerThanMinutes = Number(c.run);
   return f;
 }
@@ -107,6 +110,7 @@ function conditionsOf(f: BufferFilter): Conditions {
     categories: f.categories ?? [],
     travel: f.travel ?? false,
     flight: f.flight ?? false,
+    video: f.videoLink ?? false,
     run: f.runLongerThanMinutes ? String(f.runLongerThanMinutes) : "",
   };
 }
@@ -426,6 +430,14 @@ export function BufferEditor({
               onChange={(e) => set("flight", e.currentTarget.checked)}
             />
             Flights
+          </label>
+          <label class="inline">
+            <input
+              type="checkbox"
+              checked={c.video}
+              onChange={(e) => set("video", e.currentTarget.checked)}
+            />
+            Video meetings only
           </label>
         </div>
       </fieldset>

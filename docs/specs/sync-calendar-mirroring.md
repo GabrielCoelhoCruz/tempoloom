@@ -294,6 +294,14 @@ applies rules 14 to 23 in order. The first rule that decides wins.
     the user adds them to a Google or Microsoft account. Changes from such
     calendars can arrive many hours late. Tempoloom has no control over
     this delay and says so in the help text (E-0053, E-0059).
+    Tempoloom decision: a calendar that a Google or Microsoft account
+    subscribes to by URL is read-only there. Tempoloom lists only calendars
+    it can read and write (`accounts-connected-calendars.md` rule 4, rule 5
+    here), so such a calendar is not listed: its events do not count as busy
+    time, and it cannot be a source or a destination. The help text says
+    this, names the delay, and says that a CalDAV server (iCloud too)
+    connects directly on the Account page with read and write access. The
+    delay is the other service's, so there is nothing more to build.
 
 ## Outputs
 
