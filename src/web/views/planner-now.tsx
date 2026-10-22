@@ -390,23 +390,32 @@ export function EventExtras({ event, onDone }: { event: PlannerEvent; onDone: ()
               Start now
             </button>
           )}
-          {kind === "task" && event.start <= Date.now() && event.end > Date.now() && (
-            <button
-              type="button"
-              title="Stop: this chunk ends now, and the rest is placed later"
-              onClick={() =>
-                void api("POST", `/api/tasks/${event.sourceId}/stop`)
-                  .then(() => planNow())
-                  .then(() => {
-                    plannerReload.value++;
-                    onDone();
-                  })
-                  .catch((err) => setError(reason(err)))
-              }
-            >
-              End now
-            </button>
-          )}
+          {kind === "task" &&
+            event.start <= Date.now() &&
+            event.end > Date.now() &&
+            (
+              [
+                ["stop", "End now", "Stop: this chunk ends now, and the rest is placed later"],
+                ["restart", "Restart", "Restart: this chunk starts again now, with its length"],
+              ] as const
+            ).map(([action, label, title]) => (
+              <button
+                key={action}
+                type="button"
+                title={title}
+                onClick={() =>
+                  void api("POST", `/api/tasks/${event.sourceId}/${action}`)
+                    .then(() => planNow())
+                    .then(() => {
+                      plannerReload.value++;
+                      onDone();
+                    })
+                    .catch((err) => setError(reason(err)))
+                }
+              >
+                {label}
+              </button>
+            ))}
         </div>
       )}
       {error && <p class="error">{error}</p>}

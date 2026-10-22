@@ -719,6 +719,13 @@ export function Tasks() {
             >
               End now
             </button>
+            <button
+              type="button"
+              title="Restart: the running chunk starts again now"
+              onClick={() => void act(() => api("POST", `/api/tasks/${t.id}/restart`))}
+            >
+              Restart
+            </button>
           </>
         )}
         {filter === "open" &&
