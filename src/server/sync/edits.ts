@@ -1,20 +1,16 @@
 // Reads user edits of managed events from the event cache after a pull
 // (docs/specs/planning-calendar-edits.md).
+import { chosenDaySql, HabitChoice } from "../../shared/habit-choice.ts";
 import { addDays, chosenMinute, localToUtc, utcToLocal } from "../../shared/time.ts";
 import { all, type Db, one, run, tx } from "../db.ts";
 import type { ManagedRow } from "../planner/push.ts";
 import { planningZone } from "../travel.ts";
 
 /**
- * `habit_reschedules.not_before` of a stored event day, not a chosen time:
- * the occurrence's event on that day was deleted (habits rule 29), and the
- * occurrence's date has passed. The plan places it again on that day.
- */
-export const REOPENED_CHOICE = 2;
-
-/**
  * Habits rule 29 for an occurrence whose date has passed: its event's day
- * keeps it in the plan (see passedOpen in plan.ts). A choice of the user wins.
+ * keeps it in the plan (see passedOpen in plan.ts). A choice of the user wins
+ * while its day is today or later; an older choice is no longer read, so the
+ * event's day replaces it.
  */
 function keepDeletedOccurrence(db: Db, userId: string, row: ManagedRow, zone: string, now: number) {
   const date = row.key.slice(`habit:${row.source_id}:`.length);
@@ -24,13 +20,15 @@ function keepDeletedOccurrence(db: Db, userId: string, row: ManagedRow, zone: st
   run(
     db,
     `INSERT INTO habit_reschedules (user_id, habit_id, date, minute, not_before) VALUES (?, ?, ?, ?, ?)
-     ON CONFLICT (habit_id, date) DO UPDATE SET minute = excluded.minute WHERE not_before = ?`,
+     ON CONFLICT (habit_id, date) DO UPDATE SET minute = excluded.minute, not_before = excluded.not_before
+       WHERE habit_reschedules.not_before = ? OR ${chosenDaySql("habit_reschedules")} < ?`,
     userId,
     row.source_id,
     date,
     chosenMinute(date, day, 0),
-    REOPENED_CHOICE,
-    REOPENED_CHOICE,
+    HabitChoice.eventDay,
+    HabitChoice.eventDay,
+    today,
   );
 }
 

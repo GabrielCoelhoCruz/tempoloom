@@ -21,6 +21,7 @@ import {
   type EventSettings,
   readEventSettings,
 } from "../../shared/event-settings.ts";
+import { chosenDaySql, HabitChoice } from "../../shared/habit-choice.ts";
 import {
   addDays,
   chosenDay,
@@ -36,7 +37,6 @@ import { all, type Db, one, run } from "../db.ts";
 import { fragmentationPreference } from "../policies/model.ts";
 import type { CalendarProvider } from "../providers/types.ts";
 import { getSettings, type Settings } from "../settings.ts";
-import { REOPENED_CHOICE } from "../sync/edits.ts";
 import { planningZone } from "../travel.ts";
 import { afterPush } from "./after-push.ts";
 import { categoryContext, colorFor, externalPaints } from "./categories.ts";
@@ -233,20 +233,23 @@ export function loadSnapshot(
   // has passed: a minute of 1440 or more is on a later day (chosenMinute).
   for (const r of all<{ habit_id: string; date: string; minute: number; not_before: number }>(
     db,
-    `SELECT habit_id, date, minute, not_before FROM habit_reschedules WHERE user_id = ?
-       AND (date >= ? OR (minute >= 1440 AND date(date, '+' || (minute / 1440) || ' days') >= ?))`,
+    `SELECT habit_id, date, minute, not_before FROM habit_reschedules
+       WHERE user_id = ? AND ${chosenDaySql()} >= ?`,
     userId,
-    today,
     today,
   )) {
     const day = chosenDay(r.date, r.minute);
-    if (day < today) continue;
-    if (r.not_before === REOPENED_CHOICE) {
+    if (r.not_before === HabitChoice.eventDay) {
       reopenedOn.set(r.habit_id, { ...reopenedOn.get(r.habit_id), [r.date]: day });
       continue;
     }
-    const into = r.not_before ? snoozed : rescheduled;
-    into.set(r.habit_id, { ...into.get(r.habit_id), [r.date]: r.minute });
+    const into =
+      r.not_before === HabitChoice.snooze
+        ? snoozed
+        : r.not_before === HabitChoice.reschedule
+          ? rescheduled
+          : undefined;
+    if (into) into.set(r.habit_id, { ...into.get(r.habit_id), [r.date]: r.minute });
   }
   // Rule 33: a passed occurrence whose event today nobody started goes back to today.
   for (const r of reopen) {
@@ -781,9 +784,7 @@ function habitGuestFields(guests: string[], organizer: string, userEmail: string
 export function pruneHabitChoices(db: Db, userId: string, zone: string, now: number): void {
   run(
     db,
-    `DELETE FROM habit_reschedules AS c WHERE c.user_id = ?
-       AND (CASE WHEN c.minute >= 1440 THEN date(c.date, '+' || (c.minute / 1440) || ' days')
-            ELSE c.date END) < ?
+    `DELETE FROM habit_reschedules AS c WHERE c.user_id = ? AND ${chosenDaySql("c")} < ?
        AND NOT EXISTS (SELECT 1 FROM managed_events m WHERE m.user_id = c.user_id
          AND m.key = 'habit:' || c.habit_id || ':' || c.date AND m.end_ms > ?)`,
     userId,

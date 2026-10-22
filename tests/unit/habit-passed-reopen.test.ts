@@ -8,11 +8,19 @@
 //    keeps the date open.
 // 2. In manual start mode nobody starts the event (rule 33): the occurrence is
 //    not placed again later that day, for the same reason.
-// 3. The clean-up of old choices removes a choice that a live occurrence
+// 3. A stale choice (its day has passed) blocks the stored event day, so a
+//    reschedule, a move by hand and a delete lose the occurrence.
+// 4. A snooze after a delete does not replace the stored event day.
+// 5. With no slot on the event's day, rule 14 does not apply, or a daily habit
+//    is not reported unplaced.
+// 6. The clean-up of old choices removes a choice that a live occurrence
 //    still needs (a later day of the current period, or an event that has
 //    not ended), or keeps choices whose day passed long ago.
+import { Hono } from "hono";
 import { describe, expect, it } from "vitest";
 import { ensureUser } from "../../src/server/accounts.ts";
+import { eventActionRoutes } from "../../src/server/api/event-actions.ts";
+import type { AppEnv } from "../../src/server/app.ts";
 import { all, type Db, one, openDb, run } from "../../src/server/db.ts";
 import { replanUser } from "../../src/server/planner/replan.ts";
 import type {
@@ -22,6 +30,7 @@ import type {
 } from "../../src/server/providers/types.ts";
 import { updateSettings } from "../../src/server/settings.ts";
 import { applyCalendarEdits } from "../../src/server/sync/edits.ts";
+import type { SyncService } from "../../src/server/sync/service.ts";
 
 // The habit is on Mondays. Monday 2026-11-09 had no room, so rule 14 put its
 // occurrence on Tuesday 2026-11-10. The runs are on that Tuesday (zone UTC).
@@ -81,7 +90,7 @@ function fakeProvider(writes: Write[]): CalendarProvider {
   } as unknown as CalendarProvider;
 }
 
-function setup() {
+function setup(frequency = '{"period":"weekly","days":[1]}') {
   const db = openDb(":memory:");
   const user = ensureUser(db, "owner@example.com", "Owner", at("2026-10-01T00:00:00"));
   run(db, "UPDATE users SET time_zone = 'UTC', first_sign_in_at = 0 WHERE id = ?", user.id);
@@ -105,24 +114,26 @@ function setup() {
     db,
     `INSERT INTO habits (id, user_id, title, level, hours_set_id, ideal_minute, min_minutes, max_minutes,
        frequency, defense, when_unplaceable, created_at, rules_changed_at, event_settings)
-     VALUES ('h', ?, 'Lunch', 3, ?, 720, 30, 30, '{"period":"weekly","days":[1]}', 'always-busy',
-       'remove', 0, 0, '{}')`,
+     VALUES ('h', ?, 'Lunch', 3, ?, 720, 30, 30, ?, 'always-busy', 'remove', 0, 0, '{}')`,
     user.id,
     work?.id ?? "",
+    frequency,
   );
   return { db, userId: user.id };
 }
 
-/** The occurrence's event, as rule 14 left it. */
-function event(db: Db, userId: string, start: string, end: string, cached = true) {
+/** The occurrence's event, as rule 14 (or a move by hand: locked) left it. */
+function event(db: Db, userId: string, start: string, end: string, cached = true, locked = 0) {
   run(
     db,
     `INSERT INTO managed_events (id, user_id, calendar_id, event_id, key, kind, source_id,
-       start_ms, end_ms, busy, title) VALUES ('m1', ?, 'cal', 'ev1', ?, 'habit', 'h', ?, ?, 1, 'Lunch')`,
+       start_ms, end_ms, busy, title, locked)
+     VALUES ('m1', ?, 'cal', 'ev1', ?, 'habit', 'h', ?, ?, 1, 'Lunch', ?)`,
     userId,
     KEY,
     at(start),
     at(end),
+    locked,
   );
   if (cached)
     run(
@@ -233,5 +244,117 @@ describe("clean-up of chosen times (habit_reschedules)", () => {
     ]);
     // The live choice still places Monday's occurrence on Wednesday at 10:00.
     expect(occurrence(db)).toEqual([["2026-11-11T10:00:00.000Z", "2026-11-11T10:30:00.000Z"]]);
+  });
+});
+
+const choices = (db: Db) => all(db, "SELECT date, minute, not_before FROM habit_reschedules");
+
+/** An external busy event over all of Tuesday's work hours. */
+function busyTuesday(db: Db) {
+  run(
+    db,
+    `INSERT INTO events (calendar_id, event_id, summary, start_ms, end_ms)
+     VALUES ('cal', 'busy', 'Offsite', ?, ?)`,
+    at("2026-11-10T00:00:00"),
+    at("2026-11-11T00:00:00"),
+  );
+}
+
+describe("the event's day after a delete (rule 29): choices, rule 14, daily habits", () => {
+  it("a stale choice does not block the event's day: reschedule, move by hand to a later day, delete", async () => {
+    const { db, userId } = setup();
+    // Monday's occurrence was rescheduled to Monday 15:00, then moved by hand to Tuesday 12:00.
+    run(
+      db,
+      "INSERT INTO habit_reschedules (user_id, habit_id, date, minute, not_before) VALUES (?, 'h', ?, 900, 0)",
+      userId,
+      MONDAY,
+    );
+    event(db, userId, "2026-11-10T12:00:00", "2026-11-10T12:30:00", false, 1);
+    const now = at("2026-11-10T08:00:00");
+    applyCalendarEdits(db, userId, ["cal"], "UTC", now);
+    expect(choices(db)).toEqual([{ date: MONDAY, minute: 1440, not_before: 2 }]);
+
+    await replan(db, userId, now);
+    const placed = occurrence(db);
+    expect(placed).toHaveLength(1);
+    const [start] = placed[0] as [string, string];
+    expect(start.slice(0, 10)).toBe("2026-11-10");
+    expect(start).not.toBe("2026-11-10T12:00:00.000Z");
+  });
+
+  it("a choice whose day is today or later still wins over the event's day", async () => {
+    const { db, userId } = setup();
+    // Snoozed to Tuesday 15:00; the user deletes the event on Tuesday.
+    run(
+      db,
+      "INSERT INTO habit_reschedules (user_id, habit_id, date, minute, not_before) VALUES (?, 'h', ?, ?, 1)",
+      userId,
+      MONDAY,
+      1440 + 900,
+    );
+    event(db, userId, "2026-11-10T15:00:00", "2026-11-10T15:30:00", false);
+    applyCalendarEdits(db, userId, ["cal"], "UTC", at("2026-11-10T08:00:00"));
+    expect(choices(db)).toEqual([{ date: MONDAY, minute: 1440 + 900, not_before: 1 }]);
+  });
+
+  it("a snooze after a delete replaces the event's day, and the plan follows the snooze", async () => {
+    const { db, userId } = setup();
+    event(db, userId, "2026-11-10T12:00:00", "2026-11-10T12:30:00", false);
+    const now = at("2026-11-10T08:00:00");
+    applyCalendarEdits(db, userId, ["cal"], "UTC", now);
+    await replan(db, userId, now);
+    expect(occurrence(db)).toHaveLength(1);
+
+    const sync = { request: () => {} } as unknown as SyncService;
+    const app = new Hono<AppEnv>();
+    app.use("*", async (c, next) => {
+      c.set(
+        "user",
+        one(db, "SELECT * FROM users WHERE id = ?", userId) as AppEnv["Variables"]["user"],
+      );
+      await next();
+    });
+    app.route(
+      "/api",
+      eventActionRoutes(db, sync, () => now),
+    );
+    const res = await app.request("/api/habits/h/snooze", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ date: MONDAY, time: "15:00" }),
+    });
+    expect(res.status).toBe(200);
+    expect(choices(db)).toEqual([{ date: MONDAY, minute: 1440 + 900, not_before: 1 }]);
+
+    await replan(db, userId, now);
+    expect(occurrence(db)).toEqual([["2026-11-10T15:00:00.000Z", "2026-11-10T15:30:00.000Z"]]);
+  });
+
+  it("rule 14: when the event's day has no slot, the occurrence goes to another day of its week, from today on", async () => {
+    const { db, userId } = setup();
+    event(db, userId, "2026-11-10T12:00:00", "2026-11-10T12:30:00", false);
+    busyTuesday(db);
+    const now = at("2026-11-10T08:00:00");
+    applyCalendarEdits(db, userId, ["cal"], "UTC", now);
+    await replan(db, userId, now);
+    expect(occurrence(db)).toEqual([["2026-11-11T12:00:00.000Z", "2026-11-11T12:30:00.000Z"]]);
+  });
+
+  it("a daily habit has no rule 14 days: with no slot on the event's day it is reported unplaced", async () => {
+    const { db, userId } = setup('{"period":"daily"}');
+    event(db, userId, "2026-11-10T12:00:00", "2026-11-10T12:30:00", false, 1);
+    busyTuesday(db);
+    const now = at("2026-11-10T08:00:00");
+    applyCalendarEdits(db, userId, ["cal"], "UTC", now);
+    await replan(db, userId, now);
+    expect(occurrence(db)).toEqual([]);
+    const report = one<{ report: string }>(
+      db,
+      "SELECT report FROM plan_reports WHERE user_id = ?",
+      userId,
+    );
+    const entries = JSON.parse(report?.report ?? "[]") as { demandKey: string; status: string }[];
+    expect(entries.find((e) => e.demandKey === KEY)?.status).toBe("unplaced");
   });
 });

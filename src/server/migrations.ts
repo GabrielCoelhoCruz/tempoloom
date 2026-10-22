@@ -1287,7 +1287,8 @@ export const MIGRATIONS: readonly string[] = [
   ALTER TABLE habits ADD COLUMN decline_message TEXT NOT NULL DEFAULT '';
   -- [{rule, kind, id}]: see HabitDependency in src/scheduler/model.ts.
   ALTER TABLE habits ADD COLUMN dependencies TEXT NOT NULL DEFAULT '[]';
-  -- 1: the minute is a snooze time (first legal start at or after it), not a reschedule.
+  -- 0: a reschedule time; 1: a snooze time (first legal start at or after it);
+  -- 2: the day of a deleted event of a passed occurrence (rule 29). See src/shared/habit-choice.ts.
   ALTER TABLE habit_reschedules ADD COLUMN not_before INTEGER NOT NULL DEFAULT 0;
   `,
   // 42: the organizer's hours for one guest (meetings-flexible.md rule 7), as weekly
