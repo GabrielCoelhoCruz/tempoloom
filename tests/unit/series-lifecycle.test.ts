@@ -623,3 +623,26 @@ describe("a plan made before a series edit was read", () => {
     expect(cal.calls.filter((c) => c.name !== "delete")).toEqual([]);
   });
 });
+
+describe("a series that ended before a period, read by a plan made before the end", () => {
+  it("gets no new instance for the period: the end is read from the series itself, not from the period's window", async () => {
+    const s = setup();
+    const cal = fakeCalendar();
+    const push = pusher(s, cal.provider);
+    await push([occurrence("2026-10-19", "2026-10-20"), occurrence("2026-10-26", "2026-10-27")]);
+    // The organizer ends the series after 27 October ("this and following" elsewhere);
+    // this run's plan is older and still places a new period, 9 November.
+    const w = cal.objects.get("http://dav/1.ics") as EventWrite;
+    cal.objects.set("http://dav/1.ics", {
+      ...w,
+      recurrence: "FREQ=WEEKLY;BYDAY=TU;UNTIL=20261102T000000Z",
+    });
+    cal.calls.length = 0;
+    await push([
+      occurrence("2026-10-19", "2026-10-20"),
+      occurrence("2026-10-26", "2026-10-27"),
+      occurrence("2026-11-09", "2026-11-10"),
+    ]);
+    expect(cal.calls.filter((c) => c.name === "addInstance" || c.name === "insert")).toEqual([]);
+  });
+});
