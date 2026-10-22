@@ -9,7 +9,7 @@ import {
   ProviderError,
   type ProviderEvent,
 } from "../providers/types.ts";
-import { updateSettings } from "../settings.ts";
+import { getSettings, updateSettings } from "../settings.ts";
 
 /** Events from 12 weeks ago (the stats range) to 120 days ahead are cached. */
 const WINDOW_PAST = 84 * DAY;
@@ -45,9 +45,16 @@ const settingsFailureLogged = new Set<string>();
  * Week start, time format and date format follow the user's main Google
  * account (settings-profile.md PRF-2, PRF-3): read with each calendar list
  * sync. A grant without the settings scope keeps the current values. The
- * Google week start is kept as googleWeekStart for the profile page only: the
- * planning week start does not change, so no weekly planner key changes.
+ * Google week start is kept as googleWeekStart: it sets the display week of the
+ * pages (PRF-6), and the planning week start does not change, so no planning
+ * period key changes (settings-profile.md, "Which week each feature uses").
  */
+/** The stored formats and week starts of a user; a change means open pages must read them again. */
+export function formatsKey(db: Db, userId: string): string {
+  const s = getSettings(db, userId);
+  return `${s.timeFormat}|${s.dateFormat}|${s.weekStart}|${s.googleWeekStart}`;
+}
+
 async function readProfileSettings(
   db: Db,
   provider: CalendarProvider,

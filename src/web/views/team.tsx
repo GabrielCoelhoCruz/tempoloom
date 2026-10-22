@@ -1,8 +1,9 @@
 import type { ComponentChildren } from "preact";
 import { useCallback, useEffect, useState } from "preact/hooks";
 import { ApiError, api } from "../lib/api.ts";
+import { clockSecondsText } from "../lib/format.ts";
 import { navigate } from "../lib/router.ts";
-import { me } from "../lib/state.ts";
+import { me, zone } from "../lib/state.ts";
 import { CalendarAccess, ProvisionImport, SsoSettings } from "./team-admin.tsx";
 import { TeamBranding } from "./team-branding.tsx";
 import { Onboarding, TeamDefaults } from "./team-defaults.tsx";
@@ -570,7 +571,7 @@ function Directory() {
                   {" "}
                   ({p.eventsRead} {p.eventsRead === 1 ? "event" : "events"} read, last read{" "}
                   <span data-testid="last-read">
-                    {p.lastRead ? new Date(p.lastRead).toLocaleTimeString() : "never"}
+                    {p.lastRead ? clockSecondsText(zone(), p.lastRead) : "never"}
                   </span>
                   )
                 </>

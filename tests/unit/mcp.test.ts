@@ -32,6 +32,7 @@ import { all, one, openDb, run } from "../../src/server/db.ts";
 import { mcpRoutes, TASKS_PAGE } from "../../src/server/mcp.ts";
 import { CHECK_IDS } from "../../src/server/meeting-prefs.ts";
 import { createPreview, openChanges, type PreviewDeps } from "../../src/server/preview.ts";
+import { updateSettings } from "../../src/server/settings.ts";
 
 // get_stats returns computeStats as is: a test can make it return a bad result.
 vi.mock(import("../../src/server/api/stats.ts"), async (original) => {
@@ -683,5 +684,25 @@ describe("MCP list pages", () => {
       expect(r.isError, name).toBe(true);
       expect(r.content[0]?.text, name).toMatch(/Invalid cursor/);
     }
+  });
+});
+
+describe("MCP preview summaries", () => {
+  it("write the time in the user's time and date format (settings-profile.md PRF-6)", async () => {
+    const s = setup();
+    run(s.db, "UPDATE users SET time_zone = 'Europe/Berlin' WHERE id = ?", s.user.id);
+    updateSettings(s.db, s.user.id, { timeFormat: "12h", dateFormat: "DMY" });
+    await s.tool("propose_create_event", {
+      title: "Write report",
+      start: new Date(T0 + DAY).toISOString(),
+      end: new Date(T0 + DAY + HOUR).toISOString(),
+    });
+    const row = one<{ summary: string }>(
+      s.db,
+      "SELECT summary FROM staged_changes WHERE user_id = ?",
+      s.user.id,
+    );
+    // 2026-10-20 08:00 UTC is 10:00 in Berlin; the default would be "Tue 2026-10-20 10:00–11:00".
+    expect(row?.summary).toBe("Create “Write report” · Tue 20/10/2026 10:00 AM–11:00 AM");
   });
 });

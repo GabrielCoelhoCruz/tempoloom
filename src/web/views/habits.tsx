@@ -4,7 +4,7 @@ import { defaultEventSettings, readEventSettings } from "../../shared/event-sett
 import { utcToLocal } from "../../shared/time.ts";
 import { api } from "../lib/api.ts";
 import { CalendarDisconnected } from "../lib/calendars.tsx";
-import { duration, hhmm } from "../lib/format.ts";
+import { dateText, duration, hhmm, timeText } from "../lib/format.ts";
 import { frequencyText, readFrequency } from "../lib/frequency.ts";
 import { lazyComponent } from "../lib/lazy.ts";
 import { freeName, templateFromUrl } from "../lib/library.ts";
@@ -333,13 +333,15 @@ export function Habits() {
                 <div>{withEmoji(h)}</div>
                 <div class="meta">
                   {LEVEL_NAMES[h.level]} ·{" "}
-                  {h.ideal_at_end ? "ideal: end of each day" : `ideal ${hhmm(h.ideal_minute)}`} ·{" "}
-                  {duration(h.min_minutes)} to {duration(h.max_minutes)} · {frequencyText(f)} ·{" "}
+                  {h.ideal_at_end ? "ideal: end of each day" : `ideal ${timeText(h.ideal_minute)}`}{" "}
+                  · {duration(h.min_minutes)} to {duration(h.max_minutes)} · {frequencyText(f)} ·{" "}
                   {DEFENSE[h.defense] ?? h.defense}
                   {h.item_hours
                     ? ` · Item-specific hours: ${describeWeekly(JSON.parse(h.item_hours))}`
                     : ""}
-                  {h.starting && h.starting > today ? ` · snoozed until ${h.starting}` : ""}
+                  {h.starting && h.starting > today
+                    ? ` · snoozed until ${dateText(h.starting)}`
+                    : ""}
                   {h.enabled ? "" : " · off"} <PolicyMark id={h.id} />
                 </div>
                 <CalendarDisconnected email={h.disconnected} />

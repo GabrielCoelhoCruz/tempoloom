@@ -4,6 +4,7 @@
 import { useEffect, useMemo, useState } from "preact/hooks";
 import { addDays, localToUtc, utcToLocal } from "../../shared/time.ts";
 import { ApiError, api } from "../lib/api.ts";
+import { dateText } from "../lib/format.ts";
 import { DEFAULT_TEMPLATE, sharedTimes } from "../lib/shared-times.ts";
 import { LEVEL_NAMES, zone as myZone } from "../lib/state.ts";
 import { dayText, savedFormat, timeText, type View } from "../lib/zoned.ts";
@@ -228,8 +229,7 @@ export function OneOffForm({
                 data-testid="oneoff-expiry"
                 data-date={utcToLocal(myZone(), saved.expiresAt).date}
               >
-                Copied. Expires on{" "}
-                {new Date(saved.expiresAt).toLocaleDateString(undefined, { timeZone: myZone() })}.
+                Copied. Expires on {dateText(utcToLocal(myZone(), saved.expiresAt).date)}.
               </span>
             )}
           </>

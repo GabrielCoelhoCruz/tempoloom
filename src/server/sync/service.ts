@@ -14,7 +14,7 @@ import { type ProviderDeps, ProviderPool } from "../providers/index.ts";
 import { ProviderError } from "../providers/types.ts";
 import { getSettings } from "../settings.ts";
 import { applyCalendarEdits } from "./edits.ts";
-import { MIRROR_READ_AHEAD, pullEvents, syncCalendarList } from "./pull.ts";
+import { formatsKey, MIRROR_READ_AHEAD, pullEvents, syncCalendarList } from "./pull.ts";
 
 export interface SyncServiceDeps extends ProviderDeps {
   intervalMs: number;
@@ -288,6 +288,8 @@ export class SyncService {
       const pool = this.#pool(userId);
       // Read each account's calendar list on first sight and every 10 minutes.
       const now0 = this.#deps.now();
+      // A list read can bring new Google formats or week start (PRF-6): open pages read them again.
+      const formatsBefore = formatsKey(db, userId);
       for (const a of all<{ id: string }>(
         db,
         `SELECT id FROM accounts WHERE user_id = ? AND status = 'ok'
@@ -303,6 +305,7 @@ export class SyncService {
         }
         run(db, "UPDATE accounts SET calendars_synced_at = ? WHERE id = ?", now0, a.id);
       }
+      if (formatsKey(db, userId) !== formatsBefore) for (const fn of this.#listeners) fn(userId);
       // A lower instance limit turns extra connected calendars off (plans edge case 1).
       enforceCalendarLimit(db, userId);
       // Mirroring calendars are read 12 months ahead. Twice a day (by default) they

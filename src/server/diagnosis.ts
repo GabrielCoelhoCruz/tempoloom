@@ -7,7 +7,7 @@ import { changesOf } from "./change-log.ts";
 import { all, type Db, one } from "./db.ts";
 import { ACTIVE, mirrorKey, TAG_NOSYNC } from "./planner/mirror.ts";
 import { MANAGED_PROP } from "./planner/push.ts";
-import { when, zoneOf } from "./preview.ts";
+import { userFormatsOf, when, whenAt, zoneOf } from "./preview.ts";
 
 export type LookupError = "unreadable" | "unknown_calendar" | "not_found";
 
@@ -221,6 +221,7 @@ export function lookupEvent(db: Db, userId: string, q: string, now: number) {
   if ("error" in hit) return hit;
   const { event: e, calendar } = hit;
   const zone = zoneOf(db, userId);
+  const f = userFormatsOf(db, userId);
   const names = new Map(calendarsOf(db, userId).map((c) => [c.id, c.name]));
   const policyName = (p: PolicyRow) =>
     `${names.get(p.source_calendar_id) ?? "?"} → ${names.get(p.dest_calendar_id) ?? "?"}`;
@@ -320,12 +321,12 @@ export function lookupEvent(db: Db, userId: string, q: string, now: number) {
     repair,
     event: {
       title: e.summary,
-      when: e.all_day ? "all day" : when(zone, e.start_ms, e.end_ms),
+      when: e.all_day ? "all day" : when(zone, e.start_ms, e.end_ms, f),
     },
     calendar: {
       name: calendar.name,
       account: calendar.email,
-      lastRead: calendar.synced_at === null ? null : when(zone, calendar.synced_at),
+      lastRead: calendar.synced_at === null ? null : whenAt(zone, calendar.synced_at, f),
       lastError:
         calendar.status === "reauth_required" ? "The account needs you to sign in again" : null,
     },
@@ -333,11 +334,11 @@ export function lookupEvent(db: Db, userId: string, q: string, now: number) {
     copy,
     policies: policies.map(({ key: _, ...p }) => p),
     changes: changesOf(db, userId, e.calendar_id, e.event_id, managed?.key ?? null).map((c) => ({
-      at: when(zone, c.at),
+      at: whenAt(zone, c.at, f),
       action: c.action,
       reason: c.reason,
       title: c.title,
-      range: c.start !== null && c.end !== null ? when(zone, c.start, c.end) : "",
+      range: c.start !== null && c.end !== null ? when(zone, c.start, c.end, f) : "",
       actor: c.actor,
     })),
   };

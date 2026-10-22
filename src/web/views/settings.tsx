@@ -7,13 +7,14 @@ import { api } from "../lib/api.ts";
 import { CalendarDisconnected } from "../lib/calendars.tsx";
 import { CATEGORY_LABELS, COLORS } from "../lib/categories.ts";
 import { useCommit } from "../lib/commit-input.ts";
-import { hhmm, parseHhmm } from "../lib/format.ts";
+import { hhmm, parseHhmm, weekdaysInOrder } from "../lib/format.ts";
 import { lazyComponent } from "../lib/lazy.ts";
 import { loadPolicyMarks, PolicyMark, policyMarks } from "../lib/policy-marks.tsx";
 import { onLinkClick } from "../lib/router.ts";
 import { loadMe, me, planNow } from "../lib/state.ts";
 import { BufferEditor } from "./buffer-editor.tsx";
 import { FocusOptionsList, MeetingOverloadSection } from "./focus-options.tsx";
+import { describeWeekly } from "./hours-field.tsx";
 import { MeetingSettings } from "./meeting-settings.tsx";
 import {
   AlertSettings,
@@ -136,8 +137,13 @@ export function HoursEditor({
   return (
     <div class="hours" data-testid={`hours-${set.kind}`}>
       <h3>{set.name}</h3>
-      {DAY_NAMES.map((n, idx) => {
-        const day = String(idx + 1);
+      {/* PRF-6: the saved ranges in the user's time format, the days in the order of the user's week. */}
+      <p class="status" data-testid={`hours-text-${set.kind}`}>
+        {describeWeekly(saved) || "No hours"}
+      </p>
+      {weekdaysInOrder().map((iso) => {
+        const n = DAY_NAMES[iso - 1];
+        const day = String(iso);
         const ranges = weekly[day] ?? [];
         return (
           <div class="hours-day" key={day}>
