@@ -13,7 +13,7 @@ import { addDays, type LocalDate, weekdayOf } from "../../shared/time.ts";
 import type { AppEnv } from "../app.ts";
 import { all, type Db, one, run, tx } from "../db.ts";
 import { editedEventSettings, eventSettingsInput, newEventSettings } from "../event-settings.ts";
-import { jsonBody, notFound } from "../http.ts";
+import { editBody, jsonBody, notFound, rawBody } from "../http.ts";
 import { createItemHours, dropItemHours, itemHoursSchema, saveItemHours } from "../item-hours.ts";
 import type { Mailer } from "../mail.ts";
 import { isPublicMailDomain } from "../mail-domains.ts";
@@ -272,6 +272,31 @@ function save(db: Db, row: MeetingRow, attendees: Attendee[], insert: boolean): 
       a.hoursOverride ? JSON.stringify(a.hoursOverride) : null,
     );
   }
+}
+
+/** The stored rules of a meeting as a body of `meetingInput`; the event settings stay as stored. */
+function inputOf(db: Db, m: MeetingRow): Record<string, unknown> {
+  const item = itemWeekly(db, m.hours_set_id);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return {
+    title: m.title,
+    description: m.description,
+    location: m.location,
+    attendees: attendeesOf(db, m.id),
+    frequency: JSON.parse(m.frequency) as unknown,
+    idealTime: `${pad(Math.floor(m.ideal_minute / 60))}:${pad(m.ideal_minute % 60)}`,
+    durationMinutes: m.duration_minutes,
+    shortestMinutes: m.shortest_minutes,
+    ...(item
+      ? { hoursMode: "itemSpecific", itemHours: JSON.parse(item) as unknown }
+      : { hoursMode: m.hours_mode, hoursSetId: m.hours_set_id }),
+    starting: m.starting,
+    level: m.level,
+    defense: m.defense,
+    whenUnplaceable: m.when_unplaceable,
+    leadHours: m.lead_minutes / 60,
+    autoReschedule: m.auto_reschedule,
+  };
 }
 
 /** The ranges of a meeting's item-specific hours, as stored, or null. */
@@ -632,11 +657,14 @@ export function meetingRoutes(
   r.put("/meetings/:id", async (c) => {
     const user = c.get("user");
     own(c.req.param("id"), user.id);
-    const body = await jsonBody(c, meetingInput);
+    const raw = await rawBody(c);
     // Read in the queue: a plan run may write the series meanwhile (rule 2).
     // The edit is saved here; the plan run writes it to the series master.
     await sync.exclusive(user.id, async () => {
       const old = own(c.req.param("id"), user.id);
+      // Fields the body leaves out keep their stored value: a form sends only
+      // what it changed, so a change saved elsewhere since it opened stays.
+      const body = editBody(meetingInput, inputOf(db, old), raw);
       const t = now();
       const { row, attendees } = rowFrom(db, user.id, old.id, body, t, old.rank);
       if (adopted(old)) row.starting = keepSeriesFrequency(old, body.frequency);

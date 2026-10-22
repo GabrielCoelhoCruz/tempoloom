@@ -11,7 +11,26 @@ export class ApiError extends Error {
 /** Identifies this page, so live updates skip the changes it made itself. */
 export const CLIENT_ID = `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`;
 
-export async function api<T>(method: string, url: string, body?: unknown): Promise<T> {
+/** The answer of the newest GET of each URL (one entry per URL the page read). */
+const newest = new Map<string, Promise<unknown>>();
+
+/**
+ * Sends a request. A GET whose answer comes after a newer GET of the same URL
+ * started gives the newer answer: a page that read its data again (a live
+ * update, then its own save) never shows an older answer that came last.
+ */
+export function api<T>(method: string, url: string, body?: unknown): Promise<T> {
+  if (method !== "GET") return send<T>(method, url, body);
+  const answer: Promise<T> = send<T>(method, url, body).then((data) => {
+    const last = newest.get(url) as Promise<T> | undefined;
+    // When the newer GET fails, this answer is the newest one there is.
+    return last === undefined || last === answer ? data : last.catch(() => data);
+  });
+  newest.set(url, answer);
+  return answer;
+}
+
+async function send<T>(method: string, url: string, body?: unknown): Promise<T> {
   const res = await fetch(url, {
     method,
     headers: {

@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from "preact/hooks";
-import { defaultEventSettings, type EventSettings } from "../../shared/event-settings.ts";
-import { itemRangeOf, type Weekly } from "../../shared/item-hours.ts";
+import { defaultEventSettings } from "../../shared/event-settings.ts";
+import { itemRangeOf } from "../../shared/item-hours.ts";
 import { api } from "../lib/api.ts";
 import { CalendarDisconnected } from "../lib/calendars.tsx";
+import { useFirstBody } from "../lib/changed.ts";
 import {
   clockText,
   dateText,
@@ -24,225 +25,31 @@ import {
   DAY_NAMES,
   emails,
   GuestHours,
-  type Missed,
   MissedPeriods,
   type Person,
   PersonLine,
   useGuestHours,
 } from "./meetings-availability.tsx";
 
-interface Meeting extends Missed {
-  id: string;
-  /** The email of the disconnected account that holds the meeting's calendar. */
-  disconnected: string | null;
-  title: string;
-  level: number;
-  enabled: number;
-  ideal_minute: number;
-  duration_minutes: number;
-  shortest_minutes: number;
-  hours_mode: string;
-  starting: string | null;
-  description: string;
-  location: string;
-  when_unplaceable: string;
-  lead_minutes: number;
-  auto_reschedule: string;
-  defense: string;
-  frequency: Frequency;
-  item_hours: string | null;
-  event_settings: EventSettings;
-  attendees: (Person & { required: boolean; hoursOverride: Weekly | null })[];
-  occurrences: { id: string; key: string; start_ms: number; end_ms: number; locked: number }[];
-  problems: {
-    demandKey: string;
-    status: string;
-    reason: string;
-    suggestions?: { start: number; end: number }[];
-    /** The period of the problem: its first day, a day or a week long. */
-    period: { start: string; kind: "day" | "week" };
-  }[];
-  changes: Change[];
-  series_event_id: string | null;
-  /** 1: Tempoloom writes the series (a meeting from the form); 0: an adopted series. */
-  series_owned: number;
-}
-
-/** Rules attached to the user's own recurring meeting (rule 1), not a series Tempoloom wrote. */
-const adopted = (m: Meeting) => m.series_event_id !== null && !m.series_owned;
-
-type Frequency =
-  | { period: "daily"; everyDays?: number }
-  | { period: "weekly"; everyWeeks: number; idealDays: number[] }
-  | ({ period: "monthly"; everyMonths?: number } & (
-      | { dayOfMonth: number }
-      | { nth: number | "last"; weekday: number }
-    ));
-
-const NTH: Record<string, string> = {
-  1: "first",
-  2: "second",
-  3: "third",
-  4: "fourth",
-  5: "fifth",
-  last: "last",
-};
-const WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
-
-/** "every 2 weeks, ideally Tue", "every month, ideally on day 15". */
-function describeFrequency(f: Frequency): string {
-  const every = (n: number, unit: string) => (n === 1 ? `every ${unit}` : `every ${n} ${unit}s`);
-  if (f.period === "daily") return every(f.everyDays ?? 1, "day");
-  if (f.period === "monthly")
-    return `${every(f.everyMonths ?? 1, "month")}, ideally on ${
-      "nth" in f ? `the ${NTH[f.nth]} ${WEEKDAYS[f.weekday - 1]}` : `day ${f.dayOfMonth}`
-    }`;
-  return `${every(f.everyWeeks, "week")}, ideally ${f.idealDays.map((d) => DAY_NAMES[d - 1]).join(", ")}`;
-}
-
-const EVERY: [string, string][] = [
-  ["1", "Every week"],
-  ["2", "Every 2 weeks"],
-  ["4", "Every 4 weeks"],
-  ["daily", "Every day"],
-  ["monthly", "Every month"],
-  ["custom", "Custom"],
-];
-
-/** The "How often" choice that shows a frequency, with the custom count and unit. */
-function everyOf(f: Frequency): { every: string; unit: string; n: number } {
-  if (f.period === "daily") {
-    const n = f.everyDays ?? 1;
-    return n === 1 ? { every: "daily", unit: "days", n } : { every: "custom", unit: "days", n };
-  }
-  if (f.period === "monthly") {
-    const n = f.everyMonths ?? 1;
-    return n === 1
-      ? { every: "monthly", unit: "months", n }
-      : { every: "custom", unit: "months", n };
-  }
-  const n = f.everyWeeks;
-  return [1, 2, 4].includes(n)
-    ? { every: String(n), unit: "weeks", n }
-    : { every: "custom", unit: "weeks", n };
-}
-
-/** An adopted series repeats daily or every N weeks on its day (rule 1). */
-const seedFrequency = (x: Series): Frequency =>
-  x.everyWeeks === "daily"
-    ? { period: "daily" }
-    : { period: "weekly", everyWeeks: x.everyWeeks, idealDays: [x.idealDay] };
-
-const VISIBILITY: Record<string, string> = {
-  calendar_default: "calendar default visibility",
-  public: "public",
-  private: "private",
-};
-
-interface Change {
-  id: number;
-  occurrence_key: string;
-  old_start: number | null;
-  new_start: number | null;
-  actor: string;
-  reason: string;
-  detail: string;
-}
-
-interface Series {
-  key: string;
-  calendarId: string;
-  seriesId: string;
-  title: string;
-  description: string;
-  location: string;
-  attendees: string[];
-  start: number;
-  end: number;
-  idealTime: string;
-  idealDay: number;
-  everyWeeks: number | "daily";
-}
-
-/** MEET-02 rules 9-11: flags that offer other times. */
-const FLAGS: Record<string, string> = {
-  "budget-reached": "Move limit reached: Tempoloom used today's automatic moves.",
-  "policy-none": "No automatic moves: this meeting has a conflict at its time.",
-};
-const CHANGE_REASONS: Record<string, string> = {
-  conflict: "moved for a conflict",
-  declined: "declined",
-  ruleChanged: "rules changed",
-  noFreeSlot: "cancelled, no free time",
-  manualMove: "moved by hand",
-  manualSkip: "skipped",
-  seriesDeleted: "series deleted in the calendar; turned off",
-};
-const MOVES: [string, string][] = [
-  ["none", "No automatic moves"],
-  ["conservative", "1 per day"],
-  ["moderate", "3 per day"],
-  ["aggressive", "5 per day"],
-];
-interface Preview {
-  occurrences: { start: number; end: number; conflict: boolean }[];
-  problems: { demandKey: string; status: string; reason: string }[];
-  moved: number;
-  /** Accounts rule 16: the disconnected account that the meeting waits for. */
-  waiting: string | null;
-}
-
-const DEFENSE: Record<string, string> = {
-  adaptive: "Free until time gets short",
-  busy: "Always busy",
-  free: "Always free",
-};
-const AWAY = "time away (all-day or out-of-office events) fills the period";
-const REASONS: Record<string, string> = {
-  "no-hours-overlap": "no time inside everyone's meeting hours",
-  "no-space-fixed": "no free time in the period",
-  away: AWAY,
-  // Reports stored before the rename still say "all-day-block".
-  "all-day-block": AWAY,
-  "no-space-priority": "higher-priority items take all free time",
-  "no-hours": "no meeting hours in the period",
-  "outside-window": "outside the planning window",
-  "too-long-for-hours": "longer than any range of the meeting hours",
-};
-
-/** MEET-02 rule 33: every unplaced or conflicting occurrence of all meetings, with its reason. */
-function Attention({ meetings, zone: z }: { meetings: Meeting[]; zone: string }) {
-  const items = meetings.flatMap((m) =>
-    m.problems.map((p) => ({
-      m,
-      p,
-      occurrence: m.occurrences.find((o) => o.key === p.demandKey),
-    })),
-  );
-  if (items.length === 0) return null;
-  return (
-    <section data-testid="meeting-attention">
-      <h2>Needs your attention</h2>
-      <ul class="list">
-        {items.map(({ m, p, occurrence }) => (
-          <li
-            class="row warning"
-            key={`${m.id}-${p.demandKey}`}
-            data-testid="attention-item"
-            data-reason={p.reason}
-          >
-            {m.title} ·{" "}
-            {occurrence
-              ? dateTimeText(z, occurrence.start_ms)
-              : `${p.period.kind === "day" ? "day" : "week of"} ${dateText(p.period.start)}`}{" "}
-            · {p.status === "conflict" ? "Conflict" : "Not placed"}:{" "}
-            {FLAGS[p.reason] ?? REASONS[p.reason] ?? p.reason}
-          </li>
-        ))}
-      </ul>
-    </section>
-  );
-}
+import {
+  Attention,
+  adopted,
+  CHANGE_REASONS,
+  DEFENSE,
+  describeFrequency,
+  EVERY,
+  everyOf,
+  FLAGS,
+  type Meeting,
+  MOVES,
+  NTH,
+  type Preview,
+  REASONS,
+  type Series,
+  seedFrequency,
+  VISIBILITY,
+  WEEKDAYS,
+} from "./meetings-parts.tsx";
 
 export function Meetings() {
   const z = zone();
@@ -268,9 +75,13 @@ export function Meetings() {
   const [editing, setEditing] = useState<Meeting | null>(null);
   const ed = editing;
 
-  // True from a change until the list shows it: an edit must not start from
-  // the old meeting, because its save would write the old settings back.
-  const [stale, setStale] = useState(false);
+  // The changes of this page that the list does not show yet: an edit must not
+  // start from the old meeting. A count, so the end of one change does not
+  // allow edits while another one still saves.
+  const [pending, setPending] = useState(0);
+  // The form's first body: an edit sends only the fields it changed.
+  const first = useFirstBody<ReturnType<typeof body>>();
+  const stale = pending > 0;
   const load = useCallback(async () => {
     const r = await api<{ meetings: Meeting[]; mailConfigured: boolean }>("GET", "/api/meetings");
     setMeetings(r.meetings);
@@ -345,17 +156,22 @@ export function Meetings() {
   };
   const act = async (fn: () => Promise<unknown>) => {
     setError(null);
-    setStale(true);
+    setPending((n) => n + 1);
+    let done = false;
+    const end = () => {
+      if (!done) setPending((n) => n - 1);
+      done = true;
+    };
     try {
       await fn();
       await load();
-      setStale(false);
+      end();
       await planNow();
       await load();
     } catch (err) {
       fail(err);
     } finally {
-      setStale(false);
+      end();
     }
   };
 
@@ -431,6 +247,7 @@ export function Meetings() {
       <form
         class="form"
         data-testid="meeting-form"
+        ref={first.ref(body)}
         key={
           ed
             ? `edit-${ed.id}`
@@ -441,7 +258,7 @@ export function Meetings() {
           const form = e.currentTarget as HTMLFormElement;
           void act(async () => {
             if (ed) {
-              await api("PUT", `/api/meetings/${ed.id}`, body(form));
+              await api("PUT", `/api/meetings/${ed.id}`, first.changed(form, body(form)));
               stopEditing();
               return;
             }

@@ -14,6 +14,7 @@ import {
   loadCalendars,
 } from "../lib/calendars.tsx";
 import { COLORS } from "../lib/categories.ts";
+import { changedFields } from "../lib/changed.ts";
 import { toLocalInput } from "../lib/format.ts";
 import { templateFromUrl } from "../lib/library.ts";
 import { onLinkClick } from "../lib/router.ts";
@@ -234,6 +235,17 @@ function PolicyForm({
   );
 }
 
+const fieldsOf = (p: Policy): Fields => ({
+  source: p.source_calendar_id,
+  dest: p.dest_calendar_id,
+  calendars: [],
+  visibility: p.visibility,
+  calendarType: p.calendar_type,
+  allDayMode: p.all_day_mode,
+  color: p.color_override ?? "",
+  outside: p.copy_outside_work_hours === 1,
+});
+
 const body = (f: Fields) => ({
   sourceCalendarId: f.source,
   destCalendarId: f.dest,
@@ -253,6 +265,8 @@ export function MirrorSettings() {
   const [reconciledAt, setReconciledAt] = useState<number | null>(null);
   const [tab, setTab] = useState<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
+  // The policy as its edit form opened: a save sends only the fields it changed.
+  const [opened, setOpened] = useState<Fields | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [ask, setAsk] = useState<Ask | null>(null);
   const [created, setCreated] = useState(0);
@@ -423,7 +437,13 @@ export function MirrorSettings() {
                   )}
                 </span>
                 <div class="actions">
-                  <button type="button" onClick={() => setEditing(editing === p.id ? null : p.id)}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditing(editing === p.id ? null : p.id);
+                      setOpened(fieldsOf(p));
+                    }}
+                  >
                     Edit
                   </button>
                   <button
@@ -455,19 +475,16 @@ export function MirrorSettings() {
                   testid="mirror-edit"
                   calendars={calendars}
                   submit="Save policy"
-                  initial={{
-                    source: p.source_calendar_id,
-                    dest: p.dest_calendar_id,
-                    calendars: [],
-                    visibility: p.visibility,
-                    calendarType: p.calendar_type,
-                    allDayMode: p.all_day_mode,
-                    color: p.color_override ?? "",
-                    outside: p.copy_outside_work_hours === 1,
-                  }}
+                  initial={opened ?? fieldsOf(p)}
                   onSave={(f) =>
                     void act(
-                      () => api("PUT", `/api/mirrors/${p.id}`, body(f)),
+                      // Only the changed fields, so a change saved elsewhere stays.
+                      () =>
+                        api(
+                          "PUT",
+                          `/api/mirrors/${p.id}`,
+                          changedFields(body(opened ?? fieldsOf(p)), body(f)),
+                        ),
                       () => setEditing(null),
                     )
                   }

@@ -10,6 +10,7 @@ import {
   type Weekly,
 } from "../../shared/item-hours.ts";
 import { ApiError, api } from "../lib/api.ts";
+import { useFirstBody } from "../lib/changed.ts";
 import { LEVEL_NAMES } from "../lib/state.ts";
 import { ITEM, ItemHoursFields } from "./hours-field.tsx";
 
@@ -545,54 +546,62 @@ export function LinkEditor({
   const setMember = (userId: string, change: Partial<PoolMember>) =>
     setPool(pool.map((m) => (m.userId === userId ? { ...m, ...change } : m)));
   const several = organizers.length + (pool.length > 0 ? 1 : 0) > 1;
+  const first = useFirstBody<ReturnType<typeof read>>();
+  const read = (form: HTMLFormElement) => {
+    const f = new FormData(form);
+    const num = (k: string) => (f.get(k) === "" || f.get(k) === null ? null : Number(f.get(k)));
+    return {
+      title: String(f.get("title") ?? ""),
+      durations: String(f.get("durations") ?? "")
+        .split(",")
+        .map((d) => Number(d.trim()))
+        .filter((d) => d > 0),
+      level: Number(f.get("level")),
+      defaultDuration: num("defaultDuration"),
+      noticeMinutes: Number(f.get("notice")) * 60,
+      rangeEndDays: Number(f.get("rangeEndDays")),
+      rangeEndDate: String(f.get("rangeEndDate") ?? "") || null,
+      bufferBefore: Number(f.get("bufferBefore")),
+      bufferAfter: Number(f.get("bufferAfter")),
+      maxPerDay: num("maxPerDay"),
+      locations: locations.map((l) => ({ ...l, value: l.value.trim() })).filter((l) => l.value),
+      useRecoveryBuffer: f.get("useRecoveryBuffer") === "on",
+      useTravelBuffer: f.get("useTravelBuffer") === "on",
+      ...(isOwner && calendarId !== (link.calendar_id ?? "")
+        ? { calendarId: calendarId || null }
+        : {}),
+      branding: String(f.get("branding")),
+      questions: fromDrafts(questions),
+      reminder: {
+        enabled: f.get("reminderEnabled") === "on",
+        hoursBefore: Number(f.get("reminderHours")),
+        message: String(f.get("reminderMessage") ?? ""),
+      },
+      redirectUrl: String(f.get("redirectUrl") ?? ""),
+      ...(isOwner ? { slug: String(f.get("slug")), page: pageChoice } : {}),
+      organizers: organizers.map((o) => ({
+        userId: o.userId,
+        ...hoursBody(o),
+        required: o.required,
+        isHost: o.isHost,
+      })),
+      pool: pool.map((m) => ({ userId: m.userId, ...hoursBody(m), preferred: m.preferred })),
+    };
+  };
 
   return (
     <form
       class="form"
       data-testid="link-editor"
       key={link.id}
+      ref={first.ref(read)}
       onSubmit={(e) => {
         e.preventDefault();
-        const f = new FormData(e.currentTarget as HTMLFormElement);
-        const num = (k: string) => (f.get(k) === "" || f.get(k) === null ? null : Number(f.get(k)));
+        const form = e.currentTarget as HTMLFormElement;
+        const f = new FormData(form);
         setError(null);
-        api("PATCH", `/api/booking/links/${link.id}`, {
-          title: String(f.get("title") ?? ""),
-          durations: String(f.get("durations") ?? "")
-            .split(",")
-            .map((d) => Number(d.trim()))
-            .filter((d) => d > 0),
-          level: Number(f.get("level")),
-          defaultDuration: num("defaultDuration"),
-          noticeMinutes: Number(f.get("notice")) * 60,
-          rangeEndDays: Number(f.get("rangeEndDays")),
-          rangeEndDate: String(f.get("rangeEndDate") ?? "") || null,
-          bufferBefore: Number(f.get("bufferBefore")),
-          bufferAfter: Number(f.get("bufferAfter")),
-          maxPerDay: num("maxPerDay"),
-          locations: locations.map((l) => ({ ...l, value: l.value.trim() })).filter((l) => l.value),
-          useRecoveryBuffer: f.get("useRecoveryBuffer") === "on",
-          useTravelBuffer: f.get("useTravelBuffer") === "on",
-          ...(isOwner && calendarId !== (link.calendar_id ?? "")
-            ? { calendarId: calendarId || null }
-            : {}),
-          branding: String(f.get("branding")),
-          questions: fromDrafts(questions),
-          reminder: {
-            enabled: f.get("reminderEnabled") === "on",
-            hoursBefore: Number(f.get("reminderHours")),
-            message: String(f.get("reminderMessage") ?? ""),
-          },
-          redirectUrl: String(f.get("redirectUrl") ?? ""),
-          ...(isOwner ? { slug: String(f.get("slug")), page: pageChoice } : {}),
-          organizers: organizers.map((o) => ({
-            userId: o.userId,
-            ...hoursBody(o),
-            required: o.required,
-            isHost: o.isHost,
-          })),
-          pool: pool.map((m) => ({ userId: m.userId, ...hoursBody(m), preferred: m.preferred })),
-        })
+        // An edit sends only the fields it changed, so a change saved elsewhere stays.
+        api("PATCH", `/api/booking/links/${link.id}`, first.changed(form, read(form)))
           .then(() => onSaved(String(f.get("title") ?? "")))
           .catch((err) => {
             const body =
