@@ -36,6 +36,7 @@ const REASONS: Record<string, string> = {
   "move-limit": "the move limit stops the move",
   "budget-reached": "the move limit stops the move",
   "policy-none": "automatic moves are off",
+  "locked-conflict": "it is locked, so it keeps its time",
   "no-space-fixed": "other events take that time",
   "no-space-priority": "higher-priority items take that time",
   "after-due": "some work ends after the due date",

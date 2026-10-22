@@ -1154,10 +1154,6 @@ BLOCKED[650] = "No behavior to build for discounts or annual billing: " + PLANS_
 BLOCKED[651] = "No behavior to build for payment methods: " + PLANS_NON_GOAL
 BLOCKED[652] = "No behavior to build for a free trial, because there are no paid tiers: " + PLANS_NON_GOAL
 
-# Buildable rows that no unit has built yet. Rows that units U31 to U33 and PR #23 build now keep their text.
-PLANNED = "Buildable; not built yet (planned)"
-for n in [361]:
-    BLOCKED[n] = PLANNED
 # --- end U30 ---
 
 # --- U32: calendar edits and locks, part A (tests/e2e/chunk-edits.spec.ts, auto-lock.spec.ts) ---
@@ -1650,6 +1646,17 @@ BLOCKED[145] = (GOOGLE_CONSENT + ": the reads from Google (name, picture, time z
                 "in Tempoloom, so a Google change never moves a period key; edge case 3 applies to that planning week start. Mail keeps "
                 "the default formats")
 # --- end U59 ---
+
+# --- U72: auto-lock per flexible meeting by day or week (tests/e2e/meeting-auto-lock.spec.ts) ---
+T["u72_autolock"] = "auto-lock per meeting: each week locks the planning week on its first day, each day locks that day, off never locks, and 'as in settings' follows the setting; a later occurrence stays open until off and on; a locked occurrence keeps its time on a conflict and is flagged with suggested times (MEET-02 rules 7, 14, 15; acceptance test 9)"
+E2E[361] = ["u72_autolock", "u32_autolock"]
+E2E_NOTES[361] = ("Each meeting has its own auto-lock choice in the meeting form: as in settings (the default; the setting for "
+                  "flexible meetings is each day by default), off, each day or each week. The run is in the hour from 01:00 in the "
+                  "planning zone; each week runs on the first day of the planning week (the week start set in Tempoloom). An "
+                  "occurrence placed after the run stays open; an edit from off to on locks the current day or week at once (LCK-32), after the occurrences take the new rules of that edit. "
+                  "A locked occurrence keeps its time on a conflict (also with another locked event, or in a period with no "
+                  "meeting hours left) and is flagged with up to 3 suggested times (reason locked-conflict); applying one is a move by hand and locks")
+# --- end U72 ---
 
 # --- U73: fields kept after moves, mirroring help, digest days, video-only recovery ---
 T["u73_keep"] = "a move keeps the fields Tempoloom does not own: attachments, conference data, an agenda-tool link and hand-added Zoom details on the series and on one occurrence stay after both occurrences move and after a reload (MEET-01 rules 39, 40; video conferencing rule 14)"

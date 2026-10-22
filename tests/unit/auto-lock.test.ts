@@ -128,7 +128,7 @@ describe("autoLock", () => {
     expect(lockedKeys(db)).toEqual(["m-sun"]);
   });
 
-  it("the first run without a record locks nothing, at any hour; the next 01:00 locks", () => {
+  it("the first run without a record after 01:00 locks nothing; the next 01:00 locks", () => {
     const { db, userId, add } = setup();
     add("m-sun", "meeting", SUN);
     add("m-mon", "meeting", "2026-11-02");
@@ -138,6 +138,16 @@ describe("autoLock", () => {
     expect(lockedKeys(db)).toEqual([]);
     lock(db, userId, settings, at("2026-11-02", "01:10"));
     expect(lockedKeys(db)).toEqual(["m-mon"]);
+  });
+
+  it("a first run before 01:00 records no period, so that day's hour from 01:00 locks", () => {
+    const { db, userId, add } = setup();
+    add("m-sun", "meeting", SUN);
+    const settings = settingsSchema.parse({});
+    lock(db, userId, settings, at(SUN, "00:30"));
+    expect(lockedKeys(db)).toEqual([]);
+    lock(db, userId, settings, at(SUN, "01:05"));
+    expect(lockedKeys(db)).toEqual(["m-sun"]);
   });
 
   it("uses the zone of the trip on its dates (planning zone)", () => {

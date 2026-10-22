@@ -1390,4 +1390,9 @@ export const MIGRATIONS: readonly string[] = [
   ALTER TABLE events ADD COLUMN series TEXT NOT NULL DEFAULT '';
   UPDATE calendars SET sync_token = NULL;
   `,
+  // 50: auto-lock per flexible meeting (meetings-flexible-rescheduling.md rule 14).
+  // NULL: as the user's setting for flexible meetings (planning-locks.md LCK-30).
+  `
+  ALTER TABLE meetings ADD COLUMN auto_lock TEXT CHECK (auto_lock IN ('off', 'day', 'week'));
+  `,
 ];

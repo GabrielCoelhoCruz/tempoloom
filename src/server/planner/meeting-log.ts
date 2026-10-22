@@ -392,7 +392,7 @@ export function recordMeetingChanges(
 }
 
 /** MEET-02 rule 11: flags that keep an occurrence although another time exists. */
-const FLAGGED = new Set(["budget-reached", "policy-none"]);
+const FLAGGED = new Set(["budget-reached", "policy-none", "locked-conflict"]);
 
 /**
  * MEET-02 rules 16 and 34: after each plan, the periods of a meeting with no

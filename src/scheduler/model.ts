@@ -350,7 +350,8 @@ export type ReasonCode =
   | "no-space-priority"
   | "after-due"
   | "budget-reached"
-  | "policy-none";
+  | "policy-none"
+  | "locked-conflict";
 
 export interface ReportEntry {
   itemKind: PlacementKind;
