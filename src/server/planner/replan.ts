@@ -636,6 +636,7 @@ export function planningSnapshot(
         organizerSelf: true,
         attendeeCount: 0,
         location: "",
+        conference: "",
         eventType: "default",
         bookedViaLink: false,
         calendarId: r.calendar_id,
@@ -664,10 +665,11 @@ export function copyAnchors(db: Db, userId: string, now: number): ExternalEvent[
     location: string;
     all_day: number;
     busy: number;
+    conference: string;
   }>(
     db,
     `SELECT m.id, m.calendar_id, p.source_calendar_id, m.start_ms, m.end_ms, e.summary, e.description,
-       e.location, e.all_day, e.busy
+       e.location, e.all_day, e.busy, e.conference
      FROM managed_events m JOIN mirror_policies p ON p.id = m.source_id
        JOIN events e ON e.calendar_id = m.calendar_id AND e.event_id = m.event_id
      WHERE m.user_id = ? AND m.kind = 'mirror' AND m.end_ms > ?`,
@@ -685,6 +687,7 @@ export function copyAnchors(db: Db, userId: string, now: number): ExternalEvent[
     organizerSelf: true,
     attendeeCount: 0,
     location: c.location,
+    conference: c.conference,
     eventType: "default",
     bookedViaLink: false,
     calendarId: c.calendar_id,

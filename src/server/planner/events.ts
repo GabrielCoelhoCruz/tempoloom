@@ -1,5 +1,7 @@
 // External events of a user, read from the event cache in scheduler form.
+
 import type { ExternalEvent } from "../../scheduler/model.ts";
+import { hasVideoLink } from "../../shared/meeting-checks.ts";
 import { bookingHolds } from "../booking-team.ts";
 import { all, type Db } from "../db.ts";
 import { categoryContext, externalCategory } from "./categories.ts";
@@ -35,6 +37,7 @@ export function externalEvents(db: Db, userId: string, from: number, to: number)
     attendees: string;
     recurring_id: string | null;
     rsvp_note: string;
+    conference: string;
   }>(
     db,
     `SELECT e.* FROM events e JOIN calendars c ON c.id = e.calendar_id JOIN accounts a ON a.id = c.account_id
@@ -65,6 +68,7 @@ export function externalEvents(db: Db, userId: string, from: number, to: number)
         category: externalCategory(ctx, e),
         calendarId: e.calendar_id,
         attendees: JSON.parse(e.attendees) as string[],
+        conference: e.conference,
       },
     ];
   });
@@ -81,7 +85,9 @@ export function externalEvents(db: Db, userId: string, from: number, to: number)
       selfResponse: null,
       organizerSelf: false,
       attendeeCount: 2,
+      // Only a video link of the booking's location: travel time comes from the invitation itself.
       location: "",
+      conference: hasVideoLink(h.location) ? h.location : "",
       eventType: "default",
       bookedViaLink: true,
     });

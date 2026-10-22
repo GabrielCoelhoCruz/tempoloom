@@ -20,7 +20,8 @@ const HOUR_MINUTES = 60;
 
 type Weekly = Record<string, [number, number][]>;
 
-const workHours = (db: Db, userId: string): Weekly | null => {
+/** The weekly ranges of the user's work hours (keys "1" to "7", Monday first), or null. */
+export const workHours = (db: Db, userId: string): Weekly | null => {
   const work = one<{ weekly: string }>(
     db,
     "SELECT weekly FROM hours_sets WHERE user_id = ? AND kind = 'work' ORDER BY created_at LIMIT 1",

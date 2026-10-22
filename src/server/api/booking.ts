@@ -552,6 +552,7 @@ export function linkInputs(
     organizerSelf: true,
     attendeeCount: organizers.length + (organizers.length < people.length ? 1 : 0) + 1,
     location: locationText(location),
+    conference: "",
     eventType: "default",
     bookedViaLink: true,
   };

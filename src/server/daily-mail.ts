@@ -6,14 +6,15 @@
 // daily email goes out at its local time; a new time takes effect at its next
 // occurrence.
 import type { ReportEntry } from "../scheduler/model.ts";
-import { addDays, localToUtc, utcToLocal } from "../shared/time.ts";
+import { addDays, type LocalDate, localToUtc, utcToLocal, weekdayOf } from "../shared/time.ts";
 import { all, type Db, one, run } from "./db.ts";
 import type { Mailer, Message } from "./mail.ts";
 import { openIssues } from "./meeting-checks.ts";
 import { getPrefs } from "./meeting-prefs.ts";
 import { adoptableSeries } from "./meeting-series.ts";
 import { attendeesOf } from "./planner/meetings.ts";
-import { claimWeeklyReport, weeklyReport } from "./weekly-report.ts";
+import { getSettings } from "./settings.ts";
+import { claimWeeklyReport, weeklyReport, workHours } from "./weekly-report.ts";
 import { pruneWeeklyShares } from "./weekly-share.ts";
 
 /** "weekly" rows are claimed in weekly-report.ts. */
@@ -41,6 +42,32 @@ export function nextAt(zone: string, hhmm: string, now: number): number {
   const today = utcToLocal(zone, now).date;
   const t = localToUtc(zone, today, h * 60 + m);
   return t > now ? t : localToUtc(zone, addDays(today, 1), h * 60 + m);
+}
+
+/**
+ * assistant-chat.md rule 15: the local dates the daily digest covers, both
+ * included: from today to the end of the planning week (`weekStart`, 1 Monday
+ * or 7 Sunday), then the first 2 workdays of the next week. Workdays are the
+ * days with work hours; with none, Monday to Friday. A next week with fewer
+ * than 2 workdays is covered to its end.
+ */
+export function digestDays(
+  zone: string,
+  now: number,
+  weekStart: 1 | 7,
+  workdays: number[],
+): { from: LocalDate; to: LocalDate } {
+  const from = utcToLocal(zone, now).date;
+  const days = workdays.length > 0 ? workdays : [1, 2, 3, 4, 5];
+  const next = addDays(from, 7 - ((weekdayOf(from) - weekStart + 7) % 7));
+  // A next week with fewer than 2 workdays ends the digest at its last day.
+  let to = addDays(next, 6);
+  for (let left = 2, n = 0; n < 7; n++)
+    if (days.includes(weekdayOf(addDays(next, n))) && --left === 0) {
+      to = addDays(next, n);
+      break;
+    }
+  return { from, to };
 }
 
 export function scheduleDaily(
@@ -170,16 +197,27 @@ export class DailyMailWorker {
     return reports;
   }
 
-  /** Rule 6: open issues of the next 7 days; nothing when there are none. */
+  /**
+   * Rule 6: open issues of the days that assistant-chat.md rule 15 reviews
+   * (`digestDays`); nothing when there are none.
+   */
   async #digest(u: { id: string; email: string; time_zone: string }, now: number) {
-    const issues = openIssues(this.#d.db, u.id, now);
+    const { db } = this.#d;
+    const weekly = workHours(db, u.id);
+    const { from, to } = digestDays(
+      u.time_zone,
+      now,
+      getSettings(db, u.id).weekStart,
+      [1, 2, 3, 4, 5, 6, 7].filter((d) => (weekly?.[String(d)] ?? []).length > 0),
+    );
+    const issues = openIssues(db, u.id, now, localToUtc(u.time_zone, addDays(to, 1), 0));
     if (issues.length === 0) return;
     const lines = issues.map((i) => `- ${when(u.time_zone, i.start)} ${i.title}: ${i.message}`);
     await this.#send(
       u.email,
       `Meeting issues: ${issues.length} to look at`,
       [
-        "Tempoloom found these problems with your meetings in the next 7 days:",
+        `Tempoloom found these problems with your meetings from ${from} to ${to} (the rest of this week and the first 2 workdays of next week):`,
         "",
         ...lines,
         "",

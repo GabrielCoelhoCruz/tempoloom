@@ -88,6 +88,7 @@ export const bufferInput = z.object({
       categories: z.array(z.enum(CATEGORIES)).min(1).optional(),
       people: z.array(z.string().trim().min(1).max(320)).max(50).optional(),
       runLongerThanMinutes: z.number().int().min(1).max(1440).optional(),
+      videoLink: z.boolean().optional(),
     })
     .optional(),
   onConflict: z.enum(["remove", "keep_as_conflict"]).optional(),
