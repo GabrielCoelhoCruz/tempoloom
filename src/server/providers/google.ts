@@ -20,6 +20,8 @@ import {
   type ResponseStatus,
 } from "./types.ts";
 
+const DAY_MS = 86_400_000;
+
 function toInstant(t: GoogleEventTime | undefined, zone: string): { ms: number; allDay: boolean } {
   if (t?.dateTime) return { ms: Date.parse(t.dateTime), allDay: false };
   if (t?.date) return { ms: localToUtc(t.timeZone ?? zone, t.date, 0), allDay: true };
@@ -353,11 +355,26 @@ export class GoogleProvider implements CalendarProvider {
       return mapError(err);
     });
     if (!master?.recurrence) return;
-    if (toInstant(master.start, this.#zone).ms >= at) {
-      await this.#api.deleteEvent(calendarId, seriesId).catch(mapError);
-      return;
+    const first = toInstant(master.start, this.#zone).ms;
+    // Instances that started before `at` stay, also one that moved earlier
+    // than the series' first rule time; the rule ends after the last of them.
+    let end = at;
+    if (first >= at) {
+      const held = (
+        await this.#api.instances(calendarId, seriesId, first - 366 * DAY_MS, at).catch(mapError)
+      )
+        .filter((e) => e.status !== "cancelled" && toInstant(e.start, this.#zone).ms < at)
+        .map((e) => toInstant(e.originalStartTime ?? e.start, this.#zone).ms);
+      if (held.length === 0) {
+        await this.#api.deleteEvent(calendarId, seriesId).catch(mapError);
+        return;
+      }
+      end = Math.max(...held) + 1000;
+      for (const e of await this.#api.instances(calendarId, seriesId, at, end).catch(mapError))
+        if (toInstant(e.start, this.#zone).ms >= at && e.status !== "cancelled")
+          await this.#api.deleteEvent(calendarId, e.id).catch(mapError);
     }
-    const until = new Date(at - 1000).toISOString().replace(/[-:]|\.\d{3}/g, "");
+    const until = new Date(end - 1000).toISOString().replace(/[-:]|\.\d{3}/g, "");
     const recurrence = master.recurrence.map((r) =>
       r.startsWith("RRULE:")
         ? `RRULE:${[

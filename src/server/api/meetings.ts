@@ -33,7 +33,7 @@ import {
 } from "../planner/meetings.ts";
 import { KEY_PROP, MANAGED_PROP, type ManagedRow } from "../planner/push.ts";
 import { meetingGuests, planningSnapshot } from "../planner/replan.ts";
-import { editOwnSeries, endOwnSeries, lockedIds, seriesTarget } from "../planner/series.ts";
+import { endOwnSeries, lockedIds, seriesTarget } from "../planner/series.ts";
 import { waitingCalendars } from "../planner/write.ts";
 import type { ProviderPool } from "../providers/index.ts";
 import { getSettings } from "../settings.ts";
@@ -634,13 +634,13 @@ export function meetingRoutes(
     own(c.req.param("id"), user.id);
     const body = await jsonBody(c, meetingInput);
     // Read in the queue: a plan run may write the series meanwhile (rule 2).
-    await sync.exclusive(user.id, async (pool) => {
+    // The edit is saved here; the plan run writes it to the series master.
+    await sync.exclusive(user.id, async () => {
       const old = own(c.req.param("id"), user.id);
       const t = now();
       const { row, attendees } = rowFrom(db, user.id, old.id, body, t, old.rank);
       if (adopted(old)) row.starting = keepSeriesFrequency(old, body.frequency);
       const rulesChanged = rulesChangedAt(db, old, row, attendees, body, t);
-      await editOwnSeries(db, (id) => pool.get(id), old, row, attendees, t);
       tx(db, () => {
         if (body.hoursMode === "itemSpecific" && body.itemHours)
           row.hours_set_id = saveItemHours(

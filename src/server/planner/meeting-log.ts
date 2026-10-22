@@ -29,7 +29,8 @@ export type ChangeReason =
   | "ruleChanged"
   | "noFreeSlot"
   | "manualMove"
-  | "manualSkip";
+  | "manualSkip"
+  | "seriesDeleted";
 
 interface Change {
   meetingId: string;

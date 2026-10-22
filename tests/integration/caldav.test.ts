@@ -348,4 +348,21 @@ describe("Tempoloom series", () => {
     await later.p.endSeries(calendarUrl, later.series, T("2026-10-20", "12:00"), []);
     expect(await objectText(later.series)).toBeNull();
   });
+  it("ending a series before its first rule time keeps a first occurrence that moved earlier and took place, as one instance", async () => {
+    const { p, series } = await weekly();
+    // The first instance (Tuesday 27 Oct) moved to Monday 26 Oct 10:00 and was held.
+    await p.editExternal(
+      calendarUrl,
+      `${series}#2026-10-27T10:00:00`,
+      { start: T("2026-10-26", "10:00"), end: T("2026-10-26", "10:30") },
+      null,
+    );
+    await p.endSeries(calendarUrl, series, T("2026-10-26", "14:00"), []);
+    expect(await starts(p, series, T("2026-10-19", "00:00"), end)).toEqual([
+      "2026-10-26T09:00:00.000Z",
+    ]);
+    const text = (await objectText(series)) ?? "";
+    const at = (name: string) => text.includes(`${name};TZID=Europe/Berlin:20261027T100000`);
+    expect(at("RDATE") && at("EXDATE")).toBe(false);
+  });
 });

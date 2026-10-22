@@ -10,7 +10,8 @@ import { seriesInstanceDate } from "../meeting-series.ts";
 import type { CalendarProvider, EventWrite, SeriesFacts } from "../providers/types.ts";
 import { getSettings } from "../settings.ts";
 import { homeZone, planningZone } from "../travel.ts";
-import { type Attendee, attendeesOf, type MeetingRow } from "./meetings.ts";
+import { logChange } from "./meeting-log.ts";
+import type { MeetingRow } from "./meetings.ts";
 
 export const BYDAY = ["MO", "TU", "WE", "TH", "FR", "SA", "SU"];
 
@@ -101,7 +102,17 @@ export function planSeries(
  * what Tempoloom wrote, and the zone of the rule. Never read back, so a
  * missing read after the write cannot leave a series without a baseline.
  */
-export type Baseline = SeriesFacts & { zone?: string };
+export type Baseline = SeriesFacts & {
+  /** The home zone the rule is written in. */
+  zone?: string;
+  /** The form fields that make the rule (`formKey`) when the master was written. */
+  form?: string;
+  /** What Tempoloom wrote on the master from the form. */
+  title?: string;
+  description?: string;
+  location?: string;
+  visibility?: string;
+};
 export function baselineOf(w: EventWrite, organizer: string): Baseline {
   return {
     start: w.start,
@@ -112,7 +123,40 @@ export function baselineOf(w: EventWrite, organizer: string): Baseline {
     optional: (w.optionalAttendees ?? []).map((e) => e.toLowerCase()),
     own: false,
     ...(w.timeZone ? { zone: w.timeZone } : {}),
+    description: w.description,
+    location: w.location ?? "",
+    visibility: w.visibility ?? "default",
   };
+}
+
+/** The form fields that make a series rule: a change of one of them needs a new series. */
+export const formKey = (m: MeetingRow) =>
+  JSON.stringify([m.frequency, m.starting, m.duration_minutes, m.ideal_minute]);
+
+/**
+ * The organizer deleted the whole series in a calendar app (SPEC-MEET-02
+ * edge case 5): the meeting turns off and keeps its rules, and the change log
+ * says why. Called only on a "not found" from the calendar for the series.
+ */
+export function seriesDeleted(db: Db, userId: string, meetingId: string, now: number): void {
+  run(db, "UPDATE meetings SET enabled = 0, rules_changed_at = ? WHERE id = ?", now, meetingId);
+  forgetSeries(db, meetingId);
+  logChange(
+    db,
+    userId,
+    {
+      meetingId,
+      key: `meeting:${meetingId}`,
+      oldStart: null,
+      oldEnd: null,
+      newStart: null,
+      newEnd: null,
+      actor: "organizer",
+      reason: "seriesDeleted",
+      written: false,
+    },
+    now,
+  );
 }
 
 /** The period key of a series instance (`meeting:<id>:<period>`), as adoptInstances counts it. */
@@ -188,66 +232,3 @@ export const forgetSeries = (db: Db, meetingId: string) =>
     "UPDATE meetings SET series_calendar_id = NULL, series_event_id = NULL, series_rule = '' WHERE id = ?",
     meetingId,
   );
-
-/**
- * A form edit of Tempoloom's own series (MEET-02 rule 4). A new frequency,
- * start date, length or ideal time changes the rule: the series ends and the
- * next run writes one with the new rule. A new title or guest list goes to
- * the master, so the instances after the planning window get it too; the push
- * writes it to the occurrences in the window.
- */
-export async function editOwnSeries(
-  db: Db,
-  provider: (accountId: string) => CalendarProvider,
-  old: MeetingRow,
-  row: MeetingRow,
-  attendees: Attendee[],
-  now: number,
-): Promise<void> {
-  if (!old.series_owned || !old.series_event_id) return;
-  const rule = (m: MeetingRow) =>
-    JSON.stringify([m.frequency, m.starting, m.duration_minutes, m.ideal_minute]);
-  if (rule(old) !== rule(row)) {
-    await endOwnSeries(db, provider, old, now, lockedIds(db, old, now));
-    return;
-  }
-  const before = new Map(attendeesOf(db, old.id).map((a) => [a.email, a.required]));
-  const after = new Map(attendees.map((a) => [a.email, a.required]));
-  const add = [...after]
-    .filter(([email, required]) => before.get(email) !== required)
-    .map(([email, required]) => ({ email, optional: !required }));
-  const remove = [...before.keys()].filter((email) => !after.has(email));
-  const retitled = old.title !== row.title;
-  if (!retitled && add.length === 0 && remove.length === 0) return;
-  const cal = seriesTarget(db, old);
-  const p = cal ? provider(cal.account_id) : undefined;
-  if (!cal || !p) return;
-  const base = (old.series_rule ? JSON.parse(old.series_rule) : null) as Baseline | null;
-  // The master keeps its marker: only the title part changes.
-  const summary =
-    base?.summary.includes(old.title) === true
-      ? base.summary.replace(old.title, row.title)
-      : row.title;
-  await p.editExternal(
-    cal.provider_id,
-    old.series_event_id,
-    {
-      ...(retitled ? { summary } : {}),
-      ...(add.length > 0 || remove.length > 0 ? { guests: { add, remove } } : {}),
-    },
-    null,
-  );
-  // The new master is the baseline: this edit is not an organizer's series edit.
-  if (base)
-    run(
-      db,
-      "UPDATE meetings SET series_rule = ? WHERE id = ?",
-      JSON.stringify({
-        ...base,
-        summary: retitled ? summary : base.summary,
-        attendees: attendees.filter((a) => a.required).map((a) => a.email),
-        optional: attendees.filter((a) => !a.required).map((a) => a.email),
-      }),
-      old.id,
-    );
-}

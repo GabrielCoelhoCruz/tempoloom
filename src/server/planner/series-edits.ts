@@ -14,7 +14,7 @@ import { stripMarker } from "./markers.ts";
 import { logChange, periodOf } from "./meeting-log.ts";
 import type { MeetingRow } from "./meetings.ts";
 import type { ManagedRow } from "./push.ts";
-import { type Baseline, BYDAY, instanceDate } from "./series.ts";
+import { type Baseline, BYDAY, formKey, instanceDate } from "./series.ts";
 
 interface Instance {
   event_id: string;
@@ -132,26 +132,6 @@ function readOne(
       seriesId,
     );
   const current = instancesOf(m.series_event_id as string);
-  // C2: the organizer deleted the whole series of Tempoloom's own meeting:
-  // as a delete without guest emails, the rules stay and turn off (edge case 5).
-  if (
-    m.series_owned &&
-    !one(
-      db,
-      "SELECT 1 FROM events WHERE calendar_id = ? AND recurring_id = ? LIMIT 1",
-      calendarId,
-      m.series_event_id,
-    )
-  ) {
-    run(
-      db,
-      `UPDATE meetings SET enabled = 0, series_calendar_id = NULL, series_event_id = NULL,
-         series_rule = '', rules_changed_at = ? WHERE id = ?`,
-      now,
-      m.id,
-    );
-    return;
-  }
   const currentFacts = factsOf(current[0]?.series ?? "");
   // "This and following": a later series on the calendar that carries this meeting.
   // A series that Tempoloom ended (tl_ended) is never the organizer's split.
@@ -177,12 +157,21 @@ function readOne(
   if (!facts) return;
   const seen = factsOf(m.series_rule) as Baseline | null;
   if (!later && seen && ruleKey(seen) === ruleKey(facts)) return;
-  // The new baseline keeps the zone the rule was written in (W8).
-  const baseline = JSON.stringify({
-    ...facts,
-    own: false,
-    ...(seen?.zone ? { zone: seen.zone } : {}),
-  });
+  // The new baseline keeps what Tempoloom wrote from the form (zone, form fields).
+  const keep = (b: Baseline | null) => {
+    const {
+      start: _s,
+      end: _e,
+      rrule: _r,
+      summary: _m,
+      attendees: _a,
+      optional: _o,
+      own: _w,
+      ...rest
+    } = b ?? ({} as Baseline);
+    return rest;
+  };
+  const baseline = JSON.stringify({ ...keep(seen), ...facts, own: false });
   // The first look at an adopted series: nothing to compare with. Tempoloom's
   // own series has the baseline of its write (push.ts writeSeries); without one
   // the edit cannot be read, so it is logged, not dropped in silence.
@@ -265,7 +254,12 @@ function readOne(
     changed.shortest_minutes,
     changed.starting,
     changed.rules_changed_at,
-    baseline,
+    // The master now has the rules the calendar gave: the form matches it.
+    JSON.stringify({
+      ...JSON.parse(baseline),
+      ...(seen.form ? { form: formKey(changed) } : {}),
+      ...(seen.title !== undefined ? { title: changed.title } : {}),
+    }),
     m.id,
   );
 

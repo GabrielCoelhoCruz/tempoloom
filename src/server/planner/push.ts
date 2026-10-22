@@ -21,10 +21,11 @@ import {
   type Baseline,
   baselineOf,
   endOwnSeries,
-  forgetSeries,
+  formKey,
   instanceDate,
   lockedIds,
   planSeries,
+  seriesDeleted,
 } from "./series.ts";
 
 export interface DesiredEvent {
@@ -331,7 +332,7 @@ export async function pushSchedule(
       userId,
     ).map((p) => p.id),
   );
-  await restartMovedZones(ctx, frozen);
+  await syncOwnSeries(ctx, frozen, allDesired);
   const rows = all<ManagedRow>(
     db,
     "SELECT * FROM managed_events WHERE user_id = ? AND end_ms > ?",
@@ -484,9 +485,9 @@ export async function pushSchedule(
           ? await provider.addInstance(providerCalendarId, series, write(userId, d))
           : await provider.insertEvent(providerCalendarId, write(userId, d));
     } catch (err) {
-      // The organizer deleted the whole series: the next run writes a new one.
+      // The organizer deleted the whole series (SPEC-MEET-02 edge case 5).
       if (series && err instanceof ProviderError && err.kind === "not_found") {
-        forgetSeries(db, d.sourceId);
+        seriesDeleted(db, userId, d.sourceId, now);
         result.conflicts++;
         continue;
       }
@@ -590,14 +591,18 @@ async function writeSeries(
     "UPDATE meetings SET series_calendar_id = ?, series_event_id = ?, series_rule = ? WHERE id = ?",
     first.calendarId,
     seriesId,
-    JSON.stringify(baselineOf(master, (first.organizer ?? "").toLowerCase())),
+    JSON.stringify({
+      ...baselineOf(master, (first.organizer ?? "").toLowerCase()),
+      form: formKey(m),
+      title: m.title,
+    }),
     m.id,
   );
   return made;
 }
 
 /**
- * C1: the instance of `d`'s period in the series, when no row holds it (its
+ * The instance of `d`'s period in the series, when no row holds it (its
  * rule time is after the planning window): it becomes the row and moves to the
  * planned time. False when the period has no instance.
  */
@@ -667,26 +672,100 @@ async function moveRuleInstance(
 }
 
 /**
- * W8: a series repeats in the home zone it was written in. When the home zone
- * changes, the series ends and this run writes one in the new zone.
+ * Keeps each series of Tempoloom's own meetings in line with its form
+ * (meetings-flexible.md rule 2), before the rows are read. A series the
+ * calendar answers "not found" for is gone: the meeting turns off. A new home
+ * zone or a new rule (frequency, start date, length, ideal time) ends the
+ * series; this run writes a new one. A new title, guest list, description,
+ * location or privacy goes to the master. A form edit is saved first; this
+ * run writes it, and a calendar of a disconnected account waits.
  */
-async function restartMovedZones(ctx: PushContext, frozen: Set<string>): Promise<void> {
+async function syncOwnSeries(
+  ctx: PushContext,
+  frozen: Set<string>,
+  desired: DesiredEvent[],
+): Promise<void> {
   const { db, userId, now } = ctx;
   const home = homeZone(db, userId);
   for (const m of all<MeetingRow>(
     db,
-    "SELECT * FROM meetings WHERE user_id = ? AND series_owned = 1 AND series_event_id IS NOT NULL",
+    `SELECT * FROM meetings WHERE user_id = ? AND enabled = 1 AND series_owned = 1
+       AND series_event_id IS NOT NULL`,
     userId,
   )) {
-    const zone = (m.series_rule ? (JSON.parse(m.series_rule) as Baseline) : null)?.zone;
+    const series = m.series_event_id as string;
     const calendarId = m.series_calendar_id;
-    if (!zone || zone === home || !calendarId || frozen.has(calendarId)) continue;
+    if (!calendarId || frozen.has(calendarId)) continue;
+    const base = (m.series_rule ? JSON.parse(m.series_rule) : null) as Baseline | null;
     try {
-      const { provider } = ctx.target(calendarId);
-      await endOwnSeries(db, () => provider, m, now, lockedIds(db, m, now));
+      const { provider, providerCalendarId } = ctx.target(calendarId);
+      // No instance in the cached window does not mean gone: ask the calendar.
+      if (
+        provider.seriesInstances &&
+        !one(
+          db,
+          "SELECT 1 FROM events WHERE calendar_id = ? AND recurring_id = ?",
+          calendarId,
+          series,
+        )
+      )
+        await provider.seriesInstances(providerCalendarId, series, now, now + 86_400_000);
+      if (!base) continue;
+      if ((base.zone && base.zone !== home) || (base.form && base.form !== formKey(m))) {
+        await endOwnSeries(db, () => provider, m, now, lockedIds(db, m, now));
+        continue;
+      }
+      const d = desired.filter((x) => x.kind === "meeting" && x.sourceId === m.id).at(-1);
+      if (!base.form || !d) continue;
+      const change: ExternalChange = {};
+      const title = m.title;
+      const summary =
+        base.title && base.summary.includes(base.title)
+          ? base.summary.replace(base.title, title)
+          : d.title;
+      if (base.title !== undefined && base.title !== title) change.summary = summary;
+      if (
+        base.description !== undefined &&
+        base.description !== d.description &&
+        !tipOnly(base.description, d.description)
+      )
+        change.description = d.description;
+      if ((base.location ?? "") !== (d.location ?? "")) change.location = d.location ?? "";
+      if ((base.visibility ?? "default") !== (d.visibility ?? "default"))
+        change.visibility = d.visibility ?? "default";
+      const guests = (req: string[], opt: string[]) =>
+        new Map([
+          ...req.map((e) => [e.toLowerCase(), false] as const),
+          ...opt.map((e) => [e.toLowerCase(), true] as const),
+        ]);
+      const before = guests(base.attendees, base.optional);
+      const after = guests(d.attendees ?? [], d.optionalAttendees ?? []);
+      const add = [...after]
+        .filter(([e, optional]) => before.get(e) !== optional)
+        .map(([email, optional]) => ({ email, optional }));
+      const remove = [...before.keys()].filter((e) => !after.has(e));
+      if (add.length > 0 || remove.length > 0) change.guests = { add, remove };
+      if (Object.keys(change).length === 0) continue;
+      await provider.editExternal(providerCalendarId, series, change, null);
+      run(
+        db,
+        "UPDATE meetings SET series_rule = ? WHERE id = ?",
+        JSON.stringify({
+          ...base,
+          summary: change.summary ?? base.summary,
+          title,
+          description: change.description ?? base.description,
+          location: d.location ?? "",
+          visibility: d.visibility ?? "default",
+          attendees: (d.attendees ?? []).map((e) => e.toLowerCase()),
+          optional: (d.optionalAttendees ?? []).map((e) => e.toLowerCase()),
+        }),
+        m.id,
+      );
     } catch (err) {
       if (!(err instanceof ProviderError)) throw err;
-      console.error(`Ending the series of meeting ${m.id} failed`, err);
+      if (err.kind === "not_found") seriesDeleted(db, userId, m.id, now);
+      else console.error(`Writing the series of meeting ${m.id} failed`, err);
     }
   }
 }

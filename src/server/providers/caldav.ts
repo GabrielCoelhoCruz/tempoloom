@@ -1398,8 +1398,24 @@ export class CalDavProvider implements CalendarProvider {
     const rule = master.getFirstPropertyValue("rrule");
     if (instant(start) >= at) {
       // The series had not started: only the kept instances stay, as RDATEs.
-      master.removeAllProperties("rrule");
-      const startKept = start instanceof ICAL.Time && kept.has(idOf(start));
+      // The rule keeps DTSTART only (COUNT=1), so the object stays a series and
+      // an override of the first instance still applies.
+      if (rule instanceof ICAL.Recur) {
+        rule.until = null as unknown as ICAL.Time;
+        rule.count = 1;
+        master.removeAllProperties("rrule");
+        master.addPropertyWithValue("rrule", rule);
+      }
+      // A first instance that moved earlier and started is kept by its start:
+      // DTSTART itself is that instance, so no RDATE (and no EXDATE) there.
+      const startedFirst = start instanceof ICAL.Time && keepRdate.has(start.toString());
+      if (startedFirst)
+        for (const p of master.getAllProperties("rdate"))
+          if ((p.getFirstValue() as ICAL.Time).toString() === start.toString()) {
+            master.removeProperty(p);
+            rdates.delete(start.toString());
+          }
+      const startKept = startedFirst || (start instanceof ICAL.Time && kept.has(idOf(start)));
       if (!startKept && rdates.size === 0) {
         const res = await client.deleteCalendarObject({ calendarObject: { url: seriesId } });
         if (!res.ok && res.status !== 404 && res.status !== 410)

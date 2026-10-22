@@ -168,6 +168,7 @@ const CHANGE_REASONS: Record<string, string> = {
   noFreeSlot: "cancelled, no free time",
   manualMove: "moved by hand",
   manualSkip: "skipped",
+  seriesDeleted: "series deleted in the calendar; turned off",
 };
 const MOVES: [string, string][] = [
   ["none", "No automatic moves"],

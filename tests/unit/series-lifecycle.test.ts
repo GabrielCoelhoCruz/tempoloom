@@ -87,7 +87,8 @@ function fakeCalendar(opts: { noFacts?: boolean } = {}) {
       calls.push({ name: "edit", id, change });
       const series = id.split("#")[0] ?? id;
       const w = objects.get(series);
-      const base = w ? read(series, w).find((e) => e.id === id) : undefined;
+      // The series id names the master: the first instance stands for it.
+      const base = w ? read(series, w).find((e) => e.id === id || !id.includes("#")) : undefined;
       if (!base) throw new ProviderError("not_found", 404, "gone");
       return {
         ...base,
@@ -220,17 +221,32 @@ describe("a series the organizer deleted", () => {
     };
     await pusher(s, cal.provider)([occurrence("2026-10-26", "2026-10-27"), task]);
     expect(cal.calls.filter((c) => c.name === "insert").map((c) => c.w?.summary)).toContain("Task");
-    expect(meeting(s.db)?.series_event_id).toBeNull();
+    // Spec edge case 5: the rules stay, the meeting is off, and the log says why.
+    expect(meeting(s.db)).toMatchObject({ series_event_id: null, enabled: 0 });
+    expect(
+      all<{ reason: string }>(s.db, "SELECT reason FROM meeting_changes WHERE meeting_id = 'm1'"),
+    ).toEqual([{ reason: "seriesDeleted" }]);
   });
 
-  it("a series with no instance left in the calendar turns the meeting off and forgets the series", () => {
+  it("is found by a read of the series, also when the plan places nothing new: the meeting turns off", async () => {
     const s = setup();
     run(
       s.db,
       "UPDATE meetings SET series_event_id = 'http://dav/gone.ics', series_calendar_id = 'cal', series_rule = '{}' WHERE id = 'm1'",
     );
-    readSeriesEdits(s.db, s.userId, ["cal"], T0);
+    await pusher(s, fakeCalendar().provider)([]);
     expect(meeting(s.db)).toMatchObject({ series_event_id: null, enabled: 0 });
+  });
+
+  it("a series with no instance in the pull window stays: an empty cache never means deleted", () => {
+    const s = setup();
+    // Every 8 months: the cached window (84 days back, 120 ahead) can hold no instance.
+    run(
+      s.db,
+      "UPDATE meetings SET series_event_id = 'http://dav/far.ics', series_calendar_id = 'cal', series_rule = '{}' WHERE id = 'm1'",
+    );
+    readSeriesEdits(s.db, s.userId, ["cal"], T0);
+    expect(meeting(s.db)).toMatchObject({ series_event_id: "http://dav/far.ics", enabled: 1 });
   });
 });
 
@@ -376,6 +392,12 @@ function api(pending: (db: Db) => void = () => undefined) {
     setSeriesProps: spy("setSeriesProps"),
   };
   const pool = { get: () => provider };
+  const failCalendar = () => {
+    for (const k of Object.keys(provider) as (keyof typeof provider)[])
+      provider[k] = async () => {
+        throw new ProviderError("other", 503, "offline");
+      };
+  };
   const clock = { t: T0, onRead: (): void => {} };
   const sync = {
     request() {},
@@ -407,7 +429,7 @@ function api(pending: (db: Db) => void = () => undefined) {
       headers: { "content-type": "application/json" },
       ...(body ? { body: JSON.stringify(body) } : {}),
     });
-  return { ...s, calls, clock, call };
+  return { ...s, calls, clock, call, failCalendar };
 }
 
 const form = (over: Record<string, unknown> = {}) => ({
@@ -453,34 +475,60 @@ describe("the meeting routes and the series", () => {
     expect(meeting(s.db)?.series_rule).toContain("FREQ=WEEKLY");
   });
 
-  it("a new title or guest list goes to the series master; a new length or ideal time starts a new series", async () => {
+  it("a form edit is saved also when the calendar server is offline; the plan run writes the series", async () => {
     const s = api();
     written(s.db);
-    await s.call(
-      "PUT",
-      "/meetings/m1",
-      form({ title: "Weekly sync", attendees: [{ email: "erin@example.com" }] }),
+    s.failCalendar();
+    const res = await s.call("PUT", "/meetings/m1", form({ title: "Weekly sync" }));
+    expect(res.status).toBe(200);
+    expect(one<{ title: string }>(s.db, "SELECT title FROM meetings WHERE id = 'm1'")?.title).toBe(
+      "Weekly sync",
     );
-    const edit = s.calls.find((c) => c.name === "editExternal");
-    expect(edit?.args[1]).toBe("http://dav/s.ics");
-    expect(edit?.args[2]).toMatchObject({
+  });
+});
+
+describe("form edits reach the series master in the plan run", () => {
+  it("a new title, guest list, description, location or privacy is written to the master; a new length starts a new series", async () => {
+    const s = setup();
+    const cal = fakeCalendar();
+    const push = pusher(s, cal.provider);
+    const desired = (over: Partial<DesiredEvent> = {}) => [
+      { ...occurrence("2026-10-19", "2026-10-20"), ...over },
+      { ...occurrence("2026-10-26", "2026-10-27"), ...over },
+    ];
+    await push(desired());
+    // The form saved a new title, guest, description, location and privacy.
+    run(s.db, "UPDATE meetings SET title = 'Weekly sync' WHERE id = 'm1'");
+    cal.calls.length = 0;
+    const edited = {
+      title: "● Weekly sync",
+      description: "Agenda",
+      location: "Room 9",
+      visibility: "private" as const,
+      attendees: ["erin@example.com"],
+    };
+    await push(desired(edited));
+    const master = cal.calls.find((c) => c.name === "edit" && c.id === "http://dav/1.ics");
+    expect(master?.change).toMatchObject({
       summary: "● Weekly sync",
+      description: "Agenda",
+      location: "Room 9",
+      visibility: "private",
       guests: {
         add: [{ email: "erin@example.com", optional: false }],
         remove: ["dana@example.com"],
       },
     });
-    expect(s.calls.some((c) => c.name === "endSeries")).toBe(false);
-    await s.call(
-      "PUT",
-      "/meetings/m1",
-      form({
-        title: "Weekly sync",
-        attendees: [{ email: "erin@example.com" }],
-        durationMinutes: 45,
-      }),
+    cal.calls.length = 0;
+    await push(desired(edited));
+    expect(cal.calls.filter((c) => c.id === "http://dav/1.ics")).toEqual([]);
+    // A new length is a new rule: the series ends and a new one is written.
+    run(s.db, "UPDATE meetings SET duration_minutes = 45 WHERE id = 'm1'");
+    cal.calls.length = 0;
+    await push(desired({ ...edited, end: at("2026-10-20", 645) }));
+    expect(cal.calls.find((c) => c.name === "endSeries")?.id).toBe("http://dav/1.ics");
+    expect(cal.calls.find((c) => c.name === "insert")?.w?.end).toBe(
+      (cal.calls.find((c) => c.name === "insert")?.w?.start ?? 0) + 45 * 60_000,
     );
-    expect(s.calls.find((c) => c.name === "endSeries")?.args[1]).toBe("http://dav/s.ics");
-    expect(meeting(s.db)?.series_event_id).toBeNull();
   });
 });
