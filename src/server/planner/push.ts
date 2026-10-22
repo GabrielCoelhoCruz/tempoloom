@@ -348,6 +348,8 @@ export async function pushSchedule(
   const live = (d: DesiredEvent) => !(d.kind === "meeting" && off.has(d.sourceId));
   const wanted = new Set(allDesired.filter(live).map((d) => d.key));
   const desired = allDesired.filter((d) => !frozen.has(d.calendarId) && live(d));
+  // Keys whose new series the organizer edited before this run read it back.
+  const hold = new Set<string>();
   for (const m of all<MeetingRow>(
     db,
     "SELECT * FROM meetings WHERE user_id = ? AND enabled = 1 AND series_owned = 1 AND series_event_id IS NULL",
@@ -356,7 +358,7 @@ export async function pushSchedule(
     const own = desired.filter((d) => d.kind === "meeting" && d.sourceId === m.id);
     // One meeting's calendar error never stops the plan run of the user.
     try {
-      result.created += await writeSeries(ctx, m, own, byKey);
+      result.created += await writeSeries(ctx, m, own, byKey, hold);
     } catch (err) {
       if (!(err instanceof ProviderError)) throw err;
       console.error(`Writing the series of meeting ${m.id} failed`, err);
@@ -376,6 +378,7 @@ export async function pushSchedule(
 
   const creates: DesiredEvent[] = [];
   for (const d of desired) {
+    if (hold.has(d.key)) continue;
     const row = byKey.get(d.key);
     if (!row?.event_id || row.calendar_id !== d.calendarId) {
       creates.push(d);

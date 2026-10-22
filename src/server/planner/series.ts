@@ -280,6 +280,8 @@ export async function writeSeries(
   m: MeetingRow,
   own: DesiredEvent[],
   byKey: Map<string, ManagedRow>,
+  /** Filled with the keys this run must not write: their series has an unread edit. */
+  hold: Set<string>,
 ): Promise<number> {
   const { db, userId, now } = ctx;
   const sorted = [...own].sort((a, b) => (a.key < b.key ? -1 : 1));
@@ -320,6 +322,17 @@ export async function writeSeries(
     from,
     last + 86_400_000,
   );
+  const baseline = {
+    ...baselineOf(master, (first.organizer ?? "").toLowerCase()),
+    form: formKey(m),
+    title: m.title,
+  };
+  // The organizer may edit the new series in another app before this read:
+  // then its instances are not what this run wrote. They get their rows as
+  // the calendar has them, but this run writes nothing for the meeting (`hold`); the
+  // next run reads the edit against the baseline (what this run wrote) and
+  // places the meeting from it.
+  const edited = instances.some((i) => i.series && ruleKey(i.series) !== ruleKey(baseline));
   const { weekStart } = getSettings(db, userId);
   const zone = planningZone(db, userId);
   const wantedByKey = new Map(mine.map((d) => [d.key, d]));
@@ -349,16 +362,14 @@ export async function writeSeries(
     logManaged(db, userId, desiredRef(d, inst.id), "create", { ...d, ...inst }, now);
     made++;
   }
+  // The whole meeting waits: also its periods with no instance (a split ended them).
+  if (edited) for (const d of mine) hold.add(d.key);
   run(
     db,
     "UPDATE meetings SET series_calendar_id = ?, series_event_id = ?, series_rule = ? WHERE id = ?",
     first.calendarId,
     seriesId,
-    JSON.stringify({
-      ...baselineOf(master, (first.organizer ?? "").toLowerCase()),
-      form: formKey(m),
-      title: m.title,
-    }),
+    JSON.stringify(baseline),
     m.id,
   );
   return made;
@@ -392,18 +403,23 @@ export async function moveRuleInstance(
       userId,
     ).map((r) => r.event_id),
   );
-  const inst = (
-    await provider.seriesInstances(providerCalendarId, series, from, from + 34 * 86_400_000)
-  ).find(
+  const list = await provider.seriesInstances(
+    providerCalendarId,
+    series,
+    from,
+    from + 34 * 86_400_000,
+  );
+  // A series edit that no pull has read yet (this plan is older than it):
+  // write nothing for the period now, also no new instance; the next run
+  // reads the edit first.
+  const base = (m.series_rule ? JSON.parse(m.series_rule) : null) as Baseline | null;
+  if (base && list.some((e) => e.series && ruleKey(base) !== ruleKey(e.series))) return "stale";
+  const inst = list.find(
     (e) =>
       !used.has(e.id) &&
       periodOf(m, instanceDate(db, userId, e.id, e.start), weekStart, zone) === period,
   );
   if (!inst) return false;
-  // A series edit that no pull has read yet (this plan is older than it):
-  // write nothing for the period now; the next run reads the edit first.
-  const base = (m.series_rule ? JSON.parse(m.series_rule) : null) as Baseline | null;
-  if (base && inst.series && ruleKey(base) !== ruleKey(inst.series)) return "stale";
   cacheEvent(db, d.calendarId, inst);
   const seen = {
     ...d,

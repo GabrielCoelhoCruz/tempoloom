@@ -147,7 +147,10 @@ Attendee class, computed each time the meeting is placed:
    still written; a calendar value equal to the form edit counts as written.
    Only an HTTP 404 or 410 for the series object means "gone"; a server error,
    a refused login or a lost connection changes nothing, and turning off or
-   deleting the meeting then fails and keeps the meeting as it was. The rule is written in the user's home zone: DTSTART, BYDAY
+   deleting the meeting then fails and keeps the meeting as it was.
+   If the organizer edits the new series before Tempoloom has read back its
+   first write, the run that wrote it writes nothing more for the meeting;
+   the next run reads the edit as a series edit. The rule is written in the user's home zone: DTSTART, BYDAY
    and the EXDATEs are all in that zone. A trip (travel zone) does not change
    the rule: the plan moves the occurrences of the trip with overrides. A new
    home zone ends the series, and the next run writes one in the new zone. A
