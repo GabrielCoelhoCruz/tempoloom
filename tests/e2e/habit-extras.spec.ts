@@ -19,9 +19,15 @@
 // - a snooze acts as a reschedule (nearest time) or moves the day -> 14:00, not 12:30
 // - a typed time is ignored, or an earlier time moves it back -> 15:45; refusal at 11:30
 // - a snooze of an occurrence that has started does nothing -> 12:15, not 12:00
+// - a snooze or reschedule puts an occurrence whose event moved to another day
+//   back on its own date                                  -> Thursday 10:00, 11:00
+// - a run on the later day drops the occurrence of the passed date and deletes
+//   its event                                              -> event kept at Thursday 10:00
+// - during a trip the forms use the home zone, the API the trip's zone -> 12:00, 12:30 Tokyo
 // - snooze until a date leaves earlier events, or drops later ones -> event days
 // - the search shows other titles, or hides matches        -> names in the list
 import type { Page } from "@playwright/test";
+import { addDays, localToUtc, weekdayOf } from "../../src/shared/time.ts";
 import { boxOf, day, invite, rawEvent, span, week } from "./automation-helpers.ts";
 import { edit, names, openAutomations, save } from "./automation-list-helpers.ts";
 import {
@@ -32,6 +38,7 @@ import {
   eventually,
   expect,
   local,
+  planNow,
   test,
 } from "./fixtures.ts";
 import { addHabit, openWeek, titled, W } from "./helpers.ts";
@@ -509,10 +516,11 @@ test("snooze moves an occurrence that has started to the chosen time (rule 31)",
     () => week(cal),
     (l) => expect(titled(l, "Lunch").map(span)).toEqual(fiveAt("12:00", "12:30")),
   );
-  // Tuesday 12:05: the Tuesday lunch has started. Without a snooze it stays (SCH-60a).
+  // Tuesday 12:05: the Tuesday lunch has started. Without a snooze it stays
+  // (SCH-60a): a whole plan run at 12:05 ends before the read.
   app.env.TEST_CLOCK_START = new Date(at(day(1), "12:05")).toISOString();
   await app.restart();
-  await page.waitForTimeout(11_000);
+  await planNow(page);
   const evs = await week(cal);
   expect(titled(evs, "Lunch").map(span)).toEqual(fiveAt("12:00", "12:30"));
   const tuesday = titled(evs, "Lunch")[1];
@@ -532,6 +540,162 @@ test("snooze moves an occurrence that has started to the chosen time (rule 31)",
   await page.reload();
   await expect(page.locator(".ev-habit", { hasText: "Lunch" })).toHaveCount(5);
   expect(titled(await week(cal), "Lunch").map(span)).toEqual(expected);
+});
+
+test("snooze and reschedule keep the occurrence on the day its event moved to (rules 30, 31)", async ({
+  page,
+  app,
+  cal,
+  signIn,
+}) => {
+  await blockUntil(cal, W);
+  await signIn();
+  await addHabit(page, { title: "Lunch", ideal: "12:00", min: 30, max: 30 });
+  const evs = await eventually(
+    () => week(cal),
+    (l) => expect(titled(l, "Lunch").map(span)).toEqual(fiveAt("12:00", "12:30")),
+  );
+  const wednesday = titled(evs, "Lunch")[2];
+  if (!wednesday) throw new Error("no Wednesday lunch");
+  // The user moves Wednesday's lunch to Thursday 14:00 in the calendar: it locks there.
+  await cal.update(wednesday.id, { start: at(day(3), "14:00"), end: at(day(3), "14:30") });
+  await eventually(
+    () => week(cal),
+    (l) => expect(l.find((e) => e.id === wednesday.id)?.summary).toContain("🔒"),
+  );
+  // The moved event runs before Thursday's own lunch at 12:00.
+  const onThursday = (time: string) => [
+    `${day(0)} 12:00-12:30`,
+    `${day(1)} 12:00-12:30`,
+    `${day(3)} ${time}`,
+    `${day(3)} 12:00-12:30`,
+    `${day(4)} 12:00-12:30`,
+  ];
+  const lunches = async () => titled(await week(cal), "Lunch").map(span);
+  await openWeek(page);
+  // Reschedule to 10:00: Thursday 10:00, not Wednesday 10:00 (the occurrence's date).
+  await (await boxOf(page, app, wednesday.id)).click();
+  const reschedule = page.getByTestId("reschedule-form");
+  await reschedule.getByLabel("Reschedule to").fill("10:00");
+  await reschedule.getByRole("button", { name: "Reschedule" }).click();
+  await expect(page.getByTestId("event-drawer")).toHaveCount(0);
+  await eventually(lunches, (l) => expect(l).toEqual(onThursday("10:00-10:30")));
+  // Snooze +1 h from 10:00: Thursday 11:00. On Wednesday, 11:00 would be refused
+  // as before the start, or the occurrence would go back to Wednesday.
+  await (await boxOf(page, app, wednesday.id)).click();
+  const snooze = page.getByTestId("snooze-form");
+  await snooze.getByRole("button", { name: "+1 h" }).click();
+  await expect(snooze.getByLabel("Not before")).toHaveValue("11:00");
+  await snooze.getByRole("button", { name: "Snooze" }).click();
+  await expect(page.getByTestId("event-drawer")).toHaveCount(0);
+  const expected = onThursday("11:00-11:30");
+  await eventually(lunches, (l) => expect(l).toEqual(expected));
+  const event = (await week(cal)).find((e) => e.id === wednesday.id);
+  expect(event && span(event)).toBe(`${day(3)} 11:00-11:30`);
+  await page.reload();
+  await expect(page.locator(".ev-habit", { hasText: "Lunch" })).toHaveCount(5);
+  expect(await lunches()).toEqual(expected);
+});
+
+test("a reschedule to a later day keeps the event on that day when the plan runs on that day (rules 14, 30)", async ({
+  page,
+  app,
+  cal,
+  signIn,
+}) => {
+  // The server clock runs in the current week, so it can reach the later day.
+  const today = local(Date.now()).slice(0, 10);
+  const monday = addDays(today, 1 - weekdayOf(today));
+  const d = (n: number) => addDays(monday, n);
+  const clock = (date: string, time: string) => {
+    app.env.TEST_CLOCK_START = new Date(at(date, time)).toISOString();
+  };
+  clock(d(0), "08:00");
+  await app.restart();
+  await signIn();
+  await addHabit(page, { title: "Lunch", ideal: "12:00", min: 30, max: 30 });
+  const evs = await eventually(
+    () => week(cal, monday),
+    (l) =>
+      expect(titled(l, "Lunch").map(span)).toEqual(
+        [0, 1, 2, 3, 4].map((n) => `${d(n)} 12:00-12:30`),
+      ),
+  );
+  const wednesday = titled(evs, "Lunch")[2];
+  if (!wednesday) throw new Error("no Wednesday lunch");
+  // The user moves Wednesday's lunch to Thursday 14:00 (it locks), then reschedules it to 10:00.
+  await cal.update(wednesday.id, { start: at(d(3), "14:00"), end: at(d(3), "14:30") });
+  await eventually(
+    () => week(cal, monday),
+    (l) => expect(l.find((e) => e.id === wednesday.id)?.summary).toContain("🔒"),
+  );
+  await openWeek(page, monday);
+  await (await boxOf(page, app, wednesday.id)).click();
+  const reschedule = page.getByTestId("reschedule-form");
+  await reschedule.getByLabel("Reschedule to").fill("10:00");
+  await reschedule.getByRole("button", { name: "Reschedule" }).click();
+  await expect(page.getByTestId("event-drawer")).toHaveCount(0);
+  const moved = async () => {
+    const e = (await week(cal, monday)).find((x) => x.id === wednesday.id);
+    return e ? span(e) : null;
+  };
+  await eventually(moved, (v) => expect(v).toBe(`${d(3)} 10:00-10:30`));
+
+  // Thursday 08:00: Wednesday has passed. A whole run on Thursday keeps the event.
+  clock(d(3), "08:00");
+  await app.restart();
+  await page.reload();
+  await planNow(page);
+  expect(await moved()).toBe(`${d(3)} 10:00-10:30`);
+  await planNow(page);
+  expect(await moved()).toBe(`${d(3)} 10:00-10:30`);
+  await openWeek(page, monday);
+  await expect(await boxOf(page, app, wednesday.id)).toBeVisible();
+});
+
+test("during a trip the snooze and reschedule forms show and take times in the trip's zone (rules 30, 31; timezones travel)", async ({
+  page,
+  app,
+  cal,
+  signIn,
+}) => {
+  await blockUntil(cal, W);
+  await signIn();
+  // A trip to Tokyo (8 hours ahead of the home zone) over the test week.
+  const trip = await page.evaluate(
+    (body) =>
+      fetch("/api/travel", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      }).then((r) => r.status),
+    { tz: "Asia/Tokyo", startDate: W, endDate: day(6) },
+  );
+  expect(trip).toBe(201);
+  await addHabit(page, { title: "Lunch", ideal: "12:00", min: 30, max: 30 });
+  const tokyo = (n: number, minute: number) => localToUtc("Asia/Tokyo", day(n), minute);
+  const evs = await eventually(
+    () => week(cal),
+    (l) => expect(titled(l, "Lunch").map((e) => e.start)).toContain(tokyo(2, 720)),
+  );
+  const wednesday = titled(evs, "Lunch").find((e) => e.start === tokyo(2, 720));
+  if (!wednesday) throw new Error("no Wednesday lunch");
+  await openWeek(page);
+  await (await boxOf(page, app, wednesday.id)).click();
+  // 12:00 in Tokyo, not 04:00 in the home zone.
+  await expect(page.getByTestId("reschedule-form").getByLabel("Reschedule to")).toHaveValue(
+    "12:00",
+  );
+  const snooze = page.getByTestId("snooze-form");
+  await snooze.getByRole("button", { name: "+30 min" }).click();
+  await expect(snooze.getByLabel("Not before")).toHaveValue("12:30");
+  await snooze.getByRole("button", { name: "Snooze" }).click();
+  await expect(page.getByTestId("event-drawer")).toHaveCount(0);
+  const at1230 = (l: Awaited<ReturnType<typeof week>>) =>
+    expect(l.find((e) => e.id === wednesday.id)?.start).toBe(tokyo(2, 750));
+  await eventually(() => week(cal), at1230);
+  await page.reload();
+  at1230(await week(cal));
 });
 
 test("snooze until a date removes the habit's events before that date and keeps the later ones (rule 35)", async ({
