@@ -7,12 +7,15 @@
 //    working calendar account gets the report.
 // 3. The report counts events after the send time on the send day (rule 5).
 // 4. A task on personal hours counts as solo work, not personal time (rule 6).
+// 5. During a trip the preview puts an event on another day than the planner
+//    (the planner shows the week in the home zone, timezones rule 10), or its
+//    links open the week, not the planner at that day (rule 8).
 import { describe, expect, it } from "vitest";
 import { ensureUser } from "../../src/server/accounts.ts";
 import { DailyMailWorker } from "../../src/server/daily-mail.ts";
 import { openDb, run } from "../../src/server/db.ts";
 import type { Mailer, Message } from "../../src/server/mail.ts";
-import { localToUtc } from "../../src/shared/time.ts";
+import { localToUtc, utcToLocal } from "../../src/shared/time.ts";
 
 const ZONE = "Europe/Berlin";
 const FRI = "2026-11-13";
@@ -157,5 +160,44 @@ describe("weekly report delivery", () => {
     const report = sent.find((m) => m.subject.startsWith("Your week"));
     expect(report?.text).toContain("Solo work: 1 h\n");
     expect(report?.text).toContain("Personal time: 1 h 30 min\n");
+  });
+
+  it("during a trip, previews each event on the day the planner shows it (home zone) and links it to the planner at that day", async () => {
+    const { db, sent, user, tick } = setup();
+    const id = user("ana@example.com");
+    run(
+      db,
+      "INSERT INTO travel_zones (id, user_id, tz, start_date, end_date, created_at) VALUES ('trip', ?, 'Asia/Tokyo', '2026-11-14', '2026-11-22', ?)",
+      id,
+      T0,
+    );
+    const event = (id: string, title: string, tokyoDate: string) => {
+      const start = localToUtc("Asia/Tokyo", tokyoDate, 7 * 60);
+      run(
+        db,
+        "INSERT INTO events (calendar_id, event_id, summary, start_ms, end_ms) VALUES (?, ?, ?, ?, ?)",
+        "cal-ana@example.com",
+        id,
+        title,
+        start,
+        start + 3_600_000,
+      );
+      return start;
+    };
+    // Monday 07:00 in Tokyo is Sunday 23:00 at home: the planner shows it on
+    // Sunday of this week, so next week's preview does not list it.
+    const early = event("early", "Early call", "2026-11-16");
+    expect(utcToLocal(ZONE, early).date).toBe("2026-11-15");
+    // Tuesday 07:00 in Tokyo is Monday 23:00 at home: the planner's Monday.
+    const standup = event("standup", "Tokyo standup", "2026-11-17");
+    expect(utcToLocal(ZONE, standup).date).toBe("2026-11-16");
+    await tick(t(FRI, "09:30"));
+    const text = sent.find((m) => m.subject.startsWith("Your week"))?.text ?? "";
+    expect(text).toContain("Monday 2026-11-16 (busiest), 1 h: http://localhost/?day=2026-11-16\n");
+    expect(text).toContain("  23:00-24:00 Tokyo standup: http://localhost/?day=2026-11-16\n");
+    expect(text).toContain(
+      "Tuesday 2026-11-17 (lightest), 0 min: http://localhost/?day=2026-11-17\n",
+    );
+    expect(text).not.toContain("Early call");
   });
 });

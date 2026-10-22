@@ -64,6 +64,12 @@ gets this email.
 8. Next week preview: the primary calendar's events for next week, by day,
    with the busiest and the lightest day marked. Each day and each event
    links to the planner at that day.
+   Tempoloom decision: the link (`/?day=<date>`) opens the planner's week of
+   that day with the day marked. The preview reads next week in the home
+   zone, as the planner shows the week also during a trip
+   (timezones-home-and-travel.md rule 10), so each day and link match the
+   planner. The travel zone was checked and is not used: it would put an
+   event on another day than the planner.
 9. Priorities: the user's highest-priority open tasks and the habits they
    plan for the coming week, in priority order. Each links to the
    item in the app.
@@ -86,8 +92,18 @@ gets this email.
     name. The name is taken when the report is sent. The page, its confirm
     page and "not found" are `noindex, nofollow` (meta tag and
     `X-Robots-Tag`) with no referrer. The page views have no rate limit; the
-    confirm POST of one share answers at most 10 requests per minute (429
-    after that), counted per share, so one client cannot block other shares.
+    confirm POST answers at most 10 requests per minute per client and share
+    (429 after that). The client is its address (IPv6: its /64), read through
+    the proxies in `TRUSTED_PROXIES` as the OAuth endpoints read it: visitors
+    behind one trusted proxy keep their own limits, an `X-Forwarded-For` from
+    any other peer is not read, and a flood on one share does not block
+    another share.
+    Tempoloom decision (retention): a share that is not shared (never shared,
+    or stopped in Settings) is deleted 14 days after the last day of its
+    week, so its email share links then answer "not found"; a shared page is
+    deleted 13 weeks after the last day of its week. The email worker deletes
+    them once per UTC day. The week's dates are home-zone dates, so the
+    cutoff has one more day: no share goes early in any zone.
 
 ## Outputs
 

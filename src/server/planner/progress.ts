@@ -42,6 +42,10 @@ export function doneMinutes(
   return done;
 }
 
+/** PRG-40: an open task is time-used when no work is left and no chunk is to come. */
+export const isTimeUsed = (remainingMinutes: number, scheduledMinutes: number): boolean =>
+  remainingMinutes <= 0 && scheduledMinutes <= 0;
+
 /** Minutes of done work per task of one user, or of one task. */
 export function taskDoneMinutes(
   db: Db,

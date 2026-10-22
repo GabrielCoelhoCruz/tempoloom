@@ -24,6 +24,7 @@ import {
   HoursZoneNote,
   PlacementSetting,
   StartModeSetting,
+  TimeUsedSetting,
   TravelSettings,
 } from "./settings-extra.tsx";
 import { TaskDefaults } from "./task-defaults.tsx";
@@ -388,6 +389,7 @@ export function Settings() {
           </label>
           <PlacementSetting settings={settings} act={act} />
           <StartModeSetting settings={settings} act={act} />
+          <TimeUsedSetting settings={settings} act={act} />
         </div>
       </section>
 
