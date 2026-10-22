@@ -9,6 +9,7 @@
 // 2. The run that finds the deleted series writes its occurrences as single
 //    events, so the guests get invitations to a meeting that is gone.
 import { randomUUID } from "node:crypto";
+import { createServer, request } from "node:http";
 import { Hono } from "hono";
 import { DAVClient } from "tsdav";
 import { beforeAll, describe, expect, it } from "vitest";
@@ -56,7 +57,7 @@ function nextWeeks(): string {
   return d;
 }
 
-function setup() {
+function setup(server = url as string, calendar = calendarUrl) {
   const db = openDb(":memory:");
   const user = ensureUser(db, EMAIL, "Owner", Date.now());
   run(db, "UPDATE users SET time_zone = ? WHERE id = ?", ZONE, user.id);
@@ -72,7 +73,7 @@ function setup() {
     db,
     `INSERT INTO calendars (id, account_id, provider_id, name, is_primary, check_availability, writable)
      VALUES ('cal', 'acc', ?, 'Work', 1, 1, 1)`,
-    calendarUrl,
+    calendar,
   );
   const title = `Sync ${randomUUID().slice(0, 8)}`;
   run(
@@ -93,7 +94,7 @@ function setup() {
     db,
     "INSERT INTO meeting_attendees (meeting_id, email, required) VALUES ('m1', 'dana@example.com', 1)",
   );
-  const p = provider();
+  const p = new CalDavProvider({ serverUrl: server, username, password, email: EMAIL }, ZONE);
   const monday = nextWeeks();
   const occurrence = (week: number): DesiredEvent => {
     const date = addDays(monday, 7 * week + 1);
@@ -130,7 +131,7 @@ function setup() {
         db: db as Db,
         userId: user.id,
         now: Date.now(),
-        target: () => ({ provider: p, providerCalendarId: calendarUrl }),
+        target: () => ({ provider: p, providerCalendarId: calendar }),
       },
       desired,
     );
@@ -148,7 +149,7 @@ function setup() {
   };
   /** Events in Radicale with this title, and those that invite Dana. */
   const onServer = async (text: string) => {
-    const { events } = await p.listEvents(calendarUrl, {
+    const { events } = await p.listEvents(calendar, {
       syncToken: null,
       timeMin: Date.now() - 86_400_000,
       timeMax: Date.now() + 60 * 86_400_000,
@@ -261,4 +262,114 @@ describe("a deleted meeting series on Radicale", () => {
           });
     expect(res.status).toBeLessThan(300);
   });
+});
+
+/**
+ * A proxy in front of Radicale that can fail: "pass" forwards each request;
+ * "503" answers with an HTML body that names 404 and 410; "401" refuses the
+ * login; "reset" closes the connection.
+ */
+async function failingProxy() {
+  const target = new URL(url as string);
+  const state = { mode: "pass" as "pass" | "503" | "401" | "reset" };
+  const server = createServer((req, res) => {
+    if (state.mode === "503") {
+      res.writeHead(503, { "content-type": "text/html" });
+      res.end(
+        "<h1>503 Service Unavailable</h1><p>upstream answered 404 and 410 during restart</p>",
+      );
+      return;
+    }
+    if (state.mode === "401") {
+      res.writeHead(401, { "content-type": "text/html" });
+      res.end("<p>login refused; the object was 404 or 410</p>");
+      return;
+    }
+    if (state.mode === "reset") {
+      req.socket.destroy();
+      return;
+    }
+    const up = request(
+      {
+        host: target.hostname,
+        port: target.port,
+        method: req.method,
+        path: req.url,
+        headers: { ...req.headers, host: target.host },
+      },
+      (r) => {
+        res.writeHead(r.statusCode ?? 502, r.headers);
+        r.pipe(res);
+      },
+    );
+    req.pipe(up);
+  });
+  await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
+  const port = (server.address() as { port: number }).port;
+  const via = (u: string) => {
+    const x = new URL(u);
+    x.host = `127.0.0.1:${port}`;
+    return x.toString();
+  };
+  return { state, via, close: () => server.close() };
+}
+
+describe("a meeting series behind a failing server", () => {
+  it.each(["503", "401", "reset"] as const)(
+    "a %s answer is not a deleted series: the meeting stays on with its series, and delete and turn-off do not unlink it",
+    async (mode) => {
+      const proxy = await failingProxy();
+      try {
+        const s = setup(proxy.via(url as string), proxy.via(calendarUrl));
+        await s.push([s.occurrence(0), s.occurrence(1)]);
+        const id = s.seriesId();
+        expect(id).not.toBeNull();
+        // The pull read nothing of the series (an empty cache): the run asks the server.
+        run(s.db, "DELETE FROM events");
+        proxy.state.mode = mode;
+        await s
+          .push([s.occurrence(0), s.occurrence(1), s.occurrence(2), s.task])
+          .catch(() => undefined);
+        const state = () =>
+          one<{ enabled: number; series: string | null }>(
+            s.db,
+            "SELECT enabled, series_event_id AS series FROM meetings WHERE id = 'm1'",
+          );
+        expect(state()).toEqual({ enabled: 1, series: id });
+        const pool = { get: () => s.p };
+        const sync = {
+          request() {},
+          exclusive: async (_u: string, fn: (p: typeof pool) => Promise<unknown>) => fn(pool),
+        } as unknown as SyncService;
+        const owner = one<{ id: string }>(s.db, "SELECT * FROM users WHERE id = ?", s.userId);
+        const app = new Hono<AppEnv>();
+        app.use("*", async (c, next) => {
+          c.set("user", owner as never);
+          await next();
+        });
+        app.route(
+          "/api",
+          meetingRoutes(s.db, sync, () => Date.now()),
+        );
+        await app.request("/api/meetings/m1/enabled", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ enabled: false }),
+        });
+        expect(state()).toEqual({ enabled: 1, series: id });
+        await app.request("/api/meetings/m1", { method: "DELETE" });
+        expect(state()).toEqual({ enabled: 1, series: id });
+        expect(all(s.db, "SELECT reason FROM meeting_changes WHERE meeting_id = 'm1'")).toEqual([]);
+        // The series and its guest are still on the server.
+        proxy.state.mode = "pass";
+        const res = await fetch(id as string, { headers: { authorization: auth } });
+        expect([
+          res.status,
+          (await res.text()).toLowerCase().includes("mailto:dana@example.com"),
+        ]).toEqual([200, true]);
+      } finally {
+        proxy.close();
+      }
+    },
+  );
 });

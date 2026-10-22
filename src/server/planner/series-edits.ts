@@ -83,23 +83,33 @@ export function frequencyOf(rrule: string, date: LocalDate): MeetingFrequency | 
 
 /**
  * The form key (series.ts formKey) of the master after a series edit: each
- * rule field the edit changed (meeting row `m` before, `changed` after) has
- * its new value; the others keep the value last written to the master.
+ * rule field that the calendar changed (its facts against the baseline
+ * `seen`) has the value the meeting took from it; the others keep the value
+ * last written to the master. So a form edit not yet written still differs,
+ * and a calendar value equal to the form edit counts as written.
  */
-function masterForm(written: string, m: MeetingRow, changed: MeetingRow): string {
+function masterForm(
+  written: string,
+  seen: SeriesFacts,
+  facts: SeriesFacts,
+  changed: MeetingRow,
+  zone: string,
+): string {
   const [frequency, starting, duration, ideal] = JSON.parse(written) as [
     string,
     string | null,
     number,
     number,
   ];
+  const rule = facts.rrule !== seen.rrule;
+  const minute = (t: number) => utcToLocal(zone, t).minuteOfDay;
   return formKey({
     ...changed,
-    frequency: changed.frequency !== m.frequency ? changed.frequency : frequency,
-    starting: changed.starting !== m.starting ? changed.starting : starting,
+    frequency: rule ? changed.frequency : frequency,
+    starting: rule ? changed.starting : starting,
     duration_minutes:
-      changed.duration_minutes !== m.duration_minutes ? changed.duration_minutes : duration,
-    ideal_minute: changed.ideal_minute !== m.ideal_minute ? changed.ideal_minute : ideal,
+      facts.end - facts.start !== seen.end - seen.start ? changed.duration_minutes : duration,
+    ideal_minute: minute(facts.start) !== minute(seen.start) ? changed.ideal_minute : ideal,
   });
 }
 
@@ -282,8 +292,13 @@ function readOne(
     // value of each field wins).
     JSON.stringify({
       ...JSON.parse(baseline),
-      ...(seen.form ? { form: masterForm(seen.form, m, changed) } : {}),
-      ...(seen.title !== undefined ? { title: changed.title } : {}),
+      ...(seen.form
+        ? { form: masterForm(seen.form, seen, facts, changed, seen.zone ?? homeZone(db, userId)) }
+        : {}),
+      // The title too: the calendar's only when this edit changed the summary.
+      ...(seen.title !== undefined && facts.summary !== seen.summary
+        ? { title: changed.title }
+        : {}),
     }),
     m.id,
   );

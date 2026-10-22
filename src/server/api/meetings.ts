@@ -687,6 +687,12 @@ export function meetingRoutes(
     await sync.exclusive(user.id, async (pool) => {
       // Read in the queue, so a series that a plan run just wrote is ended too.
       const m = own(c.req.param("id"), user.id);
+      // The calendar first: when it fails, the meeting stays as it was.
+      if (adopted(m)) {
+        if (enabled) await markSeries(db, pool, m, user.id);
+        else await releaseSeries(db, pool, m);
+      } else if (!enabled)
+        await endOwnSeries(db, (id) => pool.get(id), m, now(), lockedIds(db, m, now()));
       run(
         db,
         "UPDATE meetings SET enabled = ?, rules_changed_at = ? WHERE id = ?",
@@ -694,11 +700,6 @@ export function meetingRoutes(
         now(),
         m.id,
       );
-      if (adopted(m)) {
-        if (enabled) await markSeries(db, pool, m, user.id);
-        else await releaseSeries(db, pool, m);
-      } else if (!enabled)
-        await endOwnSeries(db, (id) => pool.get(id), m, now(), lockedIds(db, m, now()));
     });
     changed(user.id);
     return c.json({ ok: true });

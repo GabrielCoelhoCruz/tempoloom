@@ -628,14 +628,27 @@ export class CalDavProvider implements CalendarProvider {
     const client = await this.#connect();
     const objs = await retryRead(() =>
       client.fetchCalendarObjects({ calendar: cal, objectUrls: [url] }),
-    ).catch((err: unknown) => {
-      if (err instanceof Error && /\b(404|410)\b/.test(err.message))
+    ).catch(async (err: unknown) => {
+      // The client's error text may hold the server's answer body, so only the
+      // HTTP status of a direct read decides that the object is gone.
+      if ((await this.#statusOf(url)) === "gone")
         throw new ProviderError("not_found", 404, "Event not found");
       throw err;
     });
     const obj = objs.find((o) => o.url === url) ?? objs[0];
     if (typeof obj?.data !== "string") throw new ProviderError("not_found", 404, "Event not found");
     return { data: obj.data, etag: obj.etag ?? null };
+  }
+
+  /** "gone" when a GET of the object answers 404 or 410; anything else (or no answer) is "unknown". */
+  async #statusOf(url: string): Promise<"gone" | "unknown"> {
+    const res = await fetch(url, {
+      headers: {
+        authorization: `Basic ${Buffer.from(`${this.#creds.username}:${this.#creds.password}`).toString("base64")}`,
+      },
+    }).catch(() => null);
+    await res?.body?.cancel().catch(() => undefined);
+    return res && (res.status === 404 || res.status === 410) ? "gone" : "unknown";
   }
 
   async #calendar(id: string): Promise<DAVCalendar> {

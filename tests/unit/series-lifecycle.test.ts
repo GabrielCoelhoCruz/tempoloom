@@ -559,3 +559,41 @@ describe("a form edit and a series edit before the next plan run", () => {
     expect((insert?.end ?? 0) - (insert?.start ?? 0)).toBe(45 * 60_000);
   });
 });
+
+describe("the newer value of each field, also for the title", () => {
+  it("a form title edit reaches the master when the organizer adds a guest to the series before the next run", async () => {
+    const s = setup();
+    const cal = fakeCalendar();
+    const push = pusher(s, cal.provider);
+    const desired = (title: string) => [
+      { ...occurrence("2026-10-19", "2026-10-20"), title },
+      { ...occurrence("2026-10-26", "2026-10-27"), title },
+    ];
+    await push(desired("● Sync"));
+    run(s.db, "UPDATE meetings SET title = 'Weekly sync' WHERE id = 'm1'");
+    editAll(s, cal, { attendees: ["dana@example.com", "erin@example.com"] });
+    readSeriesEdits(s.db, s.userId, ["cal"], T0);
+    cal.calls.length = 0;
+    await push(desired("● Weekly sync"));
+    const master = cal.calls.find((c) => c.name === "edit" && c.id === "http://dav/1.ics");
+    expect(master?.change).toMatchObject({ summary: "● Weekly sync" });
+  });
+
+  it("the organizer setting the same length as the form edit ends no series", async () => {
+    const s = setup();
+    const cal = fakeCalendar();
+    const push = pusher(s, cal.provider);
+    const desired = [
+      occurrence("2026-10-19", "2026-10-20"),
+      occurrence("2026-10-26", "2026-10-27"),
+    ];
+    await push(desired);
+    run(s.db, "UPDATE meetings SET duration_minutes = 45 WHERE id = 'm1'");
+    const w = cal.objects.get("http://dav/1.ics") as EventWrite;
+    editAll(s, cal, { end: w.start + 45 * 60_000 });
+    readSeriesEdits(s.db, s.userId, ["cal"], T0);
+    cal.calls.length = 0;
+    await push(desired);
+    expect(cal.calls.filter((c) => c.name === "endSeries" || c.name === "insert")).toEqual([]);
+  });
+});
