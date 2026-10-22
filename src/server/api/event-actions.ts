@@ -3,12 +3,13 @@
 // details panel needs to offer them (habits-automation.md rules 6, 8, 30).
 import { type Context, Hono } from "hono";
 import { z } from "zod";
-import { diffDays, localToUtc, utcToLocal, weekdayOf } from "../../shared/time.ts";
+import { chosenMinute, localToUtc, utcToLocal, weekdayOf } from "../../shared/time.ts";
 import type { AppEnv } from "../app.ts";
 import { all, type Db, one, run } from "../db.ts";
 import { jsonBody, notFound } from "../http.ts";
 import type { ManagedRow } from "../planner/push.ts";
 import type { SyncService } from "../sync/service.ts";
+import { planningZone } from "../travel.ts";
 import { badRequest, hhmm } from "./items.ts";
 import { assignmentOf } from "./task-searches.ts";
 
@@ -100,7 +101,8 @@ export function eventActionRoutes(db: Db, sync: SyncService, now: () => number):
    * The chosen time of one occurrence, on the day its event is on (rules 30,
    * 31: "the same day"). The event of an occurrence can be on another day than
    * its date (rule 14, or a move by hand). `minute` counts from the occurrence
-   * date: each 1440 minutes is one day on (plan.ts chosenDay).
+   * date (chosenMinute). The day and the instant use the planning zone, as the
+   * planner does (a travel zone on its dates).
    */
   const occurrenceTime = async (c: Context<AppEnv>, id: string) => {
     const user = c.get("user");
@@ -108,19 +110,15 @@ export function eventActionRoutes(db: Db, sync: SyncService, now: () => number):
     if (!one(db, "SELECT 1 FROM habits WHERE id = ? AND user_id = ?", id, user.id))
       notFound("habit");
     const [h, m] = body.time.split(":").map(Number) as [number, number];
-    const event = one<{ start_ms: number }>(
+    const event = one<{ start_ms: number; end_ms: number }>(
       db,
-      "SELECT start_ms FROM managed_events WHERE user_id = ? AND key = ?",
+      "SELECT start_ms, end_ms FROM managed_events WHERE user_id = ? AND key = ?",
       user.id,
       `habit:${id}:${body.date}`,
     );
-    const day = event ? utcToLocal(user.time_zone, event.start_ms).date : body.date;
-    return {
-      user,
-      event,
-      date: body.date,
-      minute: diffDays(body.date, day) * 1440 + h * 60 + m,
-    };
+    const zone = planningZone(db, user.id, user.time_zone);
+    const day = event ? utcToLocal(zone, event.start_ms).date : body.date;
+    return { user, zone, event, date: body.date, minute: chosenMinute(body.date, day, h * 60 + m) };
   };
 
   /**
@@ -175,7 +173,9 @@ export function eventActionRoutes(db: Db, sync: SyncService, now: () => number):
   r.post("/habits/:id/snooze", async (c) => {
     const id = c.req.param("id");
     const o = await occurrenceTime(c, id);
-    const at = localToUtc(o.user.time_zone, o.date, o.minute);
+    const at = localToUtc(o.zone, o.date, o.minute);
+    // A panel opened before the end: an ended occurrence keeps its done time.
+    if (o.event && o.event.end_ms <= now()) badRequest("time", "The occurrence has ended");
     if (o.event && at <= o.event.start_ms)
       badRequest("time", "Pick a time after the occurrence's current start");
     if (at < now()) badRequest("time", "Pick a time that is not in the past");

@@ -837,7 +837,8 @@ export const MIGRATIONS: readonly string[] = [
   ) STRICT;
   CREATE INDEX meeting_overloads_user ON meeting_overloads(user_id);
 
-  -- One habit occurrence moved to a chosen time of day (habits-automation.md rule 30).
+  -- One habit occurrence moved to a chosen time (habits-automation.md rules 30, 31).
+  -- minute: from the start of date; 1440 or more is a later day (chosenMinute).
   CREATE TABLE habit_reschedules (
     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     habit_id TEXT NOT NULL REFERENCES habits(id) ON DELETE CASCADE,

@@ -2,6 +2,7 @@
 // Rule ids (SCH-, DEF-, TSK-) refer to docs/specs/planning-scheduler.md and the item specs.
 import {
   addDays,
+  chosenDay,
   DAY,
   HOUR,
   type LocalDate,
@@ -466,9 +467,32 @@ const monthIndex = (d: LocalDate) => Number(d.slice(0, 4)) * 12 + Number(d.slice
  * The habit's occurrences. With an interval above 1 (custom frequency), only
  * the periods of its unit (day, week or month) on the cadence from the anchor.
  */
+/**
+ * The dates before today whose occurrence is still open: its event has not
+ * ended (rule 14 or the user moved it to a later day), or its reschedule or
+ * snooze time is on today or later (rules 30, 31).
+ */
+function passedOpen(ctx: Ctx, h: HabitItem, today: LocalDate): Set<LocalDate> {
+  const open = new Set<LocalDate>();
+  for (const picks of [h.rescheduled, h.notBefore])
+    for (const [date, minute] of Object.entries(picks ?? {}))
+      if (date < today && minute !== undefined && chosenDay(date, minute) >= today) open.add(date);
+  const prefix = `habit:${h.id}:`;
+  for (const c of ctx.s.current) {
+    if (!c.key.startsWith(prefix)) continue;
+    const date = c.key.slice(prefix.length);
+    if (date < today) open.add(date);
+  }
+  return open;
+}
+
 function habitOccurrences(ctx: Ctx, h: HabitItem): Occurrence[] {
   const f = h.frequency;
-  const out = frequencyOccurrences(ctx, h);
+  const today = utcToLocal(ctx.s.zone, ctx.earliest).date;
+  const open = passedOpen(ctx, h, today);
+  const from = [...open].reduce((a, d) => (d < a ? d : a), today);
+  const all = frequencyOccurrences(ctx, h, from);
+  const out = open.size === 0 ? all : all.filter((o) => o.date >= today || open.has(o.date));
   const every = f.interval ?? 1;
   if (every <= 1) return out;
   const anchor = f.anchor ?? h.starting ?? utcToLocal(ctx.s.zone, h.createdAt).date;
@@ -481,10 +505,9 @@ function habitOccurrences(ctx: Ctx, h: HabitItem): Occurrence[] {
   return out.filter((o) => onCadence(index(o.periodStart), every));
 }
 
-function frequencyOccurrences(ctx: Ctx, h: HabitItem): Occurrence[] {
+function frequencyOccurrences(ctx: Ctx, h: HabitItem, first: LocalDate): Occurrence[] {
   const frequency = h.frequency;
   const { s } = ctx;
-  const first = utcToLocal(s.zone, ctx.earliest).date;
   const last = utcToLocal(s.zone, ctx.end - 1).date;
   const hasHours = (d: LocalDate) => (s.hours[h.hours]?.[weekdayOf(d)]?.length ?? 0) > 0;
   const allowed = (d: LocalDate) => !h.starting || d >= h.starting;
@@ -596,6 +619,7 @@ function fragmentCost(
 
 /**
  * SCH-91: nearest start to the ideal time; shrinks per the defense mode.
+ * `window`: the occurrence's time that day, for the fragmentation cost.
  * `picked`: the instant of a reschedule or a snooze, which wins over the ideal
  * time and the end-of-hours start (`ideal_at_end`).
  */
@@ -604,8 +628,7 @@ function searchHabit(
   h: HabitItem,
   free: TimeSet,
   date: LocalDate,
-  window?: TimeSet,
-  picked?: number,
+  { window, picked }: { window?: TimeSet | undefined; picked?: number | undefined } = {},
 ): Interval | null {
   const dayEnd =
     picked === undefined && h.idealAtEnd
@@ -710,14 +733,6 @@ function habitWindow(
   return day.clip(notBefore ?? 0, Math.min(limit, ctx.end));
 }
 
-/**
- * Rules 30, 31: the day of a reschedule or snooze time. The time counts from
- * the occurrence date, so each 1440 minutes is one day on: the day its event
- * is on, which can differ from the date (rule 14, or a move by hand).
- */
-const chosenDay = (date: LocalDate, minute: number): LocalDate =>
-  addDays(date, Math.floor(minute / 1440));
-
 function placeHabit(ctx: Ctx, h: HabitItem): void {
   const { s } = ctx;
   const done = new Set((s.past ?? []).map((p) => p.key));
@@ -785,7 +800,10 @@ function placeHabit(ctx: Ctx, h: HabitItem): void {
       if (okLen && dayIdx >= 0) chosen = { iv: { start: cur.start, end: cur.end }, dayIdx };
     }
     for (let i = 0; !chosen && i < days.length; i++) {
-      const iv = searchHabit(ctx, h, frees[i] as TimeSet, days[i] as LocalDate, windows[i], picked);
+      const iv = searchHabit(ctx, h, frees[i] as TimeSet, days[i] as LocalDate, {
+        window: windows[i],
+        picked,
+      });
       if (iv) chosen = { iv, dayIdx: i };
     }
     chosen ??= takeRecovery(ctx, h, frees, days, windows, picked);
@@ -823,7 +841,7 @@ function placeHabit(ctx: Ctx, h: HabitItem): void {
       const iv =
         cur && !h.changed && (!bounded || fullWindow.contains(cur))
           ? { start: cur.start, end: cur.end }
-          : searchHabit(ctx, { ...h, defense: "always-busy" }, fullWindow, home, undefined, picked);
+          : searchHabit(ctx, { ...h, defense: "always-busy" }, fullWindow, home, { picked });
       if (iv) {
         ctx.placements.push({
           key,
@@ -901,7 +919,7 @@ function takeRecovery(
       TimeSet.from([...(frees[i] as TimeSet).intervals(), ...back.intervals()]).intersect(w),
       h.exclusions,
     );
-    const iv = searchHabit(ctx, h, free, days[i] as LocalDate, w, picked);
+    const iv = searchHabit(ctx, h, free, days[i] as LocalDate, { window: w, picked });
     if (!iv) continue;
     const gone = new Set(mine.filter((p) => p.start < iv.end && p.end > iv.start));
     ctx.placements = ctx.placements.filter((p) => !gone.has(p));

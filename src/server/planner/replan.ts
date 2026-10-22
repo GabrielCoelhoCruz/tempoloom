@@ -23,6 +23,7 @@ import {
 } from "../../shared/event-settings.ts";
 import {
   addDays,
+  chosenDay,
   DAY,
   type LocalDate,
   localToUtc,
@@ -225,12 +226,15 @@ export function loadSnapshot(
   const today = utcToLocal(zone, now).date;
   const rescheduled = new Map<string, Partial<Record<LocalDate, number>>>();
   const snoozed = new Map<string, Partial<Record<LocalDate, number>>>();
+  // Each choice whose day is today or later, also when the occurrence's date
+  // has passed: a minute of 1440 or more is on a later day (chosenMinute).
   for (const r of all<{ habit_id: string; date: string; minute: number; not_before: number }>(
     db,
-    "SELECT habit_id, date, minute, not_before FROM habit_reschedules WHERE user_id = ? AND date >= ?",
+    "SELECT habit_id, date, minute, not_before FROM habit_reschedules WHERE user_id = ? AND (date >= ? OR minute >= 1440)",
     userId,
     today,
   )) {
+    if (chosenDay(r.date, r.minute) < today) continue;
     const into = r.not_before ? snoozed : rescheduled;
     into.set(r.habit_id, { ...into.get(r.habit_id), [r.date]: r.minute });
   }

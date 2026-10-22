@@ -21,9 +21,12 @@
 // - a snooze of an occurrence that has started does nothing -> 12:15, not 12:00
 // - a snooze or reschedule puts an occurrence whose event moved to another day
 //   back on its own date                                  -> Thursday 10:00, 11:00
+// - a run on the later day drops the occurrence of the passed date and deletes
+//   its event                                              -> event kept at Thursday 10:00
 // - snooze until a date leaves earlier events, or drops later ones -> event days
 // - the search shows other titles, or hides matches        -> names in the list
 import type { Page } from "@playwright/test";
+import { addDays, weekdayOf } from "../../src/shared/time.ts";
 import { boxOf, day, invite, rawEvent, span, week } from "./automation-helpers.ts";
 import { edit, names, openAutomations, save } from "./automation-list-helpers.ts";
 import {
@@ -591,6 +594,62 @@ test("snooze and reschedule keep the occurrence on the day its event moved to (r
   await page.reload();
   await expect(page.locator(".ev-habit", { hasText: "Lunch" })).toHaveCount(5);
   expect(await lunches()).toEqual(expected);
+});
+
+test("a reschedule to a later day keeps the event on that day when the plan runs on that day (rules 14, 30)", async ({
+  page,
+  app,
+  cal,
+  signIn,
+}) => {
+  // The server clock runs in the current week, so it can reach the later day.
+  const today = local(Date.now()).slice(0, 10);
+  const monday = addDays(today, 1 - weekdayOf(today));
+  const d = (n: number) => addDays(monday, n);
+  const clock = (date: string, time: string) => {
+    app.env.TEST_CLOCK_START = new Date(at(date, time)).toISOString();
+  };
+  clock(d(0), "08:00");
+  await app.restart();
+  await signIn();
+  await addHabit(page, { title: "Lunch", ideal: "12:00", min: 30, max: 30 });
+  const evs = await eventually(
+    () => week(cal, monday),
+    (l) =>
+      expect(titled(l, "Lunch").map(span)).toEqual(
+        [0, 1, 2, 3, 4].map((n) => `${d(n)} 12:00-12:30`),
+      ),
+  );
+  const wednesday = titled(evs, "Lunch")[2];
+  if (!wednesday) throw new Error("no Wednesday lunch");
+  // The user moves Wednesday's lunch to Thursday 14:00 (it locks), then reschedules it to 10:00.
+  await cal.update(wednesday.id, { start: at(d(3), "14:00"), end: at(d(3), "14:30") });
+  await eventually(
+    () => week(cal, monday),
+    (l) => expect(l.find((e) => e.id === wednesday.id)?.summary).toContain("🔒"),
+  );
+  await openWeek(page, monday);
+  await (await boxOf(page, app, wednesday.id)).click();
+  const reschedule = page.getByTestId("reschedule-form");
+  await reschedule.getByLabel("Reschedule to").fill("10:00");
+  await reschedule.getByRole("button", { name: "Reschedule" }).click();
+  await expect(page.getByTestId("event-drawer")).toHaveCount(0);
+  const moved = async () => {
+    const e = (await week(cal, monday)).find((x) => x.id === wednesday.id);
+    return e ? span(e) : null;
+  };
+  await eventually(moved, (v) => expect(v).toBe(`${d(3)} 10:00-10:30`));
+
+  // Thursday 08:00: Wednesday has passed. A whole run on Thursday keeps the event.
+  clock(d(3), "08:00");
+  await app.restart();
+  await page.reload();
+  await planNow(page);
+  expect(await moved()).toBe(`${d(3)} 10:00-10:30`);
+  await planNow(page);
+  expect(await moved()).toBe(`${d(3)} 10:00-10:30`);
+  await openWeek(page, monday);
+  await expect(await boxOf(page, app, wednesday.id)).toBeVisible();
 });
 
 test("snooze until a date removes the habit's events before that date and keeps the later ones (rule 35)", async ({
