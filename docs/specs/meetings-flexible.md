@@ -108,6 +108,57 @@ Attendee class, computed each time the meeting is placed:
 2. The user can also create a meeting from an empty form. Tempoloom then
    creates a new recurring series on `targetCalendar` with the attendees as
    guests (E-0177, E-0046) (legacy evidence).
+   Tempoloom decision: at the first plan run that places the meeting,
+   Tempoloom writes one series master: an RRULE from `frequency` (one
+   instance per period: weekly on the first ideal day, daily, or monthly on
+   the ideal day; day 29 to 31 is the last day of a shorter month), DTSTART at
+   `idealTime` on the ideal day of the first planned period, in the user's
+   time zone (TZID with a VTIMEZONE, so the local time stays across DST), the
+   length `duration`, and the private properties `tl`, `tl_user` and
+   `tl_meeting`. The master takes the fields of the last planned occurrence,
+   as the instances after the planning window will be (rule 20). Each
+   occurrence is an instance of the series: a move or a resize is an override
+   (RECURRENCE-ID), a skip or `remove` is an EXDATE, and a period that gets an
+   occurrence again gets an RDATE with an override. A meeting saved before
+   this change keeps its single events; its series begins in the first
+   planned period, with an EXDATE for each period that already has its own
+   event, so no period has two events. Turning the meeting off, deleting it,
+   or a new frequency or start date in the form ends the series (RRULE UNTIL
+   at that time): past instances stay, later ones go; locked later instances
+   stay (each as an RDATE with its override), except on delete. The next run
+   after a turn-on or a new frequency writes a new series. An instance counts
+   by its start (an override's own start, else its rule time): ending the
+   series removes a moved occurrence that starts later and keeps one that
+   started before. A new length or ideal time in the form also starts a new
+   series; a new title or guest list goes to the master and to the
+   occurrences in the planning window. A period whose rule instance starts
+   after the planning window moves that instance; it never gets a second one.
+   An occurrence that comes back at its rule time loses its EXDATE; one at
+   another time gets an RDATE. If the organizer deletes the whole series in a
+   calendar app, the meeting turns off and keeps its rules (edge case 5 of
+   SPEC-MEET-02). Only the calendar decides that the series is gone: a "not
+   found" answer for the series object, never an empty read window. The run
+   that finds it writes nothing more for the meeting (no single events, so no
+   invitations), and the change log says "series deleted in the calendar". A
+   form edit is saved at once; the next plan run writes it to the series. If
+   the organizer also edits the series in a calendar app before that run, each
+   field keeps its newer value: a field the calendar edit changed takes the
+   calendar's value, and a form change of another field (the title too) is
+   still written; a calendar value equal to the form edit counts as written.
+   Only an HTTP 404 or 410 for the series object means "gone"; a server error,
+   a refused login or a lost connection changes nothing, and turning off or
+   deleting the meeting then fails and keeps the meeting as it was. The rule is written in the user's home zone: DTSTART, BYDAY
+   and the EXDATEs are all in that zone. A trip (travel zone) does not change
+   the rule: the plan moves the occurrences of the trip with overrides. A new
+   home zone ends the series, and the next run writes one in the new zone. A
+   calendar backend without series support (no instance list) keeps one event
+   per occurrence.
+   Known gaps on Google Calendar (not proven; the rows are "done (CalDAV)"):
+   Tempoloom writes the series there too, but it reads no series edit back
+   (no master facts), so a "this and following" or "all events" edit counts as
+   edits of single occurrences; it has no instance add, so a period that comes
+   back gets a single event; and ending a series drops the locked later
+   instances.
 3. Only series organized by the user can be adopted. A series where the user
    is only a guest is not listed (Proposed; E-0046 requires the user to own
    the series).

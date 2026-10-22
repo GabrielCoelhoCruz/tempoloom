@@ -29,7 +29,8 @@ export type ChangeReason =
   | "ruleChanged"
   | "noFreeSlot"
   | "manualMove"
-  | "manualSkip";
+  | "manualSkip"
+  | "seriesDeleted";
 
 interface Change {
   meetingId: string;
@@ -84,7 +85,7 @@ const meetingOf = (db: Db, id: string) =>
   one<MeetingRow>(db, "SELECT * FROM meetings WHERE id = ?", id);
 
 /** The period of an instance date, as the scheduler counts it; null in a skipped week. */
-function periodOf(
+export function periodOf(
   m: MeetingRow,
   date: LocalDate,
   weekStart: 1 | 7,

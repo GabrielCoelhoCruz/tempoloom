@@ -1377,4 +1377,17 @@ export const MIGRATIONS: readonly string[] = [
   ALTER TABLE tasks ADD COLUMN readds INTEGER NOT NULL DEFAULT 0;
   ALTER TABLE tasks ADD COLUMN time_used_since INTEGER;
   `,
+  // 49: a meeting made from the form is one recurring series that Tempoloom
+  // writes (meetings-flexible.md rule 2): series_owned. Meetings made before
+  // keep their single events and get a series at the next plan run.
+  // series_rule: the master facts last seen, so a series edit in the calendar
+  // is read once (meetings-flexible-rescheduling.md rules 18, 22). events.series:
+  // the master facts of each instance; each calendar is read in full once.
+  `
+  ALTER TABLE meetings ADD COLUMN series_owned INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE meetings ADD COLUMN series_rule TEXT NOT NULL DEFAULT '';
+  UPDATE meetings SET series_owned = 1 WHERE series_event_id IS NULL;
+  ALTER TABLE events ADD COLUMN series TEXT NOT NULL DEFAULT '';
+  UPDATE calendars SET sync_token = NULL;
+  `,
 ];

@@ -2,7 +2,7 @@
 import { randomUUID } from "node:crypto";
 import ICAL from "ical.js";
 import { type DAVCalendar, DAVClient } from "tsdav";
-import { isValidTimeZone, localToUtc } from "../../shared/time.ts";
+import { isValidTimeZone, localToUtc, utcToLocal } from "../../shared/time.ts";
 import {
   type CalendarProvider,
   type EventChanges,
@@ -12,7 +12,9 @@ import {
   ProviderError,
   type ProviderEvent,
   type ResponseStatus,
+  type SeriesFacts,
 } from "./types.ts";
+import { vtimezone } from "./vtimezone.ts";
 
 export interface CalDavCredentials {
   serverUrl: string;
@@ -316,6 +318,7 @@ export function eventsFromObject(
     return out;
   }
 
+  const facts = seriesFacts(master, event, zone);
   const it = event.iterator();
   for (let n = 0, next = it.next(); next && n < MAX_OCCURRENCES; n++, next = it.next()) {
     const details = event.getOccurrenceDetails(next);
@@ -330,9 +333,52 @@ export function eventsFromObject(
       start,
       end,
       allDay: details.startDate.isDate,
+      series: { ...facts, own: comp !== master },
     });
   }
   return out;
+}
+
+/** What the master of a series says (types.ts SeriesFacts), for each of its instances. */
+function seriesFacts(master: ICAL.Component, event: ICAL.Event, zone: string): SeriesFacts {
+  const start = instantOf(event.startDate, zone);
+  const guests = master.getAllProperties("attendee");
+  const optional = (a: ICAL.Property) =>
+    String(a.getParameter("role") ?? "").toUpperCase() === "OPT-PARTICIPANT";
+  return {
+    start,
+    end: event.endDate ? instantOf(event.endDate, zone) : start,
+    rrule: String(master.getFirstPropertyValue("rrule") ?? ""),
+    summary: String(master.getFirstPropertyValue("summary") ?? ""),
+    attendees: guests.filter((a) => !optional(a)).map((a) => mailto(a.getFirstValue())),
+    optional: guests.filter(optional).map((a) => mailto(a.getFirstValue())),
+    own: false,
+  };
+}
+
+/** A local time of `zone` (no zone of its own: the caller sets the TZID parameter). */
+function localTime(zone: string, ms: number): ICAL.Time {
+  const l = utcToLocal(zone, ms);
+  const [year, month, day] = l.date.split("-").map(Number) as [number, number, number];
+  return ICAL.Time.fromData({
+    year,
+    month,
+    day,
+    hour: Math.floor(l.minuteOfDay / 60),
+    minute: l.minuteOfDay % 60,
+    second: 0,
+    isDate: false,
+  });
+}
+
+/** Adds a date-time property: local with a TZID when `zone` is set, else UTC. */
+function addTime(ev: ICAL.Component, name: string, ms: number, zone: string | undefined) {
+  if (!zone) return ev.addPropertyWithValue(name, toUtcTime(ms));
+  const p = new ICAL.Property(name);
+  p.setValue(localTime(zone, ms));
+  p.setParameter("tzid", zone);
+  ev.addProperty(p);
+  return p;
 }
 
 function toUtcTime(ms: number): ICAL.Time {
@@ -379,8 +425,15 @@ export function objectFromWrite(uid: string, w: EventWrite, now: number): string
     ev.addPropertyWithValue("dtstart", ICAL.Time.fromDateString(w.allDayDates.start));
     ev.addPropertyWithValue("dtend", ICAL.Time.fromDateString(w.allDayDates.end));
   } else {
-    ev.addPropertyWithValue("dtstart", toUtcTime(w.start));
-    ev.addPropertyWithValue("dtend", toUtcTime(w.end));
+    // A series keeps its local time across DST changes (TZID and VTIMEZONE).
+    const zone = w.recurrence && w.timeZone && isValidTimeZone(w.timeZone) ? w.timeZone : undefined;
+    if (zone)
+      cal.addSubcomponent(
+        new ICAL.Component(ICAL.parse(vtimezone(zone, new Date(w.start).getUTCFullYear()))),
+      );
+    addTime(ev, "dtstart", w.start, zone);
+    addTime(ev, "dtend", w.end, zone);
+    for (const t of w.exdates ?? []) addTime(ev, "exdate", t, zone);
   }
   if (w.recurrence) ev.addPropertyWithValue("rrule", ICAL.Recur.fromString(w.recurrence));
   ev.addPropertyWithValue("summary", w.summary);
@@ -566,11 +619,43 @@ export class CalDavProvider implements CalendarProvider {
     };
   }
 
+  /**
+   * One calendar object, as the server stores it. A missing object (404, 410)
+   * is a ProviderError "not_found" for every caller: the CalDAV client throws a
+   * plain Error for it.
+   */
+  async #object(cal: DAVCalendar, url: string): Promise<{ data: string; etag: string | null }> {
+    const client = await this.#connect();
+    const objs = await retryRead(() =>
+      client.fetchCalendarObjects({ calendar: cal, objectUrls: [url] }),
+    ).catch(async (err: unknown) => {
+      // The client's error text may hold the server's answer body, so only the
+      // HTTP status of a direct read decides that the object is gone.
+      if ((await this.#statusOf(url)) === "gone")
+        throw new ProviderError("not_found", 404, "Event not found");
+      throw err;
+    });
+    const obj = objs.find((o) => o.url === url) ?? objs[0];
+    if (typeof obj?.data !== "string") throw new ProviderError("not_found", 404, "Event not found");
+    return { data: obj.data, etag: obj.etag ?? null };
+  }
+
+  /** "gone" when a GET of the object answers 404 or 410; anything else (or no answer) is "unknown". */
+  async #statusOf(url: string): Promise<"gone" | "unknown"> {
+    const res = await fetch(url, {
+      headers: {
+        authorization: `Basic ${Buffer.from(`${this.#creds.username}:${this.#creds.password}`).toString("base64")}`,
+      },
+    }).catch(() => null);
+    await res?.body?.cancel().catch(() => undefined);
+    return res && (res.status === 404 || res.status === 410) ? "gone" : "unknown";
+  }
+
   async #calendar(id: string): Promise<DAVCalendar> {
     const cached = this.#calendars.get(id);
     if (cached) return cached;
     const found = (await this.#fetchCalendars()).find((c) => c.url === id);
-    if (!found) throw new ProviderError("not_found", 404, `Calendar ${id} not found`);
+    if (!found) throw new ProviderError("not_found", 404, `Calendar ${id} not found`, "calendar");
     return found;
   }
 
@@ -744,10 +829,7 @@ export class CalDavProvider implements CalendarProvider {
   ): Promise<ProviderEvent> {
     const client = await this.#connect();
     const cal = await this.#calendar(calendarId);
-    const [obj] = await retryRead(() =>
-      client.fetchCalendarObjects({ calendar: cal, objectUrls: [eventId] }),
-    );
-    if (typeof obj?.data !== "string") throw new ProviderError("not_found", 404, "Event not found");
+    const obj = await this.#object(cal, eventId);
     const root = new ICAL.Component(ICAL.parse(obj.data));
     const name = colorId ? COLOR_NAMES[colorId] : undefined;
     for (const ev of root.getAllSubcomponents("vevent")) {
@@ -843,10 +925,7 @@ export class CalDavProvider implements CalendarProvider {
     if (eventId.includes("#")) return this.#editInstance(calendarId, eventId, change, etag);
     const client = await this.#connect();
     const cal = await this.#calendar(calendarId);
-    const [obj] = await retryRead(() =>
-      client.fetchCalendarObjects({ calendar: cal, objectUrls: [eventId] }),
-    );
-    if (typeof obj?.data !== "string") throw new ProviderError("not_found", 404, "Event not found");
+    const obj = await this.#object(cal, eventId);
     const root = new ICAL.Component(ICAL.parse(obj.data));
     const ev = root.getAllSubcomponents("vevent").find((v) => !v.hasProperty("recurrence-id"));
     if (!ev) throw new ProviderError("not_found", 404, "Event not found");
@@ -989,10 +1068,7 @@ export class CalDavProvider implements CalendarProvider {
     const hash = eventId.indexOf("#");
     const url = eventId.slice(0, hash);
     const rid = eventId.slice(hash + 1);
-    const [obj] = await retryRead(() =>
-      client.fetchCalendarObjects({ calendar: cal, objectUrls: [url] }),
-    );
-    if (typeof obj?.data !== "string") throw new ProviderError("not_found", 404, "Event not found");
+    const obj = await this.#object(cal, url);
     const root = new ICAL.Component(ICAL.parse(obj.data));
     for (const tz of root.getAllSubcomponents("vtimezone")) {
       ICAL.TimezoneService.register(new ICAL.Timezone(tz));
@@ -1164,12 +1240,8 @@ export class CalDavProvider implements CalendarProvider {
     seriesId: string,
     props: Record<string, string>,
   ): Promise<void> {
-    const client = await this.#connect();
     const cal = await this.#calendar(calendarId);
-    const [obj] = await retryRead(() =>
-      client.fetchCalendarObjects({ calendar: cal, objectUrls: [seriesId] }),
-    );
-    if (typeof obj?.data !== "string") throw new ProviderError("not_found", 404, "Event not found");
+    const obj = await this.#object(cal, seriesId);
     const root = new ICAL.Component(ICAL.parse(obj.data));
     const value = Buffer.from(JSON.stringify(props)).toString("base64url");
     for (const ev of root.getAllSubcomponents("vevent")) {
@@ -1177,6 +1249,203 @@ export class CalDavProvider implements CalendarProvider {
       if (Object.keys(props).length > 0) ev.addPropertyWithValue(PROPS_PROPERTY, value);
     }
     await this.#putSeries(seriesId, root, obj.etag ?? null);
+  }
+
+  /** The series object at `url`, parsed, with its master. */
+  async #seriesObject(calendarId: string, url: string) {
+    const client = await this.#connect();
+    const cal = await this.#calendar(calendarId);
+    const obj = await this.#object(cal, url);
+    const root = new ICAL.Component(ICAL.parse(obj.data));
+    for (const tz of root.getAllSubcomponents("vtimezone")) {
+      ICAL.TimezoneService.register(new ICAL.Timezone(tz));
+    }
+    const master = root.getAllSubcomponents("vevent").find((v) => !v.hasProperty("recurrence-id"));
+    if (!master) throw new ProviderError("not_found", 404, "Event not found");
+    return { client, root, master, etag: obj.etag ?? null, data: obj.data };
+  }
+
+  async seriesInstances(
+    calendarId: string,
+    seriesId: string,
+    from: number,
+    to: number,
+  ): Promise<ProviderEvent[]> {
+    const { data, etag } = await this.#seriesObject(calendarId, seriesId);
+    return eventsFromObject(data, seriesId, etag, from, to, this.#zone, await this.#self()).filter(
+      (e) => e.recurringId === seriesId,
+    );
+  }
+
+  /** A time of the series' own kind: local in the master's TZID, else UTC. */
+  #seriesTime(master: ICAL.Component, ms: number): { time: ICAL.Time; tzid: string | null } {
+    const tzid = master.getFirstProperty("dtstart")?.getParameter("tzid");
+    const zone = typeof tzid === "string" && isValidTimeZone(tzid) ? tzid : null;
+    return { time: zone ? localTime(zone, ms) : toUtcTime(ms), tzid: zone };
+  }
+
+  async addInstance(calendarId: string, seriesId: string, w: EventWrite): Promise<ProviderEvent> {
+    const { root, master, etag } = await this.#seriesObject(calendarId, seriesId);
+    const { time, tzid } = this.#seriesTime(master, w.start);
+    // At a rule time with an EXDATE: removing the EXDATE gives the instance
+    // back. An RDATE there too would make two instances at the same time.
+    let ruleTime = false;
+    for (const p of master.getAllProperties("exdate"))
+      if ((p.getFirstValue() as ICAL.Time | null)?.toString() === time.toString()) {
+        master.removeProperty(p);
+        ruleTime = true;
+      }
+    if (!ruleTime) {
+      const rdate = new ICAL.Property("rdate");
+      rdate.setValue(time);
+      if (tzid) rdate.setParameter("tzid", tzid);
+      master.addProperty(rdate);
+    }
+    const tag = await this.#putSeries(seriesId, root, etag);
+    return this.#updateInstance(calendarId, `${seriesId}#${time.toString()}`, w, tag);
+  }
+
+  async endSeries(calendarId: string, seriesId: string, at: number, keep: string[]): Promise<void> {
+    const found = await this.#seriesObject(calendarId, seriesId).catch((err: unknown) => {
+      if (err instanceof ProviderError && err.kind === "not_found") return null;
+      throw err;
+    });
+    if (!found) return;
+    const { client, root, master, etag } = found;
+    const kept = new Set(keep);
+    const idOf = (t: ICAL.Time) => `${seriesId}#${t.toString()}`;
+    const instant = (t: unknown) =>
+      t instanceof ICAL.Time ? instantOf(t, this.#zone) : Number.NEGATIVE_INFINITY;
+    const tzid = master.getFirstProperty("dtstart")?.getParameter("tzid");
+    const start = master.getFirstPropertyValue("dtstart");
+    const datesOf = (name: string) =>
+      new Set(
+        master.getAllProperties(name).map((p) => (p.getFirstValue() as ICAL.Time).toString()),
+      );
+    const rdates = datesOf("rdate");
+    const exdates = datesOf("exdate");
+    const add = (name: "rdate" | "exdate", t: ICAL.Time) => {
+      const set = name === "rdate" ? rdates : exdates;
+      if (set.has(t.toString())) return;
+      const p = new ICAL.Property(name);
+      p.setValue(t);
+      if (typeof tzid === "string" && !t.zone?.tzid?.startsWith("UTC"))
+        p.setParameter("tzid", tzid);
+      master.addProperty(p);
+      set.add(t.toString());
+    };
+    // An instance counts by its start: an override's own start, else its rule
+    // time (the RECURRENCE-ID). The rule ends at `at`, so an instance kept
+    // with a later rule time needs an RDATE of that time (its id); a removed
+    // one whose rule time is before `at` needs an EXDATE.
+    const keepRdate = new Set<string>();
+    for (const ov of root.getAllSubcomponents("vevent")) {
+      if (ov === master) continue;
+      const rid = ov.getFirstPropertyValue("recurrence-id");
+      if (!(rid instanceof ICAL.Time)) continue;
+      const ruleLater = instant(rid) >= at;
+      const startLater = instant(ov.getFirstPropertyValue("dtstart") ?? rid) >= at;
+      if (startLater && !kept.has(idOf(rid))) {
+        root.removeSubcomponent(ov);
+        if (!ruleLater) add("exdate", rid);
+        continue;
+      }
+      if (ruleLater) keepRdate.add(rid.toString());
+    }
+    // Kept instances without an override stay at their rule time.
+    for (const id of kept) {
+      if (!id.startsWith(`${seriesId}#`) || !(start instanceof ICAL.Time)) continue;
+      const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})/.exec(
+        id.slice(seriesId.length + 1),
+      );
+      if (!m) continue;
+      const t = start.clone();
+      [t.year, t.month, t.day, t.hour, t.minute, t.second] = m.slice(1).map(Number) as [
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+      ];
+      if (instant(t) >= at) keepRdate.add(t.toString());
+    }
+    for (const p of master.getAllProperties("rdate")) {
+      const t = p.getFirstValue() as ICAL.Time;
+      if (instant(t) >= at && !keepRdate.has(t.toString())) {
+        master.removeProperty(p);
+        rdates.delete(t.toString());
+      }
+    }
+    for (const ov of root.getAllSubcomponents("vevent")) {
+      const rid = ov.getFirstPropertyValue("recurrence-id");
+      if (ov !== master && rid instanceof ICAL.Time && keepRdate.has(rid.toString()))
+        add("rdate", rid);
+    }
+    for (const id of keepRdate) {
+      const ov = root
+        .getAllSubcomponents("vevent")
+        .some(
+          (v) => (v.getFirstPropertyValue("recurrence-id") as ICAL.Time | null)?.toString() === id,
+        );
+      if (ov || !(start instanceof ICAL.Time)) continue;
+      const t = start.clone();
+      const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})/.exec(id);
+      if (!m) continue;
+      [t.year, t.month, t.day, t.hour, t.minute, t.second] = m.slice(1).map(Number) as [
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+      ];
+      add("rdate", t);
+    }
+    // Tempoloom ended this series: it is never read as the organizer's split.
+    for (const ev of root.getAllSubcomponents("vevent")) {
+      const props = { ...readProps(ev), tl_ended: "1" };
+      ev.removeAllProperties(PROPS_PROPERTY);
+      ev.addPropertyWithValue(
+        PROPS_PROPERTY,
+        Buffer.from(JSON.stringify(props)).toString("base64url"),
+      );
+    }
+    const rule = master.getFirstPropertyValue("rrule");
+    if (instant(start) >= at) {
+      // The series had not started: only the kept instances stay, as RDATEs.
+      // The rule keeps DTSTART only (COUNT=1), so the object stays a series and
+      // an override of the first instance still applies.
+      if (rule instanceof ICAL.Recur) {
+        rule.until = null as unknown as ICAL.Time;
+        rule.count = 1;
+        master.removeAllProperties("rrule");
+        master.addPropertyWithValue("rrule", rule);
+      }
+      // A first instance that moved earlier and started is kept by its start:
+      // DTSTART itself is that instance, so no RDATE (and no EXDATE) there.
+      const startedFirst = start instanceof ICAL.Time && keepRdate.has(start.toString());
+      if (startedFirst)
+        for (const p of master.getAllProperties("rdate"))
+          if ((p.getFirstValue() as ICAL.Time).toString() === start.toString()) {
+            master.removeProperty(p);
+            rdates.delete(start.toString());
+          }
+      const startKept = startedFirst || (start instanceof ICAL.Time && kept.has(idOf(start)));
+      if (!startKept && rdates.size === 0) {
+        const res = await client.deleteCalendarObject({ calendarObject: { url: seriesId } });
+        if (!res.ok && res.status !== 404 && res.status !== 410)
+          throw new ProviderError("other", res.status, `Delete failed: ${res.status}`);
+        return;
+      }
+      if (!startKept && start instanceof ICAL.Time) add("exdate", start);
+    } else if (rule instanceof ICAL.Recur) {
+      rule.count = null as unknown as number;
+      rule.until = toUtcTime(at - 1000);
+      master.removeAllProperties("rrule");
+      master.addPropertyWithValue("rrule", rule);
+    }
+    await this.#putSeries(seriesId, root, etag);
   }
 
   async deleteEvent(calendarId: string, eventId: string): Promise<void> {

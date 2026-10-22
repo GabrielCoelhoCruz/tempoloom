@@ -11,6 +11,12 @@
 // 6. All-day, free (TRANSPARENT) and cancelled events must be recognized.
 // 7. The user's own attendee status and a foreign organizer must be read.
 // 8. An unchanged calendar must report no changes; a changed one a full read.
+// 9. Tempoloom's own meeting series (meetings-flexible.md rule 2): an occurrence
+//    that comes back at its rule time is one instance (no RDATE next to it); one
+//    at another time is an RDATE; ending a series removes each instance that
+//    starts after the end, also a moved one, keeps one that started before
+//    (also when its rule time is later), keeps the locked ones it is told to,
+//    and deletes a series that has not started.
 import { randomUUID } from "node:crypto";
 import { DAVClient } from "tsdav";
 import { beforeAll, describe, expect, it } from "vitest";
@@ -245,5 +251,118 @@ describe("CalDavProvider", () => {
     });
     expect(changed.full).toBe(true);
     expect(changed.events.some((e) => e.summary === "New")).toBe(true);
+  });
+});
+
+describe("Tempoloom series", () => {
+  const T = (date: string, hm: string) => Date.parse(`${date}T${hm}:00+01:00`);
+  const write = (start: number, minutes = 30) => ({
+    summary: "Series",
+    description: "",
+    start,
+    end: start + minutes * 60_000,
+    busy: true,
+    colorId: null,
+    privateProps: { tl: "1", tl_meeting: "m" },
+    recurrence: "FREQ=WEEKLY;BYDAY=TU",
+    timeZone: ZONE,
+  });
+  /** A weekly Tuesday 10:00 series from 27 Oct (CET), and its object URL. */
+  async function weekly() {
+    const p = provider();
+    const ev = await p.insertEvent(calendarUrl, write(T("2026-10-27", "10:00")));
+    return { p, series: ev.recurringId ?? ev.id };
+  }
+  const starts = async (p: CalDavProvider, series: string, a: number, b: number) =>
+    (await p.seriesInstances(calendarUrl, series, a, b))
+      .map((e) => new Date(e.start).toISOString())
+      .sort();
+  const objectText = async (series: string) => {
+    // A deleted object: the server answers 404.
+    const res = await fetch(series, {
+      headers: {
+        authorization: `Basic ${Buffer.from(`${username}:${password}`).toString("base64")}`,
+      },
+    });
+    return res.ok ? await res.text() : null;
+  };
+  const end = T("2026-12-01", "00:00");
+
+  it("puts back a removed occurrence at its rule time as one instance, and one at another time as an RDATE", async () => {
+    const { p, series } = await weekly();
+    await p.deleteEvent(calendarUrl, `${series}#2026-11-03T10:00:00`);
+    await p.deleteEvent(calendarUrl, `${series}#2026-11-10T10:00:00`);
+    await p.addInstance(calendarUrl, series, write(T("2026-11-03", "10:00")));
+    await p.addInstance(calendarUrl, series, write(T("2026-11-12", "14:00")));
+    expect(await starts(p, series, T("2026-11-02", "00:00"), T("2026-11-16", "00:00"))).toEqual([
+      "2026-11-03T09:00:00.000Z",
+      "2026-11-12T13:00:00.000Z",
+    ]);
+    const text = (await objectText(series)) ?? "";
+    expect(text.match(/^RDATE/gm)).toHaveLength(1);
+    expect(text).not.toContain("EXDATE;TZID=Europe/Berlin:20261103T100000");
+  });
+
+  it("ending a series removes each later instance by its start, also a moved one, and keeps one that started before", async () => {
+    const { p, series } = await weekly();
+    // 3 Nov 10:00 moves to Thursday 5 Nov; 10 Nov 10:00 moves back to Monday 2 Nov.
+    await p.editExternal(
+      calendarUrl,
+      `${series}#2026-11-03T10:00:00`,
+      { start: T("2026-11-05", "10:00"), end: T("2026-11-05", "10:30") },
+      null,
+    );
+    await p.editExternal(
+      calendarUrl,
+      `${series}#2026-11-10T10:00:00`,
+      { start: T("2026-11-02", "10:00"), end: T("2026-11-02", "10:30") },
+      null,
+    );
+    // The organizer turns the meeting off on Wednesday 4 Nov.
+    await p.endSeries(calendarUrl, series, T("2026-11-04", "12:00"), []);
+    expect(await starts(p, series, T("2026-10-26", "00:00"), end)).toEqual([
+      "2026-10-27T09:00:00.000Z",
+      "2026-11-02T09:00:00.000Z",
+    ]);
+  });
+
+  it("ending a series keeps the locked instances it names, and deletes a series that has not started", async () => {
+    const { p, series } = await weekly();
+    await p.editExternal(
+      calendarUrl,
+      `${series}#2026-11-17T10:00:00`,
+      { start: T("2026-11-18", "09:00"), end: T("2026-11-18", "09:30") },
+      null,
+    );
+    await p.endSeries(calendarUrl, series, T("2026-11-04", "12:00"), [
+      `${series}#2026-11-10T10:00:00`,
+      `${series}#2026-11-17T10:00:00`,
+    ]);
+    expect(await starts(p, series, T("2026-10-26", "00:00"), end)).toEqual([
+      "2026-10-27T09:00:00.000Z",
+      "2026-11-03T09:00:00.000Z",
+      "2026-11-10T09:00:00.000Z",
+      "2026-11-18T08:00:00.000Z",
+    ]);
+    const later = await weekly();
+    await later.p.endSeries(calendarUrl, later.series, T("2026-10-20", "12:00"), []);
+    expect(await objectText(later.series)).toBeNull();
+  });
+  it("ending a series before its first rule time keeps a first occurrence that moved earlier and took place, as one instance", async () => {
+    const { p, series } = await weekly();
+    // The first instance (Tuesday 27 Oct) moved to Monday 26 Oct 10:00 and was held.
+    await p.editExternal(
+      calendarUrl,
+      `${series}#2026-10-27T10:00:00`,
+      { start: T("2026-10-26", "10:00"), end: T("2026-10-26", "10:30") },
+      null,
+    );
+    await p.endSeries(calendarUrl, series, T("2026-10-26", "14:00"), []);
+    expect(await starts(p, series, T("2026-10-19", "00:00"), end)).toEqual([
+      "2026-10-26T09:00:00.000Z",
+    ]);
+    const text = (await objectText(series)) ?? "";
+    const at = (name: string) => text.includes(`${name};TZID=Europe/Berlin:20261027T100000`);
+    expect(at("RDATE") && at("EXDATE")).toBe(false);
   });
 });

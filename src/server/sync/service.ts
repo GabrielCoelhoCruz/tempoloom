@@ -7,6 +7,7 @@ import { observeMeetings } from "../planner/meeting-log.ts";
 import { meetingPeers } from "../planner/meetings.ts";
 import { finishPaint, type PaintJob, writePaint } from "../planner/repaint.ts";
 import { replanUser } from "../planner/replan.ts";
+import { readSeriesEdits } from "../planner/series-edits.ts";
 import { enforceAgendas } from "../policies/agendas.ts";
 import { applyPolicies } from "../policies/apply.ts";
 import { type ProviderDeps, ProviderPool } from "../providers/index.ts";
@@ -365,7 +366,14 @@ export class SyncService {
         );
         return;
       }
-      // Flexible meetings: the organizer's edits and guests' declines (MEET-02 rules 2, 31).
+      // Flexible meetings: the organizer's series edits (MEET-02 rules 18, 22),
+      // then occurrence edits and guests' declines (rules 2, 31).
+      readSeriesEdits(
+        db,
+        userId,
+        calendars.map((c) => c.id),
+        now,
+      );
       observeMeetings(
         db,
         userId,

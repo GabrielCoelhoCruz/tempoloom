@@ -1,4 +1,4 @@
-import { localToUtc } from "../../shared/time.ts";
+import { localToUtc, utcToLocal } from "../../shared/time.ts";
 import {
   GoogleApiError,
   type GoogleCalendarApi,
@@ -19,6 +19,8 @@ import {
   type ProviderEvent,
   type ResponseStatus,
 } from "./types.ts";
+
+const DAY_MS = 86_400_000;
 
 function toInstant(t: GoogleEventTime | undefined, zone: string): { ms: number; allDay: boolean } {
   if (t?.dateTime) return { ms: Date.parse(t.dateTime), allDay: false };
@@ -83,14 +85,26 @@ function toGoogleReminders(r: EventWrite["reminders"]): NonNullable<GoogleEventI
         };
 }
 
+/** A local date-time of `zone` in iCalendar basic form, for EXDATE lines. */
+const icalLocal = (zone: string, ms: number) => {
+  const l = utcToLocal(zone, ms);
+  const hh = String(Math.floor(l.minuteOfDay / 60)).padStart(2, "0");
+  const mm = String(l.minuteOfDay % 60).padStart(2, "0");
+  return `${l.date.replace(/-/g, "")}T${hh}${mm}00`;
+};
+
 function toGoogleEvent(w: EventWrite): GoogleEventInput {
+  // A series keeps its local time across DST: Google needs the zone of a recurring event.
+  const zone = w.recurrence && w.timeZone ? { timeZone: w.timeZone } : {};
   return {
     summary: w.summary,
     description: w.description,
     start: w.allDayDates
       ? { date: w.allDayDates.start }
-      : { dateTime: new Date(w.start).toISOString() },
-    end: w.allDayDates ? { date: w.allDayDates.end } : { dateTime: new Date(w.end).toISOString() },
+      : { dateTime: new Date(w.start).toISOString(), ...zone },
+    end: w.allDayDates
+      ? { date: w.allDayDates.end }
+      : { dateTime: new Date(w.end).toISOString(), ...zone },
     transparency: w.busy ? "opaque" : "transparent",
     ...(w.colorId ? { colorId: w.colorId } : {}),
     ...(w.location ? { location: w.location } : {}),
@@ -105,7 +119,18 @@ function toGoogleEvent(w: EventWrite): GoogleEventInput {
     reminders: toGoogleReminders(w.reminders),
     ...(w.visibility ? { visibility: w.visibility } : {}),
     extendedProperties: { private: w.privateProps },
-    ...(w.recurrence ? { recurrence: [`RRULE:${w.recurrence}`] } : {}),
+    ...(w.recurrence
+      ? {
+          recurrence: [
+            `RRULE:${w.recurrence}`,
+            ...(w.exdates ?? []).map((t) =>
+              w.timeZone
+                ? `EXDATE;TZID=${w.timeZone}:${icalLocal(w.timeZone, t)}`
+                : `EXDATE:${new Date(t).toISOString().replace(/[-:]|\.\d{3}/g, "")}`,
+            ),
+          ],
+        }
+      : {}),
   };
 }
 
@@ -308,5 +333,59 @@ export class GoogleProvider implements CalendarProvider {
     await this.#api
       .patchEvent(calendarId, seriesId, { extendedProperties: { private: props } })
       .catch(mapError);
+  }
+
+  async seriesInstances(
+    calendarId: string,
+    seriesId: string,
+    from: number,
+    to: number,
+  ): Promise<ProviderEvent[]> {
+    const list = await this.#api.instances(calendarId, seriesId, from, to).catch(mapError);
+    return list.map((e) => fromGoogleEvent(e, this.#zone)).filter((e) => !e.cancelled);
+  }
+
+  /**
+   * Ends a series before `at`: an UNTIL in its RRULE. Google keeps no instance
+   * of a series after its end, so `keep` stays unused here.
+   */
+  async endSeries(calendarId: string, seriesId: string, at: number): Promise<void> {
+    const master = await this.#api.getEvent(calendarId, seriesId).catch((err: unknown) => {
+      if (err instanceof GoogleApiError && (err.status === 404 || err.status === 410)) return null;
+      return mapError(err);
+    });
+    if (!master?.recurrence) return;
+    const first = toInstant(master.start, this.#zone).ms;
+    // Instances that started before `at` stay, also one that moved earlier
+    // than the series' first rule time; the rule ends after the last of them.
+    let end = at;
+    if (first >= at) {
+      const held = (
+        await this.#api.instances(calendarId, seriesId, first - 366 * DAY_MS, at).catch(mapError)
+      )
+        .filter((e) => e.status !== "cancelled" && toInstant(e.start, this.#zone).ms < at)
+        .map((e) => toInstant(e.originalStartTime ?? e.start, this.#zone).ms);
+      if (held.length === 0) {
+        await this.#api.deleteEvent(calendarId, seriesId).catch(mapError);
+        return;
+      }
+      end = Math.max(...held) + 1000;
+      for (const e of await this.#api.instances(calendarId, seriesId, at, end).catch(mapError))
+        if (toInstant(e.start, this.#zone).ms >= at && e.status !== "cancelled")
+          await this.#api.deleteEvent(calendarId, e.id).catch(mapError);
+    }
+    const until = new Date(end - 1000).toISOString().replace(/[-:]|\.\d{3}/g, "");
+    const recurrence = master.recurrence.map((r) =>
+      r.startsWith("RRULE:")
+        ? `RRULE:${[
+            ...r
+              .slice(6)
+              .split(";")
+              .filter((p) => !/^(UNTIL|COUNT)=/.test(p)),
+            `UNTIL=${until}`,
+          ].join(";")}`
+        : r,
+    );
+    await this.#api.patchEvent(calendarId, seriesId, { recurrence }).catch(mapError);
   }
 }

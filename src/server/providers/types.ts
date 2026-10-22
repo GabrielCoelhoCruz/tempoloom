@@ -50,6 +50,26 @@ export interface ProviderEvent {
   alerts?: boolean;
   /** The event privacy: CalDAV CLASS, or Google visibility. */
   visibility: Visibility | "confidential";
+  /** An instance of a recurring series: what the series master says. */
+  series?: SeriesFacts;
+}
+
+/**
+ * The master of a recurring series, as each of its instances carries it
+ * (meetings-flexible-rescheduling.md rule 22: a series edit in the calendar).
+ */
+export interface SeriesFacts {
+  /** The master's first start and end: its rule time and length. */
+  start: number;
+  end: number;
+  /** The master's RRULE value, for example "FREQ=WEEKLY;BYDAY=TU". */
+  rrule: string;
+  summary: string;
+  /** Guests of the master, lower case; optional ones in `optional`. */
+  attendees: string[];
+  optional: string[];
+  /** This instance has its own data (a CalDAV override, a Google exception). */
+  own: boolean;
 }
 
 export interface EventWrite {
@@ -75,6 +95,10 @@ export interface EventWrite {
   allDayDates?: { start: string; end: string };
   /** An RFC 5545 RRULE value, for example "FREQ=WEEKLY;BYDAY=WE": a recurring series. */
   recurrence?: string;
+  /** A series' start and end are local times in this IANA zone, so it keeps them across DST. */
+  timeZone?: string;
+  /** Rule starts of a series that have no instance (RFC 5545 EXDATE). */
+  exdates?: number[];
   /**
    * Calendar reminders (planning-notifications.md NTF-10, NTF-11): the
    * calendar's default ones, or alerts this many minutes before the start.
@@ -130,10 +154,18 @@ export type ProviderErrorKind =
 export class ProviderError extends Error {
   readonly kind: ProviderErrorKind;
   readonly status: number;
-  constructor(kind: ProviderErrorKind, status: number, message: string) {
+  /** What is missing for "not_found": the event (default) or its whole calendar. */
+  readonly what: "event" | "calendar";
+  constructor(
+    kind: ProviderErrorKind,
+    status: number,
+    message: string,
+    what: "event" | "calendar" = "event",
+  ) {
     super(message);
     this.kind = kind;
     this.status = status;
+    this.what = what;
   }
 }
 
@@ -213,4 +245,22 @@ export interface CalendarProvider {
     seriesId: string,
     props: Record<string, string>,
   ): Promise<void>;
+  /** The instances of a series in [from, to) (meetings-flexible.md rule 2: a new series). */
+  seriesInstances?(
+    calendarId: string,
+    seriesId: string,
+    from: number,
+    to: number,
+  ): Promise<ProviderEvent[]>;
+  /**
+   * Adds one instance to a series at `event`'s time, with `event`'s fields
+   * (CalDAV RDATE and override): a period whose instance was removed gets one again.
+   */
+  addInstance?(calendarId: string, seriesId: string, event: EventWrite): Promise<ProviderEvent>;
+  /**
+   * Ends a series before `at` (RRULE UNTIL): later instances go, except the
+   * instance ids in `keep`, which stay as they are. A series with no instance
+   * left is deleted.
+   */
+  endSeries?(calendarId: string, seriesId: string, at: number, keep: string[]): Promise<void>;
 }

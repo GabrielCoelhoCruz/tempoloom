@@ -8,9 +8,12 @@ import {
   type EventWrite,
   type ExternalChange,
   ProviderError,
+  type ProviderEvent,
 } from "../providers/types.ts";
 import { cacheEvent } from "../sync/pull.ts";
+import type { MeetingRow } from "./meetings.ts";
 import { ACTIVE } from "./mirror.ts";
+import { moveRuleInstance, seriesDeleted, syncOwnSeries, writeSeries } from "./series.ts";
 
 export interface DesiredEvent {
   key: string;
@@ -149,7 +152,7 @@ export interface PushResult {
 export const MANAGED_PROP = "tl";
 export const KEY_PROP = "tl_key";
 
-function write(userId: string, d: DesiredEvent): EventWrite {
+export function write(userId: string, d: DesiredEvent): EventWrite {
   return {
     summary: d.title,
     description: d.description,
@@ -317,6 +320,8 @@ export async function pushSchedule(
       userId,
     ).map((p) => p.id),
   );
+  // Meetings whose series the organizer deleted turn off: this run writes nothing for them.
+  const off = await syncOwnSeries(ctx, frozen, allDesired);
   const rows = all<ManagedRow>(
     db,
     "SELECT * FROM managed_events WHERE user_id = ? AND end_ms > ?",
@@ -340,8 +345,24 @@ export async function pushSchedule(
       );
     return (await mails.get(calendarId)) === false;
   };
-  const wanted = new Set(allDesired.map((d) => d.key));
-  const desired = allDesired.filter((d) => !frozen.has(d.calendarId));
+  const live = (d: DesiredEvent) => !(d.kind === "meeting" && off.has(d.sourceId));
+  const wanted = new Set(allDesired.filter(live).map((d) => d.key));
+  const desired = allDesired.filter((d) => !frozen.has(d.calendarId) && live(d));
+  for (const m of all<MeetingRow>(
+    db,
+    "SELECT * FROM meetings WHERE user_id = ? AND enabled = 1 AND series_owned = 1 AND series_event_id IS NULL",
+    userId,
+  )) {
+    const own = desired.filter((d) => d.kind === "meeting" && d.sourceId === m.id);
+    // One meeting's calendar error never stops the plan run of the user.
+    try {
+      result.created += await writeSeries(ctx, m, own, byKey);
+    } catch (err) {
+      if (!(err instanceof ProviderError)) throw err;
+      console.error(`Writing the series of meeting ${m.id} failed`, err);
+      result.conflicts++;
+    }
+  }
 
   for (const row of rows) {
     if (wanted.has(row.key) || row.locked || row.start_ms <= now) continue;
@@ -422,6 +443,7 @@ export async function pushSchedule(
 
   const reopen = (ctx.reopen ?? []).filter((r) => !frozen.has(r.calendar_id));
   for (const d of creates) {
+    if (!live(d)) continue;
     const row = byKey.get(d.key);
     if (row && (row.locked || row.start_ms <= now)) continue;
     if (!row && (await moveReopened(ctx, reopen, d))) {
@@ -431,7 +453,48 @@ export async function pushSchedule(
     }
     if (row?.event_id) await deleteRemote(ctx, row);
     const { provider, providerCalendarId } = ctx.target(d.calendarId);
-    const ev = await provider.insertEvent(providerCalendarId, write(userId, d));
+    // A period of Tempoloom's own series with no instance gets one in the series.
+    const series =
+      d.kind === "meeting"
+        ? one<{ series_event_id: string }>(
+            db,
+            `SELECT series_event_id FROM meetings WHERE id = ? AND series_owned = 1
+               AND series_event_id IS NOT NULL AND series_calendar_id = ?`,
+            d.sourceId,
+            d.calendarId,
+          )?.series_event_id
+        : undefined;
+    let ev: ProviderEvent;
+    try {
+      // The period's rule instance may start after the planning window, so no
+      // row holds it yet: move that instance, never add a second one.
+      const moved = series
+        ? await moveRuleInstance(ctx, provider, providerCalendarId, series, d, row)
+        : false;
+      if (moved === "stale") {
+        result.conflicts++;
+        continue;
+      }
+      if (moved) {
+        result.created++;
+        continue;
+      }
+      ev =
+        series && provider.addInstance
+          ? await provider.addInstance(providerCalendarId, series, write(userId, d))
+          : await provider.insertEvent(providerCalendarId, write(userId, d));
+    } catch (err) {
+      // The organizer deleted the whole series (SPEC-MEET-02 edge case 5).
+      if (series && err instanceof ProviderError && err.kind === "not_found") {
+        if (err.what === "event") {
+          seriesDeleted(db, userId, d.sourceId, now);
+          off.add(d.sourceId);
+        } else console.error(`Meeting ${d.sourceId}: calendar missing`, err);
+        result.conflicts++;
+        continue;
+      }
+      throw err;
+    }
     cacheEvent(db, d.calendarId, ev);
     saveRow(db, userId, d, ev.id, ev.etag, row?.id);
     ctx.written?.set(d.key, { start: d.start, end: d.end });
@@ -493,7 +556,7 @@ const managedRef = (r: ManagedRow, eventId: string) => ({
   kind: r.kind,
   sourceId: r.source_id,
 });
-const desiredRef = (d: DesiredEvent, eventId: string) => ({ ...d, eventId });
+export const desiredRef = (d: DesiredEvent, eventId: string) => ({ ...d, eventId });
 const plain = (r: ManagedRow) => ({ title: r.title, start: r.start_ms, end: r.end_ms });
 
 async function deleteRemote(ctx: PushContext, row: ManagedRow): Promise<void> {
@@ -508,7 +571,7 @@ async function deleteRemote(ctx: PushContext, row: ManagedRow): Promise<void> {
   );
 }
 
-function saveRow(
+export function saveRow(
   db: Db,
   userId: string,
   d: DesiredEvent,
