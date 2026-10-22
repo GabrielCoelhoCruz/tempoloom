@@ -14,7 +14,7 @@ import { randomUUID } from "node:crypto";
 import { DAVClient } from "tsdav";
 import { beforeAll, describe, expect, it } from "vitest";
 import { ensureUser } from "../../src/server/accounts.ts";
-import { all, type Db, one, openDb, run } from "../../src/server/db.ts";
+import { all, one, openDb, run } from "../../src/server/db.ts";
 import { observeMeetings } from "../../src/server/planner/meeting-log.ts";
 import { replanUser } from "../../src/server/planner/replan.ts";
 import { readSeriesEdits } from "../../src/server/planner/series-edits.ts";
