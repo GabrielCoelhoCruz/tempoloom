@@ -154,15 +154,27 @@ export function bookingHolds(
   userId: string,
   from: number,
   to: number,
-): { id: string; title: string; start: number; end: number }[] {
-  return all<{ id: string; name: string; start_ms: number; end_ms: number }>(
+): { id: string; title: string; start: number; end: number; location: string }[] {
+  return all<{
+    id: string;
+    name: string;
+    start_ms: number;
+    end_ms: number;
+    location: string | null;
+  }>(
     db,
-    `SELECT b.id, b.name, b.start_ms, b.end_ms FROM booking_participants p JOIN bookings b ON b.id = p.booking_id
+    `SELECT b.id, b.name, b.start_ms, b.end_ms, b.location FROM booking_participants p JOIN bookings b ON b.id = p.booking_id
      WHERE p.user_id = ? AND p.event_id IS NULL AND b.status = 'booked' AND b.end_ms > ? AND b.start_ms < ?`,
     userId,
     from,
     to,
-  ).map((b) => ({ id: b.id, title: `Booking with ${b.name}`, start: b.start_ms, end: b.end_ms }));
+  ).map((b) => ({
+    id: b.id,
+    title: `Booking with ${b.name}`,
+    start: b.start_ms,
+    end: b.end_ms,
+    location: b.location ?? "",
+  }));
 }
 
 export interface Party {

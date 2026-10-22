@@ -1,6 +1,7 @@
 import type { ComponentChildren } from "preact";
 import { useCallback, useEffect, useState } from "preact/hooks";
 import { CATEGORIES } from "../../scheduler/categories.ts";
+import type { BufferFilter } from "../../scheduler/model.ts";
 import type { Settings as UserSettings } from "../../server/settings.ts";
 import { defaultEventSettings, readEventSettings } from "../../shared/event-settings.ts";
 import { api } from "../lib/api.ts";
@@ -224,6 +225,7 @@ export function Settings() {
       minutes_before: number;
       minutes_after: number;
       calendar_scope: string | null;
+      filter: BufferFilter;
     }[]
   >([]);
   const [focus, setFocus] = useState<
@@ -241,7 +243,10 @@ export function Settings() {
         "GET",
         "/api/hours",
       ),
-      api<{ buffers: typeof buffers }>("GET", "/api/buffers"),
+      api<{ buffers: (Omit<(typeof buffers)[number], "filter"> & { filter: string })[] }>(
+        "GET",
+        "/api/buffers",
+      ),
       api<{ focus: typeof focus }>("GET", "/api/focus"),
       api<{ calendars: { id: string; name: string }[] }>("GET", "/api/calendars"),
     ]);
@@ -249,7 +254,10 @@ export function Settings() {
     setWindowLimit(s.windowLimit);
     setHours(h.hours);
     setTaskCalendars(h.taskCalendars);
-    setBuffers(b.buffers);
+    // The filter is stored as JSON: parse it once here.
+    setBuffers(
+      b.buffers.map((x) => ({ ...x, filter: JSON.parse(x.filter || "{}") as BufferFilter })),
+    );
     setFocus(f.focus);
     setCalendars(c.calendars);
     await loadPolicyMarks();
@@ -486,6 +494,22 @@ export function Settings() {
             onClick={() =>
               void act(() =>
                 api("POST", "/api/buffers", {
+                  title: "Recovery",
+                  side: "after",
+                  minutesAfter: 15,
+                  level: 2,
+                  filter: { participants: { op: ">=", value: 2 }, videoLink: true },
+                }),
+              )
+            }
+          >
+            Add 15 min recovery after video meetings
+          </button>
+          <button
+            type="button"
+            onClick={() =>
+              void act(() =>
+                api("POST", "/api/buffers", {
                   title: "Prep",
                   side: "before",
                   minutesBefore: 15,
@@ -544,8 +568,8 @@ export function Settings() {
                 ·{" "}
                 {b.calendar_scope
                   ? `${calendars.find((c) => c.id === b.calendar_scope)?.name ?? "one calendar"} only`
-                  : "all calendars"}{" "}
-                <PolicyMark id={b.id} />
+                  : "all calendars"}
+                {b.filter.videoLink ? " · video meetings only" : ""} <PolicyMark id={b.id} />
               </span>
               {!policyMarks.value[b.id] && (
                 <button

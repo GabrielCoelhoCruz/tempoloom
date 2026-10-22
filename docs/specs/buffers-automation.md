@@ -69,6 +69,11 @@ Tempoloom decisions for the event filter:
   Each run longer than the value is one anchor from the run's start to its
   end, so buffers sit before or after the whole run. One event longer than the
   value is a run of one.
+- `has_video_link` uses the test of the `video_link` meeting check
+  (`automations-meeting-quality.md`): a conference link (CalDAV CONFERENCE,
+  Google Meet), or a URL in the location or description whose host names a
+  video service. The recovery template offers both options: all meetings
+  with another attendee, or those with a video link only.
 - `calendar_scope`: with one calendar, only events on that calendar are
   anchors. Tempoloom's own mirror copies on that calendar are anchors as the
   copy shows them (`buffers-travel.md` rule 13), unless their source event is

@@ -1,5 +1,6 @@
 // The scheduling engine: plan(snapshot) -> placements and report.
 // Rule ids (SCH-, DEF-, TSK-) refer to docs/specs/planning-scheduler.md and the item specs.
+import { hasVideo } from "../shared/meeting-checks.ts";
 import {
   addDays,
   chosenDay,
@@ -1452,6 +1453,7 @@ export function matchesFilter(f: BufferFilter, e: ExternalEvent): boolean {
   }
   if (f.tags && !f.tags.some((t) => hasTag(e, t))) return false;
   if (f.people && f.people.length > 0 && !hasPerson(e, f.people)) return false;
+  if (f.videoLink && !hasVideo(e)) return false;
   return true;
 }
 
