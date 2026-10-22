@@ -570,8 +570,8 @@ export function meetingRoutes(
     // The rank the save gives (SCH-71, rule 7), and the ranks it moves.
     const shift = old ? null : rankShift(db, "flexible_meeting", user.id, row.level);
     if (shift) row.rank = shift.at;
-    else if (old && row.level !== old.level) row.rank = endRank(db, user.id, row.level);
     if (old) {
+      if (row.level !== old.level) row.rank = endRank(db, user.id, row.level);
       row.created_at = old.created_at;
       row.rules_changed_at = rulesChangedAt(db, old, row, attendees, body, t);
       row.series_event_id = old.series_event_id;
@@ -590,16 +590,14 @@ export function meetingRoutes(
       )?.planned_at ?? 0;
     // Accounts rule 16: a meeting on a disconnected account waits, also a new
     // one on the main calendar, so the preview shows no times and says why.
-    // The calendar is the form's (null: the main one), else the saved one, else the main one.
-    const formCalendar = body.eventSettings?.calendarId;
-    const waiting = waitingCalendars(
-      db,
-      user.id,
-    )(
-      formCalendar !== undefined || !old
-        ? formCalendar
-        : readEventSettings(old.event_settings, defaultEventSettings("meeting")).calendarId,
-    );
+    // The calendar is the one the save keeps: set at creation only (`targetCalendar`).
+    const settings = old
+      ? editedEventSettings(
+          readEventSettings(old.event_settings, defaultEventSettings("meeting")),
+          body.eventSettings,
+        )
+      : newEventSettings(db, user.id, "meeting", body.eventSettings);
+    const waiting = waitingCalendars(db, user.id)(settings.calendarId);
     const { snapshot } = planningSnapshot(db, user.id, zone, getSettings(db, user.id), t, last);
     if (body.hoursMode === "itemSpecific" && body.itemHours) {
       row.hours_set_id = "preview-hours";
