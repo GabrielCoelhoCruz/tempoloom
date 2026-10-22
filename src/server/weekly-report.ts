@@ -12,7 +12,6 @@ import { addDays, type LocalDate, localToUtc, utcToLocal, weekdayOf } from "../s
 import { personalInsights } from "./analytics/personal.ts";
 import { all, type Db, one, run } from "./db.ts";
 import type { Message } from "./mail.ts";
-import { planningZone } from "./travel.ts";
 import { publicName } from "./weekly-share.ts";
 
 /** Rule 7: the facts show as colored blocks under the totals. */
@@ -246,8 +245,9 @@ export function weeklyReport(
     href: url(`/r/${token}/share?to=${target}`),
   }));
 
-  // The planning zone, as the planner shows next week (a trip changes it).
-  const zone = planningZone(db, user.id, user.time_zone);
+  // The home zone: the planner shows the week in it, also during a trip
+  // (timezones-home-and-travel.md rule 10), so each day and link match the planner.
+  const zone = user.time_zone;
   const monday = addDays(from, 1 - weekdayOf(from));
   const nextMonday = addDays(monday, 7);
   const preview = nextWeekPreview(db, user.id, zone, nextMonday);

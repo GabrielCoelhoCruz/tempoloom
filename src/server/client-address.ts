@@ -37,7 +37,7 @@ export function createLimiter(o: { perWindow: number; windowMs: number; maxKeys:
   };
 }
 
-export const plainAddress = (a: string) => {
+const plainAddress = (a: string) => {
   const ip = a.trim().replace(/%.*$/, "");
   const v4 = ip.toLowerCase().startsWith("::ffff:") ? ip.slice(7) : "";
   return isIPv4(v4) ? v4 : ip.toLowerCase();
@@ -77,6 +77,11 @@ export function addressBucket(address: string): string {
     .slice(0, 4)
     .map((g) => Number.parseInt(g || "0", 16).toString(16))
     .join(":")}::/64`;
+}
+
+/** The trusted proxy addresses (TRUSTED_PROXIES) in the form that clientAddress compares. */
+export function trustedSet(proxies: readonly string[]): ReadonlySet<string> {
+  return new Set(proxies.map(plainAddress));
 }
 
 /** The client address of a Hono request on the Node server (`c.env.incoming`). */

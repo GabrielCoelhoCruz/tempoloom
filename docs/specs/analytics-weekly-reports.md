@@ -65,8 +65,11 @@ gets this email.
    with the busiest and the lightest day marked. Each day and each event
    links to the planner at that day.
    Tempoloom decision: the link (`/?day=<date>`) opens the planner's week of
-   that day with the day marked, and the preview reads next week in the
-   planning zone (a trip changes it), as the planner shows it.
+   that day with the day marked. The preview reads next week in the home
+   zone, as the planner shows the week also during a trip
+   (timezones-home-and-travel.md rule 10), so each day and link match the
+   planner. The travel zone was checked and is not used: it would put an
+   event on another day than the planner.
 9. Priorities: the user's highest-priority open tasks and the habits they
    plan for the coming week, in priority order. Each links to the
    item in the app.
@@ -99,7 +102,8 @@ gets this email.
     or stopped in Settings) is deleted 14 days after the last day of its
     week, so its email share links then answer "not found"; a shared page is
     deleted 13 weeks after the last day of its week. The email worker deletes
-    them on each run.
+    them once per UTC day. The week's dates are home-zone dates, so the
+    cutoff has one more day: no share goes early in any zone.
 
 ## Outputs
 

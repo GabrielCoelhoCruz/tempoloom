@@ -8,7 +8,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { hashToken, type User } from "./accounts.ts";
 import type { AppEnv } from "./app.ts";
-import { addressBucket, createLimiter, plainAddress, requestAddress } from "./client-address.ts";
+import { addressBucket, createLimiter, requestAddress } from "./client-address.ts";
 import { all, type Db, one, run, tx } from "./db.ts";
 import { jsonBody, notFound } from "./http.ts";
 
@@ -182,9 +182,8 @@ export function oauthRoutes(
   db: Db,
   baseUrl: string,
   now: () => number,
-  trustedProxies: readonly string[] = [],
+  trusted: ReadonlySet<string>,
 ): Hono {
-  const trusted = new Set(trustedProxies.map(plainAddress));
   const issuer = new URL(baseUrl).origin;
   const r = new Hono();
   // Clients may run in a browser: the public endpoints allow any origin, without credentials.

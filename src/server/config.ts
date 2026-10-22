@@ -1,6 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { z } from "zod";
+import { trustedSet } from "./client-address.ts";
 
 const schema = z
   .object({
@@ -57,7 +58,8 @@ const schema = z
           .map((x) => x.trim())
           .filter(Boolean),
       )
-      .pipe(z.array(z.union([z.ipv4(), z.ipv6()]))),
+      .pipe(z.array(z.union([z.ipv4(), z.ipv6()])))
+      .transform(trustedSet),
     /** false: AI tools (MCP clients) may read but not stage changes (plans-feature-inventory.md). */
     MCP_WRITE_ENABLED: z.stringbool().default(true),
     /** Where users ask for help, shown on the help page (support-troubleshooting.md rule 4). */

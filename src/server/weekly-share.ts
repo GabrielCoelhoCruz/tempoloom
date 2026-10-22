@@ -9,7 +9,7 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import { Hono } from "hono";
 import { getCookie, setCookie } from "hono/cookie";
 import type { AppEnv } from "./app.ts";
-import { addressBucket, createLimiter, plainAddress, requestAddress } from "./client-address.ts";
+import { addressBucket, createLimiter, requestAddress } from "./client-address.ts";
 import { all, type Db, one, run } from "./db.ts";
 import { notFound } from "./http.ts";
 
@@ -154,12 +154,11 @@ export function weeklyShareRoutes(
   db: Db,
   baseUrl: string,
   now: () => number,
-  trustedProxies: readonly string[] = [],
+  trusted: ReadonlySet<string>,
 ): Hono {
   const r = new Hono();
   const origin = new URL(baseUrl).origin;
   const secure = baseUrl.startsWith("https://");
-  const trusted = new Set(trustedProxies.map(plainAddress));
   const limiter = createLimiter({ perWindow: POST_LIMIT, windowMs: 60_000, maxKeys: LIMITER_KEYS });
   const find = (token: string) =>
     one<Share>(
@@ -227,10 +226,12 @@ export const SHARED_DAYS = 13 * 7;
  * Deletes the shares that are over their time: unshared (never shared, or
  * stopped) ones UNSHARED_DAYS after the week's last day, shared ones
  * SHARED_DAYS after it. Their links then answer "not found". The email
- * worker runs it on each tick.
+ * worker runs it once per day.
  */
 export function pruneWeeklyShares(db: Db, now: number): void {
-  const before = (days: number) => new Date(now - days * DAY).toISOString().slice(0, 10);
+  // week_to is a date in the user's home zone and the cutoff a UTC date: one
+  // more day, so that no zone (west of UTC) loses a share early.
+  const before = (days: number) => new Date(now - (days + 1) * DAY).toISOString().slice(0, 10);
   run(
     db,
     `DELETE FROM weekly_shares WHERE week_to < ? AND (shared_at IS NULL OR week_to < ?)`,

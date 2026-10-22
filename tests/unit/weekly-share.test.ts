@@ -298,7 +298,7 @@ describe("weekly report share page (rules 10-12)", () => {
     expect((await post("198.51.100.7")).status).toBe(429);
   });
 
-  it("prunes unshared and stopped shares 2 weeks after their week, and shared pages 13 weeks after it, in the email worker's run", async () => {
+  it("prunes unshared and stopped shares 2 weeks after their week, and shared pages 13 weeks after it, never early in a zone west of UTC, in the email worker's run", async () => {
     const s = setup({ email: "ana@example.com", name: "Ana Lima" });
     const tick = (at: string) =>
       new DailyMailWorker({
@@ -329,23 +329,61 @@ describe("weekly report share page (rules 10-12)", () => {
         "SELECT week_from FROM weekly_shares ORDER BY week_from",
       ).map((r) => r.week_from);
 
-    // 13 days after 11-20: nothing is old enough.
-    await tick("2026-12-03T12:00:00Z");
+    // The cutoff has one day of margin: week_to is a home-zone date, so at the
+    // end of UTC day 12-05 (12-05 13:59 in Honolulu) the week of 11-20 stays.
+    await tick("2026-12-05T23:59:00Z");
     expect(weeks()).toEqual(["2026-11-09", "2026-11-16", "2026-11-23"]);
-    // 15 days after 11-20: the unshared week goes; its share link is "not found".
-    await tick("2026-12-05T12:00:00Z");
+    // UTC 12-06 (more than 14 days after 11-20 in every zone): the unshared week
+    // goes; its share link is "not found".
+    await tick("2026-12-06T00:00:00Z");
     expect(weeks()).toEqual(["2026-11-09", "2026-11-23"]);
     expect(await status(unshared)).toBe(404);
-    // 15 days after 11-27: the stopped share goes; the shared page stays.
-    await tick("2026-12-12T12:00:00Z");
+    // UTC 12-13: the stopped share of 11-27 goes; the shared page stays.
+    await tick("2026-12-13T00:00:00Z");
     expect(weeks()).toEqual(["2026-11-09"]);
     expect(await status(stoppedPath)).toBe(404);
     expect(await status(s.pagePath)).toBe(200);
-    // 13 weeks after 11-13 the shared page stays; one day later it is "not found".
-    await tick("2027-02-12T12:00:00Z");
+    // The shared page of 11-13 stays through UTC 2027-02-13; on 02-14 it is "not found".
+    await tick("2027-02-13T23:59:00Z");
     expect(await status(s.pagePath)).toBe(200);
-    await tick("2027-02-13T12:00:00Z");
+    await tick("2027-02-14T00:00:00Z");
     expect(await status(s.pagePath)).toBe(404);
     expect(weeks()).toEqual([]);
+  });
+});
+
+describe("weekly share pruning in the email worker", () => {
+  it("prunes once per UTC day, on the first tick of the day", async () => {
+    const db = openDb(":memory:");
+    const u = ensureUser(db, "ana@example.com", "Ana", T0);
+    const add = (token: string) =>
+      run(
+        db,
+        "INSERT INTO weekly_shares (token, user_id, week_from, week_to, totals, facts, created_at) VALUES (?, ?, '2026-11-09', '2026-11-13', '[]', '[]', ?)",
+        token,
+        u.id,
+        T0,
+      );
+    let t = Date.parse("2026-12-01T08:00:00Z");
+    const worker = new DailyMailWorker({
+      db,
+      mailer: { configured: false, send: async () => {} },
+      now: () => t,
+      baseUrl: BASE,
+      intervalMs: 60_000,
+    });
+    const count = () => all(db, "SELECT token FROM weekly_shares").length;
+    add("a");
+    await worker.tick();
+    expect(count()).toBe(0);
+    // A later tick on the same day does not prune again.
+    add("b");
+    t += 3_600_000;
+    await worker.tick();
+    expect(count()).toBe(1);
+    // The first tick of the next day does.
+    t = Date.parse("2026-12-02T00:00:00Z");
+    await worker.tick();
+    expect(count()).toBe(0);
   });
 });
