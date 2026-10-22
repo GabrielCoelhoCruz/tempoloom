@@ -50,7 +50,9 @@ Google. The user edits a few other profile fields in Tempoloom.
   Pomodoro and analytics charts) have no field order to choose and stay so.
   The display week (see "Which week each feature uses") sets the first day of
   the planner week, the "Today" and week links, the day order of the hours
-  page, the hours previews and the item-specific days, and the Pomodoro week.
+  page, the hours previews and the item-specific days. The Pomodoro timer is
+  a public page that reads no account (`tools-pomodoro-timer.md`), so it
+  keeps the browser's clock and weeks from Monday.
   Values of form inputs (time and date pickers) stay in the browser's format.
   Mail keeps the default formats: guests read most of it, and they have
   their own settings. Without a Google account (CalDAV) the values are the
@@ -70,9 +72,9 @@ Tempoloom decision. Two week starts exist, and each feature uses one:
 
 | Week | Value | Features |
 |---|---|---|
-| Display week | `weekStart` of the Google account (`googleWeekStart`), else the planning week start | planner week view (first day, "Today", week links, "weekdays only" stays Monday to Friday), hours page day order, hours previews, item-specific days, Pomodoro week counts |
+| Display week | `weekStart` of the Google account (`googleWeekStart`), else the planning week start | planner week view (first day, "Today", week links, "weekdays only" stays Monday to Friday), hours page day order, hours previews, item-specific days |
 | Planning period | the planning week start set in Tempoloom (`weekStart`, default Monday) | weekly habit periods, flexible meeting periods, cadence, skips and missed periods (`meetings-flexible.md`), meeting series, focus goals and focus progress, weekly auto-lock (LCK-30, LCK-33), policy reports, the meeting availability map, booking link weekly limits, "next week" snooze of a task |
-| Calendar week | Monday to Sunday | the weekly report mail and its share page (`analytics-weekly-reports.md`), not changed here |
+| Calendar week | Monday to Sunday | the weekly report mail and its share page (`analytics-weekly-reports.md`), the Pomodoro week counts (a public page with no account), not changed here |
 
 The planner's focus progress shows the planning week that holds most of
 the days shown (the display week's Thursday).

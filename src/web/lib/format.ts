@@ -68,6 +68,13 @@ export function displayWeekOf(date: LocalDate, f: Formats = userFormats()): Loca
   return addDays(date, -((weekdayOf(date) - f.weekStart + 7) % 7));
 }
 
+/**
+ * After a change of the week start, the new display week that keeps most days
+ * of the week shown from `first` (PRF-6, planner edge case 4).
+ */
+export const sameWeekShown = (first: LocalDate, f: Formats = userFormats()) =>
+  displayWeekOf(addDays(first, 3), f);
+
 /** A time in a zone: "Mon 2026-11-09 14:30", in the user's formats. */
 export function formatWhen(zone: string, t: number, f: Formats = userFormats()): string {
   const l = utcToLocal(zone, t);

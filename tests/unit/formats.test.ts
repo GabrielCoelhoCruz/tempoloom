@@ -5,6 +5,7 @@
 //  3. The display week of a Sunday start does not begin on the Sunday at or before the date.
 //  4. A time in a zone uses the browser zone, not the user's.
 import { describe, expect, it } from "vitest";
+import { formatsOf } from "../../src/shared/formats.ts";
 import { localToUtc } from "../../src/shared/time.ts";
 import {
   clockSecondsText,
@@ -14,6 +15,7 @@ import {
   type Formats,
   formatWhen,
   hourText,
+  sameWeekShown,
   timeText,
   weekdaysInOrder,
 } from "../../src/web/lib/format.ts";
@@ -65,5 +67,22 @@ describe("formats (PRF-6)", () => {
     expect(dateTimeText("Europe/Berlin", t, US)).toBe("11/09/2026 6:30 AM");
     expect(clockSecondsText("Asia/Tokyo", t + 5_000, H24)).toBe("14:30:05");
     expect(clockSecondsText("Asia/Tokyo", t + 5_000, H12)).toBe("2:30:05 PM");
+  });
+});
+
+describe("display week and planning week (PRF-6)", () => {
+  it("takes the Google week start for displays, else the planning week start", () => {
+    const base = { timeFormat: "24h", dateFormat: "YMD" } as const;
+    expect(formatsOf({ ...base, weekStart: 7, googleWeekStart: null }).weekStart).toBe(7);
+    expect(formatsOf({ ...base, weekStart: 1, googleWeekStart: 7 }).weekStart).toBe(7);
+    expect(formatsOf({ ...base, weekStart: 7, googleWeekStart: 1 }).weekStart).toBe(1);
+  });
+
+  it("keeps most days of the week shown when the week start changes", () => {
+    // Sunday 2026-11-08 to Saturday 11-14, then weeks from Monday: 11-09 (6 days stay), not 11-02.
+    expect(sameWeekShown("2026-11-08", H24)).toBe("2026-11-09");
+    // Monday 2026-11-09 to Sunday 11-15, then weeks from Sunday: 11-08 (6 days stay).
+    expect(sameWeekShown("2026-11-09", H12)).toBe("2026-11-08");
+    expect(sameWeekShown("2026-11-09", H24)).toBe("2026-11-09");
   });
 });

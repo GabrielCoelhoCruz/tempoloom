@@ -11,12 +11,15 @@
 // - "weekdays only" shows Sunday to Thursday               -> weekdays from Monday
 // - the hours page keeps Monday first or 24-hour ranges     -> first day, range text
 // - the lists show times and dates in the old format        -> task due date, habit ideal time, trip dates
-// - the Google week start moves the planning week           -> profile: planning week Monday
-// - the formats are lost at a reload                        -> reload
+// - the Google week start moves the planning week           -> weekly meeting key on Monday
+// - the formats are lost at a reload                        -> planner after a reload
+// - a week start change on an open planner shows the week
+//   before, or waits for a reload                           -> second test
 import type { Page } from "@playwright/test";
 import { addDays } from "../../src/shared/time.ts";
-import { at, blockUntil, expect, test } from "./fixtures.ts";
-import { addHabit, addTask, W } from "./helpers.ts";
+import { at, blockUntil, eventually, expect, test } from "./fixtures.ts";
+import { addHabit, addTask, titled, W } from "./helpers.ts";
+import { addMeeting } from "./meeting-helpers.ts";
 
 const SUN = addDays(W, -1);
 const TUE = addDays(W, 1);
@@ -42,8 +45,7 @@ interface Expected {
   trip: string;
 }
 
-async function check(page: Page, x: Expected) {
-  await page.goto(`/?week=${W}`);
+async function checkPlanner(page: Page, x: Expected) {
   await expect(page.getByTestId("week-label")).toHaveText(`Week of ${x.label}`);
   await expect(dayNames(page)).toHaveCount(7);
   await expect(dayNames(page).first()).toHaveAttribute("data-date", x.first);
@@ -53,7 +55,11 @@ async function check(page: Page, x: Expected) {
   await expect(hourLabel(page, 14)).toHaveText(x.hour);
   await ev.click();
   await expect(page.getByTestId("event-drawer")).toContainText(x.when);
+}
 
+async function check(page: Page, x: Expected) {
+  await page.goto(`/?week=${W}`);
+  await checkPlanner(page, x);
   await page.getByRole("link", { name: "Tasks" }).click();
   await expect(
     page.locator('[data-task-title="Formatted task"]').getByTestId("task-due"),
@@ -119,8 +125,24 @@ test("the planner, the hours page and the task and habit lists use the time form
     trip: `${dmy(TRIP)} to ${dmy(addDays(TRIP, 2))}`,
   };
   await check(page, sunday);
+  await page.goto(`/?week=${W}`);
   await page.reload();
-  await check(page, sunday);
+  await checkPlanner(page, sunday);
+
+  // Planning keeps the week start set in Tempoloom: a weekly meeting on Tuesday
+  // is in the period that starts on Monday W, not on Sunday.
+  await addMeeting(page, {
+    title: "Format sync",
+    guests: "dana@example.com",
+    idealTime: "11:00",
+    days: ["Tue"],
+  });
+  const meeting = await eventually(
+    () => cal.events(at(W, "00:00"), at(addDays(W, 7), "00:00")),
+    (l) => expect(titled(l, "Format sync")).toHaveLength(1),
+  );
+  const key = titled(meeting, "Format sync")[0]?.privateProps.tl_key ?? "";
+  expect(key).toMatch(new RegExp(`^meeting:.+:${W}$`));
 
   // "Weekdays only" shows Monday to Friday of the Sunday week.
   const weekdays = await page.request.patch("/api/settings", {
@@ -144,4 +166,21 @@ test("the planner, the hours page and the task and habit lists use the time form
     fixed.locator(".row", { hasText: "Week start in your Google calendar" }),
   ).toContainText("Sunday");
   await expect(fixed.locator(".row", { hasText: "Time format" })).toContainText("12-hour");
+});
+
+test("a week start change from the calendar account moves an open planner to the week that keeps most of its days (PRF-6, planner edge case 4)", async ({
+  page,
+  signIn,
+}) => {
+  await signIn();
+  const sunday = await page.request.patch("/api/settings", { data: { googleWeekStart: 7 } });
+  expect(sunday.status()).toBe(200);
+  await page.goto(`/?week=${W}`);
+  await expect(page.getByTestId("week-label")).toHaveText(`Week of ${SUN}`);
+  // Another client stores weeks from Monday; the open page reads it through the live signal.
+  const monday = await page.request.patch("/api/settings", { data: { googleWeekStart: 1 } });
+  expect(monday.status()).toBe(200);
+  // Sunday SUN to Saturday: the Monday week that keeps 6 of its days starts on W, not W - 7.
+  await expect(page.getByTestId("week-label")).toHaveText(`Week of ${W}`);
+  await expect(dayNames(page).first()).toHaveAttribute("data-date", W);
 });

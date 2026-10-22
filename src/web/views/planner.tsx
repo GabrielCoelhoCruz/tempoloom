@@ -6,7 +6,14 @@ import { addDays, localToUtc, utcToLocal, weekdayOf } from "../../shared/time.ts
 import { api } from "../lib/api.ts";
 import { calendarList, displayName, loadCalendars } from "../lib/calendars.tsx";
 import { CATEGORY_LABELS } from "../lib/categories.ts";
-import { clockText, dateText, displayWeekOf, formatWhen, userFormats } from "../lib/format.ts";
+import {
+  clockText,
+  dateText,
+  displayWeekOf,
+  formatWhen,
+  sameWeekShown,
+  userFormats,
+} from "../lib/format.ts";
 import { lazyComponent, settle, settled } from "../lib/lazy.ts";
 import { useLive } from "../lib/live.ts";
 import {
@@ -97,8 +104,17 @@ const FocusProgress = lazyComponent<{ week: string }>(() =>
   import("./planner-extras.tsx").then((m) => m.FocusProgress),
 );
 
-/** PLN-3: the days the planner shows from the first day of the week; "weekdays" keeps Monday to Friday. */
-const DAY_COUNT = { "all-days": 7, weekdays: 7, "rolling-9-days": 9 } as const;
+/**
+ * PLN-3: the days the planner shows for a week that starts on `first`: 7 days,
+ * 9 days, or Monday to Friday of that week (also when it starts on Sunday).
+ */
+function shownDays(first: string, mode: "all-days" | "weekdays" | "rolling-9-days"): string[] {
+  if (mode === "weekdays") {
+    const monday = addDays(first, (8 - weekdayOf(first)) % 7);
+    return Array.from({ length: 5 }, (_, i) => addDays(monday, i));
+  }
+  return Array.from({ length: mode === "rolling-9-days" ? 9 : 7 }, (_, i) => addDays(first, i));
+}
 
 /** The first day of the display week that holds `t` (PRF-6: the user's week start). */
 function weekOf(z: string, t: number): string {
@@ -128,10 +144,9 @@ export function Planner() {
   };
   const settings = me.value?.settings;
   const plannerDays = settings?.plannerDays ?? "all-days";
-  const dayCount = DAY_COUNT[plannerDays];
   // The week start can change with the next read of the account (PRF-6, planner edge case 4).
   const first = userFormats().weekStart;
-  useEffect(() => setWeekStart((w) => displayWeekOf(w)), [first]);
+  useEffect(() => setWeekStart((w) => sameWeekShown(w)), [first]);
   const hidden = useMemo(() => new Set(settings?.hiddenCalendars ?? []), [settings]);
   const others = viewAs.value === "others";
   // PLN-6: others see no event details and no conflict titles, so a switch
@@ -154,13 +169,7 @@ export function Planner() {
   const [error, setError] = useState<string | null>(null);
   // A planner link (?item=task:<id>, planning-event-content.md CNT-10) opens that item's event.
   const openItem = useRef(new URLSearchParams(location.search).get("item"));
-  const days = useMemo(
-    () =>
-      Array.from({ length: dayCount }, (_, i) => addDays(weekStart, i)).filter(
-        (d) => plannerDays !== "weekdays" || weekdayOf(d) <= 5,
-      ),
-    [weekStart, dayCount, plannerDays],
-  );
+  const days = useMemo(() => shownDays(weekStart, plannerDays), [weekStart, plannerDays]);
   // The loaded range: from the first to the end of the last day shown.
   const fromDay = days[0] ?? weekStart;
   const toDay = addDays(days.at(-1) ?? weekStart, 1);

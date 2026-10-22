@@ -1584,14 +1584,17 @@ BLOCKED[949] = ("Needs a Claude account (Claude Desktop or the Claude web app) t
 
 # --- U59: PRF-6 formats and week start in the planner, hours page and date displays ---
 T["u59_formats"] = "the planner, the hours page and the task and habit lists use the time format, date format and week start from the calendar account, also after a reload (PRF-6)"
+T["u59_live_week"] = "a week start change from the calendar account moves an open planner to the week that keeps most of its days (PRF-6, planner edge case 4)"
 BLOCKED[145] = (GOOGLE_CONSENT + ": the reads from Google (name, picture, time zone, week start, time and date format) have unit tests "
                 "against a fake Google API only (tests/unit/google-profile.test.ts). Built, with full UI E2E on CalDAV, with the values "
                 "stored as the Google sync stores them: PRF-6, the planner (first day of the week, week label, day headers, hour labels, "
                 "event times, event details), the hours page (day order, ranges), the travel dates in Settings and the task and habit lists use "
-                "the time format (12 or 24 hours), the date format and the Google week start, also after a reload (\u201c" + T["u59_formats"]
-                + "\u201d); initials without a picture (\u201c" + T["u56_initials"] + "\u201d); the editable profile fields (row 146). "
+                "the time format (12 or 24 hours), the date format and the Google week start, also after a reload, and a weekly meeting "
+                "keeps its planning period from Monday (\u201c" + T["u59_formats"] + "\u201d); an open planner follows a week start change "
+                "through the live signal (\u201c" + T["u59_live_week"] + "\u201d); initials without a picture (\u201c" + T["u56_initials"] + "\u201d); the editable profile fields (row 146). "
                 "Built, with unit tests: one set of format rules (tests/unit/formats.test.ts) for the times and dates the user reads in "
-                "the app; the meeting list, change logs, help page and preview texts use them too, with E2E of the default formats only. Tempoloom decision (settings-profile.md, "
+                "the app; the meeting list, change logs, help page, recommendations, error texts and the preview texts (also of the MCP "
+                "tools, unit test in tests/unit/mcp.test.ts) use them too, with E2E of the default formats only. Tempoloom decision (settings-profile.md, "
                 "\u201cWhich week each feature uses\u201d): the Google week start sets the display week only; planning periods (habits, "
                 "meetings with their skips, missed periods and cadence, focus goals, auto-lock, policy reports) keep the week start set "
                 "in Tempoloom, so a Google change never moves a period key; edge case 3 applies to that planning week start. Mail keeps "
