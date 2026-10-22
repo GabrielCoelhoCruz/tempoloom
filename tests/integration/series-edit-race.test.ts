@@ -175,13 +175,6 @@ async function moveSeries(id: string, thursday: string) {
   const etag = res.headers.get("etag");
   const text = (await res.text()).replace(/\r?\n[ \t]/g, "");
   const date = thursday.replace(/-/g, "");
-  let inMaster = false;
-  const lines = text.split(/\r?\n/).map((l) => {
-    if (l === "BEGIN:VEVENT") inMaster = true;
-    if (l.startsWith("RECURRENCE-ID")) inMaster = false;
-    if (l === "END:VEVENT") inMaster = false;
-    return l;
-  });
   // The master is the VEVENT without a RECURRENCE-ID.
   const blocks = text.split(/(?=BEGIN:VEVENT)/);
   const out = blocks
@@ -194,8 +187,6 @@ async function moveSeries(id: string, thursday: string) {
         .replace(/^(SUMMARY:.*)$/m, "$1 board");
     })
     .join("");
-  void lines;
-  void inMaster;
   const put = await fetch(id, {
     method: "PUT",
     headers: {
@@ -325,6 +316,29 @@ describe("an all-events edit of a meeting series during a sync job", () => {
       ]);
       expect(
         all(s.db, "SELECT key FROM managed_events WHERE kind = 'meeting' AND locked = 1"),
+      ).toEqual([]);
+      // The meeting history names the organizer's move of each occurrence, from the
+      // time Tempoloom wrote; the item log never says that Tempoloom chose the new time.
+      const moves = all<{ actor: string; reason: string; old_start: number; new_start: number }>(
+        s.db,
+        `SELECT actor, reason, old_start, new_start FROM meeting_changes
+         WHERE occurrence_key IN (?, ?) ORDER BY occurrence_key`,
+        `meeting:m1:${W}`,
+        `meeting:m1:${addDays(W, 7)}`,
+      ).map((c) => [c.actor, c.reason, local(c.old_start), local(c.new_start)]);
+      expect(moves).toEqual([
+        ["organizer", "ruleChanged", `${addDays(W, 1)} 10:00`, `${addDays(W, 3)} 14:00`],
+        ["organizer", "ruleChanged", `${addDays(W, 8)} 10:00`, `${addDays(W, 10)} 14:00`],
+      ]);
+      const thursdays = [
+        localToUtc(ZONE, addDays(W, 3), 840),
+        localToUtc(ZONE, addDays(W, 10), 840),
+      ];
+      expect(
+        all<{ start_ms: number }>(
+          s.db,
+          "SELECT start_ms FROM change_log WHERE action = 'create'",
+        ).filter((r) => thursdays.includes(r.start_ms)),
       ).toEqual([]);
     },
   );

@@ -13,6 +13,7 @@ import {
   type EventWrite,
   type ExternalChange,
   ProviderError,
+  type ProviderEvent,
   type SeriesFacts,
 } from "../providers/types.ts";
 import { getSettings } from "../settings.ts";
@@ -280,15 +281,13 @@ export async function writeSeries(
   m: MeetingRow,
   own: DesiredEvent[],
   byKey: Map<string, ManagedRow>,
-  /** Filled with the keys this run must not write: their series has an unread edit. */
-  hold: Set<string>,
-): Promise<number> {
+): Promise<{ made: number; held: boolean }> {
   const { db, userId, now } = ctx;
   const sorted = [...own].sort((a, b) => (a.key < b.key ? -1 : 1));
   const [first] = sorted;
-  if (!first) return 0;
+  if (!first) return { made: 0, held: false };
   const { provider, providerCalendarId } = ctx.target(first.calendarId);
-  if (!provider.seriesInstances) return 0;
+  if (!provider.seriesInstances) return { made: 0, held: false };
   const period = (key: string) => key.slice(key.lastIndexOf(":") + 1);
   const mine = sorted.filter((d) => d.calendarId === first.calendarId);
   const plan = planSeries(
@@ -297,7 +296,7 @@ export async function writeSeries(
     period(first.key),
     mine.map((d) => period(d.key)),
   );
-  if (!plan) return 0;
+  if (!plan) return { made: 0, held: false };
   const taken = mine.filter((d) => byKey.get(d.key)?.event_id);
   // The master takes the fields of the last occurrence: as the instances past
   // the planning window will be (rule 20), so most instances need no override.
@@ -328,11 +327,11 @@ export async function writeSeries(
     title: m.title,
   };
   // The organizer may edit the new series in another app before this read:
-  // then its instances are not what this run wrote. They get their rows as
-  // the calendar has them, but this run writes nothing for the meeting (`hold`); the
-  // next run reads the edit against the baseline (what this run wrote) and
-  // places the meeting from it.
-  const edited = instances.some((i) => i.series && ruleKey(i.series) !== ruleKey(baseline));
+  // then its instances are not what this run wrote. Their rows hold what this
+  // run wrote (the rule time of each period), this run writes nothing more
+  // for the meeting (`held`), and the next run reads the edit against the
+  // baseline: the history logs the organizer's move from the written time.
+  const edited = unreadEdit(instances, baseline);
   const { weekStart } = getSettings(db, userId);
   const zone = planningZone(db, userId);
   const wantedByKey = new Map(mine.map((d) => [d.key, d]));
@@ -343,14 +342,12 @@ export async function writeSeries(
     const d = p ? wantedByKey.get(`meeting:${m.id}:${p}`) : undefined;
     if (!d || byKey.get(d.key)?.event_id) continue;
     // The row holds what the master wrote; the push writes what differs.
-    saveRow(
-      db,
-      userId,
-      { ...model, key: d.key, start: inst.start, end: inst.end },
-      inst.id,
-      inst.etag,
-      byKey.get(d.key)?.id,
-    );
+    const ruleStart = p ? plan.ruleStarts.get(p) : undefined;
+    const at =
+      edited && ruleStart !== undefined
+        ? { start: ruleStart, end: ruleStart + (plan.end - plan.start) }
+        : { start: inst.start, end: inst.end };
+    saveRow(db, userId, { ...model, key: d.key, ...at }, inst.id, inst.etag, byKey.get(d.key)?.id);
     const row = one<ManagedRow>(
       db,
       "SELECT * FROM managed_events WHERE user_id = ? AND key = ?",
@@ -358,12 +355,10 @@ export async function writeSeries(
       d.key,
     );
     if (row) byKey.set(d.key, row);
-    ctx.written?.set(d.key, { start: inst.start, end: inst.end });
-    logManaged(db, userId, desiredRef(d, inst.id), "create", { ...d, ...inst }, now);
+    ctx.written?.set(d.key, at);
+    logManaged(db, userId, desiredRef(d, inst.id), "create", { ...d, ...at }, now);
     made++;
   }
-  // The whole meeting waits: also its periods with no instance (a split ended them).
-  if (edited) for (const d of mine) hold.add(d.key);
   run(
     db,
     "UPDATE meetings SET series_calendar_id = ?, series_event_id = ?, series_rule = ? WHERE id = ?",
@@ -372,7 +367,18 @@ export async function writeSeries(
     JSON.stringify(baseline),
     m.id,
   );
-  return made;
+  // The whole meeting waits, also its periods with no instance (a split ended them).
+  return { made, held: edited };
+}
+
+/**
+ * A series edit that Tempoloom has not read yet: an instance whose master is
+ * not the baseline (what Tempoloom last wrote or read).
+ */
+export function unreadEdit(list: ProviderEvent[], base: SeriesFacts | null): boolean {
+  if (!base) return false;
+  const key = ruleKey(base);
+  return list.some((e) => e.series !== undefined && ruleKey(e.series) !== key);
 }
 
 /**
@@ -403,17 +409,19 @@ export async function moveRuleInstance(
       userId,
     ).map((r) => r.event_id),
   );
+  const base = (m.series_rule ? JSON.parse(m.series_rule) : null) as Baseline | null;
+  // From the series' first start (DTSTART is always an instance), so the read
+  // shows the series' own master also when it ended before this period.
   const list = await provider.seriesInstances(
     providerCalendarId,
     series,
-    from,
+    Math.min(from, base?.start ?? from),
     from + 34 * 86_400_000,
   );
   // A series edit that no pull has read yet (this plan is older than it):
   // write nothing for the period now, also no new instance; the next run
   // reads the edit first.
-  const base = (m.series_rule ? JSON.parse(m.series_rule) : null) as Baseline | null;
-  if (base && list.some((e) => e.series && ruleKey(base) !== ruleKey(e.series))) return "stale";
+  if (unreadEdit(list, base)) return "stale";
   const inst = list.find(
     (e) =>
       !used.has(e.id) &&
