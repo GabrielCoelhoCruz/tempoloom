@@ -3,6 +3,7 @@
 // details panel needs to offer them (habits-automation.md rules 6, 8, 30).
 import { type Context, Hono } from "hono";
 import { z } from "zod";
+import { HabitChoice } from "../../shared/habit-choice.ts";
 import { chosenMinute, localToUtc, utcToLocal, weekdayOf } from "../../shared/time.ts";
 import type { AppEnv } from "../app.ts";
 import { all, type Db, one, run } from "../db.ts";
@@ -143,7 +144,7 @@ export function eventActionRoutes(db: Db, sync: SyncService, now: () => number):
       id,
       o.date,
       o.minute,
-      notBefore ? 1 : 0,
+      notBefore ? HabitChoice.snooze : HabitChoice.reschedule,
     );
     run(
       db,

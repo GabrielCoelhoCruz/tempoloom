@@ -465,14 +465,17 @@ const monthIndex = (d: LocalDate) => Number(d.slice(0, 4)) * 12 + Number(d.slice
 
 /**
  * The dates before today whose occurrence is still open: its event has not
- * ended (rule 14 or the user moved it to a later day), or its reschedule or
- * snooze time is on today or later (rules 30, 31).
+ * ended (rule 14 or the user moved it to a later day), its reschedule or
+ * snooze time is on today or later (rules 30, 31), or its event on today or
+ * later went away without a choice (rules 29, 33).
  */
 function passedOpen(ctx: Ctx, h: HabitItem, today: LocalDate): Set<LocalDate> {
   const open = new Set<LocalDate>();
   for (const picks of [h.rescheduled, h.notBefore])
     for (const [date, minute] of Object.entries(picks ?? {}))
       if (date < today && minute !== undefined && chosenDay(date, minute) >= today) open.add(date);
+  for (const [date, day] of Object.entries(h.reopened ?? {}))
+    if (date < today && day !== undefined && day >= today) open.add(date);
   const prefix = `habit:${h.id}:`;
   for (const c of ctx.s.current) {
     if (!c.key.startsWith(prefix)) continue;
@@ -750,11 +753,18 @@ function placeHabit(ctx: Ctx, h: HabitItem): void {
     const snoozed = h.notBefore?.[occ.date];
     const pick = h.rescheduled?.[occ.date] ?? snoozed;
     const moved = pick !== undefined;
-    const home = moved ? chosenDay(occ.date, pick) : occ.date;
+    // Rules 29, 33: a passed occurrence whose event went away goes back to that event's day.
+    const back = moved ? undefined : h.reopened?.[occ.date];
+    const home = moved ? chosenDay(occ.date, pick) : (back ?? occ.date);
     const picked = moved ? localToUtc(s.zone, occ.date, pick) : undefined;
     const notBefore = snoozed === undefined ? undefined : picked;
     const limits = new Map<LocalDate, number>();
-    const days = (moved ? [home] : [occ.date, ...occ.alternatives]).filter((d) => {
+    const candidates = moved
+      ? [home]
+      : back === undefined
+        ? [occ.date, ...occ.alternatives]
+        : [back, ...[occ.date, ...occ.alternatives].filter((d) => d !== back)];
+    const days = candidates.filter((d) => {
       const limit = dependencyLimit(ctx, h, d);
       if (limit !== null) limits.set(d, limit);
       return limit !== null;
