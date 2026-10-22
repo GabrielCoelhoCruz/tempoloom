@@ -124,3 +124,31 @@ test("the Google Calendar card follows the server's Google client and offers a C
     "https://help.example.com/contact",
   );
 });
+
+test("when the server's sign-in methods do not load, Settings > Integrations shows the error and all cards, and the Google Calendar card claims no state; a reload that loads them shows the state", async ({
+  page,
+  signIn,
+}) => {
+  test.skip(BACKEND === "google", "The Google backend may configure a Google client.");
+  await signIn();
+  await page.route("**/auth/methods", (r) => r.fulfill({ status: 500, body: "{}" }));
+  await openIntegrations(page);
+  await expect(page.getByTestId("integrations-error")).toHaveText(
+    "Could not check this server's Google client (API error 500). Reload the page to try again.",
+  );
+  await expect(page.getByTestId("integration-card")).toHaveCount(
+    GROUPS.flatMap(([, n]) => n).length,
+  );
+  const google = card(page, "Google Calendar");
+  await expect(google.getByTestId("integration-state")).toHaveText("Unknown");
+  await expect(google.getByRole("button", { name: "Connect" })).toBeDisabled();
+  await expect(card(page, "Slack").getByTestId("integration-state")).toHaveText(
+    "Not available yet",
+  );
+  await page.unroute("**/auth/methods");
+  const methods = page.waitForResponse((r) => new URL(r.url()).pathname === "/auth/methods");
+  await page.reload();
+  expect((await methods).ok()).toBe(true);
+  await expect(google.getByTestId("integration-state")).toHaveText("Not configured on this server");
+  await expect(page.getByTestId("integrations-error")).toHaveCount(0);
+});

@@ -371,7 +371,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   app.route("/", embedRoutes());
   app.route("/pub", publicBrandingRoutes(db));
   app.route("/scim/v2", scimRoutes(db, config.BASE_URL, now));
-  app.route("/r", weeklyShareRoutes(db, config.BASE_URL, now));
+  app.route("/r", weeklyShareRoutes(db, config.BASE_URL, now, config.TRUSTED_PROXIES));
   const ssoDeps = {
     db,
     box,

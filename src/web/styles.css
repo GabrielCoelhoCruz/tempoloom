@@ -221,6 +221,10 @@ label > textarea {
   color: var(--accent);
   font-weight: 600;
 }
+.day-name.focus {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border-radius: 6px;
+}
 .week-scroll {
   overflow-y: auto;
   flex: 1;
