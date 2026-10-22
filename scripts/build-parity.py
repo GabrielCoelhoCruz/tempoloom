@@ -1075,9 +1075,11 @@ E2E_NOTES.update({
 # Chat rows: the assistant chat needs a language model, which the owner must supply.
 G2 = "Needs an LLM provider and key from the owner (gate G2)"
 CHAT_BUILT = "; preview mode and the MCP server, which the assistant chat would use, are built"
-for n in [6, 47, 316, 369, 569, 582, 609, 612, 627, 661, 662, 672, 674, 675, 676, 677, 678, 679, 680, 681,
+for n in [6, 47, 316, 369, 569, 582, 609, 612, 627, 661, 662, 674, 675, 676, 677, 678, 679, 680, 681,
           684, 685, 686, 687, 688, 689, 718]:
-    BLOCKED[n] = G2 + CHAT_BUILT
+    BLOCKED[n] = G2
+# Row 672 belongs to unit U73, which changes its reason.
+BLOCKED[672] = G2 + CHAT_BUILT
 for n in [723, 724, 730, 732, 733, 734, 735, 736, 738, 739, 740, 742, 749]:
     BLOCKED[n] = G2 + ": a prompt entry opens the assistant chat"
 BLOCKED[568] = G2 + ": the switch turns off the assistant chat, so without the chat it has no effect to prove"
