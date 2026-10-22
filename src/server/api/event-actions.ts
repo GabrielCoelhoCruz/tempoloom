@@ -201,6 +201,8 @@ export function eventActionRoutes(db: Db, sync: SyncService, now: () => number):
       kind: row.kind,
       sourceId: row.source_id,
       date: row.key.split(":")[2] ?? null,
+      // The zone of the times the forms show and send (occurrenceTime).
+      zone: planningZone(db, user.id, user.time_zone),
       ended,
       started: row.start_ms <= now(),
       // Start when placed (rule 33): an occurrence is done when its end passes.

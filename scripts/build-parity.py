@@ -1406,9 +1406,10 @@ E2E_NOTES.update({
 T.update({
     "u45_moved_day": "snooze and reschedule keep the occurrence on the day its event moved to (rules 30, 31)",
     "u45_later_day": "a reschedule to a later day keeps the event on that day when the plan runs on that day (rules 14, 30)",
+    "u45_trip": "during a trip the snooze and reschedule forms show and take times in the trip's zone (rules 30, 31; timezones travel)",
 })
 E2E[182] = E2E[182] + ["u45_moved_day", "u45_later_day"]
-E2E[183] = E2E[183] + ["u45_moved_day"]
+E2E[183] = E2E[183] + ["u45_moved_day", "u45_trip"]
 E2E_NOTES[183] = E2E_NOTES[183] + ". Reschedule and snooze use the day the occurrence's event is on, also when rule 14 or the user moved it to another day"
 # --- end U45 ---
 

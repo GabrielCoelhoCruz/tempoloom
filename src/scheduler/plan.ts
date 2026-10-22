@@ -464,10 +464,6 @@ const onCadence = (i: number, every: number) => mod(i, every) === 0;
 const monthIndex = (d: LocalDate) => Number(d.slice(0, 4)) * 12 + Number(d.slice(5, 7));
 
 /**
- * The habit's occurrences. With an interval above 1 (custom frequency), only
- * the periods of its unit (day, week or month) on the cadence from the anchor.
- */
-/**
  * The dates before today whose occurrence is still open: its event has not
  * ended (rule 14 or the user moved it to a later day), or its reschedule or
  * snooze time is on today or later (rules 30, 31).
@@ -486,6 +482,10 @@ function passedOpen(ctx: Ctx, h: HabitItem, today: LocalDate): Set<LocalDate> {
   return open;
 }
 
+/**
+ * The habit's occurrences. With an interval above 1 (custom frequency), only
+ * the periods of its unit (day, week or month) on the cadence from the anchor.
+ */
 function habitOccurrences(ctx: Ctx, h: HabitItem): Occurrence[] {
   const f = h.frequency;
   const today = utcToLocal(ctx.s.zone, ctx.earliest).date;

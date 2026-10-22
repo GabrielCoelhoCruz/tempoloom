@@ -16,6 +16,8 @@ interface Actions {
   series?: { eligible: boolean; reason: string | null } | null;
   sourceId?: string;
   date?: string | null;
+  /** The planning zone (a travel zone on its dates): the API reads chosen times in it. */
+  zone?: string;
   ended?: boolean;
   started?: boolean;
   done?: boolean;
@@ -79,11 +81,12 @@ export function EventActions({
       if (!live) return;
       setInfo(a);
       setSearchId(a.search?.searchId ?? null);
+      if (a.zone) setTime(hhmm(utcToLocal(a.zone, event.start).minuteOfDay));
     });
     return () => {
       live = false;
     };
-  }, [event.id]);
+  }, [event.id, event.start]);
   const { tasks, name } = useSearchTasks(searchId);
   if (!info) return null;
 
@@ -182,7 +185,7 @@ export function EventActions({
       {info.kind === "habit" && !info.ended && info.sourceId && info.date && (
         <SnoozeForm
           start={event.start}
-          zone={zone}
+          zone={info.zone ?? zone}
           snooze={(time) => {
             const id = info.sourceId;
             const date = info.date;
