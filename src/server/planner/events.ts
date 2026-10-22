@@ -1,5 +1,7 @@
 // External events of a user, read from the event cache in scheduler form.
+
 import type { ExternalEvent } from "../../scheduler/model.ts";
+import { hasVideoLink } from "../../shared/meeting-checks.ts";
 import { bookingHolds } from "../booking-team.ts";
 import { all, type Db } from "../db.ts";
 import { categoryContext, externalCategory } from "./categories.ts";
@@ -83,7 +85,9 @@ export function externalEvents(db: Db, userId: string, from: number, to: number)
       selfResponse: null,
       organizerSelf: false,
       attendeeCount: 2,
+      // Only a video link of the booking's location: travel time comes from the invitation itself.
       location: "",
+      conference: hasVideoLink(h.location) ? h.location : "",
       eventType: "default",
       bookedViaLink: true,
     });

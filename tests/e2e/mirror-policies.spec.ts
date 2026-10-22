@@ -482,7 +482,7 @@ test("mirroring keeps copies 12 months ahead while planning stops at its own win
   ]);
 });
 
-test("the mirroring help names the fixes for missing source details (Workspace external sharing, the Gmail event visibility setting) and says that iCloud and other calendars arrive through Google or Microsoft, hours late, while a CalDAV server connects directly (rules 45-47)", async ({
+test("the mirroring help names the fixes for missing source details (Workspace external sharing, the Gmail event visibility setting), says that a calendar subscribed by URL through Google or Microsoft is read-only, late and not listed, and that a CalDAV server connects directly (rules 45-47)", async ({
   page,
   signIn,
 }) => {
@@ -492,9 +492,9 @@ test("the mirroring help names the fixes for missing source details (Workspace e
     "Only busy blocks from a Google Workspace calendar? The domain's external sharing setting hides the details. Ask the domain admin to allow external sharing of full event details.",
     // Rule 46.
     'Events that Gmail added to the source calendar show their details only when that calendar\'s "Events from Gmail" visibility setting allows it.',
-    // Rule 47.
-    "iCloud and other calendars hosted elsewhere reach Tempoloom only after you add them to a Google or Microsoft account. Their changes can then arrive many hours late, and Tempoloom cannot make this faster.",
-    "A CalDAV server, iCloud too, connects directly instead: add it on the Account page.",
+    // Rule 47 and its Tempoloom decision (read-only subscribed calendars are not listed).
+    "An iCloud or other calendar that a Google or Microsoft account subscribes to by URL is read-only there, and its changes can arrive many hours late. Tempoloom uses only calendars it can write, so it does not list such a calendar: its events do not count as busy time, and it cannot be a mirroring source or destination.",
+    "A CalDAV server, iCloud too, connects directly: add it on the Account page, with read and write access.",
   ];
   for (const reload of [false, true]) {
     if (reload) await page.reload();

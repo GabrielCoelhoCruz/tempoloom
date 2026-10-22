@@ -48,7 +48,8 @@ export function nextAt(zone: string, hhmm: string, now: number): number {
  * assistant-chat.md rule 15: the local dates the daily digest covers, both
  * included: from today to the end of the planning week (`weekStart`, 1 Monday
  * or 7 Sunday), then the first 2 workdays of the next week. Workdays are the
- * days with work hours; with none, Monday to Friday.
+ * days with work hours; with none, Monday to Friday. A next week with fewer
+ * than 2 workdays is covered to its end.
  */
 export function digestDays(
   zone: string,
@@ -58,9 +59,14 @@ export function digestDays(
 ): { from: LocalDate; to: LocalDate } {
   const from = utcToLocal(zone, now).date;
   const days = workdays.length > 0 ? workdays : [1, 2, 3, 4, 5];
-  let to = addDays(from, 7 - ((weekdayOf(from) - weekStart + 7) % 7));
-  for (let left = 2, n = 0; n < 7; n++, to = addDays(to, 1))
-    if (days.includes(weekdayOf(to)) && --left === 0) break;
+  const next = addDays(from, 7 - ((weekdayOf(from) - weekStart + 7) % 7));
+  // A next week with fewer than 2 workdays ends the digest at its last day.
+  let to = addDays(next, 6);
+  for (let left = 2, n = 0; n < 7; n++)
+    if (days.includes(weekdayOf(addDays(next, n))) && --left === 0) {
+      to = addDays(next, n);
+      break;
+    }
   return { from, to };
 }
 

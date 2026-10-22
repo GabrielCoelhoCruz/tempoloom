@@ -324,10 +324,14 @@ export function MirrorSettings() {
           calendar's "Events from Gmail" visibility setting allows it.
         </li>
         <li>
-          iCloud and other calendars hosted elsewhere reach Tempoloom only after you add them to a
-          Google or Microsoft account. Their changes can then arrive many hours late, and Tempoloom
-          cannot make this faster. A CalDAV server, iCloud too, connects directly instead: add it on
-          the Account page.
+          An iCloud or other calendar that a Google or Microsoft account subscribes to by URL is
+          read-only there, and its changes can arrive many hours late. Tempoloom uses only calendars
+          it can write, so it does not list such a calendar: its events do not count as busy time,
+          and it cannot be a mirroring source or destination.
+        </li>
+        <li>
+          A CalDAV server, iCloud too, connects directly: add it on the Account page, with read and
+          write access.
         </li>
       </ul>
       {fromLibrary && calendars.filter((c) => c.provider !== "ics" && c.writable).length < 2 && (

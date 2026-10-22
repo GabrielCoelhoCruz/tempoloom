@@ -36,7 +36,10 @@ export interface ExternalEvent {
   attendees?: string[];
   /** For a Tempoloom mirror copy: the calendar of its source event. */
   mirrorSource?: string;
-  /** The conference link (CalDAV CONFERENCE, Google Meet), or "" (buffer filter has_video_link). */
+  /**
+   * The conference link (CalDAV CONFERENCE, Google Meet), or "" (buffer filter
+   * has_video_link). Every event the server builds sets it; absent counts as none.
+   */
   conference?: string;
 }
 

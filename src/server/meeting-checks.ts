@@ -2,7 +2,7 @@
 // from the event cache each time they are read, so an issue resolves as soon
 // as its condition ends (rule 5) and a disabled check closes its issues
 // (rule 2). Only ignores are stored (rule 3). Checks never change an event (rule 7).
-import { hasVideoLink } from "../shared/meeting-checks.ts";
+import { hasVideo } from "../shared/meeting-checks.ts";
 import { DAY } from "../shared/time.ts";
 import { all, type Db, one } from "./db.ts";
 import { type CheckId, getPrefs } from "./meeting-prefs.ts";
@@ -70,9 +70,6 @@ interface Ev {
 
 /** A street address: two or more commas, as buffers-travel.md reads it. */
 const isAddress = (location: string) => (location.match(/,/g) ?? []).length >= 2;
-
-const video = (e: Ev) =>
-  e.conference !== "" || hasVideoLink(e.location) || hasVideoLink(e.description);
 
 function eventsOf(db: Db, userId: string, from: number, to: number): Ev[] {
   const email =
@@ -181,7 +178,7 @@ function companyFails(c: CompanyConditions, e: Ev, teamDomain: string): boolean 
   const people = e.others.length + 1;
   if (c.minAttendees !== undefined && people < c.minAttendees) return false;
   if (c.descriptionEmpty && e.description.trim() !== "") return false;
-  if (c.noVideoLink && video(e)) return false;
+  if (c.noVideoLink && hasVideo(e)) return false;
   if (c.externalGuests && !e.others.some((o) => domainOf(o) !== teamDomain)) return false;
   if (c.longerThanMinutes !== undefined && e.end - e.start <= c.longerThanMinutes * 60_000)
     return false;
@@ -260,7 +257,7 @@ export function evaluate(db: Db, userId: string, now: number, to = now + HORIZON
         ignoreId: "rsvp_reminder",
         message: "You have not answered this invitation",
       });
-    if (on.video_link && !video(e) && !isAddress(e.location))
+    if (on.video_link && !hasVideo(e) && !isAddress(e.location))
       out.push({
         ...base(e),
         checkId: "video_link",

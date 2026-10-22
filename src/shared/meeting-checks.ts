@@ -24,3 +24,12 @@ export function hasVideoLink(text: string): boolean {
   }
   return false;
 }
+
+/**
+ * The one video link rule (automations-meeting-quality.md video_link;
+ * buffers-automation.md has_video_link): a conference link (CalDAV
+ * CONFERENCE, Google Meet), or a video service URL in the location or the
+ * description. No conference given counts as none.
+ */
+export const hasVideo = (e: { conference?: string; location: string; description: string }) =>
+  Boolean(e.conference) || hasVideoLink(e.location) || hasVideoLink(e.description);

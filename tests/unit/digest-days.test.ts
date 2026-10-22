@@ -5,7 +5,8 @@
 // Failure modes, each covered below:
 //  1. The digest covers 7 days instead of the rest of the week and 2 workdays.
 //  2. The planning week start is ignored.
-//  3. Days without work hours count as workdays, or no work hours give no days.
+//  3. Days without work hours count as workdays, or no work hours give no days;
+//     a week with fewer than 2 workdays runs past the end of next week.
 //  4. The video filter misses a link in the conference, location or description,
 //     or takes a link that names no video service.
 import { describe, expect, it } from "vitest";
@@ -51,6 +52,15 @@ describe("digestDays", () => {
     expect(digestDays(ZONE, at("2026-11-05"), 1, [2, 3, 4, 5, 6])).toEqual({
       from: "2026-11-05",
       to: "2026-11-11",
+    });
+    // One workday a week (Saturday): the digest stops at the end of next week, not later.
+    expect(digestDays(ZONE, at("2026-11-05"), 1, [6])).toEqual({
+      from: "2026-11-05",
+      to: "2026-11-15",
+    });
+    expect(digestDays(ZONE, at("2026-11-08"), 7, [6])).toEqual({
+      from: "2026-11-08",
+      to: "2026-11-21",
     });
     expect(digestDays(ZONE, at("2026-11-05"), 1, [])).toEqual({
       from: "2026-11-05",

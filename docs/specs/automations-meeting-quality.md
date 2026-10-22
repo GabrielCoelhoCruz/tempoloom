@@ -72,7 +72,8 @@ open issues of the days that the nightly review covers
 (`assistant-chat.md` rule 15): from today to the end of the planning week
 (`weekStart`, `settings-profile.md` "Which week each feature uses"), then the
 first 2 workdays of the next week. Workdays are the days with work hours;
-with none, Monday to Friday. The Issues tab keeps the 7-day horizon.
+with none, Monday to Friday. A next week with fewer than 2 workdays is
+covered to its end. The Issues tab keeps the 7-day horizon.
 
 ## Behavior
 

@@ -1,6 +1,6 @@
 // The scheduling engine: plan(snapshot) -> placements and report.
 // Rule ids (SCH-, DEF-, TSK-) refer to docs/specs/planning-scheduler.md and the item specs.
-import { hasVideoLink } from "../shared/meeting-checks.ts";
+import { hasVideo } from "../shared/meeting-checks.ts";
 import {
   addDays,
   chosenDay,
@@ -1402,10 +1402,6 @@ export function matchesFilter(f: BufferFilter, e: ExternalEvent): boolean {
   if (f.videoLink && !hasVideo(e)) return false;
   return true;
 }
-
-/** Buffer filter `has_video_link`: the same video link test as the video_link meeting check. */
-const hasVideo = (e: ExternalEvent) =>
-  Boolean(e.conference) || hasVideoLink(e.location) || hasVideoLink(e.description);
 
 /**
  * Rule 7 and the calendar scope: the anchors of a buffer in [from, to). Mirror

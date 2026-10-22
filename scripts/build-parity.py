@@ -1078,8 +1078,7 @@ for n in [6, 47, 316, 369, 569, 582, 609, 612, 627, 661, 662, 674, 675, 676, 677
 for n in [723, 724, 730, 732, 733, 734, 735, 736, 738, 739, 740, 742, 749]:
     BLOCKED[n] = G2 + ": a prompt entry opens the assistant chat"
 BLOCKED[568] = G2 + ": the switch turns off the assistant chat, so without the chat it has no effect to prove"
-BLOCKED[683] = (G2 + " for the nightly review by chat, and a Slack app and a Slack test workspace for the chat-app channel; "
-                "the morning email digest of meeting checks is built (row 317)")
+# Row 683: see the U73 block (it names the built digest by E2E titles).
 
 # Rows that need a named outside account, vendor app or API.
 SLACK = "Needs a Slack app and a Slack test workspace"
@@ -1654,15 +1653,17 @@ BLOCKED[145] = (GOOGLE_CONSENT + ": the reads from Google (name, picture, time z
 
 # --- U73: fields kept after moves, mirroring help, digest days, video-only recovery ---
 T["u73_keep"] = "a move keeps the fields Tempoloom does not own: attachments, conference data, an agenda-tool link and hand-added Zoom details on the series and on one occurrence stay after both occurrences move and after a reload (MEET-01 rules 39, 40; video conferencing rule 14)"
-T["u73_help"] = "the mirroring help names the fixes for missing source details (Workspace external sharing, the Gmail event visibility setting) and says that iCloud and other calendars arrive through Google or Microsoft, hours late, while a CalDAV server connects directly (rules 45-47)"
+T["u73_help"] = "the mirroring help names the fixes for missing source details (Workspace external sharing, the Gmail event visibility setting), says that a calendar subscribed by URL through Google or Microsoft is read-only, late and not listed, and that a CalDAV server connects directly (rules 45-47)"
 T["u73_digest"] = "the daily digest covers the rest of the planning week and the first 2 workdays of the next week: on Thursday it lists Friday and next Tuesday but not next Wednesday; on Sunday it stops at Tuesday, and with the planning week from Sunday it runs to the Tuesday after next (assistant chat rule 15; meeting checks rule 6)"
 T["u73_video"] = "recovery after video meetings only: a buffer follows each meeting with a video link in its conference data, location or description, and none follows a meeting without one, which the all-meetings option covers (recovery template: all or video only; has_video_link)"
 E2E[344] = ["u73_keep"]
 E2E_NOTES[344] = ("The E2E puts an ATTACH, a CONFERENCE, a Zoom URL in the location and Zoom details in the description on the series "
                   "in Radicale, and an agenda-tool link and ATTACH on one occurrence (an override with RECURRENCE-ID), then blocks both "
                   "occurrences. Tempoloom moves each one by a patch of its override (a new override copies the series), so every field "
-                  "stays on the series and on both occurrences after the moves, a reload and more plan runs. Writes to the series master "
-                  "and to single meeting events use the same patch call, which changes only the fields Tempoloom owns")
+                  "stays on the series and on both occurrences after the moves, a reload and more plan runs. A move of a single "
+                  "(non-series) event and a title change of a series master use the same patch call (editExternal); a CalDAV "
+                  "integration test against Radicale proves that both keep these fields. No UI path makes a single meeting event "
+                  "on CalDAV now (a meeting from the form is one series), so that part has no E2E")
 E2E[828] = ["u73_keep"]
 E2E_NOTES[828] = ("Without the Zoom integration: Zoom details pasted by hand into the series (CONFERENCE, location and description) "
                   "stay on every occurrence that Tempoloom moves, also after a reload")
@@ -1670,11 +1671,12 @@ BLOCKED[492] = ("Needs a Google Workspace domain whose external sharing setting 
                 "with full UI E2E on CalDAV: the help text on the mirroring settings tells the user to ask the domain admin to allow "
                 "external sharing of full details, and names the \u201cEvents from Gmail\u201d visibility setting (rules 45, 46; "
                 "\u201c" + T["u73_help"] + "\u201d)")
-BLOCKED[493] = ("Needs a Google account that signs in through Tempoloom's OAuth client (row 510) or a Microsoft 365 account with Microsoft Graph, "
-                "each subscribed to an iCloud calendar, to show such a calendar arriving late through it. Built, with full UI E2E on "
-                "CalDAV: the help text says that iCloud and other calendars hosted elsewhere work only through a Google or Microsoft "
-                "account, can arrive many hours late, and that a CalDAV server, iCloud too, connects directly (rule 47; "
-                "\u201c" + T["u73_help"] + "\u201d)")
+E2E[493] = ["u73_help"]
+E2E_NOTES[493] = ("Rule 47 asks Tempoloom only for the help text; the delay is the other service's. Tempoloom decision "
+                  "(sync-calendar-mirroring.md rule 47): a calendar that a Google or Microsoft account subscribes to by URL is "
+                  "read-only there, so Tempoloom does not list it (accounts-connected-calendars.md rule 4): it gives no busy time "
+                  "and cannot be mirrored. The help says this, names the delay, and says that a CalDAV server, iCloud too, connects "
+                  "directly with read and write access")
 BLOCKED[672] = (G2 + " for the proposed fixes of the nightly review and the chat that opens with the fixes staged (assistant-chat.md "
                 "rules 16, 18). The \u201cagenda\u201d in the title has no rule in the specs (no evidence). Built, with full UI E2E "
                 "on CalDAV: the one daily digest by email of the open meeting-check issues (" + quoted_titles("s5_digest") + "), "

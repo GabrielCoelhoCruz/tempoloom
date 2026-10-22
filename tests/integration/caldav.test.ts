@@ -17,6 +17,10 @@
 //    starts after the end, also a moved one, keeps one that started before
 //    (also when its rule time is later), keeps the locked ones it is told to,
 //    and deletes a series that has not started.
+// 10. A patch (editExternal) of a single event or of a series master keeps the
+//     fields Tempoloom does not own: ATTACH, CONFERENCE, a hand-added Zoom URL in
+//     the location and description (meetings-flexible.md rules 39, 40;
+//     integrations-video-conferencing.md rule 14).
 import { randomUUID } from "node:crypto";
 import { DAVClient } from "tsdav";
 import { beforeAll, describe, expect, it } from "vitest";
@@ -251,6 +255,75 @@ describe("CalDavProvider", () => {
     });
     expect(changed.full).toBe(true);
     expect(changed.events.some((e) => e.summary === "New")).toBe(true);
+  });
+});
+
+describe("fields Tempoloom does not own", () => {
+  const ZOOM = "https://zoom.us/j/5550003333";
+  const kept = [
+    "ATTACH;FMTTYPE=application/pdf:https://files.example.com/brief.pdf",
+    `CONFERENCE;VALUE=URI;FEATURE=VIDEO:${ZOOM}`,
+    `LOCATION:${ZOOM}`,
+    `DESCRIPTION:Agenda: https://agenda.example.com/notes/1\\nJoin Zoom: ${ZOOM}`,
+  ];
+  const object = (uid: string, extra: string[]) =>
+    [
+      "BEGIN:VCALENDAR",
+      "VERSION:2.0",
+      "PRODID:-//Test//EN",
+      "BEGIN:VEVENT",
+      `UID:${uid}`,
+      "DTSTAMP:20261001T000000Z",
+      "DTSTART:20261021T080000Z",
+      "DTEND:20261021T083000Z",
+      "SUMMARY:Planning sync",
+      `ORGANIZER:mailto:${EMAIL}`,
+      `ATTENDEE;PARTSTAT=ACCEPTED:mailto:${EMAIL}`,
+      "ATTENDEE;PARTSTAT=ACCEPTED:mailto:dana@example.com",
+      ...extra,
+      ...kept,
+      "END:VEVENT",
+      "END:VCALENDAR",
+      "",
+    ].join("\r\n");
+  const stored = async (id: string) => {
+    const res = await fetch(id, {
+      headers: {
+        authorization: `Basic ${Buffer.from(`${username}:${password}`).toString("base64")}`,
+      },
+    });
+    return (await res.text()).replace(/\r?\n[ \t]/g, "");
+  };
+
+  it("a move of a single event and a title change of a series master keep them", async () => {
+    const p = provider();
+    const single = await putRaw(object(randomUUID(), []));
+    const moved = await p.editExternal(
+      calendarUrl,
+      single,
+      { start: Date.parse("2026-10-21T10:00:00Z"), end: Date.parse("2026-10-21T10:30:00Z") },
+      null,
+    );
+    expect(moved.start).toBe(Date.parse("2026-10-21T10:00:00Z"));
+    const series = await putRaw(object(randomUUID(), ["RRULE:FREQ=WEEKLY;COUNT=4"]));
+    await p.editExternal(calendarUrl, series, { summary: "Planning sync (new)" }, null);
+    for (const [id, check] of [
+      [single, "DTSTART:20261021T100000Z"],
+      [series, "SUMMARY:Planning sync (new)"],
+    ] as const) {
+      const text = await stored(id);
+      expect(text).toContain(check);
+      // Parameters may come back in another order; the name and the value stay.
+      for (const line of kept) {
+        const name = line.slice(0, line.search(/[;:]/));
+        const value = line.slice(line.indexOf(":", name.length) + 1);
+        expect(text.split(/\r?\n/)).toContainEqual(
+          expect.stringMatching(
+            new RegExp(`^${name}(;[^:]*)?:${value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`),
+          ),
+        );
+      }
+    }
   });
 });
 
