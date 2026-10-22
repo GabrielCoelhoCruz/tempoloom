@@ -33,8 +33,6 @@ const EMAIL = "e2e@tempoloom.test";
 const auth = `Basic ${Buffer.from(`${username}:${password}`).toString("base64")}`;
 
 let calendarUrl = "";
-const provider = () =>
-  new CalDavProvider({ serverUrl: url, username, password, email: EMAIL }, ZONE);
 
 beforeAll(async () => {
   const raw = new DAVClient({
