@@ -619,11 +619,30 @@ export class CalDavProvider implements CalendarProvider {
     };
   }
 
+  /**
+   * One calendar object, as the server stores it. A missing object (404, 410)
+   * is a ProviderError "not_found" for every caller: the CalDAV client throws a
+   * plain Error for it.
+   */
+  async #object(cal: DAVCalendar, url: string): Promise<{ data: string; etag: string | null }> {
+    const client = await this.#connect();
+    const objs = await retryRead(() =>
+      client.fetchCalendarObjects({ calendar: cal, objectUrls: [url] }),
+    ).catch((err: unknown) => {
+      if (err instanceof Error && /\b(404|410)\b/.test(err.message))
+        throw new ProviderError("not_found", 404, "Event not found");
+      throw err;
+    });
+    const obj = objs.find((o) => o.url === url) ?? objs[0];
+    if (typeof obj?.data !== "string") throw new ProviderError("not_found", 404, "Event not found");
+    return { data: obj.data, etag: obj.etag ?? null };
+  }
+
   async #calendar(id: string): Promise<DAVCalendar> {
     const cached = this.#calendars.get(id);
     if (cached) return cached;
     const found = (await this.#fetchCalendars()).find((c) => c.url === id);
-    if (!found) throw new ProviderError("not_found", 404, `Calendar ${id} not found`);
+    if (!found) throw new ProviderError("not_found", 404, `Calendar ${id} not found`, "calendar");
     return found;
   }
 
@@ -797,10 +816,7 @@ export class CalDavProvider implements CalendarProvider {
   ): Promise<ProviderEvent> {
     const client = await this.#connect();
     const cal = await this.#calendar(calendarId);
-    const [obj] = await retryRead(() =>
-      client.fetchCalendarObjects({ calendar: cal, objectUrls: [eventId] }),
-    );
-    if (typeof obj?.data !== "string") throw new ProviderError("not_found", 404, "Event not found");
+    const obj = await this.#object(cal, eventId);
     const root = new ICAL.Component(ICAL.parse(obj.data));
     const name = colorId ? COLOR_NAMES[colorId] : undefined;
     for (const ev of root.getAllSubcomponents("vevent")) {
@@ -896,10 +912,7 @@ export class CalDavProvider implements CalendarProvider {
     if (eventId.includes("#")) return this.#editInstance(calendarId, eventId, change, etag);
     const client = await this.#connect();
     const cal = await this.#calendar(calendarId);
-    const [obj] = await retryRead(() =>
-      client.fetchCalendarObjects({ calendar: cal, objectUrls: [eventId] }),
-    );
-    if (typeof obj?.data !== "string") throw new ProviderError("not_found", 404, "Event not found");
+    const obj = await this.#object(cal, eventId);
     const root = new ICAL.Component(ICAL.parse(obj.data));
     const ev = root.getAllSubcomponents("vevent").find((v) => !v.hasProperty("recurrence-id"));
     if (!ev) throw new ProviderError("not_found", 404, "Event not found");
@@ -1042,10 +1055,7 @@ export class CalDavProvider implements CalendarProvider {
     const hash = eventId.indexOf("#");
     const url = eventId.slice(0, hash);
     const rid = eventId.slice(hash + 1);
-    const [obj] = await retryRead(() =>
-      client.fetchCalendarObjects({ calendar: cal, objectUrls: [url] }),
-    );
-    if (typeof obj?.data !== "string") throw new ProviderError("not_found", 404, "Event not found");
+    const obj = await this.#object(cal, url);
     const root = new ICAL.Component(ICAL.parse(obj.data));
     for (const tz of root.getAllSubcomponents("vtimezone")) {
       ICAL.TimezoneService.register(new ICAL.Timezone(tz));
@@ -1217,12 +1227,8 @@ export class CalDavProvider implements CalendarProvider {
     seriesId: string,
     props: Record<string, string>,
   ): Promise<void> {
-    const client = await this.#connect();
     const cal = await this.#calendar(calendarId);
-    const [obj] = await retryRead(() =>
-      client.fetchCalendarObjects({ calendar: cal, objectUrls: [seriesId] }),
-    );
-    if (typeof obj?.data !== "string") throw new ProviderError("not_found", 404, "Event not found");
+    const obj = await this.#object(cal, seriesId);
     const root = new ICAL.Component(ICAL.parse(obj.data));
     const value = Buffer.from(JSON.stringify(props)).toString("base64url");
     for (const ev of root.getAllSubcomponents("vevent")) {
@@ -1236,10 +1242,7 @@ export class CalDavProvider implements CalendarProvider {
   async #seriesObject(calendarId: string, url: string) {
     const client = await this.#connect();
     const cal = await this.#calendar(calendarId);
-    const [obj] = await retryRead(() =>
-      client.fetchCalendarObjects({ calendar: cal, objectUrls: [url] }),
-    );
-    if (typeof obj?.data !== "string") throw new ProviderError("not_found", 404, "Event not found");
+    const obj = await this.#object(cal, url);
     const root = new ICAL.Component(ICAL.parse(obj.data));
     for (const tz of root.getAllSubcomponents("vtimezone")) {
       ICAL.TimezoneService.register(new ICAL.Timezone(tz));

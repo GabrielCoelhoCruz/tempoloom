@@ -154,10 +154,18 @@ export type ProviderErrorKind =
 export class ProviderError extends Error {
   readonly kind: ProviderErrorKind;
   readonly status: number;
-  constructor(kind: ProviderErrorKind, status: number, message: string) {
+  /** What is missing for "not_found": the event (default) or its whole calendar. */
+  readonly what: "event" | "calendar";
+  constructor(
+    kind: ProviderErrorKind,
+    status: number,
+    message: string,
+    what: "event" | "calendar" = "event",
+  ) {
     super(message);
     this.kind = kind;
     this.status = status;
+    this.what = what;
   }
 }
 

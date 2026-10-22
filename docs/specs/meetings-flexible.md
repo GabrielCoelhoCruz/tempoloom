@@ -136,7 +136,14 @@ Attendee class, computed each time the meeting is placed:
    An occurrence that comes back at its rule time loses its EXDATE; one at
    another time gets an RDATE. If the organizer deletes the whole series in a
    calendar app, the meeting turns off and keeps its rules (edge case 5 of
-   SPEC-MEET-02). The rule is written in the user's home zone: DTSTART, BYDAY
+   SPEC-MEET-02). Only the calendar decides that the series is gone: a "not
+   found" answer for the series object, never an empty read window. The run
+   that finds it writes nothing more for the meeting (no single events, so no
+   invitations), and the change log says "series deleted in the calendar". A
+   form edit is saved at once; the next plan run writes it to the series. If
+   the organizer also edits the series in a calendar app before that run, each
+   field keeps its newer value: a field the calendar edit changed takes the
+   calendar's value, and a form change of another field is still written. The rule is written in the user's home zone: DTSTART, BYDAY
    and the EXDATEs are all in that zone. A trip (travel zone) does not change
    the rule: the plan moves the occurrences of the trip with overrides. A new
    home zone ends the series, and the next run writes one in the new zone. A

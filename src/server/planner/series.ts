@@ -5,13 +5,32 @@
 import type { MeetingFrequency } from "../../scheduler/model.ts";
 import { monthlyDate } from "../../scheduler/plan.ts";
 import { addDays, type LocalDate, localToUtc, MINUTE, weekdayOf } from "../../shared/time.ts";
+import { logManaged } from "../change-log.ts";
 import { all, type Db, one, run } from "../db.ts";
 import { seriesInstanceDate } from "../meeting-series.ts";
-import type { CalendarProvider, EventWrite, SeriesFacts } from "../providers/types.ts";
+import {
+  type CalendarProvider,
+  type EventWrite,
+  type ExternalChange,
+  ProviderError,
+  type SeriesFacts,
+} from "../providers/types.ts";
 import { getSettings } from "../settings.ts";
+import { cacheEvent } from "../sync/pull.ts";
 import { homeZone, planningZone } from "../travel.ts";
-import { logChange } from "./meeting-log.ts";
+import { logChange, periodOf } from "./meeting-log.ts";
 import type { MeetingRow } from "./meetings.ts";
+import {
+  type DesiredEvent,
+  desiredRef,
+  MANAGED_PROP,
+  type ManagedRow,
+  meetingChange,
+  type PushContext,
+  saveRow,
+  tipOnly,
+  write,
+} from "./push.ts";
 
 export const BYDAY = ["MO", "TU", "WE", "TH", "FR", "SA", "SU"];
 
@@ -232,3 +251,278 @@ export const forgetSeries = (db: Db, meetingId: string) =>
     "UPDATE meetings SET series_calendar_id = NULL, series_event_id = NULL, series_rule = '' WHERE id = ?",
     meetingId,
   );
+
+// ---------------------------------------------------------------- push steps
+
+/**
+ * Writes the series of a meeting made from the form (meetings-flexible.md
+ * rule 2) and makes its instances the managed rows of the planned periods;
+ * the push then moves each instance that the plan placed elsewhere (an
+ * override). A period that already has an event of its own (a single event
+ * from before series, a locked occurrence of an ended series) gets an EXDATE,
+ * so it is never there twice. Returns the number of instances made.
+ */
+export async function writeSeries(
+  ctx: PushContext,
+  m: MeetingRow,
+  own: DesiredEvent[],
+  byKey: Map<string, ManagedRow>,
+): Promise<number> {
+  const { db, userId, now } = ctx;
+  const sorted = [...own].sort((a, b) => (a.key < b.key ? -1 : 1));
+  const [first] = sorted;
+  if (!first) return 0;
+  const { provider, providerCalendarId } = ctx.target(first.calendarId);
+  if (!provider.seriesInstances) return 0;
+  const period = (key: string) => key.slice(key.lastIndexOf(":") + 1);
+  const mine = sorted.filter((d) => d.calendarId === first.calendarId);
+  const plan = planSeries(
+    db,
+    m,
+    period(first.key),
+    mine.map((d) => period(d.key)),
+  );
+  if (!plan) return 0;
+  const taken = mine.filter((d) => byKey.get(d.key)?.event_id);
+  // The master takes the fields of the last occurrence: as the instances past
+  // the planning window will be (rule 20), so most instances need no override.
+  const model = mine.at(-1) ?? first;
+  const master: EventWrite = {
+    ...write(userId, model),
+    start: plan.start,
+    end: plan.end,
+    recurrence: plan.rrule,
+    timeZone: plan.timeZone,
+    exdates: taken.flatMap((d) => plan.ruleStarts.get(period(d.key)) ?? []),
+    privateProps: { [MANAGED_PROP]: "1", tl_user: userId, tl_meeting: m.id },
+  };
+  const ev = await provider.insertEvent(providerCalendarId, master);
+  const seriesId = ev.recurringId ?? ev.id;
+  // From the first rule start: an instance whose rule time passed in the current period is its row.
+  const from = Math.min(plan.start, ...mine.map((d) => d.start));
+  const last = Math.max(...mine.map((d) => d.end));
+  const instances = await provider.seriesInstances(
+    providerCalendarId,
+    seriesId,
+    from,
+    last + 86_400_000,
+  );
+  const { weekStart } = getSettings(db, userId);
+  const zone = planningZone(db, userId);
+  const wantedByKey = new Map(mine.map((d) => [d.key, d]));
+  let made = 0;
+  for (const inst of instances) {
+    cacheEvent(db, first.calendarId, inst);
+    const p = periodOf(m, instanceDate(db, userId, inst.id, inst.start), weekStart, zone);
+    const d = p ? wantedByKey.get(`meeting:${m.id}:${p}`) : undefined;
+    if (!d || byKey.get(d.key)?.event_id) continue;
+    // The row holds what the master wrote; the push writes what differs.
+    saveRow(
+      db,
+      userId,
+      { ...model, key: d.key, start: inst.start, end: inst.end },
+      inst.id,
+      inst.etag,
+      byKey.get(d.key)?.id,
+    );
+    const row = one<ManagedRow>(
+      db,
+      "SELECT * FROM managed_events WHERE user_id = ? AND key = ?",
+      userId,
+      d.key,
+    );
+    if (row) byKey.set(d.key, row);
+    ctx.written?.set(d.key, { start: inst.start, end: inst.end });
+    logManaged(db, userId, desiredRef(d, inst.id), "create", { ...d, ...inst }, now);
+    made++;
+  }
+  run(
+    db,
+    "UPDATE meetings SET series_calendar_id = ?, series_event_id = ?, series_rule = ? WHERE id = ?",
+    first.calendarId,
+    seriesId,
+    JSON.stringify({
+      ...baselineOf(master, (first.organizer ?? "").toLowerCase()),
+      form: formKey(m),
+      title: m.title,
+    }),
+    m.id,
+  );
+  return made;
+}
+
+/**
+ * The instance of `d`'s period in the series, when no row holds it (its
+ * rule time is after the planning window): it becomes the row and moves to the
+ * planned time. False when the period has no instance.
+ */
+export async function moveRuleInstance(
+  ctx: PushContext,
+  provider: CalendarProvider,
+  providerCalendarId: string,
+  series: string,
+  d: DesiredEvent,
+  row: ManagedRow | undefined,
+): Promise<boolean> {
+  if (!provider.seriesInstances) return false;
+  const { db, userId, now } = ctx;
+  const m = one<MeetingRow>(db, "SELECT * FROM meetings WHERE id = ?", d.sourceId);
+  if (!m) return false;
+  const period = d.key.slice(d.key.lastIndexOf(":") + 1);
+  const zone = planningZone(db, userId);
+  const { weekStart } = getSettings(db, userId);
+  const from = localToUtc(zone, period, 0) - 86_400_000;
+  const used = new Set(
+    all<{ event_id: string }>(
+      db,
+      "SELECT event_id FROM managed_events WHERE user_id = ? AND event_id IS NOT NULL",
+      userId,
+    ).map((r) => r.event_id),
+  );
+  const inst = (
+    await provider.seriesInstances(providerCalendarId, series, from, from + 34 * 86_400_000)
+  ).find(
+    (e) =>
+      !used.has(e.id) &&
+      periodOf(m, instanceDate(db, userId, e.id, e.start), weekStart, zone) === period,
+  );
+  if (!inst) return false;
+  cacheEvent(db, d.calendarId, inst);
+  const seen = {
+    ...d,
+    start: inst.start,
+    end: inst.end,
+    title: inst.summary,
+    description: inst.description,
+    busy: inst.busy,
+  };
+  saveRow(db, userId, seen, inst.id, inst.etag, row?.id);
+  const fresh = one<ManagedRow>(
+    db,
+    "SELECT * FROM managed_events WHERE user_id = ? AND key = ?",
+    userId,
+    d.key,
+  );
+  const change = fresh
+    ? meetingChange(
+        fresh,
+        { busy: inst.busy ? 1 : 0, own_visibility: null, description: inst.description },
+        d,
+      )
+    : null;
+  let ev = inst;
+  if (change) {
+    ev = await provider.editExternal(providerCalendarId, inst.id, change, inst.etag);
+    cacheEvent(db, d.calendarId, ev);
+  }
+  saveRow(db, userId, d, ev.id, ev.etag, fresh?.id);
+  ctx.written?.set(d.key, { start: d.start, end: d.end });
+  logManaged(db, userId, desiredRef(d, ev.id), "create", d, now);
+  return true;
+}
+
+/**
+ * Keeps each series of Tempoloom's own meetings in line with its form
+ * (meetings-flexible.md rule 2), before the rows are read. A series the
+ * calendar answers "not found" for is gone: the meeting turns off. A new home
+ * zone or a new rule (frequency, start date, length, ideal time) ends the
+ * series; this run writes a new one. A new title, guest list, description,
+ * location or privacy goes to the master. A form edit is saved first; this
+ * run writes it, and a calendar of a disconnected account waits. Returns the
+ * meetings that turned off: this run writes nothing more for them.
+ */
+export async function syncOwnSeries(
+  ctx: PushContext,
+  frozen: Set<string>,
+  desired: DesiredEvent[],
+): Promise<Set<string>> {
+  const { db, userId, now } = ctx;
+  const home = homeZone(db, userId);
+  const off = new Set<string>();
+  for (const m of all<MeetingRow>(
+    db,
+    `SELECT * FROM meetings WHERE user_id = ? AND enabled = 1 AND series_owned = 1
+       AND series_event_id IS NOT NULL`,
+    userId,
+  )) {
+    const series = m.series_event_id as string;
+    const calendarId = m.series_calendar_id;
+    if (!calendarId || frozen.has(calendarId)) continue;
+    const base = (m.series_rule ? JSON.parse(m.series_rule) : null) as Baseline | null;
+    try {
+      const { provider, providerCalendarId } = ctx.target(calendarId);
+      // No instance in the cached window does not mean gone: ask the calendar.
+      if (
+        provider.seriesInstances &&
+        !one(
+          db,
+          "SELECT 1 FROM events WHERE calendar_id = ? AND recurring_id = ?",
+          calendarId,
+          series,
+        )
+      )
+        await provider.seriesInstances(providerCalendarId, series, now, now + 86_400_000);
+      if (!base) continue;
+      if ((base.zone && base.zone !== home) || (base.form && base.form !== formKey(m))) {
+        await endOwnSeries(db, () => provider, m, now, lockedIds(db, m, now));
+        continue;
+      }
+      const d = desired.filter((x) => x.kind === "meeting" && x.sourceId === m.id).at(-1);
+      if (!base.form || !d) continue;
+      const change: ExternalChange = {};
+      const title = m.title;
+      const summary =
+        base.title && base.summary.includes(base.title)
+          ? base.summary.replace(base.title, title)
+          : d.title;
+      if (base.title !== undefined && base.title !== title) change.summary = summary;
+      if (
+        base.description !== undefined &&
+        base.description !== d.description &&
+        !tipOnly(base.description, d.description)
+      )
+        change.description = d.description;
+      if ((base.location ?? "") !== (d.location ?? "")) change.location = d.location ?? "";
+      if ((base.visibility ?? "default") !== (d.visibility ?? "default"))
+        change.visibility = d.visibility ?? "default";
+      const guests = (req: string[], opt: string[]) =>
+        new Map([
+          ...req.map((e) => [e.toLowerCase(), false] as const),
+          ...opt.map((e) => [e.toLowerCase(), true] as const),
+        ]);
+      const before = guests(base.attendees, base.optional);
+      const after = guests(d.attendees ?? [], d.optionalAttendees ?? []);
+      const add = [...after]
+        .filter(([e, optional]) => before.get(e) !== optional)
+        .map(([email, optional]) => ({ email, optional }));
+      const remove = [...before.keys()].filter((e) => !after.has(e));
+      if (add.length > 0 || remove.length > 0) change.guests = { add, remove };
+      if (Object.keys(change).length === 0) continue;
+      await provider.editExternal(providerCalendarId, series, change, null);
+      run(
+        db,
+        "UPDATE meetings SET series_rule = ? WHERE id = ?",
+        JSON.stringify({
+          ...base,
+          summary: change.summary ?? base.summary,
+          title,
+          description: change.description ?? base.description,
+          location: d.location ?? "",
+          visibility: d.visibility ?? "default",
+          attendees: (d.attendees ?? []).map((e) => e.toLowerCase()),
+          optional: (d.optionalAttendees ?? []).map((e) => e.toLowerCase()),
+        }),
+        m.id,
+      );
+    } catch (err) {
+      if (!(err instanceof ProviderError)) throw err;
+      if (err.kind === "not_found" && err.what === "event") {
+        seriesDeleted(db, userId, m.id, now);
+        off.add(m.id);
+      } else if (err.kind === "not_found")
+        console.error(`Meeting ${m.id}: calendar missing; its series is not written`, err);
+      else console.error(`Writing the series of meeting ${m.id} failed`, err);
+    }
+  }
+  return off;
+}

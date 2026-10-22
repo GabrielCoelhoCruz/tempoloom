@@ -221,6 +221,8 @@ describe("a series the organizer deleted", () => {
     };
     await pusher(s, cal.provider)([occurrence("2026-10-26", "2026-10-27"), task]);
     expect(cal.calls.filter((c) => c.name === "insert").map((c) => c.w?.summary)).toContain("Task");
+    // No single event (an invitation) for the meeting that turned off.
+    expect(cal.calls.filter((c) => c.name === "insert").map((c) => c.w?.summary)).toEqual(["Task"]);
     // Spec edge case 5: the rules stay, the meeting is off, and the log says why.
     expect(meeting(s.db)).toMatchObject({ series_event_id: null, enabled: 0 });
     expect(
@@ -530,5 +532,30 @@ describe("form edits reach the series master in the plan run", () => {
     expect(cal.calls.find((c) => c.name === "insert")?.w?.end).toBe(
       (cal.calls.find((c) => c.name === "insert")?.w?.start ?? 0) + 45 * 60_000,
     );
+  });
+});
+
+describe("a form edit and a series edit before the next plan run", () => {
+  it("each field keeps the newer value: the form's new length still reaches the master after the organizer renames the series", async () => {
+    const s = setup();
+    const cal = fakeCalendar();
+    const push = pusher(s, cal.provider);
+    const desired = [
+      occurrence("2026-10-19", "2026-10-20"),
+      occurrence("2026-10-26", "2026-10-27"),
+    ];
+    await push(desired);
+    // The form saves 45 minutes; before the next run, the organizer renames the series.
+    run(s.db, "UPDATE meetings SET duration_minutes = 45 WHERE id = 'm1'");
+    editAll(s, cal, { summary: "● Sync (team)" });
+    readSeriesEdits(s.db, s.userId, ["cal"], T0);
+    expect(one<{ title: string }>(s.db, "SELECT title FROM meetings WHERE id = 'm1'")?.title).toBe(
+      "Sync (team)",
+    );
+    cal.calls.length = 0;
+    await push(desired);
+    expect(cal.calls.find((c) => c.name === "endSeries")?.id).toBe("http://dav/1.ics");
+    const insert = cal.calls.find((c) => c.name === "insert")?.w;
+    expect((insert?.end ?? 0) - (insert?.start ?? 0)).toBe(45 * 60_000);
   });
 });

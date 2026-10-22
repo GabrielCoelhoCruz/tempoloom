@@ -81,6 +81,28 @@ export function frequencyOf(rrule: string, date: LocalDate): MeetingFrequency | 
   }
 }
 
+/**
+ * The form key (series.ts formKey) of the master after a series edit: each
+ * rule field the edit changed (meeting row `m` before, `changed` after) has
+ * its new value; the others keep the value last written to the master.
+ */
+function masterForm(written: string, m: MeetingRow, changed: MeetingRow): string {
+  const [frequency, starting, duration, ideal] = JSON.parse(written) as [
+    string,
+    string | null,
+    number,
+    number,
+  ];
+  return formKey({
+    ...changed,
+    frequency: changed.frequency !== m.frequency ? changed.frequency : frequency,
+    starting: changed.starting !== m.starting ? changed.starting : starting,
+    duration_minutes:
+      changed.duration_minutes !== m.duration_minutes ? changed.duration_minutes : duration,
+    ideal_minute: changed.ideal_minute !== m.ideal_minute ? changed.ideal_minute : ideal,
+  });
+}
+
 /** The repeat unit and count of a frequency: a change of either gives other periods. */
 const cadence = (f: MeetingFrequency) =>
   f.period === "weekly"
@@ -254,10 +276,13 @@ function readOne(
     changed.shortest_minutes,
     changed.starting,
     changed.rules_changed_at,
-    // The master now has the rules the calendar gave: the form matches it.
+    // The master's form fields: the ones this series edit changed take the
+    // calendar's value; the others stay as written, so a form edit that is not
+    // written yet still differs and the next plan run writes it (the newer
+    // value of each field wins).
     JSON.stringify({
       ...JSON.parse(baseline),
-      ...(seen.form ? { form: formKey(changed) } : {}),
+      ...(seen.form ? { form: masterForm(seen.form, m, changed) } : {}),
       ...(seen.title !== undefined ? { title: changed.title } : {}),
     }),
     m.id,
