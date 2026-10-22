@@ -1,6 +1,7 @@
 // Names of the built-in meeting checks (docs/specs/automations-meeting-quality.md),
-// shown on the meeting checks page and in the automation list. Shared by the
-// server and the client.
+// shown on the meeting checks page and in the automation list, and the video
+// link test that the video_link check and video-only buffers share. Shared by
+// the server, the scheduler and the client.
 import type { CheckId } from "../server/meeting-prefs.ts";
 
 export const CHECK_NAMES: Record<CheckId, string> = {
@@ -10,3 +11,16 @@ export const CHECK_NAMES: Record<CheckId, string> = {
   video_link: "Missing video link",
   agenda: "Agenda drafts",
 };
+
+const VIDEO_HOST =
+  /(zoom|meet|teams|webex|whereby|jit\.?si|gotomeet|chime|bluejeans|skype|bigbluebutton|video|call)/i;
+
+/** A URL whose host names a video service (Tempoloom decision, video_link). */
+export function hasVideoLink(text: string): boolean {
+  for (const m of text.matchAll(/https?:\/\/[^\s<>"')]+/gi)) {
+    try {
+      if (VIDEO_HOST.test(new URL(m[0]).hostname)) return true;
+    } catch {}
+  }
+  return false;
+}

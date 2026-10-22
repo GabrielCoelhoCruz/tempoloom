@@ -18,11 +18,15 @@
 //   run gets one, or a long run gets none                          -> one buffer after the long run
 // - a mirrored copy that hides its details gives travel time from its hidden
 //   tag, or a copy with details gives none                         -> travel buffers per copy
+// - the video-only recovery covers a meeting with no video link, misses a
+//   link in the conference data, location or description, or is lost on
+//   reload                                                         -> video only
 // - settings are lost on reload                                    -> rows after reload
 import type { Page } from "@playwright/test";
 import { day, openLibrary, openSettings, span, week } from "./automation-helpers.ts";
-import { at, BACKEND, blockUntil, eventually, expect, test } from "./fixtures.ts";
+import { at, BACKEND, blockUntil, EMAIL, eventually, expect, planNow, test } from "./fixtures.ts";
 import { titled, W } from "./helpers.ts";
+import { putMeeting } from "./meeting-helpers.ts";
 
 test.skip(BACKEND === "google", "These scenarios use guests and several CalDAV calendars.");
 
@@ -284,4 +288,81 @@ test("travel time follows what a mirrored copy shows: a copy with details gets i
   ]);
   await page.reload();
   await expect(page.locator('[data-buffer-title="Travel"]')).toContainText("Work only");
+});
+
+test("recovery after video meetings only: a buffer follows each meeting with a video link in its conference data, location or description, and none follows a meeting without one, which the all-meetings option covers (recovery template: all or video only; has_video_link)", async ({
+  page,
+  cal,
+  signIn,
+}) => {
+  await blockUntil(cal, W);
+  const guests = ["ana@example.com"];
+  await cal.addEvent({
+    title: "Zoom review",
+    start: at(day(1), "10:00"),
+    end: at(day(1), "11:00"),
+    attendees: guests,
+    location: "https://zoom.us/j/5550002222",
+  });
+  // A meeting with guests and no video link: the all-meetings option gives it recovery.
+  await cal.addEvent({
+    title: "Room review",
+    start: at(day(1), "14:00"),
+    end: at(day(1), "15:00"),
+    attendees: guests,
+    location: "Room 4",
+  });
+  await cal.addEvent({
+    title: "Linked review",
+    start: at(day(2), "10:00"),
+    end: at(day(2), "11:00"),
+    attendees: guests,
+    description: "Join: https://meet.jit.si/linked-review",
+  });
+  await putMeeting(cal.calendarId, {
+    title: "Conference review",
+    start: at(day(3), "10:00"),
+    end: at(day(3), "11:00"),
+    organizer: EMAIL,
+    attendees: [{ email: "ana@example.com", answer: "ACCEPTED" }],
+    conference: "https://meet.example.com/conference-review",
+  });
+  await signIn();
+  await openSettings(page);
+
+  // The filter editor offers the same condition, with its live list.
+  const editor = editorOf(page);
+  await editor.getByLabel("Video meetings only").check();
+  await expect(matchTitles(page)).toHaveText(["Zoom review", "Linked review", "Conference review"]);
+  await editor.getByLabel("Video meetings only").uncheck();
+  await expect(matchTitles(page)).toContainText(["Room review"]);
+
+  await page.getByRole("button", { name: "Add 15 min recovery after video meetings" }).click();
+  const row = page.locator('[data-buffer-title="Recovery"]');
+  await expect(row).toContainText("video meetings only");
+  const expected = [`${day(1)} 11:00-11:15`, `${day(2)} 11:00-11:15`, `${day(3)} 11:00-11:15`];
+  await eventually(
+    () => week(cal),
+    (l) => expect(titled(l, "Recovery").map(span)).toEqual(expected),
+  );
+  await page.reload();
+  await expect(row).toContainText("video meetings only");
+  await planNow(page);
+  expect(titled(await week(cal), "Recovery").map(span)).toEqual(expected);
+
+  // The all-meetings option on the same calendar adds recovery after the room meeting too.
+  await row.getByRole("button", { name: "Delete" }).click();
+  await expect(row).toHaveCount(0);
+  await page.getByRole("button", { name: "Add 15 min recovery after meetings" }).click();
+  await expect(row).not.toContainText("video meetings only");
+  await eventually(
+    () => week(cal),
+    (l) =>
+      expect(titled(l, "Recovery").map(span)).toEqual([
+        `${day(1)} 11:00-11:15`,
+        `${day(1)} 15:00-15:15`,
+        `${day(2)} 11:00-11:15`,
+        `${day(3)} 11:00-11:15`,
+      ]),
+  );
 });

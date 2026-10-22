@@ -35,6 +35,7 @@ export function externalEvents(db: Db, userId: string, from: number, to: number)
     attendees: string;
     recurring_id: string | null;
     rsvp_note: string;
+    conference: string;
   }>(
     db,
     `SELECT e.* FROM events e JOIN calendars c ON c.id = e.calendar_id JOIN accounts a ON a.id = c.account_id
@@ -65,6 +66,7 @@ export function externalEvents(db: Db, userId: string, from: number, to: number)
         category: externalCategory(ctx, e),
         calendarId: e.calendar_id,
         attendees: JSON.parse(e.attendees) as string[],
+        conference: e.conference,
       },
     ];
   });

@@ -718,13 +718,10 @@ E2E.update({282: ["s1_habit_es", "s1_task_color", "s4_labels"]})
 E2E_NOTES.update({282: "Habits, focus time, buffers and tasks have their own color (stream s1); a mirroring policy has a color override (stream s4)"})
 # Rows this round did not build, each with the concrete reason.
 BLOCKED[491] = "Needs a Google Workspace account: the trigger is Google calendar sharing"
-BLOCKED[492] = "Needs a Google Workspace account: the help covers Workspace sharing and Gmail-made events"
-BLOCKED[493] = "Needs Google or Microsoft accounts that subscribe to the iCloud calendar; a CalDAV server connects directly"
 BLOCKED[519] = "Needs a Google Workspace domain and a super admin"
 BLOCKED[671] = "Needs Google Meet (a Google account and the Calendar conference API)"
 for n in [268, 293]:
     BLOCKED[n] = "Needs a Slack app and a Slack test workspace"
-BLOCKED[344] = "Needs the vendor apps of third-party agenda tools (Docs notes, Lattice, Fellow)"
 for n in [664, 665, 666, 667, 668]:
     BLOCKED[n] = "The pricing page names it and gives no behavior to build (plans-feature-inventory.md open questions); it also needs meeting notes, transcripts or a room provider"
 # --- end merge ---
@@ -1096,7 +1093,7 @@ RAYCAST = "Needs a Mac with Raycast to run the Raycast extension, a macOS client
 WORKSPACE_ADDON = "Needs a Google Workspace Marketplace add-on (Calendar and Gmail) and a Google Workspace test account"
 OUTSIDE = {
     SLACK: [236] + list(range(785, 822)),
-    ZOOM: [822, 823, 825, 826, 827, 828, 829, 830],
+    ZOOM: [822, 823, 825, 826, 827, 829, 830],
     ZOOM + ", and a Slack app and a Slack test workspace": [824],
     GONG: [831, 832, 833, 834],
     TASK_APPS: [26, 67, 835] + list(range(837, 847)) + [859],
@@ -1627,6 +1624,44 @@ BLOCKED[145] = (GOOGLE_CONSENT + ": the reads from Google (name, picture, time z
                 "in Tempoloom, so a Google change never moves a period key; edge case 3 applies to that planning week start. Mail keeps "
                 "the default formats")
 # --- end U59 ---
+
+# --- U73: fields kept after moves, mirroring help, digest days, video-only recovery ---
+T["u73_keep"] = "a move keeps the fields Tempoloom does not own: attachments, conference data, an agenda-tool link and hand-added Zoom details on the series and on one occurrence stay after both occurrences move and after a reload (MEET-01 rules 39, 40; video conferencing rule 14)"
+T["u73_help"] = "the mirroring help names the fixes for missing source details (Workspace external sharing, the Gmail event visibility setting) and says that iCloud and other calendars arrive through Google or Microsoft, hours late, while a CalDAV server connects directly (rules 45-47)"
+T["u73_digest"] = "the daily digest covers the rest of the planning week and the first 2 workdays of the next week: on Thursday it lists Friday and next Tuesday but not next Wednesday; on Sunday it stops at Tuesday, and with the planning week from Sunday it runs to the Tuesday after next (assistant chat rule 15; meeting checks rule 6)"
+T["u73_video"] = "recovery after video meetings only: a buffer follows each meeting with a video link in its conference data, location or description, and none follows a meeting without one, which the all-meetings option covers (recovery template: all or video only; has_video_link)"
+E2E[344] = ["u73_keep"]
+E2E_NOTES[344] = ("The E2E puts an ATTACH, a CONFERENCE, a Zoom URL in the location and Zoom details in the description on the series "
+                  "in Radicale, and an agenda-tool link and ATTACH on one occurrence (an override with RECURRENCE-ID), then blocks both "
+                  "occurrences. Tempoloom moves each one by a patch of its override (a new override copies the series), so every field "
+                  "stays on the series and on both occurrences after the moves, a reload and more plan runs. Writes to the series master "
+                  "and to single meeting events use the same patch call, which changes only the fields Tempoloom owns")
+E2E[828] = ["u73_keep"]
+E2E_NOTES[828] = ("Without the Zoom integration: Zoom details pasted by hand into the series (CONFERENCE, location and description) "
+                  "stay on every occurrence that Tempoloom moves, also after a reload")
+BLOCKED[492] = ("Needs a Google Workspace domain whose external sharing setting blocks details, to show a live busy-only source. Built, "
+                "with full UI E2E on CalDAV: the help text on the mirroring settings tells the user to ask the domain admin to allow "
+                "external sharing of full details, and names the \u201cEvents from Gmail\u201d visibility setting (rules 45, 46; "
+                "\u201c" + T["u73_help"] + "\u201d)")
+BLOCKED[493] = ("Needs a Google account that signs in through Tempoloom's OAuth client (row 510) or a Microsoft 365 account with Microsoft Graph, "
+                "each subscribed to an iCloud calendar, to show such a calendar arriving late through it. Built, with full UI E2E on "
+                "CalDAV: the help text says that iCloud and other calendars hosted elsewhere work only through a Google or Microsoft "
+                "account, can arrive many hours late, and that a CalDAV server, iCloud too, connects directly (rule 47; "
+                "\u201c" + T["u73_help"] + "\u201d)")
+BLOCKED[672] = (G2 + " for the proposed fixes of the nightly review and the chat that opens with the fixes staged (assistant-chat.md "
+                "rules 16, 18). The \u201cagenda\u201d in the title has no rule in the specs (no evidence). Built, with full UI E2E "
+                "on CalDAV: the one daily digest by email of the open meeting-check issues (" + quoted_titles("s5_digest") + "), "
+                "over the days of the nightly review, the rest of the planning week and the first 2 workdays of the next week "
+                "(rule 15; " + quoted_titles("u73_digest") + ")")
+BLOCKED[683] = (G2 + " for the nightly review and its fixes by chat, and a Slack app and a Slack test workspace for the chat-app "
+                "channel. Built, with full UI E2E on CalDAV: the morning digest by email of the open meeting-check issues at the "
+                "digest time (" + quoted_titles("s5_digest") + "), over the days of the nightly review, the rest of the planning "
+                "week and the first 2 workdays of the next week (rule 15; " + quoted_titles("u73_digest") + ")")
+E2E[230] = ["buffer", "u73_video"]
+E2E_NOTES[230] = ("All meetings: recovery follows each meeting with another attendee. Video only: recovery follows a meeting with a "
+                  "video link in its conference data, location or description, and not one without, which the all-meetings option "
+                  "covers on the same calendar; the editor offers the same \u201cVideo meetings only\u201d condition")
+# --- end U73 ---
 
 # Google Calendar proof. docs/e2e-google-run.tsv records a full E2E run on Google
 # (a "# commit <sha>" line, then status, test id, title per line; docs/e2e-google-run.md

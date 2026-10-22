@@ -20,6 +20,9 @@
 //   open ones, or the next one is not moved to the next day          -> digest
 // - library entry 9 does not turn the checks and the digest on, or shows no
 //   "Added" badge                                                   -> digest
+// - the digest covers the next 7 days instead of the rest of the planning
+//   week and the first 2 workdays of the next one, or ignores the planning
+//   week start                                                      -> digest window
 // - a member can change a company check, the issue reaches a guest who
 //   does not organize the meeting, or a member cannot ignore it      -> company checks
 // - an agenda draft is written before the user applies it, or not at all;
@@ -36,6 +39,7 @@ import {
   eventually,
   expect,
   local,
+  planNow,
   test,
   ZONE,
 } from "./fixtures.ts";
@@ -529,4 +533,89 @@ test("library entry 'Agenda drafts' stages a draft that is written only when app
   await expect(page.getByTestId("checks-issues")).toBeVisible();
   await expect(issue(page, "agenda", "Strategy workshop")).toHaveCount(0);
   expect(await rawEvent(c, workshop)).toContain("DESCRIPTION:Agenda: Strategy workshop");
+});
+
+test("the daily digest covers the rest of the planning week and the first 2 workdays of the next week: on Thursday it lists Friday and next Tuesday but not next Wednesday; on Sunday it stops at Tuesday, and with the planning week from Sunday it runs to the Tuesday after next (assistant chat rule 15; meeting checks rule 6)", async ({
+  page,
+  cal,
+  signIn,
+  mail,
+  app,
+}) => {
+  const day = (n: number) => addDays(W, n);
+  const iso = (date: string, hhmm: string) => new Date(at(date, hhmm)).toISOString();
+  const c = cal.calendarId;
+  await signIn();
+  // Meetings the user organizes with a guest and no video link: one issue each.
+  const meetings = [
+    ["Friday review", 4],
+    ["Tuesday review", 8],
+    ["Wednesday review", 9],
+  ] as const;
+  for (const [title, n] of meetings)
+    await putMeeting(c, {
+      title,
+      start: at(day(n), "10:00"),
+      end: at(day(n), "10:30"),
+      organizer: EMAIL,
+      attendees: [{ email: "dana@example.com", answer: "ACCEPTED" }],
+    });
+  await planNow(page);
+  await eventually(
+    async () =>
+      app.query<{ summary: string }>(
+        "SELECT summary FROM events WHERE summary LIKE '% review' ORDER BY start_ms",
+      ),
+    (rows) => expect(rows.map((r) => r.summary)).toEqual(meetings.map(([t]) => t)),
+  );
+
+  // The form saves the digest at 08:00: the next one is due before the test week.
+  const form = page.getByTestId("checks-form");
+  const saveDigest = async () => {
+    await openChecks(page);
+    await form.getByLabel("Daily digest").selectOption("email");
+    await form.getByLabel("Digest time").fill("08:00");
+    await form.getByRole("button", { name: "Save checks" }).click();
+    await expect(form.getByTestId("checks-saved")).toHaveText("Saved");
+  };
+  /** Runs the server's email worker at `at` and returns the digest it sent. */
+  let sent = 0;
+  const digestAt = async (at: string) => {
+    app.cli("weekly-reports", "--now", at);
+    sent++;
+    await eventually(
+      () => mail.count(EMAIL, /^Meeting issues/),
+      (n) => expect(n).toBe(sent),
+    );
+    return (await mail.message(EMAIL, /^Meeting issues/)).text;
+  };
+  const listed = (text: string) => meetings.map(([t]) => t).filter((t) => text.includes(t));
+
+  // Thursday, week from Monday: Thursday to Sunday, then next Monday and Tuesday.
+  await saveDigest();
+  const thursday = await digestAt(iso(day(3), "08:05"));
+  expect(listed(thursday)).toEqual(["Friday review", "Tuesday review"]);
+  expect(thursday).toContain(`from ${day(3)} to ${day(8)}`);
+
+  // Sunday, week from Monday: Sunday is the last day of the week.
+  await saveDigest();
+  const sunday = await digestAt(iso(day(6), "08:05"));
+  expect(listed(sunday)).toEqual(["Tuesday review"]);
+  expect(sunday).toContain(`from ${day(6)} to ${day(8)}`);
+
+  // Sunday, week from Sunday: Sunday starts a week, so the digest reaches the
+  // first 2 workdays of the week after.
+  const weekStart = await page.evaluate(() =>
+    fetch("/api/settings", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ weekStart: 7 }),
+    }).then((r) => r.status),
+  );
+  expect(weekStart).toBe(200);
+  await page.reload();
+  await saveDigest();
+  const fromSunday = await digestAt(iso(day(6), "08:05"));
+  expect(listed(fromSunday)).toEqual(["Tuesday review", "Wednesday review"]);
+  expect(fromSunday).toContain(`from ${day(6)} to ${day(15)}`);
 });

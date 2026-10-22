@@ -67,7 +67,12 @@ Tempoloom decision: the channel is `email` or `none`. A chat app channel needs
 a chat integration (a vendor app), which Tempoloom does not have. The digest
 goes out at the first check after `digest_time` in the user's time zone; a new
 time takes effect at its next occurrence, which is today when the time is still
-ahead. No email is sent when there is no open issue.
+ahead. No email is sent when there is no open issue. The digest lists the
+open issues of the days that the nightly review covers
+(`assistant-chat.md` rule 15): from today to the end of the planning week
+(`weekStart`, `settings-profile.md` "Which week each feature uses"), then the
+first 2 workdays of the next week. Workdays are the days with work hours;
+with none, Monday to Friday. The Issues tab keeps the 7-day horizon.
 
 ## Behavior
 

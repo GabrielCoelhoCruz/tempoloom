@@ -98,7 +98,8 @@ export function MeetingChecks() {
           <input name="digestTime" type="time" required defaultValue={prefs.digestTime} />
         </label>
         <p class="meta wide">
-          A chat app digest needs a chat integration, which Tempoloom does not have.
+          The digest lists the issues of the rest of this week and the first 2 workdays of next
+          week. A chat app digest needs a chat integration, which Tempoloom does not have.
         </p>
         {typeof checks.state === "object" && (
           <p class="error wide" role="alert">

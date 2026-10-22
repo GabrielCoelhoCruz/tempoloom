@@ -36,6 +36,8 @@ export interface ExternalEvent {
   attendees?: string[];
   /** For a Tempoloom mirror copy: the calendar of its source event. */
   mirrorSource?: string;
+  /** The conference link (CalDAV CONFERENCE, Google Meet), or "" (buffer filter has_video_link). */
+  conference?: string;
 }
 
 /** An existing managed event. */
@@ -214,6 +216,8 @@ export interface BufferFilter {
   people?: string[];
   /** The anchor is a run of back-to-back matching events longer than this. */
   runLongerThanMinutes?: number;
+  /** Only events with a video link in the conference data, location or description (`has_video_link`). */
+  videoLink?: boolean;
 }
 
 export interface BufferItem {

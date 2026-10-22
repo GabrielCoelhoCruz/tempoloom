@@ -2,7 +2,7 @@
 // creation, many-calendar setups, the destination rules, copy labels and
 // colors, alerts, the full reconcile, guidance and the separate window
 // (docs/specs/sync-calendar-mirroring.md rules 4, 6-8, 10, 12-17, 21, 26-30,
-// 38-40, 43, edge cases 11, 14, 16; planning-scheduling-window.md WIN-7).
+// 38-40, 43, 45-47, edge cases 11, 14, 16; planning-scheduling-window.md WIN-7).
 //
 // Ways it can fail, and the test that catches each:
 // - the tabs miss an account, or filter by the wrong side of a policy      -> tabs
@@ -22,6 +22,8 @@
 // - the guidance for family calendars and duplicate views is missing, or a
 //   declined or tagged family event keeps its copy                          -> family
 // - copies stop at the planning window, or go past 12 months               -> window
+// - the help for busy-only Workspace sources, Gmail events and calendars that
+//   arrive through Google or Microsoft is missing                          -> source help
 // Every test reloads the page and reads the calendars again.
 import { addDays } from "../../src/shared/time.ts";
 import {
@@ -478,4 +480,26 @@ test("mirroring keeps copies 12 months ahead while planning stops at its own win
     `${day(150)} 10:00`,
     `${day(350)} 10:00`,
   ]);
+});
+
+test("the mirroring help names the fixes for missing source details (Workspace external sharing, the Gmail event visibility setting) and says that iCloud and other calendars arrive through Google or Microsoft, hours late, while a CalDAV server connects directly (rules 45-47)", async ({
+  page,
+  signIn,
+}) => {
+  await signIn();
+  const texts = [
+    // Rule 45.
+    "Only busy blocks from a Google Workspace calendar? The domain's external sharing setting hides the details. Ask the domain admin to allow external sharing of full event details.",
+    // Rule 46.
+    'Events that Gmail added to the source calendar show their details only when that calendar\'s "Events from Gmail" visibility setting allows it.',
+    // Rule 47.
+    "iCloud and other calendars hosted elsewhere reach Tempoloom only after you add them to a Google or Microsoft account. Their changes can then arrive many hours late, and Tempoloom cannot make this faster.",
+    "A CalDAV server, iCloud too, connects directly instead: add it on the Account page.",
+  ];
+  for (const reload of [false, true]) {
+    if (reload) await page.reload();
+    await openSettings(page);
+    const help = page.getByTestId("mirror-source-help");
+    for (const t of texts) await expect(help).toContainText(t);
+  }
 });

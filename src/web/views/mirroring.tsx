@@ -1,5 +1,5 @@
 // Calendar mirroring on the Settings page (docs/specs/sync-calendar-mirroring.md
-// rules 1-13, 26, 29, 39, 40, edge cases 11, 16): the policy form, the list
+// rules 1-13, 26, 29, 39, 40, 45-47, edge cases 11, 16): the policy form, the list
 // with one tab per account, edit, the status toggle and delete.
 import { useCallback, useEffect, useId, useState } from "preact/hooks";
 import type { Settings as UserSettings } from "../../server/settings.ts";
@@ -312,6 +312,22 @@ export function MirrorSettings() {
         <li>
           Seeing each event twice? Your calendar app shows both the original and the copy. Hide the
           source calendar in your calendar app.
+        </li>
+      </ul>
+      <ul class="meta" data-testid="mirror-source-help">
+        <li>
+          Only busy blocks from a Google Workspace calendar? The domain's external sharing setting
+          hides the details. Ask the domain admin to allow external sharing of full event details.
+        </li>
+        <li>
+          Events that Gmail added to the source calendar show their details only when that
+          calendar's "Events from Gmail" visibility setting allows it.
+        </li>
+        <li>
+          iCloud and other calendars hosted elsewhere reach Tempoloom only after you add them to a
+          Google or Microsoft account. Their changes can then arrive many hours late, and Tempoloom
+          cannot make this faster. A CalDAV server, iCloud too, connects directly instead: add it on
+          the Account page.
         </li>
       </ul>
       {fromLibrary && calendars.filter((c) => c.provider !== "ics" && c.writable).length < 2 && (

@@ -1,6 +1,7 @@
 import type { ComponentChildren } from "preact";
 import { useCallback, useEffect, useState } from "preact/hooks";
 import { CATEGORIES } from "../../scheduler/categories.ts";
+import type { BufferFilter } from "../../scheduler/model.ts";
 import type { Settings as UserSettings } from "../../server/settings.ts";
 import { defaultEventSettings, readEventSettings } from "../../shared/event-settings.ts";
 import { api } from "../lib/api.ts";
@@ -224,6 +225,8 @@ export function Settings() {
       minutes_before: number;
       minutes_after: number;
       calendar_scope: string | null;
+      /** The filter as JSON (BufferFilter). */
+      filter: string;
     }[]
   >([]);
   const [focus, setFocus] = useState<
@@ -486,6 +489,22 @@ export function Settings() {
             onClick={() =>
               void act(() =>
                 api("POST", "/api/buffers", {
+                  title: "Recovery",
+                  side: "after",
+                  minutesAfter: 15,
+                  level: 2,
+                  filter: { participants: { op: ">=", value: 2 }, videoLink: true },
+                }),
+              )
+            }
+          >
+            Add 15 min recovery after video meetings
+          </button>
+          <button
+            type="button"
+            onClick={() =>
+              void act(() =>
+                api("POST", "/api/buffers", {
                   title: "Prep",
                   side: "before",
                   minutesBefore: 15,
@@ -544,7 +563,10 @@ export function Settings() {
                 ·{" "}
                 {b.calendar_scope
                   ? `${calendars.find((c) => c.id === b.calendar_scope)?.name ?? "one calendar"} only`
-                  : "all calendars"}{" "}
+                  : "all calendars"}
+                {(JSON.parse(b.filter || "{}") as BufferFilter).videoLink
+                  ? " · video meetings only"
+                  : ""}{" "}
                 <PolicyMark id={b.id} />
               </span>
               {!policyMarks.value[b.id] && (
