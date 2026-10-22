@@ -56,6 +56,7 @@ import {
   inHours,
   MIN,
   openWeek,
+  serverClockAt,
   slot,
   titled,
   visitor,
@@ -423,15 +424,18 @@ test("the urgency setting decides whether a low task that is short of time goes 
 
 test("with the 48-hour urgency mode a low task due within 48 hours goes up one level, a task due later does not (SCH-78)", async ({
   page,
+  app,
   cal,
   signIn,
 }) => {
+  // The server clock starts on Sunday 20:00 before the test week, and nothing
+  // is placed before the next midnight, B (Monday of W). So no midnight of the
+  // real time falls between "now" and B.
+  const b = W;
+  await serverClockAt(app, at(addDays(b, -1), "20:00"));
+  await blockUntil(cal, b);
   await signIn();
   await allDayWorkHours(page);
-  // Nothing is placed before the next midnight, B.
-  const today = local(Date.now()).slice(0, 10);
-  const b = addDays(today, 1);
-  await cal.addEvent({ title: "E2E blocker", start: Date.now() - 3_600_000, end: at(b, "00:00") });
   await openSettings(page);
   await page.getByLabel("Urgency").selectOption({ label: "Raise tasks due within 48 hours" });
   await expect(page.getByTestId("settings-message")).toHaveText("Saved");

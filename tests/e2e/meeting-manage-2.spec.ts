@@ -31,7 +31,7 @@ import {
   planNow,
   test,
 } from "./fixtures.ts";
-import { openWeek, titled, W } from "./helpers.ts";
+import { openWeek, serverClockAt, titled, W } from "./helpers.ts";
 import { allDayBusy } from "./ics.ts";
 import {
   editRaw,
@@ -72,10 +72,7 @@ test("the move notice: an automatic move never starts sooner than the notice aft
   // earlier week moves it (cadence, meetings-flexible.md rule 18), whatever the
   // real day and time of the run.
   const d = W;
-  app.env.TEST_CLOCK_START = new Date(at(d, "07:00")).toISOString();
-  await app.restart();
-  const shift = at(d, "07:00") - Date.now();
-  const now = () => Date.now() + shift;
+  const now = await serverClockAt(app, at(d, "07:00"));
   // The notice ends between 10:00 and 11:00 on that day.
   const notice = Math.ceil((at(d, "10:00") - now()) / HOUR);
   const earliest = now() + notice * HOUR;

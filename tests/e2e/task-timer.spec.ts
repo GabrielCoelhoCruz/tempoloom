@@ -14,7 +14,17 @@
 // - stats do not count time logged on a task or on a habit              -> stat-tasks, stat-workHabits
 import { addDays, localToUtc } from "../../src/shared/time.ts";
 import { blockUntil, eventually, expect, test, ZONE } from "./fixtures.ts";
-import { addHabit, addTask, allEvents, MIN, openEvent, openWeek, titled, W } from "./helpers.ts";
+import {
+  addHabit,
+  addTask,
+  allEvents,
+  MIN,
+  openEvent,
+  openWeek,
+  serverClockAt,
+  titled,
+  W,
+} from "./helpers.ts";
 import { chooseSetting } from "./s3-helpers.ts";
 
 test("the task timer logs the recorded time as a past event on the chosen calendar only after Log time (PRG-30 to PRG-32)", async ({
@@ -113,8 +123,7 @@ test("time logged with the timer on a task and on a habit counts in stats (analy
   // clock starts at noon on Wednesday of the test week, so the 25 and 15 logged
   // minutes stay inside "today", whatever the real day and time of the run.
   const today = addDays(W, 2);
-  app.env.TEST_CLOCK_START = new Date(localToUtc(ZONE, today, 12 * 60)).toISOString();
-  await app.restart();
+  await serverClockAt(app, localToUtc(ZONE, today, 12 * 60));
   await signIn();
   await chooseSetting(page, "Task placement", "Suggestions only (no task events)");
   await addTask(page, { title: "AT-Logged task", minutes: 60, split: false, due: "" });
