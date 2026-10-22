@@ -18,7 +18,7 @@ import { createItemHours, dropItemHours, itemHoursSchema, saveItemHours } from "
 import { automationCount, limitRefusal } from "../limits.ts";
 import { itemChanges } from "../planner/item-log.ts";
 import { isTimeUsed, taskDoneMinutes } from "../planner/progress.ts";
-import { when, zoneOf } from "../preview.ts";
+import { userFormatsOf, when, zoneOf } from "../preview.ts";
 import { getSettings } from "../settings.ts";
 import type { SyncService } from "../sync/service.ts";
 import { markTaskDone, taskOrderChanged } from "../task-order.ts";
@@ -371,11 +371,12 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
     if (!["task", "habit", "focus", "buffer", "meeting"].includes(kind)) notFound("item kind");
     const userId = c.get("user").id;
     const zone = zoneOf(db, userId);
+    const f = userFormatsOf(db, userId);
     const range = (s: number | null, e: number | null) =>
-      s !== null && e !== null ? when(zone, s, e) : "";
+      s !== null && e !== null ? when(zone, s, e, f) : "";
     return c.json({
       changes: itemChanges(db, userId, kind, c.req.param("id"), now()).map((x) => ({
-        at: when(zone, x.at),
+        at: when(zone, x.at, undefined, f),
         action: x.action,
         from: range(x.old_start, x.old_end),
         to: range(x.new_start, x.new_end),

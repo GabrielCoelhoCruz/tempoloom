@@ -4,6 +4,14 @@
 import { randomUUID } from "node:crypto";
 import type { Hono, MiddlewareHandler } from "hono";
 import { plan } from "../scheduler/plan.ts";
+import {
+  DEFAULT_FORMATS,
+  dateText,
+  type Formats,
+  formatsOf,
+  timeText,
+  weekdayText,
+} from "../shared/formats.ts";
 import { utcToLocal, weekdayOf } from "../shared/time.ts";
 import { createSession, deleteSession } from "./accounts.ts";
 import type { AppEnv } from "./app.ts";
@@ -271,18 +279,25 @@ function settle(db: Db, userId: string, now: number): void {
 
 // ---------------------------------------------------------------- words
 
-const WEEKDAYS = ["", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-const clock = (m: number) =>
-  `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
-
-/** "Tue 2026-10-27 15:30–16:30" in the user's zone. */
-export function when(zone: string, start: number, end?: number): string {
+/**
+ * "Tue 2026-10-27 15:30–16:30" in a zone. Texts the user reads pass the user's
+ * formats (settings-profile.md PRF-6); mail to guests keeps the default.
+ */
+export function when(
+  zone: string,
+  start: number,
+  end?: number,
+  f: Formats = DEFAULT_FORMATS,
+): string {
   const a = utcToLocal(zone, start);
-  const head = `${WEEKDAYS[weekdayOf(a.date)]} ${a.date} ${clock(a.minuteOfDay)}`;
+  const head = `${weekdayText(a.date)} ${dateText(a.date, f)} ${timeText(a.minuteOfDay, f)}`;
   if (end === undefined) return head;
   const b = utcToLocal(zone, end);
-  return `${head}–${b.date === a.date ? "" : `${b.date} `}${clock(b.minuteOfDay)}`;
+  return `${head}–${b.date === a.date ? "" : `${dateText(b.date, f)} `}${timeText(b.minuteOfDay, f)}`;
 }
+
+/** The formats of a user's own texts (PRF-6). */
+export const userFormatsOf = (db: Db, userId: string) => formatsOf(getSettings(db, userId));
 
 export const zoneOf = (db: Db, userId: string) =>
   one<{ time_zone: string }>(db, "SELECT time_zone FROM users WHERE id = ?", userId)?.time_zone ??
@@ -518,7 +533,7 @@ export function createPreview(deps: PreviewDeps) {
               eventId: row.id,
             },
           ],
-          summary: `Move “${title}” to ${when(zoneOf(db, user.id), start, end)}`,
+          summary: `Move “${title}” to ${when(zoneOf(db, user.id), start, end, userFormatsOf(db, user.id))}`,
         },
         now(),
       );

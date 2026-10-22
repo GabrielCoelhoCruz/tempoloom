@@ -3,9 +3,8 @@
 // pick the calendar, and see the event it adds before applying it.
 import "./parts.css";
 import { useEffect, useState } from "preact/hooks";
-import { utcToLocal } from "../../shared/time.ts";
 import { api } from "../lib/api.ts";
-import { hhmm } from "../lib/format.ts";
+import { clockText } from "../lib/format.ts";
 import { planNow, zone } from "../lib/state.ts";
 
 interface Timer {
@@ -86,7 +85,7 @@ export function TimerDialog({ onClose }: { onClose: () => void }) {
         )}
         <p class="status wide" data-testid="timer-preview">
           {valid
-            ? `Adds “${timer.title}”, ${minutes} min, ${hhmm(utcToLocal(z, end - minutes * 60_000).minuteOfDay)}–${hhmm(utcToLocal(z, end).minuteOfDay)} today, to ${calendar}.`
+            ? `Adds “${timer.title}”, ${minutes} min, ${clockText(z, end - minutes * 60_000)}–${clockText(z, end)} today, to ${calendar}.`
             : "Enter 1 to 1440 minutes."}
         </p>
         {error && (

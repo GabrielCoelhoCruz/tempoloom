@@ -1,6 +1,7 @@
 import { signal } from "@preact/signals";
 import { useEffect, useMemo, useRef } from "preact/hooks";
 import { addDays, type LocalDate, localToUtc, MINUTE, utcToLocal } from "../../shared/time.ts";
+import { clockText, hourText, timeText, weekdayText } from "../lib/format.ts";
 
 export interface WeekEvent {
   id: string;
@@ -268,11 +269,7 @@ export function WeekView({
         )}
         {days.map((d, i) => (
           <div class={i === todayIdx ? "day-name today" : "day-name"} key={d} data-date={d}>
-            {new Date(`${d}T12:00:00Z`).toLocaleDateString(undefined, {
-              weekday: "short",
-              day: "numeric",
-              timeZone: "UTC",
-            })}
+            {weekdayText(d)} {Number(d.slice(8))}
           </div>
         ))}
       </div>
@@ -287,7 +284,7 @@ export function WeekView({
           <div class="hours">
             {Array.from({ length: 24 }, (_, h) => (
               <div class="hour-label" key={h} style={{ top: `${h * HOUR_PX}px` }}>
-                {h === 0 ? "" : `${String(h).padStart(2, "0")}:00`}
+                {h === 0 ? "" : hourText(h)}
               </div>
             ))}
           </div>
@@ -300,7 +297,7 @@ export function WeekView({
                   data-testid="extra-hour"
                   style={{ top: `${h * HOUR_PX}px` }}
                 >
-                  {h === 0 ? "" : fmtMinute(l.minuteOfDay)}
+                  {h === 0 ? "" : timeText(l.minuteOfDay)}
                 </div>
               ))}
             </div>
@@ -371,7 +368,7 @@ export function WeekView({
                 >
                   <span class="ev-title">{b.ev.title}</span>
                   <span class="ev-time">
-                    {fmtTime(zone, b.ev.start)}–{fmtTime(zone, b.ev.end)}
+                    {clockText(zone, b.ev.start)}–{clockText(zone, b.ev.end)}
                   </span>
                 </div>
               );
@@ -381,14 +378,6 @@ export function WeekView({
       </div>
     </div>
   );
-}
-
-function fmtTime(zone: string, t: number): string {
-  return fmtMinute(utcToLocal(zone, t).minuteOfDay);
-}
-
-function fmtMinute(m: number): string {
-  return `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
 }
 
 export const SNAP = SNAP_MIN * MINUTE;

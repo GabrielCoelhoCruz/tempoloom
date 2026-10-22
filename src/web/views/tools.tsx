@@ -3,7 +3,7 @@
 // Both work without sign-in; the timer keeps its data in this browser only.
 import { render } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
-import { duration } from "../lib/format.ts";
+import { duration, userFormats } from "../lib/format.ts";
 
 const OCCURRENCES = {
   every_weekday: 240,
@@ -265,14 +265,17 @@ async function openMiniWindow(): Promise<Window | null> {
   return win;
 }
 
+/** The start of the week that holds `t`, from the user's week start (PRF-6). */
+function startOfWeek(t: number): number {
+  const d = new Date(t);
+  const back = (d.getDay() - (userFormats().weekStart % 7) + 7) % 7;
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate() - back).getTime();
+}
+
 export function counters(log: TimerLog, now: number) {
   const today = dayStr(now);
   const d = new Date(now);
-  const weekStart = new Date(
-    d.getFullYear(),
-    d.getMonth(),
-    d.getDate() - ((d.getDay() + 6) % 7),
-  ).getTime();
+  const weekStart = startOfWeek(now);
   const monthStart = new Date(d.getFullYear(), d.getMonth(), 1).getTime();
   const days = new Set(log.sessions.map((s) => dayStr(s.at)));
   const dayBack = (k: number) =>
@@ -288,10 +291,6 @@ export function counters(log: TimerLog, now: number) {
 }
 
 type Grouping = "day" | "week" | "month";
-const startOfWeek = (t: number) => {
-  const d = new Date(t);
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate() - ((d.getDay() + 6) % 7)).getTime();
-};
 
 /** Rule 17: the stats view, from the log of this browser. */
 export function timerStats(log: TimerLog, now: number, by: Grouping) {

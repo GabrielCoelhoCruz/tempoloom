@@ -67,12 +67,12 @@ export function ProfilePage() {
             <strong>{m.user.time_zone}</strong>
           </div>
           <div class="row">
-            <span>Week starts on</span>
+            <span>Planning week starts on</span>
             <strong>{m.settings.weekStart === 7 ? "Sunday" : "Monday"}</strong>
           </div>
           {m.settings.googleWeekStart !== null && (
             <div class="row">
-              <span>Week start in your Google calendar</span>
+              <span>Week start in your Google calendar (planner and dates)</span>
               <strong>{m.settings.googleWeekStart === 7 ? "Sunday" : "Monday"}</strong>
             </div>
           )}

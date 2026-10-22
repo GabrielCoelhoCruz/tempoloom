@@ -103,7 +103,8 @@ test("an MCP client signs in with OAuth on the consent page, reads at once, and 
   const details = page.getByTestId("oauth-client-details");
   await expect(details).toContainText("Unverified");
   await expect(details).toContainText("sends you to 127.0.0.1:9");
-  const today = await page.evaluate(() => new Date().toLocaleDateString());
+  // The date in the user's date format, year-month-day by default (PRF-6).
+  const today = utcToLocal(ZONE, Date.now()).date;
   await expect(details).toContainText(`registered on ${today}`);
   const yes = await answerConsent(page, provider, "Allow access");
   const claude = await finishOAuth(provider, yes.get("code") ?? "");
