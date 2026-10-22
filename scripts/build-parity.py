@@ -1474,11 +1474,13 @@ E2E_NOTES.update({
     232: ("A recovery buffer is the after side of a buffer that is not travel time; it gives way only when no allowed day of the occurrence has "
           "other room and the habit turns busy there (adaptive or always busy; an always-free habit leaves it, unit test), and a locked buffer "
           "does not give way. The rule applies whatever the buffer's priority; task events follow rule 17 (buffers-automation.md rule 18 decision)"),
-    635: "Next week's events on the primary calendar of the main account, on each workday (Monday to Friday without work hours); days and events link to the planner week of that day",
+    635: ("Next week's events on the primary calendar of the main account, on each workday (Monday to Friday without work hours), in the home "
+          "zone as the planner shows the week, also during a trip (unit test); days and events link to the planner at that day (its week, with the day marked)"),
     636: "The 5 open tasks with the highest priority, then the nearest due date, and the habits with an event next week; each links to its edit form",
     637: ("Each share link of the email opens a confirm page; only its button makes the page public, so a mail scanner shares nothing. The page "
           "shows the top part as it was sent, a display name only when the user set one (never an email or a login name; unit test), is noindex, "
-          "and the owner can stop sharing in Settings"),
+          "and the owner can stop sharing in Settings. The confirm POST limit counts per client address through the trusted proxies and per share, "
+          "and unshared shares go 14 days, shared pages 13 weeks after their week, never early in any zone (unit tests)"),
     775: ("Tools Tempoloom does not build yet (Outlook, Slack, Zoom, Gong, the task apps, the calendar add-on) show Not available yet; "
           "webhooks, Raycast, Zapier and AI tools link to their settings; the connect flow of each tool is in rows 777 to 782"),
     776: "The link goes to the server's SUPPORT_URL, else to the project's issue form",

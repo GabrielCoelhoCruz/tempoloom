@@ -245,12 +245,15 @@ export function weeklyReport(
     href: url(`/r/${token}/share?to=${target}`),
   }));
 
+  // The home zone: the planner shows the week in it, also during a trip
+  // (timezones-home-and-travel.md rule 10), so each day and link match the planner.
   const zone = user.time_zone;
   const monday = addDays(from, 1 - weekdayOf(from));
   const nextMonday = addDays(monday, 7);
   const preview = nextWeekPreview(db, user.id, zone, nextMonday);
   const dayLabel = (d: PreviewDay) => `${DAY_NAMES[weekdayOf(d.date)]} ${d.date}`;
-  const planner = (d: PreviewDay) => url(`/?week=${d.date}`);
+  // Rule 8: the planner at that day (its week, with the day marked).
+  const planner = (d: PreviewDay) => url(`/?day=${d.date}`);
   const prio = reportPriorities(db, user.id, {
     from: localToUtc(zone, nextMonday, 0),
     to: localToUtc(zone, addDays(nextMonday, 7), 0),
