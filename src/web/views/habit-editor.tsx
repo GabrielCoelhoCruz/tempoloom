@@ -3,6 +3,7 @@
 import { useEffect, useState } from "preact/hooks";
 import type { HabitFrequency } from "../../scheduler/model.ts";
 import { api } from "../lib/api.ts";
+import { useFirstBody } from "../lib/changed.ts";
 import { hhmm } from "../lib/format.ts";
 import { DAY_NAMES, MAX_INTERVAL, ORDINALS, readFrequency, WEEKDAYS } from "../lib/frequency.ts";
 import { LEVEL_NAMES, planNow } from "../lib/state.ts";
@@ -163,6 +164,8 @@ export function HabitEditor({ target, onClose }: { target: EditorTarget; onClose
   const [draft, setDraft] = useState<Draft | null>(null);
   const [searchId, setSearchId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // An edit sends only the fields it changed, so a change saved elsewhere stays.
+  const first = useFirstBody<ReturnType<typeof read>>();
   const editId = "edit" in target ? target.edit : null;
   const fromId = "from" in target ? target.from : null;
 
@@ -214,11 +217,10 @@ export function HabitEditor({ target, onClose }: { target: EditorTarget; onClose
     })();
   }, [editId, fromId]);
 
-  const save = async (e: Event) => {
-    e.preventDefault();
-    const f = new FormData(e.currentTarget as HTMLFormElement);
+  const read = (form: HTMLFormElement) => {
+    const f = new FormData(form);
     const text = (k: string) => String(f.get(k) ?? "").trim();
-    const body = {
+    return {
       title: text("title"),
       notes: text("notes"),
       level: Number(f.get("level")),
@@ -230,10 +232,15 @@ export function HabitEditor({ target, onClose }: { target: EditorTarget; onClose
       defense: text("defense"),
       whenUnplaceable: text("whenUnplaceable"),
     };
+  };
+  const save = async (e: Event) => {
+    e.preventDefault();
+    const form = e.currentTarget as HTMLFormElement;
+    const body = read(form);
     setError(null);
     try {
       if (editId) {
-        await api("PATCH", `/api/habits/${editId}`, body);
+        await api("PATCH", `/api/habits/${editId}`, first.changed(form, body));
         if (searchId !== (draft?.searchId ?? null)) {
           await api("PUT", "/api/task-searches/assign", {
             kind: "habit",
@@ -261,7 +268,7 @@ export function HabitEditor({ target, onClose }: { target: EditorTarget; onClose
         </p>
       )}
       {draft && (
-        <form class="form" onSubmit={save} key={`${editId ?? fromId}`}>
+        <form class="form" onSubmit={save} key={`${editId ?? fromId}`} ref={first.ref(read)}>
           <label class="wide">
             Title
             <input name="title" required maxLength={255} defaultValue={draft.title} />

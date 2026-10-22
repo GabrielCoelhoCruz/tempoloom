@@ -5,7 +5,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import type { AppEnv } from "../app.ts";
 import { all, type Db, one, run, tx } from "../db.ts";
-import { jsonBody, notFound } from "../http.ts";
+import { editBody, jsonBody, notFound, rawBody } from "../http.ts";
 import { connectedCount, instanceLimit, limitMessage, limitRefusal } from "../limits.ts";
 import type { SyncService } from "../sync/service.ts";
 import { listedCalendars } from "./calendars.ts";
@@ -199,9 +199,30 @@ export function mirrorRoutes(db: Db, sync: SyncService, now: () => number): Hono
   r.put("/mirrors/:id", async (c) => {
     const user = c.get("user");
     const id = c.req.param("id");
-    if (!one(db, "SELECT 1 FROM mirror_policies WHERE id = ? AND user_id = ?", id, user.id))
-      notFound("policy");
-    const b = await jsonBody(c, policyInput);
+    const cur = one<{
+      source_calendar_id: string;
+      dest_calendar_id: string;
+      calendar_type: string;
+      visibility: string;
+      all_day_mode: string;
+      copy_outside_work_hours: number;
+      color_override: string | null;
+    }>(db, "SELECT * FROM mirror_policies WHERE id = ? AND user_id = ?", id, user.id);
+    if (!cur) notFound("policy");
+    // Fields the body leaves out keep their stored value (an edit sends only what it changed).
+    const b = editBody(
+      policyInput,
+      {
+        sourceCalendarId: cur.source_calendar_id,
+        destCalendarId: cur.dest_calendar_id,
+        calendarType: cur.calendar_type,
+        visibility: cur.visibility,
+        allDayMode: cur.all_day_mode,
+        copyOutsideWorkHours: cur.copy_outside_work_hours === 1,
+        colorOverride: cur.color_override,
+      },
+      await rawBody(c),
+    );
     const no = problem(user.id, b, id);
     if (no) return c.json(no, 400);
     run(

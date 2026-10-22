@@ -99,6 +99,55 @@ describe("meeting edits", () => {
     expect(changedAt(db, id)).toBe(T0 + 2 * DAY);
   });
 
+  it("keeps every field an edit leaves out, also item-specific hours and guest hours", async () => {
+    const { db, clock, call } = setup();
+    const hours = { "2": [[540, 720]] };
+    const { id } = (await call(
+      "POST",
+      "/meetings",
+      sync1("Sync", {
+        attendees: [{ email: "dana@example.com", hoursOverride: { "2": [[600, 660]] } }],
+        hoursMode: "itemSpecific",
+        itemHours: hours,
+        location: "Room A",
+        idealTime: "10:30",
+        level: 3,
+        leadHours: 24,
+        autoLock: "week",
+      }),
+    )) as { id: string };
+    const before = one<Record<string, unknown>>(db, "SELECT * FROM meetings WHERE id = ?", id);
+    clock.t = T0 + DAY;
+    // Another client changed the location; this form changed only the title.
+    await call("PUT", `/meetings/${id}`, { location: "Room B" });
+    await call("PUT", `/meetings/${id}`, { title: "Weekly sync" });
+    const after = one<Record<string, unknown>>(db, "SELECT * FROM meetings WHERE id = ?", id);
+    expect(after).toEqual({ ...before, title: "Weekly sync", location: "Room B" });
+    expect(
+      one<{ weekly: string }>(
+        db,
+        "SELECT weekly FROM hours_sets WHERE id = ?",
+        String(after?.hours_set_id),
+      )?.weekly,
+    ).toBe(JSON.stringify(hours));
+    expect(
+      all(db, "SELECT email, hours_override FROM meeting_attendees WHERE meeting_id = ?", id),
+    ).toEqual([
+      { email: "dana@example.com", hours_override: JSON.stringify({ "2": [[600, 660]] }) },
+    ]);
+  });
+
+  it("refuses an invalid number in a partial edit and keeps the meeting", async () => {
+    const { db, call, status } = setup();
+    const { id } = (await call("POST", "/meetings", sync1("Sync"))) as { id: string };
+    // NaN from the form is null in JSON.
+    expect(await status("PUT", `/meetings/${id}`, { durationMinutes: null })).toBe(400);
+    expect(await status("PUT", `/meetings/${id}`, { shortestMinutes: 60 })).toBe(400);
+    expect(
+      one<{ d: number }>(db, "SELECT duration_minutes AS d FROM meetings WHERE id = ?", id)?.d,
+    ).toBe(30);
+  });
+
   it("previews an edit in place of the saved meeting, with its creation day", async () => {
     const { clock, call } = setup();
     const { id } = (await call("POST", "/meetings", sync1("Sync"))) as { id: string };
