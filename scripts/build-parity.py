@@ -277,8 +277,9 @@ PARTIAL = StatusMap("PARTIAL", {
 
 # Row id -> reason, for rows that cannot work yet because a feature they build on is missing.
 BLOCKED = StatusMap("BLOCKED", {
-    630: "Not needed for parity: the reference lists these reports as coming soon (analytics-organization.md rule 16)",
-    644: "Needs a Google Workspace domain and a super admin to grant domain-wide delegation; the CalDAV organization grant covers the same need for CalDAV servers (E2E: \u201cCalendar access attaches each provisioned person's calendar read-only\u2026\u201d)",
+    630: ("Not needed for parity: analytics-organization.md rule 16 says \u201cThe reference lists policy analysis and industry benchmark "
+          "reports as \"coming soon\". Tempoloom does not need them for parity\u201d"),
+    644: "Needs a Google Workspace domain and a super admin to grant domain-wide delegation; the CalDAV organization grant covers the same need for CalDAV servers (E2E: " + quoted_titles("grant_read") + ")",
     645: "Needs a Microsoft 365 tenant and a Microsoft Graph calendar provider, which is not implemented",
     581: "Needs a Slack app and a Slack test workspace",
     217: "No benchmark data: the evidence gives no targets per role (teams-policies.md open question 3)",
@@ -717,7 +718,9 @@ E2E_NOTES.update({
 E2E.update({282: ["s1_habit_es", "s1_task_color", "s4_labels"]})
 E2E_NOTES.update({282: "Habits, focus time, buffers and tasks have their own color (stream s1); a mirroring policy has a color override (stream s4)"})
 # Rows this round did not build, each with the concrete reason.
-BLOCKED[491] = "Needs a Google Workspace account: the trigger is Google calendar sharing"
+BLOCKED[491] = ("No evidence of the trigger: sync-calendar-mirroring.md rule 44 says \u201cThe trigger is not in the evidence\u201d (open question). "
+                "The share would also need the owner's consent to the Google calendar.acls scope (accounts-login-emails-permissions.md rule 19) "
+                "in the second Google E2E run")
 BLOCKED[492] = "Needs a Google Workspace account: the help covers Workspace sharing and Gmail-made events"
 BLOCKED[493] = "Needs Google or Microsoft accounts that subscribe to the iCloud calendar; a CalDAV server connects directly"
 BLOCKED[519] = "Needs a Google Workspace domain and a super admin"
@@ -1033,9 +1036,10 @@ E2E_NOTES.update({
     28: "Due by and Starts from are local dates; the filters and the sort stay in the page address, so a reload keeps them",
     29: "Scheduling order is the order in which the last plan processed the tasks, with the urgency lifts of the urgency mode",
 })
-BLOCKED[17] = ("Settings has every task default with E2E but one (\u201c" + T["u33_defaults"] + "\u201d, \u201c"
-               + T["u33_chunk_defaults"] + "\u201d, \u201c" + T["u33_private"] + "\u201d; the time between chunks is row 9). "
-               "quickTaskMinutes is used only for tasks made from chat-app or mail messages, which need the Slack app and a mail integration (row 19)")
+BLOCKED[17] = ("Needs a Slack app and a Slack test workspace, or a Gmail add-on and a Google Workspace test account (row 19): "
+               "quickTaskMinutes sets only the length of tasks made from chat-app or mail messages (planning-tasks.md TSK-4). "
+               "Built, with full UI E2E on CalDAV: " + quoted_titles("u33_defaults", "u33_chunk_defaults", "u33_private")
+               + "; the time between chunks is row 9")
 # --- end U33 ---
 
 # --- U30: exact blocked and partial reasons (audit of the blocked rows) ---
@@ -1071,9 +1075,11 @@ E2E_NOTES.update({
 # Chat rows: the assistant chat needs a language model, which the owner must supply.
 G2 = "Needs an LLM provider and key from the owner (gate G2)"
 CHAT_BUILT = "; preview mode and the MCP server, which the assistant chat would use, are built"
-for n in [6, 47, 316, 369, 569, 582, 609, 612, 627, 661, 662, 672, 674, 675, 676, 677, 678, 679, 680, 681,
-          682, 684, 685, 686, 687, 688, 689, 718]:
-    BLOCKED[n] = G2 + CHAT_BUILT
+for n in [6, 47, 316, 369, 569, 582, 609, 612, 627, 661, 662, 674, 675, 676, 677, 678, 679, 680, 681,
+          684, 685, 686, 687, 688, 689, 718]:
+    BLOCKED[n] = G2
+# Row 672 belongs to unit U73, which changes its reason.
+BLOCKED[672] = G2 + CHAT_BUILT
 for n in [723, 724, 730, 732, 733, 734, 735, 736, 738, 739, 740, 742, 749]:
     BLOCKED[n] = G2 + ": a prompt entry opens the assistant chat"
 BLOCKED[568] = G2 + ": the switch turns off the assistant chat, so without the chat it has no effect to prove"
@@ -1096,7 +1102,7 @@ RAYCAST = "Needs a Mac with Raycast to run the Raycast extension, a macOS client
 WORKSPACE_ADDON = "Needs a Google Workspace Marketplace add-on (Calendar and Gmail) and a Google Workspace test account"
 OUTSIDE = {
     SLACK: [236] + list(range(785, 822)),
-    ZOOM: [822, 823, 825, 826, 827, 828, 829, 830],
+    ZOOM: [822, 823, 825, 827, 828, 829, 830],
     ZOOM + ", and a Slack app and a Slack test workspace": [824],
     GONG: [831, 832, 833, 834],
     TASK_APPS: [26, 67, 835] + list(range(837, 847)) + [859],
@@ -1112,10 +1118,11 @@ OUTSIDE = {
     WORKSPACE_ADDON: list(range(954, 964)),
     ("Needs the developer app and a test account of at least one task or chat tool (Slack, Todoist, Asana, ClickUp, Jira, Linear or Zoom): "
      "the connect, consent and disconnect flow has no provider to run against"): list(range(777, 783)),
-    "Needs a Zapier Developer Platform app and a Zapier account; personal API keys, which a Zapier app would use, are built (row 927)": [928, 929],
+    ("Needs a Zapier Developer Platform app and a Zapier account. Built: personal API keys, which a Zapier app would use to create tasks, "
+     "with full UI E2E on CalDAV: " + quoted_titles("acct_keys")): [928, 929],
     "Needs a Zoom developer app and a Zoom test account, or Google Meet (a Google account and the Calendar conference API)": [436],
     "Needs a Microsoft 365 test account and a Microsoft Entra app registration for Microsoft Graph; the Graph calendar provider is not built": [
-        520, 521, 526, 527, 528, 529, 530, 531, 532, 533, 534, 535, 536, 669, 670],
+        520, 521, 526, 527, 528, 529, 530, 531, 532, 533, 534, 535, 670],
 }
 for reason, ns in OUTSIDE.items():
     for n in ns:
@@ -1123,8 +1130,11 @@ for reason, ns in OUTSIDE.items():
 BLOCKED[19] = "Needs a Slack app and a Slack test workspace, or a Gmail add-on and a Google Workspace test account: the tasks come from chat or mail messages"
 BLOCKED[66] = "Needs a Google Workspace Marketplace add-on for Google Calendar and a Google Workspace test account; priorities change in the planner and the task and habit forms"
 BLOCKED[147] = BLOCKED[518] = (
-    "Needs a Google account and the Google Tasks and Gmail APIs: only the Google Tasks and Gmail features (rows 847 to 858) ask for more Google access. "
-    "Google sign-in asks for the calendar scopes up front (with include_granted_scopes); CalDAV has no permission scopes")
+    "Needs the owner's Google OAuth consent in the second Google E2E run for the extra scopes of accounts-login-emails-permissions.md rule 19: "
+    "Tasks (rows 847 to 858), Gmail (row 855) and calendar.acls to share a source calendar (row 491). "
+    "Built, without E2E: Google sign-in asks only for the sign-up scopes, with include_granted_scopes; CalDAV has no permission scopes")
+BLOCKED[826] = (ZOOM + ": Zoom join support starts and stops with the Zoom connection (integrations-video-conferencing.md rules 3, 11). "
+                "Built: the planner Join for any event link, with full UI E2E on CalDAV: " + quoted_titles("s3_join"))
 BLOCKED[446] = BLOCKED[447] = WORKSPACE_ADDON + "; the same actions exist on the Booking links page (rows 440 to 443)"
 BLOCKED[836] = (TASK_APPS + " for imported tasks. A saved search over Tempoloom tasks on a habit and on focus time has full UI E2E "
                 "on CalDAV (\u201c" + T["s2_habit_tasks"] + "\u201d; \u201c" + T["s2_focus_tasks"] + "\u201d)")
@@ -1133,8 +1143,22 @@ BLOCKED[836] = (TASK_APPS + " for imported tasks. A saved search over Tempoloom 
 BLOCKED[595] = "Not software: a guided pilot and rollout is a human service of the vendor company"
 BLOCKED[655] = "Not software: a support tier, security reviews and company onboarding are human services of the vendor company"
 BLOCKED[653] = BLOCKED[654] = "No spec and no evidence of inputs or formulas: a calculator widget on the marketing site"
-BLOCKED[773] = "No evidence: the source service is closed and its export file format is not in the evidence"
-BLOCKED[770] = "Not needed: no legacy users (platform-current-version rule 11)"
+BLOCKED[773] = ("No evidence: platform-current-version.md rule 16 (competitor import, non-goal) says \u201cTempoloom does not build "
+                "this: the source service is closed and its file format is not in the evidence\u201d")
+BLOCKED[770] = ("Not needed: platform-current-version.md rule 11 says \u201cTempoloom has no legacy users, so it needs no version switch "
+                "and no upgrade banner\u201d")
+BLOCKED[536] = ("No behavior to build: accounts-outlook-support.md rule 15 says chat and status for Microsoft Teams and a Microsoft To Do "
+                "(Outlook Tasks) integration are \u201cnot available\u201d in the reference, and Tempoloom has none either")
+PLANS_NON_GOAL = ("plans-feature-inventory.md says \u201cPrices, payment and discounts are non-goals. Tempoloom is self-hosted and has no "
+                  "paid tiers; the tier limits become optional instance settings\u201d")
+BLOCKED[572] = ("No behavior to build for billing or plan changes: teams-settings-templates.md lists the Billing page "
+                "(plans and payment) as a non-goal, and " + PLANS_NON_GOAL + ". Seats are an instance limit, built with full UI E2E on CalDAV: "
+                + quoted_titles("tm_seats", "tm_roles"))
+BLOCKED[649] = ("No behavior to build for prices: " + PLANS_NON_GOAL + ". The limits are built, with full UI E2E on CalDAV: "
+                + quoted_titles("s4_win_limit", "s4_cal_limit", "s4_counts", "s7_readonly"))
+BLOCKED[650] = "No behavior to build for discounts or annual billing: " + PLANS_NON_GOAL
+BLOCKED[651] = "No behavior to build for payment methods: " + PLANS_NON_GOAL
+BLOCKED[652] = "No behavior to build for a free trial, because there are no paid tiers: " + PLANS_NON_GOAL
 
 # Buildable rows that no unit has built yet. Rows that units U31 to U33 and PR #23 build now keep their text.
 PLANNED = "Buildable; not built yet (planned)"
@@ -1288,6 +1312,11 @@ _SERVER = "the server side it uses (OAuth 2.1 with dynamic client registration a
 BLOCKED[948] = "Needs a paid ChatGPT plan and a listing in the ChatGPT app directory, or a ChatGPT plan with custom connectors; " + _SERVER
 BLOCKED[950] = "Needs Claude Code and an Anthropic account to run claude mcp add with an HTTP URL and the browser sign-in; " + _SERVER
 BLOCKED[952] = "Needs the Cursor app and a Cursor account to add the mcp.json entry and connect; " + _SERVER
+BLOCKED[682] = (G2 + " for the chat that proposes changes. Built: the approval step (assistant-chat.md rules 12 to 14 use "
+                "assistant-preview-mode.md), with full UI E2E on CalDAV: " + quoted_titles("s7_auto", "s7_manual", "u34_flow"))
+BLOCKED[669] = ("Needs a Microsoft 365 account with Microsoft Copilot that can add an MCP server (Copilot Studio), to add Tempoloom as an MCP connector; "
+                "Copilot does not use the Graph calendar provider. Built: the MCP server side it uses, with E2E through the MCP SDK client and the consent page: "
+                + quoted_titles("u34_flow", "s7_readonly"))
 # --- end U34 ---
 
 # --- U31: task progress, part A (tests/e2e/task-progress.spec.ts) ---
@@ -1573,7 +1602,7 @@ BLOCKED[322] = (GOOGLE_CONSENT + " and a second Google account that is not a Tem
                 "fake Google API (tests/unit/guest-free-busy.test.ts): the organizer's Google account asks Google free/busy for required "
                 "guests who are not users here (at most 50 per request, a 5-second limit, the answer kept for 5 minutes), the meeting "
                 "keeps away from their busy time but not from its own invitation, and a guest with no data or a failed or slow query "
-                "is unknown. The availability of attendees who are users here is E2E-proven (rows 321, 339)")
+                "is unknown. The availability of attendees who are users here has full UI E2E on CalDAV: " + quoted_titles("m_sync", "mr_hours"))
 # --- end U56 ---
 
 # --- U57: setup guides per AI tool on the Account page ---
