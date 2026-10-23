@@ -15,12 +15,13 @@ import {
   weekdayOf,
 } from "../../shared/time.ts";
 import type { AppEnv } from "../app.ts";
-import { all, type Db, one, run } from "../db.ts";
+import { all, type Db, one, run, tx } from "../db.ts";
 import { jsonBody, notFound } from "../http.ts";
 import { externalEvents } from "../planner/events.ts";
 import { getSettings } from "../settings.ts";
 import type { SyncService } from "../sync/service.ts";
 import { planningZone } from "../travel.ts";
+import { insertRank } from "./automations.ts";
 import { badRequest, hoursSetId } from "./items.ts";
 import { moveManaged } from "./planner.ts";
 
@@ -371,25 +372,29 @@ export function focusExtraRoutes(db: Db, sync: SyncService, now: () => number): 
     }
     const id = randomUUID();
     const t = now();
-    run(
-      db,
-      `INSERT INTO meeting_overloads (id, user_id, title, enabled, hours_set_id, daily_max_minutes, weekly_max_minutes,
-         heavy_day_minutes, min_block_minutes, decline_enabled, decline_message, task_search_id, created_at,
-         rules_changed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      id,
-      user.id,
-      body.title,
-      body.enabled === false ? 0 : 1,
-      hoursSetId(db, user.id, body.hoursSetId, "work"),
-      daily,
-      weekly,
-      body.heavyDayMinutes ?? null,
-      body.minBlockMinutes ?? 30,
-      body.autoDecline?.enabled ? 1 : 0,
-      body.autoDecline?.message ?? "",
-      body.taskSearchId ?? null,
-      t,
-      t,
+    // SCH-71: the rank shift and the insert are one change.
+    tx(db, () =>
+      run(
+        db,
+        `INSERT INTO meeting_overloads (id, user_id, title, enabled, hours_set_id, daily_max_minutes, weekly_max_minutes,
+           heavy_day_minutes, min_block_minutes, decline_enabled, decline_message, task_search_id, created_at,
+           rules_changed_at, rank) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        id,
+        user.id,
+        body.title,
+        body.enabled === false ? 0 : 1,
+        hoursSetId(db, user.id, body.hoursSetId, "work"),
+        daily,
+        weekly,
+        body.heavyDayMinutes ?? null,
+        body.minBlockMinutes ?? 30,
+        body.autoDecline?.enabled ? 1 : 0,
+        body.autoDecline?.message ?? "",
+        body.taskSearchId ?? null,
+        t,
+        t,
+        insertRank(db, "meeting_overload", user.id, 4),
+      ),
     );
     changed(user.id);
     return c.json({ overload: overloadRow(id) }, 201);

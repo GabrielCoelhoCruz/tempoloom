@@ -531,34 +531,33 @@ export function itemRoutes(db: Db, sync: SyncService, now: () => number): Hono<A
     const hours = f.itemHours
       ? createItemHours(db, user.id, f.title ?? "Focus time", f.itemHours)
       : hoursSetId(db, user.id, f.hoursSetId, "work");
-    run(
-      db,
-      `INSERT INTO focus_goals (id, user_id, title, enabled, hours_set_id, weekly_goal_minutes, daily_min_minutes,
+    // SCH-71: the rank shift and the insert are one change.
+    tx(db, () =>
+      run(
+        db,
+        `INSERT INTO focus_goals (id, user_id, title, enabled, hours_set_id, weekly_goal_minutes, daily_min_minutes,
          daily_max_minutes, min_block_minutes, max_block_minutes, busy, created_at, rules_changed_at,
          event_settings, template_id, rank, preferred_from, preferred_to)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      id,
-      user.id,
-      f.title ?? "Focus time",
-      f.enabled === false ? 0 : 1,
-      hours,
-      f.weeklyGoalMinutes,
-      f.dailyMinMinutes ?? 0,
-      f.dailyMaxMinutes ?? 240,
-      min,
-      max,
-      f.busy === false ? 0 : 1,
-      t,
-      t,
-      JSON.stringify(es),
-      f.templateId ?? null,
-      (one<{ r: number | null }>(
-        db,
-        "SELECT MAX(rank) AS r FROM focus_goals WHERE user_id = ?",
+        id,
         user.id,
-      )?.r ?? -1) + 1,
-      prefFrom,
-      prefTo,
+        f.title ?? "Focus time",
+        f.enabled === false ? 0 : 1,
+        hours,
+        f.weeklyGoalMinutes,
+        f.dailyMinMinutes ?? 0,
+        f.dailyMaxMinutes ?? 240,
+        min,
+        max,
+        f.busy === false ? 0 : 1,
+        t,
+        t,
+        JSON.stringify(es),
+        f.templateId ?? null,
+        insertRank(db, "focus_time", user.id, 4),
+        prefFrom,
+        prefTo,
+      ),
     );
     changed(user.id);
     return c.json({ focus: one(db, "SELECT * FROM focus_goals WHERE id = ?", id) }, 201);
