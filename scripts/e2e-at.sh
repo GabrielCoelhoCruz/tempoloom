@@ -3,10 +3,11 @@
 #   scripts/e2e-at.sh "2026-10-22 23:50" [playwright args]
 # The time is Europe/Berlin local time. The test runner, the server and the
 # browser see a clock that starts there and then runs at normal speed
-# (tests/e2e/shift-clock.mjs). Calendar, mail and identity provider containers
-# keep the real time: sso.spec.ts fails when the moved clock is before the real
-# time or more than a day after it, because the server then refuses the ID
-# tokens of the Dex container.
+# (tests/e2e/shift-clock.mjs). Containers keep the real time, so two specs
+# fail with a moved clock: sso.spec.ts when the clock is before the real time or
+# more than a day after it (the server refuses the Dex container's ID tokens),
+# and self-host.spec.ts when it is ahead (the app in the Docker image plans
+# from the real time).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 target=$(TZ=Europe/Berlin date -d "$1" +%s%3N)
