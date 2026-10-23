@@ -12,6 +12,12 @@
 //                                                while the calendars call waits
 // - the settings page shows no error when one call fails, and hides the parts
 //   that loaded                               -> an alert, and the other parts
+// - a reload that fails after a save that worked shows as a failed save, so
+//   the user saves again and makes a second hours set
+//                                             -> "Saved", the load alert, and
+//                                                one hours set
+// - an older help lookup answers after a newer one and shows its result
+//                                             -> the newer lookup's error stays
 import type { Page, Request, Route } from "@playwright/test";
 import { expect, test } from "./fixtures.ts";
 import { addTask } from "./helpers.ts";
@@ -94,6 +100,10 @@ test("the settings page shows each part when its data comes in, before a slow ca
   // The buffers need the calendar names: they wait for the held call.
   const recovery = settings.getByRole("button", { name: "Add 15 min recovery after meetings" });
   await expect(recovery).toBeHidden();
+  const pending = settings.locator('section[aria-busy="true"]');
+  await expect(pending).toHaveCount(1);
+  await expect(pending).toContainText("Buffers");
+  await expect(pending).toContainText("Loading…");
   release();
   await expect(recovery).toBeVisible();
   await expect(page.getByTestId("settings-load-error")).toBeHidden();
@@ -110,7 +120,9 @@ test("the settings page shows an error when one call fails, and the parts that l
       : route.continue(),
   );
   await page.getByRole("link", { name: "Settings" }).click();
-  await expect(page.getByTestId("settings-load-error")).toContainText("API error 500");
+  await expect(page.getByTestId("settings-load-error")).toHaveText(
+    "Some settings could not load. Reload the page to try again.",
+  );
   const settings = page.getByTestId("settings-page");
   await expect(settings.getByRole("combobox", { name: "Planning" })).toHaveValue("on");
   await expect(page.getByTestId("hours-work")).toBeVisible();
@@ -129,4 +141,79 @@ test("the settings page shows an error when one call fails, and the parts that l
   await expect(page.getByTestId("settings-message")).toHaveText("Saved");
   await expect(focus).toBeVisible();
   await expect(page.getByTestId("settings-load-error")).toBeHidden();
+});
+
+test("a save that worked shows as saved when the reload after it fails", async ({
+  page,
+  signIn,
+}) => {
+  await signIn();
+  await page.getByRole("link", { name: "Settings" }).click();
+  const settings = page.getByTestId("settings-page");
+  await expect(page.getByTestId("hours-work")).toBeVisible();
+  await expect(page.getByTestId("settings-load-error")).toBeHidden();
+
+  // From now on the reload after each save fails on one call.
+  await page.route("**/api/focus", (route) =>
+    route.request().method() === "GET"
+      ? route.fulfill({ status: 500, json: { error: "internal" } })
+      : route.continue(),
+  );
+  const added = page.waitForResponse(
+    (r) => r.request().method() === "POST" && new URL(r.url()).pathname === "/api/hours",
+  );
+  await settings.getByLabel("New hours set name").fill("LR-Extra");
+  await settings.getByRole("button", { name: "+ Custom hours" }).click();
+  expect((await added).status()).toBe(201);
+  await expect(page.getByTestId("settings-message")).toHaveText("Saved");
+  await expect(page.getByTestId("settings-load-error")).toBeVisible();
+
+  // One more save: still one hours set with the name.
+  const saved = page.waitForResponse(
+    (r) => r.request().method() === "PATCH" && new URL(r.url()).pathname === "/api/settings",
+  );
+  await settings
+    .getByRole("combobox", { name: "Break between tasks and habits" })
+    .selectOption("5");
+  expect((await saved).ok()).toBe(true);
+  await expect(page.getByTestId("settings-message")).toHaveText("Saved");
+  const res = await page.request.get("/api/hours");
+  const { hours } = (await res.json()) as { hours: { name: string }[] };
+  expect(hours.filter((h) => h.name === "LR-Extra")).toHaveLength(1);
+});
+
+test("an older help lookup that answers last does not replace the newer one", async ({
+  page,
+  signIn,
+}) => {
+  await signIn();
+  // The first lookup waits, then reads as unreadable; the second is not found.
+  let release = () => {};
+  const released = new Promise<void>((r) => {
+    release = r;
+  });
+  await page.route("**/api/help/lookup?q=first*", async (route) => {
+    await released;
+    await route.fulfill({ status: 400, json: { error: "unreadable" } });
+  });
+  await page.route("**/api/help/lookup?q=second*", (route) =>
+    route.fulfill({ status: 404, json: { error: "not_found" } }),
+  );
+  await page.getByRole("link", { name: "Help" }).click();
+  await page.getByTestId("help-index").getByRole("link", { name: "Repair one event" }).click();
+  const form = page.getByTestId("lookup-form");
+  const input = form.getByLabel("Event link or id");
+  await input.fill("first");
+  await form.getByRole("button", { name: "Look up" }).click();
+  await input.fill("second");
+  await form.getByRole("button", { name: "Look up" }).click();
+  const alert = page.getByTestId("lookup-page").getByRole("alert");
+  await expect(alert).toContainText("No event with this link or id");
+
+  const first = page.waitForResponse((r) => r.url().includes("/api/help/lookup?q=first"));
+  release();
+  await first;
+  await drawn(page);
+  await expect(alert).toContainText("No event with this link or id");
+  await expect(alert).not.toContainText("cannot read this link");
 });

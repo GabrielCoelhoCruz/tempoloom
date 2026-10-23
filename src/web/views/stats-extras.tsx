@@ -1,10 +1,11 @@
 // Stats by category (docs/specs/analytics-personal-stats.md rules 1, 4, 6-8,
 // 12-13): deep and shallow work, breaks, travel and time away, weekday panels,
 // people met, insights, and calendar facts (analytics-weekly-reports.md rule 7).
-import { useEffect, useRef, useState } from "preact/hooks";
+import { useEffect, useState } from "preact/hooks";
 import { type Fact, factText } from "../../shared/facts.ts";
 import { api } from "../lib/api.ts";
 import { duration } from "../lib/format.ts";
+import { useNewest } from "../lib/newest.ts";
 
 interface Insights {
   categories: Record<string, number>;
@@ -59,19 +60,19 @@ export interface BaseStats {
 
 export function StatsExtras({ from, to, base }: { from: string; to: string; base: BaseStats }) {
   const [data, setData] = useState<Insights | null>(null);
-  const seq = useRef(0);
+  const newest = useNewest();
   useEffect(() => {
-    const n = ++seq.current;
+    const isNewest = newest();
     void api<Insights>("GET", `/api/stats/insights?from=${from}&to=${to}`).then(
       (d) => {
         // Only the answer for the newest range counts.
-        if (n === seq.current) setData(d);
+        if (isNewest()) setData(d);
       },
       () => {
-        if (n === seq.current) setData(null);
+        if (isNewest()) setData(null);
       },
     );
-  }, [from, to]);
+  }, [newest, from, to]);
   if (!data) return null;
   const maxSolo = Math.max(1, ...data.weekdays.map((w) => w.solo));
   const i = data.insights;

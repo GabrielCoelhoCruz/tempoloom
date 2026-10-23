@@ -93,10 +93,7 @@ function TaskCalendar({
         onChange={(e) => {
           const value = e.currentTarget.value;
           void act(
-            () =>
-              api("PUT", `/api/hours/${set.id}`, {
-                taskCalendarId: value || null,
-              }),
+            () => api("PUT", `/api/hours/${set.id}`, { taskCalendarId: value || null }),
             dirty ? "Calendar saved. The changed ranges are not saved yet." : "Saved",
           );
         }}
@@ -173,12 +170,7 @@ export function HoursEditor({
                 />
                 <button
                   type="button"
-                  onClick={() =>
-                    setWeekly({
-                      ...weekly,
-                      [day]: ranges.filter((_, j) => j !== i),
-                    })
-                  }
+                  onClick={() => setWeekly({ ...weekly, [day]: ranges.filter((_, j) => j !== i) })}
                 >
                   −
                 </button>
@@ -221,11 +213,6 @@ export function HoursEditor({
   );
 }
 
-function errorText(err: unknown): string {
-  const body = (err as { body?: { message?: string } }).body;
-  return body?.message ?? (err instanceof Error ? err.message : String(err));
-}
-
 type Buffer = {
   id: string;
   title: string;
@@ -235,12 +222,17 @@ type Buffer = {
   calendar_scope: string | null;
   filter: BufferFilter;
 };
-type Focus = {
-  id: string;
-  title: string;
-  weekly_goal_minutes: number;
-  event_settings: string;
-};
+type Focus = { id: string; title: string; weekly_goal_minutes: number; event_settings: string };
+
+/** The place of a settings part whose data is not in yet. */
+function Pending({ title, failed }: { title: string; failed: boolean }) {
+  return (
+    <section aria-busy={!failed}>
+      <h2>{title}</h2>
+      <p class="status">{failed ? "Could not load." : "Loading…"}</p>
+    </section>
+  );
+}
 
 export function Settings() {
   // Each part of the page shows when its own data is in (null until then), so
@@ -254,45 +246,49 @@ export function Settings() {
   const [calendars, setCalendars] = useState<{ id: string; name: string }[] | null>(null);
   const [taskCalendars, setTaskCalendars] = useState<{ id: string; name: string }[]>([]);
   const [message, setMessage] = useState<string | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
 
-  /** Reads the page data; each part draws when it arrives. Fails when one call fails. */
+  /**
+   * Reads the page data; each part draws when it arrives. A failed call shows
+   * the load alert and never rejects, so a save that worked shows as saved.
+   */
   const load = useCallback(async () => {
-    await Promise.all([
-      api<{ settings: UserSettings; windowLimit: number | null }>("GET", "/api/settings").then(
-        (s) => {
-          setSettings(s.settings);
-          setWindowLimit(s.windowLimit);
-        },
-      ),
-      api<{ hours: HoursSet[]; taskCalendars: { id: string; name: string }[] }>(
-        "GET",
-        "/api/hours",
-      ).then((h) => {
-        setHours(h.hours);
-        setTaskCalendars(h.taskCalendars);
-      }),
-      // The filter is stored as JSON: parse it once here.
-      api<{ buffers: (Omit<Buffer, "filter"> & { filter: string })[] }>("GET", "/api/buffers").then(
-        (b) =>
+    try {
+      await Promise.all([
+        api<{ settings: UserSettings; windowLimit: number | null }>("GET", "/api/settings").then(
+          (s) => {
+            setSettings(s.settings);
+            setWindowLimit(s.windowLimit);
+          },
+        ),
+        api<{ hours: HoursSet[]; taskCalendars: { id: string; name: string }[] }>(
+          "GET",
+          "/api/hours",
+        ).then((h) => {
+          setHours(h.hours);
+          setTaskCalendars(h.taskCalendars);
+        }),
+        // The filter is stored as JSON: parse it once here.
+        api<{ buffers: (Omit<Buffer, "filter"> & { filter: string })[] }>(
+          "GET",
+          "/api/buffers",
+        ).then((b) =>
           setBuffers(
-            b.buffers.map((x) => ({
-              ...x,
-              filter: JSON.parse(x.filter || "{}") as BufferFilter,
-            })),
+            b.buffers.map((x) => ({ ...x, filter: JSON.parse(x.filter || "{}") as BufferFilter })),
           ),
-      ),
-      api<{ focus: Focus[] }>("GET", "/api/focus").then((f) => setFocus(f.focus)),
-      api<{ calendars: { id: string; name: string }[] }>("GET", "/api/calendars").then((c) =>
-        setCalendars(c.calendars),
-      ),
-      loadPolicyMarks(),
-    ]);
-    setLoadError(null);
+        ),
+        api<{ focus: Focus[] }>("GET", "/api/focus").then((f) => setFocus(f.focus)),
+        api<{ calendars: { id: string; name: string }[] }>("GET", "/api/calendars").then((c) =>
+          setCalendars(c.calendars),
+        ),
+        loadPolicyMarks(),
+      ]);
+      setLoadFailed(false);
+    } catch {
+      setLoadFailed(true);
+    }
   }, []);
-  useEffect(() => {
-    load().catch((err: unknown) => setLoadError(errorText(err)));
-  }, [load]);
+  useEffect(() => void load(), [load]);
   // The hours preview of item editors links here (planning-hours.md HRS-11).
   const ready = settings !== null && hours !== null;
   useEffect(() => {
@@ -310,7 +306,8 @@ export function Settings() {
       setMessage(done);
       return true;
     } catch (err) {
-      setMessage(errorText(err));
+      const body = (err as { body?: { message?: string } }).body;
+      setMessage(body?.message ?? (err instanceof Error ? err.message : String(err)));
       return false;
     }
   };
@@ -332,13 +329,13 @@ export function Settings() {
           {message}
         </p>
       )}
-      {loadError && (
+      {loadFailed && (
         <p class="error" role="alert" data-testid="settings-load-error">
-          Some settings could not load: {loadError}
+          Some settings could not load. Reload the page to try again.
         </p>
       )}
 
-      {settings && (
+      {settings ? (
         <>
           <section>
             <h2>Scheduling</h2>
@@ -386,9 +383,7 @@ export function Settings() {
                   value={settings.chunkCooldown}
                   onChange={(e) =>
                     void act(() =>
-                      api("PATCH", "/api/settings", {
-                        chunkCooldown: e.currentTarget.value,
-                      }),
+                      api("PATCH", "/api/settings", { chunkCooldown: e.currentTarget.value }),
                     )
                   }
                 >
@@ -407,9 +402,7 @@ export function Settings() {
                   value={settings.urgencyMode}
                   onChange={(e) =>
                     void act(() =>
-                      api("PATCH", "/api/settings", {
-                        urgencyMode: e.currentTarget.value,
-                      }),
+                      api("PATCH", "/api/settings", { urgencyMode: e.currentTarget.value }),
                     )
                   }
                 >
@@ -424,11 +417,7 @@ export function Settings() {
                   name="timeZone"
                   defaultValue={me.value?.user.time_zone ?? ""}
                   onChange={(e) =>
-                    void act(() =>
-                      api("PATCH", "/api/me", {
-                        timeZone: e.currentTarget.value,
-                      }),
-                    )
+                    void act(() => api("PATCH", "/api/me", { timeZone: e.currentTarget.value }))
                   }
                 />
               </label>
@@ -439,9 +428,7 @@ export function Settings() {
                   value={settings.paused ? "paused" : "on"}
                   onChange={(e) =>
                     void act(() =>
-                      api("PATCH", "/api/settings", {
-                        paused: e.currentTarget.value === "paused",
-                      }),
+                      api("PATCH", "/api/settings", { paused: e.currentTarget.value === "paused" }),
                     )
                   }
                 >
@@ -455,15 +442,21 @@ export function Settings() {
             </div>
           </section>
 
-          {hours && <TaskDefaults settings={settings} hours={hours} act={act} />}
+          {hours ? (
+            <TaskDefaults settings={settings} hours={hours} act={act} />
+          ) : (
+            <Pending title="Task defaults" failed={loadFailed} />
+          )}
           <AutoLockSettings settings={settings} act={act} />
 
           <AlertSettings settings={settings} act={act} />
           <EventTipsSetting settings={settings} act={act} />
         </>
+      ) : (
+        <Pending title="Scheduling" failed={loadFailed} />
       )}
 
-      {hours && (
+      {hours ? (
         <section id="hours">
           <h2>Hours</h2>
           <HoursZoneNote />
@@ -515,6 +508,8 @@ export function Settings() {
             <button type="submit">+ Custom hours</button>
           </form>
         </section>
+      ) : (
+        <Pending title="Hours" failed={loadFailed} />
       )}
 
       <TravelSettings />
@@ -522,7 +517,7 @@ export function Settings() {
       <CalendarSettings />
       <MirrorSettings />
 
-      {buffers && calendars && (
+      {buffers && calendars ? (
         <section>
           <h2>Buffers</h2>
           <div class="actions">
@@ -551,10 +546,7 @@ export function Settings() {
                     side: "after",
                     minutesAfter: 15,
                     level: 2,
-                    filter: {
-                      participants: { op: ">=", value: 2 },
-                      videoLink: true,
-                    },
+                    filter: { participants: { op: ">=", value: 2 }, videoLink: true },
                   }),
                 )
               }
@@ -640,9 +632,11 @@ export function Settings() {
             ))}
           </div>
         </section>
+      ) : (
+        <Pending title="Buffers" failed={loadFailed} />
       )}
 
-      {settings && (
+      {settings ? (
         <>
           <section>
             <h2>Colors</h2>
@@ -753,9 +747,11 @@ export function Settings() {
             </form>
           </section>
         </>
+      ) : (
+        <Pending title="Colors and title markers" failed={loadFailed} />
       )}
 
-      {focus && (
+      {focus ? (
         <section>
           <h2>Focus time</h2>
           <FocusRecommendation onDone={() => act(async () => {})} />
@@ -804,6 +800,8 @@ export function Settings() {
           )}
           {focus.length > 0 && <FocusOptionsList key={focus.map((f) => f.id).join(",")} />}
         </section>
+      ) : (
+        <Pending title="Focus time" failed={loadFailed} />
       )}
 
       <MeetingOverloadSection />
