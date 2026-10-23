@@ -12,7 +12,8 @@
 // 4. Another item is placed over an event that a waiting item keeps.
 // 5. A preview, a task's work blocks, a meeting preview or a meeting
 //    reschedule plans without the waiting rule: it shows or picks times that
-//    the real run does not use.
+//    the real run does not use. A meeting preview checks another calendar
+//    than the save keeps (`targetCalendar`: set at creation only).
 // 6. Meeting overload focus time on a disconnected calendar does not wait, or
 //    its moves get no "rules-changed" reason in the change log.
 import { Hono } from "hono";
@@ -251,13 +252,14 @@ function routes(db: Db, userId: string) {
     "/api",
     taskTimeRoutes(db, sync, "http://localhost", () => NOW),
   );
-  return async (path: string, body: unknown) => {
+  return async (path: string, body: unknown, status?: number) => {
     const res = await app.request(`/api${path}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
     });
-    expect(res.status).toBeLessThan(300);
+    if (status) expect(res.status).toBe(status);
+    else expect(res.status).toBeLessThan(300);
     return res.json() as Promise<Record<string, unknown>>;
   };
 }
@@ -324,6 +326,39 @@ describe("every plan entry point keeps the waiting rule (accounts rule 16)", () 
     expect(after.occurrences).toEqual([]);
     expect(after.waiting).toBe("extra@example.com");
     expect(rescheduleSlot(db, userId, row, "otherDay", NOW)).toBeNull();
+  });
+
+  it("the meeting preview checks the calendar that the save keeps", async () => {
+    const { db, userId } = setup("ok", "ok");
+    const call = routes(db, userId);
+    const body = {
+      title: "Sync",
+      attendees: [{ email: "dana@example.com" }],
+      frequency: { period: "weekly", everyWeeks: 1, idealDays: [2] },
+      idealTime: "10:00",
+      durationMinutes: 30,
+      eventSettings: { calendarId: "cal2" },
+    };
+    // A new meeting: the calendar of the form, here not the main one.
+    run(db, "UPDATE accounts SET status = 'reauth_required' WHERE id = 'main'");
+    const fresh = await call("/meetings/preview", body);
+    expect(fresh.waiting).toBeNull();
+    expect(fresh.occurrences).not.toEqual([]);
+    run(db, "UPDATE accounts SET status = 'ok' WHERE id = 'main'");
+
+    // An edit keeps the saved calendar, also when the body has no event settings.
+    const { id } = (await call("/meetings", body)) as { id: string };
+    run(db, "UPDATE accounts SET status = 'reauth_required' WHERE id = 'added'");
+    const { eventSettings: _, ...kept } = body;
+    for (const edit of [body, kept]) {
+      const preview = await call(`/meetings/preview?id=${id}`, edit);
+      expect(preview.occurrences).toEqual([]);
+      expect(preview.waiting).toBe("extra@example.com");
+    }
+    // A calendar change is refused, as the save refuses it.
+    for (const calendarId of ["cal", null]) {
+      await call(`/meetings/preview?id=${id}`, { ...body, eventSettings: { calendarId } }, 400);
+    }
   });
 
   it("a new meeting on the main calendar has no preview times while the main account is disconnected", async () => {

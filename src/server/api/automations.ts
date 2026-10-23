@@ -4,6 +4,7 @@
 // lists them and changes their priority and rank.
 import { Hono } from "hono";
 import { z } from "zod";
+import { AUTOMATION_TYPES, type AutomationType } from "../../shared/automation-types.ts";
 import { CHECK_NAMES } from "../../shared/meeting-checks.ts";
 import type { AppEnv } from "../app.ts";
 import { all, type Db, one, run, tx } from "../db.ts";
@@ -16,19 +17,7 @@ import type { SyncService } from "../sync/service.ts";
 import { badRequest } from "./items.ts";
 import { adminTeam } from "./meeting-checks.ts";
 
-/**
- * Every automation type, in the scheduler's order inside one priority and rank
- * (planning-scheduler.md); meeting checks, without a table, last.
- */
-export const AUTOMATION_TYPES = [
-  "flexible_meeting",
-  "buffer",
-  "habit",
-  "meeting_overload",
-  "focus_time",
-  "meeting_check",
-] as const;
-export type AutomationType = (typeof AUTOMATION_TYPES)[number];
+export { AUTOMATION_TYPES, type AutomationType };
 
 /**
  * One automation type with a table. A new type adds one entry here and one in
@@ -221,26 +210,41 @@ const levelGroup = (db: Db, userId: string, level: number) =>
   listAutomations(db, userId).filter((a) => a.level === level && a.type !== "meeting_check");
 
 /**
- * SCH-71: the rank of a new flexible meeting, buffer or habit. Ranks are one
- * list per level. It goes after the last automation of its level whose type
- * comes at or before its own in AUTOMATION_TYPES, else to the top; the
- * automations after it move down one, so a dragged order stays. The caller
- * runs this and the insert in one transaction.
+ * SCH-71: the rank of a new automation with a priority; focus time and the
+ * meeting overload are at P4 (rule 8). Ranks are one list per level. It goes
+ * after the last automation of its level whose type comes at or before its own
+ * in AUTOMATION_TYPES, else to the top; the automations after it move down
+ * one, so a dragged order stays. Returns the rank and the new ranks of the
+ * automations that move, and writes nothing (the meeting preview uses it too).
  */
-export function insertRank(
+export function rankShift(
   db: Db,
-  type: "flexible_meeting" | "buffer" | "habit",
+  type: ListedType["type"],
   userId: string,
   level: number,
-): number {
+): { at: number; moved: { type: AutomationType; id: string; rank: number }[] } {
   const group = levelGroup(db, userId, level);
   const kind = AUTOMATION_TYPES.indexOf(type);
   const at = group.findLastIndex((a) => AUTOMATION_TYPES.indexOf(a.type) <= kind) + 1;
-  group.forEach((a, i) => {
+  const moved = group.flatMap((a, i) => {
     const rank = i < at ? i : i + 1;
-    const table = LISTED_TYPES.find((t) => t.type === a.type)?.table;
-    if (table && a.rank !== rank) run(db, `UPDATE ${table} SET rank = ? WHERE id = ?`, rank, a.id);
+    return a.rank === rank ? [] : [{ type: a.type, id: a.id, rank }];
   });
+  return { at, moved };
+}
+
+/** rankShift, saved: the caller runs this and the insert in one transaction. */
+export function insertRank(
+  db: Db,
+  type: ListedType["type"],
+  userId: string,
+  level: number,
+): number {
+  const { at, moved } = rankShift(db, type, userId, level);
+  for (const a of moved) {
+    const table = LISTED_TYPES.find((t) => t.type === a.type)?.table;
+    if (table) run(db, `UPDATE ${table} SET rank = ? WHERE id = ?`, a.rank, a.id);
+  }
   return at;
 }
 
