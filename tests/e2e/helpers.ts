@@ -3,6 +3,7 @@ import type { Browser, Page } from "@playwright/test";
 import type { ProviderEvent } from "../../src/server/providers/types.ts";
 import { addDays } from "../../src/shared/time.ts";
 import {
+  type AppServer,
   at,
   BASE_URL,
   type CalendarDriver,
@@ -17,6 +18,18 @@ import {
 export const MIN = 60_000;
 export const W = testWeek();
 export const windowFrom = () => Date.now() - 3_600_000;
+
+/**
+ * Restarts the server with its clock at `t` (TEST_CLOCK_START), so a test does
+ * not depend on the real day and time (order 29). Returns the server's now as
+ * the test sees it: never later than the server's own clock.
+ */
+export async function serverClockAt(app: AppServer, t: number): Promise<() => number> {
+  app.env.TEST_CLOCK_START = new Date(t).toISOString();
+  await app.restart();
+  const shift = t - Date.now();
+  return () => Date.now() + shift;
+}
 export const windowTo = () => at(addDays(W, 21), "00:00");
 
 export const titled = (events: ProviderEvent[], text: string) =>
