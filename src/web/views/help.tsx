@@ -3,6 +3,7 @@
 import type { ComponentChildren } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import { ApiError, api } from "../lib/api.ts";
+import { useNewest } from "../lib/newest.ts";
 import { navigate, onLinkClick, path } from "../lib/router.ts";
 
 function A({ href, children }: { href: string; children: ComponentChildren }) {
@@ -315,15 +316,21 @@ function LookupView() {
   const [repairing, setRepairing] = useState<"busy" | "done" | null>(null);
   // The query of the result on the page: repair acts on that event, also after the input changes.
   const [shown, setShown] = useState("");
+  // Each query has its own URL: only the newest lookup may draw.
+  const newest = useNewest();
   const run = async (value: string) => {
+    const isNewest = newest();
     setError(null);
     setRepairing(null);
     setResult(null);
     if (!value.trim()) return;
     try {
-      setResult(await api<Lookup>("GET", `/api/help/lookup?q=${encodeURIComponent(value)}`));
+      const r = await api<Lookup>("GET", `/api/help/lookup?q=${encodeURIComponent(value)}`);
+      if (!isNewest()) return;
+      setResult(r);
       setShown(value);
     } catch (err) {
+      if (!isNewest()) return;
       const code = err instanceof ApiError ? (err.body as { error?: string })?.error : undefined;
       setError(ERRORS[code ?? ""] ?? "The lookup failed. Try again.");
     }
