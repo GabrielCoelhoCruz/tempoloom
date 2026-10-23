@@ -9,15 +9,21 @@
 //    lands before the habits of its new level (rule 7).
 // 3. An insert ignores focus time at P4 and undoes the user's drag order (rule 8).
 // 4. Old data with tied ranks changes order when a new automation comes in.
+// 5. A new focus goal or meeting overload, from its form or from a team
+//    policy, takes rank 0 or the next focus rank and lands in the middle of P4.
+// 6. The meeting preview ranks a new or moved meeting other than the save
+//    does, so it shows a time that the plan run gives to another automation.
 import { Hono } from "hono";
 import { describe, expect, it } from "vitest";
 import { ensureUser } from "../../src/server/accounts.ts";
 import { automationRoutes, listAutomations } from "../../src/server/api/automations.ts";
+import { focusExtraRoutes } from "../../src/server/api/focus-extras.ts";
 import { habitRoutes } from "../../src/server/api/habits.ts";
 import { itemRoutes } from "../../src/server/api/items.ts";
 import { meetingRoutes } from "../../src/server/api/meetings.ts";
 import type { AppEnv } from "../../src/server/app.ts";
 import { openDb, run } from "../../src/server/db.ts";
+import { applyPolicies } from "../../src/server/policies/apply.ts";
 import type { SyncService } from "../../src/server/sync/service.ts";
 
 const T0 = Date.parse("2026-10-19T08:00:00Z");
@@ -41,6 +47,7 @@ function setup() {
   app.route("/api", habitRoutes(db, sync, now));
   app.route("/api", meetingRoutes(db, sync, now));
   app.route("/api", automationRoutes(db, sync, now));
+  app.route("/api", focusExtraRoutes(db, sync, now));
   const send = async (method: string, url: string, body: unknown) => {
     const res = await app.request(url, {
       method,
@@ -82,6 +89,10 @@ function setup() {
     focus: async (title: string) => {
       const r = await send("POST", "/api/focus", { title, weeklyGoalMinutes: 120 });
       ids[title] = { type: "focus_time", id: (r.focus as { id: string }).id };
+    },
+    overload: async (title: string) => {
+      const r = await send("POST", "/api/meeting-overloads", { title, dailyMaxMinutes: 240 });
+      ids[title] = { type: "meeting_overload", id: (r.overload as { id: string }).id };
     },
   };
   const group = (level: number) =>
@@ -136,6 +147,84 @@ describe("rank of a new automation (SCH-71)", () => {
     await order(4, ["F", "H", "M"]);
     await add.buffer("B", 4);
     expect(group(4)).toEqual(["F", "H", "M", "B"]);
+  });
+
+  it("puts a new focus goal or meeting overload at its kind's place in P4", async () => {
+    const { add, group } = setup();
+    await add.meeting("M", 4);
+    await add.buffer("B", 4);
+    await add.habit("H", 4);
+    await add.focus("F");
+    expect(group(4)).toEqual(["M", "B", "H", "F"]);
+    await add.overload("O");
+    expect(group(4)).toEqual(["M", "B", "H", "O", "F"]);
+    await add.focus("F2");
+    expect(group(4)).toEqual(["M", "B", "H", "O", "F", "F2"]);
+  });
+
+  it("puts a focus goal from a team policy at the end of P4", async () => {
+    const { db, user, add, group } = setup();
+    await add.meeting("M", 4);
+    await add.buffer("B", 4);
+    await add.habit("H", 4);
+    run(
+      db,
+      `INSERT INTO team_policies (id, team_id, type, name, goal, enabled, created_at, updated_at)
+       SELECT 'p', team_id, 'focus_time', 'Focus', '{"weeklyGoalMinutes":600}', 1, 0, 0
+       FROM team_members WHERE user_id = ?`,
+      user.id,
+    );
+    applyPolicies(db, user.id, T0);
+    expect(group(4)).toEqual(["M", "B", "H", "Focus time"]);
+  });
+});
+
+describe("rank in the meeting preview", () => {
+  it("is the rank that the save gives, for a new meeting and for a new priority", async () => {
+    const { add, ids, send, order, meetingBody } = setup();
+    // P2 in the dragged order H, M: both want Tuesday 10:00, so H holds it.
+    await add.habit("H", 2);
+    await add.meeting("M", 2);
+    await order(2, ["H", "M"]);
+    await add.meeting("Moved", 3);
+    const starts = async (url: string, body: unknown) =>
+      ((await send("POST", url, body)).occurrences as { start: number }[]).map((o) =>
+        new Date(o.start).toISOString().slice(11, 16),
+      );
+    // A new P2 meeting goes after M (SCH-71); a meeting moved to P2 goes to the end (rule 7).
+    const fresh = await starts("/api/meetings/preview", meetingBody("New", 2));
+    const moved = await starts(
+      `/api/meetings/preview?id=${ids.Moved?.id}`,
+      meetingBody("Moved", 2),
+    );
+    expect(fresh[0]).toBeDefined();
+    expect(fresh[0]).not.toBe("10:00");
+    expect(moved[0]).not.toBe("10:00");
+    // Without a contest the preview shows the ideal time.
+    const free = await starts("/api/meetings/preview", meetingBody("Alone", 1));
+    expect(free[0]).toBe("10:00");
+  });
+});
+
+describe("rank in the meeting preview, with a gap in the ranks", () => {
+  it("moves the ranks after the new meeting as the save does", async () => {
+    const { db, user, add, ids, send, meetingBody } = setup();
+    await add.meeting("M", 2);
+    await add.meeting("M2", 2);
+    await add.habit("H", 2);
+    // A gap, as after a delete: M 0, M2 5, H 6. A new meeting gets rank 2 and
+    // the save moves M2 to 1 and H to 3, so M2 still comes first.
+    run(db, "UPDATE meetings SET rank = 5 WHERE title = 'M2' AND user_id = ?", user.id);
+    run(db, "UPDATE habits SET rank = 6 WHERE title = 'H' AND user_id = ?", user.id);
+    const starts = async (url: string) =>
+      ((await send("POST", url, meetingBody("New", 2))).occurrences as { start: number }[]).map(
+        (o) => o.start,
+      );
+    const fresh = await starts("/api/meetings/preview");
+    await add.meeting("New", 2);
+    // The preview of the saved meeting, with the saved ranks, shows the same times.
+    expect(fresh).toEqual(await starts(`/api/meetings/preview?id=${ids.New?.id}`));
+    expect(fresh).not.toEqual([]);
   });
 });
 

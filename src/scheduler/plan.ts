@@ -1,5 +1,6 @@
 // The scheduling engine: plan(snapshot) -> placements and report.
 // Rule ids (SCH-, DEF-, TSK-) refer to docs/specs/planning-scheduler.md and the item specs.
+import { AUTOMATION_TYPES } from "../shared/automation-types.ts";
 import { hasVideo } from "../shared/meeting-checks.ts";
 import {
   addDays,
@@ -1873,8 +1874,13 @@ type Automation =
   | { kind: "meeting"; item: MeetingItem; boosted?: boolean }
   | { kind: "buffer"; item: BufferItem }
   | { kind: "habit"; item: HabitItem };
-// Inside one level and rank, meetings go first (meetings-flexible.md rule 23).
-const KIND_ORDER = { meeting: 0, buffer: 1, habit: 2 } as const;
+// Inside one level and rank, the order of AUTOMATION_TYPES: meetings go first
+// (meetings-flexible.md rule 23).
+const KIND_ORDER = {
+  meeting: AUTOMATION_TYPES.indexOf("flexible_meeting"),
+  buffer: AUTOMATION_TYPES.indexOf("buffer"),
+  habit: AUTOMATION_TYPES.indexOf("habit"),
+};
 
 const automationOrder = (a: { rank: number; createdAt: number; id: string }, b: typeof a) =>
   a.rank - b.rank || a.createdAt - b.createdAt || a.id.localeCompare(b.id);
