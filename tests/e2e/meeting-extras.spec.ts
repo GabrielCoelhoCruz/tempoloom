@@ -50,6 +50,8 @@ interface Form {
   level?: 1 | 2 | 3 | 4;
   remove?: boolean;
   noticeHours?: number;
+  /** The first day of the meeting ("Starting"). */
+  starting?: string;
 }
 
 async function fillMeeting(page: Page, m: Form) {
@@ -68,6 +70,7 @@ async function fillMeeting(page: Page, m: Form) {
   if (m.level) await form.getByLabel("Priority").selectOption(String(m.level));
   if (m.noticeHours !== undefined)
     await form.getByLabel("Move notice (hours)").fill(String(m.noticeHours));
+  if (m.starting) await form.getByLabel("Starting").fill(m.starting);
   if (m.remove)
     await form
       .getByLabel("When there is no time")
@@ -170,11 +173,15 @@ test("cadence: after an occurrence moves late in its week, the next one keeps at
 }) => {
   await blockUntil(cal, W);
   await signIn();
+  // The meeting starts in week W. Else, on a Friday, the rest of the real week
+  // gets an occurrence (kept as a conflict on Friday, rule 13), and the cadence
+  // moves W's occurrence from Monday to Tuesday before the test starts.
   await addMeeting(page, {
     title: "Cadence",
     guests: "dana@example.com",
     days: ["Mon"],
     idealTime: "10:00",
+    starting: W,
   });
   await eventually(
     () => twoWeeks(cal),

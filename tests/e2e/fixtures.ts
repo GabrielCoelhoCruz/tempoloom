@@ -55,6 +55,9 @@ function oauthEnv() {
     accountEmail: env("GOOGLE_TEST_ACCOUNT_EMAIL"),
   };
 }
+// scripts/e2e-at.sh: the runner's clock is moved by this much (tests/e2e/shift-clock.mjs);
+// the server and every browser context get the same move.
+const SHIFT_MS = Number(process.env.TEMPOLOOM_E2E_SHIFT_MS ?? 0);
 const GOOGLE_TEST_CALENDAR = "[tl-test] tempoloom-e2e";
 // Set on the test calendar when the driver creates it. The driver empties only
 // a calendar that carries this description and that the account itself created
@@ -461,6 +464,7 @@ type TestFixtures = {
   mail: Mailbox;
 };
 type WorkerFixtures = {
+  shiftedBrowser: undefined;
   radicale: RadicaleEnv | null;
   mailServer: { smtpUrl: string; apiUrl: string };
 };
@@ -488,7 +492,48 @@ async function signInAs(
   return page;
 }
 
+/** Moves Date in a page by `shift` ms, as tests/e2e/shift-clock.mjs does in Node. */
+function shiftPageClock(shift: number) {
+  const RealDate = Date;
+  class ShiftedDate extends RealDate {
+    constructor(...args: []) {
+      if (args.length === 0) super(RealDate.now() + shift);
+      else super(...(args as unknown as [number]));
+    }
+    static override now() {
+      return RealDate.now() + shift;
+    }
+  }
+  globalThis.Date = ShiftedDate as DateConstructor;
+}
+
+const shiftedContexts = new WeakSet<BrowserContext>();
+
 export const test = base.extend<TestFixtures, WorkerFixtures>({
+  shiftedBrowser: [
+    async ({ browser }, use) => {
+      if (SHIFT_MS) {
+        const newContext = browser.newContext.bind(browser);
+        browser.newContext = async (options) => {
+          const ctx = await newContext(options);
+          await ctx.addInitScript(shiftPageClock, SHIFT_MS);
+          shiftedContexts.add(ctx);
+          return ctx;
+        };
+      }
+      await use(undefined);
+    },
+    { scope: "worker", auto: true },
+  ],
+
+  context: async ({ context }, use) => {
+    if (SHIFT_MS && !shiftedContexts.has(context)) {
+      await context.addInitScript(shiftPageClock, SHIFT_MS);
+      shiftedContexts.add(context);
+    }
+    await use(context);
+  },
+
   closeVisitors: [
     async ({}, use) => {
       await use(undefined);
@@ -594,6 +639,12 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
       WEEKLY_REPORTS: "off",
       // Tests may set TEST_CLOCK_START (planned-actual.spec.ts, weekly-report.spec.ts).
       TEMPOLOOM_TEST_MODE: "1",
+      ...(SHIFT_MS
+        ? {
+            TEMPOLOOM_E2E_SHIFT_MS: String(SHIFT_MS),
+            NODE_OPTIONS: `--import=${join(ROOT, "tests/e2e/shift-clock.mjs")}`,
+          }
+        : {}),
       SMTP_URL: mailServer.smtpUrl,
       MAIL_FROM: "Tempoloom <noreply@tempoloom.test>",
       ...(SA_JSON ? { GOOGLE_SERVICE_ACCOUNT_JSON: SA_JSON } : {}),

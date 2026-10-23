@@ -13,9 +13,19 @@
 //  6. Inspecting changes what bookers are offered.                           (rule 22)
 //  7. The switch is lost on reload.
 import type { Page } from "@playwright/test";
-import { addDays, diffDays, utcToLocal } from "../../src/shared/time.ts";
-import { at, blockUntil, eventually, expect, local, test, ZONE } from "./fixtures.ts";
-import { addHabit, addLink, book, claimPage, slot, titled, visitor, W } from "./helpers.ts";
+import { addDays, diffDays } from "../../src/shared/time.ts";
+import { at, blockUntil, eventually, expect, local, test } from "./fixtures.ts";
+import {
+  addHabit,
+  addLink,
+  book,
+  claimPage,
+  serverClockAt,
+  slot,
+  titled,
+  visitor,
+  W,
+} from "./helpers.ts";
 import { addOrganizer, editLink, saveLink, teamOf } from "./link-helpers.ts";
 
 const day = (n: number) => addDays(W, n);
@@ -29,6 +39,7 @@ const dots = async (p: Page, t: number) => {
 
 test("the availability inspector shows organizers every time with a dot per failed check, explains each and links its setting; others never see it (availability rules 18-22)", async ({
   page,
+  app,
   browser,
   cal,
   signIn,
@@ -36,6 +47,10 @@ test("the availability inspector shows organizers every time with a dot per fail
   people,
   mail,
 }) => {
+  // The server clock starts on Sunday 12:00 before the test week, so "today"
+  // (for the days ahead) does not change with the real day and time of the run.
+  const today = day(-1);
+  await serverClockAt(app, at(today, "12:00"));
   await blockUntil(cal, W);
   await cal.addEvent({ title: "Board meeting", start: at(W, "10:00"), end: at(W, "11:00") });
   await colleague.cal.addEvent({
@@ -63,7 +78,6 @@ test("the availability inspector shows organizers every time with a dot per fail
   await addLink(page, { title: "Inspect me", durations: "30", level: 3, maxPerDay: 1 });
   const ed = await editLink(page, "Inspect me");
   // The last bookable day is W + 2.
-  const today = utcToLocal(ZONE, Date.now()).date;
   await ed.getByLabel("Book up to (days ahead)").fill(String(diffDays(today, day(2))));
   await ed.getByLabel("Buffer before (minutes)").fill("15");
   await addOrganizer(page, colleague.email);

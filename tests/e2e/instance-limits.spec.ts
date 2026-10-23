@@ -13,7 +13,7 @@
 //   can be created, or the refusal does not name the limit                  -> counts
 // - items that exist when a limit applies stop working                      -> counts
 // Every test reloads the pages and reads the state again.
-import { addDays, localToUtc, utcToLocal } from "../../src/shared/time.ts";
+import { addDays, localToUtc } from "../../src/shared/time.ts";
 import {
   addPolicy,
   calendarRow,
@@ -23,11 +23,19 @@ import {
   week,
 } from "./calendar-helpers.ts";
 import { at, BACKEND, blockUntil, eventually, expect, local, test, ZONE } from "./fixtures.ts";
-import { addHabit, addLink, addTask, allEvents, claimPage, titled, visitor, W } from "./helpers.ts";
+import {
+  addHabit,
+  addLink,
+  addTask,
+  allEvents,
+  claimPage,
+  serverClockAt,
+  titled,
+  visitor,
+  W,
+} from "./helpers.ts";
 
 test.skip(BACKEND === "google", "Limit E2E uses CalDAV calendars.");
-
-const DAY = 86_400_000;
 
 test("a window limit caps planning but never booking links (plans rule 3; T1)", async ({
   page,
@@ -36,11 +44,14 @@ test("a window limit caps planning but never booking links (plans rule 3; T1)", 
   cal,
   signIn,
 }) => {
+  // The server clock starts at noon on Monday of the test week, so "today"
+  // and the window end do not change with the real day and time of the run.
+  const today = W;
+  await serverClockAt(app, at(today, "12:00"));
   await signIn();
   await addHabit(page, { title: "AT-Daily", days: ["Mon", "Tue", "Wed", "Thu", "Fri"] });
-  const today = utcToLocal(ZONE, Date.now()).date;
   const limitEnd = localToUtc(ZONE, addDays(today, 8), 0);
-  const habits = () => cal.events(Date.now(), Date.now() + 30 * DAY);
+  const habits = () => cal.events(at(today, "00:00"), at(addDays(today, 30), "00:00"));
   await eventually(habits, (l) =>
     expect(titled(l, "AT-Daily").some((e) => e.start >= limitEnd)).toBe(true),
   );
