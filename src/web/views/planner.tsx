@@ -16,6 +16,7 @@ import {
 } from "../lib/format.ts";
 import { lazyComponent, settle, settled } from "../lib/lazy.ts";
 import { useLive } from "../lib/live.ts";
+import { useNewest } from "../lib/newest.ts";
 import {
   blockPreview,
   conflictIds,
@@ -176,9 +177,9 @@ export function Planner() {
 
   // Answers can arrive out of order (another week, a live update): only the
   // newest load may draw.
-  const loads = useRef(0);
+  const newest = useNewest();
   const load = useCallback(async () => {
-    const n = ++loads.current;
+    const isNewest = newest();
     const from = localToUtc(z, fromDay, 0);
     const to = localToUtc(z, toDay, 0);
     const [ev, rep] = await Promise.all([
@@ -188,7 +189,7 @@ export function Planner() {
       ),
       api<{ report: ReportEntry[] }>("GET", "/api/planner/report"),
     ]);
-    if (n !== loads.current) return;
+    if (!isNewest()) return;
     setEvents(ev.events);
     setAllDay(ev.allDay);
     setReport(rep.report);
@@ -200,7 +201,7 @@ export function Planner() {
       openItem.current = null;
       setSelected(hit);
     }
-  }, [z, fromDay, toDay]);
+  }, [newest, z, fromDay, toDay]);
 
   useEffect(() => {
     void load();

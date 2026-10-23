@@ -7,6 +7,7 @@ import { utcToLocal } from "../../shared/time.ts";
 import { api } from "../lib/api.ts";
 import { fromLocalInput, hhmm, timeText, toLocalInput } from "../lib/format.ts";
 import { useLive } from "../lib/live.ts";
+import { useNewest } from "../lib/newest.ts";
 import { navigate, onLinkClick } from "../lib/router.ts";
 import { zone } from "../lib/state.ts";
 import { type SearchTask, SearchTaskList, TaskSearchPicker } from "./task-search-picker.tsx";
@@ -327,11 +328,13 @@ const hours = (m: number) => `${Math.round((m / 60) * 10) / 10} h`;
 /** Weekly focus progress and the "goal not reached" notice (focus-time.md rule 35). */
 export function FocusProgress({ week }: { week: string }) {
   const [progress, setProgress] = useState<Progress[]>([]);
+  // The URL changes with the week: only the newest load may draw.
+  const newest = useNewest();
   const load = useCallback(async () => {
-    setProgress(
-      (await api<{ progress: Progress[] }>("GET", `/api/focus/progress?week=${week}`)).progress,
-    );
-  }, [week]);
+    const isNewest = newest();
+    const r = await api<{ progress: Progress[] }>("GET", `/api/focus/progress?week=${week}`);
+    if (isNewest()) setProgress(r.progress);
+  }, [newest, week]);
   useEffect(() => {
     void load();
     const t = setInterval(() => void load(), 15_000);

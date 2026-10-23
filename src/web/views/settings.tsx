@@ -1,4 +1,4 @@
-import type { ComponentChildren } from "preact";
+import { type ComponentChildren, Fragment } from "preact";
 import { useCallback, useEffect, useState } from "preact/hooks";
 import { CATEGORIES } from "../../scheduler/categories.ts";
 import type { BufferFilter } from "../../scheduler/model.ts";
@@ -213,58 +213,84 @@ export function HoursEditor({
   );
 }
 
+type Buffer = {
+  id: string;
+  title: string;
+  side: string;
+  minutes_before: number;
+  minutes_after: number;
+  calendar_scope: string | null;
+  filter: BufferFilter;
+};
+type Focus = { id: string; title: string; weekly_goal_minutes: number; event_settings: string };
+
+/** The place of a settings part whose data is not in yet. */
+function Pending({ title, failed }: { title: string; failed: boolean }) {
+  return (
+    <section aria-busy={!failed}>
+      <h2>{title}</h2>
+      <p class="status">{failed ? "Could not load." : "Loading…"}</p>
+    </section>
+  );
+}
+
 export function Settings() {
+  // Each part of the page shows when its own data is in (null until then), so
+  // one slow or failed call does not hide the whole page.
   const [settings, setSettings] = useState<UserSettings | null>(null);
   const [windowLimit, setWindowLimit] = useState<number | null>(null);
-  const [hours, setHours] = useState<HoursSet[]>([]);
-  const [buffers, setBuffers] = useState<
-    {
-      id: string;
-      title: string;
-      side: string;
-      minutes_before: number;
-      minutes_after: number;
-      calendar_scope: string | null;
-      filter: BufferFilter;
-    }[]
-  >([]);
-  const [focus, setFocus] = useState<
-    { id: string; title: string; weekly_goal_minutes: number; event_settings: string }[]
-  >([]);
+  const [hours, setHours] = useState<HoursSet[] | null>(null);
+  const [buffers, setBuffers] = useState<Buffer[] | null>(null);
+  const [focus, setFocus] = useState<Focus[] | null>(null);
   // The buffer editor's calendar scope lists the connected calendars.
-  const [calendars, setCalendars] = useState<{ id: string; name: string }[]>([]);
+  const [calendars, setCalendars] = useState<{ id: string; name: string }[] | null>(null);
   const [taskCalendars, setTaskCalendars] = useState<{ id: string; name: string }[]>([]);
   const [message, setMessage] = useState<string | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
 
+  /**
+   * Reads the page data; each part draws when it arrives. A failed call shows
+   * the load alert and never rejects, so a save that worked shows as saved.
+   */
   const load = useCallback(async () => {
-    const [s, h, b, f, c] = await Promise.all([
-      api<{ settings: UserSettings; windowLimit: number | null }>("GET", "/api/settings"),
-      api<{ hours: HoursSet[]; taskCalendars: { id: string; name: string }[] }>(
-        "GET",
-        "/api/hours",
-      ),
-      api<{ buffers: (Omit<(typeof buffers)[number], "filter"> & { filter: string })[] }>(
-        "GET",
-        "/api/buffers",
-      ),
-      api<{ focus: typeof focus }>("GET", "/api/focus"),
-      api<{ calendars: { id: string; name: string }[] }>("GET", "/api/calendars"),
-    ]);
-    setSettings(s.settings);
-    setWindowLimit(s.windowLimit);
-    setHours(h.hours);
-    setTaskCalendars(h.taskCalendars);
-    // The filter is stored as JSON: parse it once here.
-    setBuffers(
-      b.buffers.map((x) => ({ ...x, filter: JSON.parse(x.filter || "{}") as BufferFilter })),
-    );
-    setFocus(f.focus);
-    setCalendars(c.calendars);
-    await loadPolicyMarks();
+    try {
+      await Promise.all([
+        api<{ settings: UserSettings; windowLimit: number | null }>("GET", "/api/settings").then(
+          (s) => {
+            setSettings(s.settings);
+            setWindowLimit(s.windowLimit);
+          },
+        ),
+        api<{ hours: HoursSet[]; taskCalendars: { id: string; name: string }[] }>(
+          "GET",
+          "/api/hours",
+        ).then((h) => {
+          setHours(h.hours);
+          setTaskCalendars(h.taskCalendars);
+        }),
+        // The filter is stored as JSON: parse it once here.
+        api<{ buffers: (Omit<Buffer, "filter"> & { filter: string })[] }>(
+          "GET",
+          "/api/buffers",
+        ).then((b) =>
+          setBuffers(
+            b.buffers.map((x) => ({ ...x, filter: JSON.parse(x.filter || "{}") as BufferFilter })),
+          ),
+        ),
+        api<{ focus: Focus[] }>("GET", "/api/focus").then((f) => setFocus(f.focus)),
+        api<{ calendars: { id: string; name: string }[] }>("GET", "/api/calendars").then((c) =>
+          setCalendars(c.calendars),
+        ),
+        loadPolicyMarks(),
+      ]);
+      setLoadFailed(false);
+    } catch {
+      setLoadFailed(true);
+    }
   }, []);
   useEffect(() => void load(), [load]);
   // The hours preview of item editors links here (planning-hours.md HRS-11).
-  const ready = settings !== null;
+  const ready = settings !== null && hours !== null;
   useEffect(() => {
     if (ready && new URLSearchParams(location.search).get("section") === "hours")
       document.getElementById("hours")?.scrollIntoView();
@@ -290,7 +316,6 @@ export function Settings() {
     act(() => api("PATCH", "/api/settings", { schedulingWindowWeeks: Number(v) })),
   );
 
-  if (!settings) return null;
   return (
     <div class="page" data-testid="settings-page">
       <h1>Settings</h1>
@@ -304,440 +329,483 @@ export function Settings() {
           {message}
         </p>
       )}
+      {loadFailed && (
+        <p class="error" role="alert" data-testid="settings-load-error">
+          Some settings could not load. Reload the page to try again.
+        </p>
+      )}
 
-      <section>
-        <h2>Scheduling</h2>
-        <div class="form">
-          <label>
-            Plan ahead (weeks)
-            <input
-              name="schedulingWindowWeeks"
-              type="number"
-              min={1}
-              max={windowLimit ?? 12}
-              {...windowWeeks}
-            />
-          </label>
-          {windowLimit !== null && (
-            <p class="meta" data-testid="window-limit">
-              This server plans at most {windowLimit} {windowLimit === 1 ? "week" : "weeks"} ahead.
-            </p>
+      {/* Each part that loads late has its own key: a part that comes in never
+          takes the place of one shown before it, which would start that part
+          again (the focus recommendation lost its typed goal). */}
+      {settings ? (
+        <Fragment key="scheduling">
+          <section>
+            <h2>Scheduling</h2>
+            <div class="form">
+              <label>
+                Plan ahead (weeks)
+                <input
+                  name="schedulingWindowWeeks"
+                  type="number"
+                  min={1}
+                  max={windowLimit ?? 12}
+                  {...windowWeeks}
+                />
+              </label>
+              {windowLimit !== null && (
+                <p class="meta" data-testid="window-limit">
+                  This server plans at most {windowLimit} {windowLimit === 1 ? "week" : "weeks"}{" "}
+                  ahead.
+                </p>
+              )}
+              <label>
+                Break between tasks and habits
+                <select
+                  name="breakMinutes"
+                  value={settings.breakMinutes}
+                  onChange={(e) =>
+                    void act(() =>
+                      api("PATCH", "/api/settings", {
+                        breakMinutes: Number(e.currentTarget.value),
+                      }),
+                    )
+                  }
+                >
+                  {[0, 5, 10, 15, 20, 30].map((m) => (
+                    <option value={m} key={m}>
+                      {m === 0 ? "None" : `${m} minutes`}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Time between chunks of a task
+                <select
+                  name="chunkCooldown"
+                  value={settings.chunkCooldown}
+                  onChange={(e) =>
+                    void act(() =>
+                      api("PATCH", "/api/settings", { chunkCooldown: e.currentTarget.value }),
+                    )
+                  }
+                >
+                  <option value="none">At least 15 minutes</option>
+                  <option value="30m">30 minutes</option>
+                  <option value="1h">1 hour</option>
+                  <option value="2h">2 hours</option>
+                  <option value="4h">4 hours</option>
+                  <option value="once-per-day">Once a day</option>
+                </select>
+              </label>
+              <label>
+                Urgency
+                <select
+                  name="urgencyMode"
+                  value={settings.urgencyMode}
+                  onChange={(e) =>
+                    void act(() =>
+                      api("PATCH", "/api/settings", { urgencyMode: e.currentTarget.value }),
+                    )
+                  }
+                >
+                  <option value="priority-only">Priority only</option>
+                  <option value="due-date">Raise tasks due within 48 hours</option>
+                  <option value="due-date-and-work">Raise tasks that are short of time</option>
+                </select>
+              </label>
+              <label>
+                Time zone
+                <input
+                  name="timeZone"
+                  defaultValue={me.value?.user.time_zone ?? ""}
+                  onChange={(e) =>
+                    void act(() => api("PATCH", "/api/me", { timeZone: e.currentTarget.value }))
+                  }
+                />
+              </label>
+              <label>
+                Planning
+                <select
+                  name="paused"
+                  value={settings.paused ? "paused" : "on"}
+                  onChange={(e) =>
+                    void act(() =>
+                      api("PATCH", "/api/settings", { paused: e.currentTarget.value === "paused" }),
+                    )
+                  }
+                >
+                  <option value="on">On</option>
+                  <option value="paused">Paused</option>
+                </select>
+              </label>
+              <PlacementSetting settings={settings} act={act} />
+              <StartModeSetting settings={settings} act={act} />
+              <TimeUsedSetting settings={settings} act={act} />
+            </div>
+          </section>
+
+          {hours ? (
+            <TaskDefaults settings={settings} hours={hours} act={act} />
+          ) : (
+            <Pending title="Task defaults" failed={loadFailed} />
           )}
-          <label>
-            Break between tasks and habits
-            <select
-              name="breakMinutes"
-              value={settings.breakMinutes}
-              onChange={(e) =>
-                void act(() =>
-                  api("PATCH", "/api/settings", { breakMinutes: Number(e.currentTarget.value) }),
-                )
-              }
-            >
-              {[0, 5, 10, 15, 20, 30].map((m) => (
-                <option value={m} key={m}>
-                  {m === 0 ? "None" : `${m} minutes`}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Time between chunks of a task
-            <select
-              name="chunkCooldown"
-              value={settings.chunkCooldown}
-              onChange={(e) =>
-                void act(() =>
-                  api("PATCH", "/api/settings", { chunkCooldown: e.currentTarget.value }),
-                )
-              }
-            >
-              <option value="none">At least 15 minutes</option>
-              <option value="30m">30 minutes</option>
-              <option value="1h">1 hour</option>
-              <option value="2h">2 hours</option>
-              <option value="4h">4 hours</option>
-              <option value="once-per-day">Once a day</option>
-            </select>
-          </label>
-          <label>
-            Urgency
-            <select
-              name="urgencyMode"
-              value={settings.urgencyMode}
-              onChange={(e) =>
-                void act(() =>
-                  api("PATCH", "/api/settings", { urgencyMode: e.currentTarget.value }),
-                )
-              }
-            >
-              <option value="priority-only">Priority only</option>
-              <option value="due-date">Raise tasks due within 48 hours</option>
-              <option value="due-date-and-work">Raise tasks that are short of time</option>
-            </select>
-          </label>
-          <label>
-            Time zone
-            <input
-              name="timeZone"
-              defaultValue={me.value?.user.time_zone ?? ""}
-              onChange={(e) =>
-                void act(() => api("PATCH", "/api/me", { timeZone: e.currentTarget.value }))
-              }
-            />
-          </label>
-          <label>
-            Planning
-            <select
-              name="paused"
-              value={settings.paused ? "paused" : "on"}
-              onChange={(e) =>
-                void act(() =>
-                  api("PATCH", "/api/settings", { paused: e.currentTarget.value === "paused" }),
-                )
-              }
-            >
-              <option value="on">On</option>
-              <option value="paused">Paused</option>
-            </select>
-          </label>
-          <PlacementSetting settings={settings} act={act} />
-          <StartModeSetting settings={settings} act={act} />
-          <TimeUsedSetting settings={settings} act={act} />
-        </div>
-      </section>
+          <AutoLockSettings settings={settings} act={act} />
 
-      <TaskDefaults settings={settings} hours={hours} act={act} />
-      <AutoLockSettings settings={settings} act={act} />
+          <AlertSettings settings={settings} act={act} />
+          <EventTipsSetting settings={settings} act={act} />
+        </Fragment>
+      ) : (
+        <Pending key="scheduling" title="Scheduling" failed={loadFailed} />
+      )}
 
-      <AlertSettings settings={settings} act={act} />
-      <EventTipsSetting settings={settings} act={act} />
-
-      <section id="hours">
-        <h2>Hours</h2>
-        <HoursZoneNote />
-        {hours.map((h) => (
-          <HoursEditor
-            key={h.id}
-            set={h}
-            onSave={(weekly) => act(() => api("PUT", `/api/hours/${h.id}`, { weekly }))}
+      {hours ? (
+        <section key="hours" id="hours">
+          <h2>Hours</h2>
+          <HoursZoneNote />
+          {hours.map((h) => (
+            <HoursEditor
+              key={h.id}
+              set={h}
+              onSave={(weekly) => act(() => api("PUT", `/api/hours/${h.id}`, { weekly }))}
+            >
+              {(dirty) => (
+                <>
+                  <TaskCalendar set={h} calendars={taskCalendars} dirty={dirty} act={act} />
+                  <CalendarDisconnected email={h.disconnected} />
+                  {h.kind === "custom" && <DeleteHoursSet set={h} sets={hours} act={act} />}
+                </>
+              )}
+            </HoursEditor>
+          ))}
+          <form
+            class="actions"
+            data-testid="custom-hours-form"
+            onSubmit={(e) => {
+              e.preventDefault();
+              const input = (e.currentTarget as HTMLFormElement).elements.namedItem(
+                "name",
+              ) as HTMLInputElement;
+              const name = input.value.trim();
+              if (!name) return;
+              void act(() =>
+                api("POST", "/api/hours", {
+                  name,
+                  weekly: {
+                    1: [[540, 1020]],
+                    2: [[540, 1020]],
+                    3: [[540, 1020]],
+                    4: [[540, 1020]],
+                    5: [[540, 1020]],
+                  },
+                }),
+              );
+              input.value = "";
+            }}
           >
-            {(dirty) => (
-              <>
-                <TaskCalendar set={h} calendars={taskCalendars} dirty={dirty} act={act} />
-                <CalendarDisconnected email={h.disconnected} />
-                {h.kind === "custom" && <DeleteHoursSet set={h} sets={hours} act={act} />}
-              </>
-            )}
-          </HoursEditor>
-        ))}
-        <form
-          class="actions"
-          data-testid="custom-hours-form"
-          onSubmit={(e) => {
-            e.preventDefault();
-            const input = (e.currentTarget as HTMLFormElement).elements.namedItem(
-              "name",
-            ) as HTMLInputElement;
-            const name = input.value.trim();
-            if (!name) return;
-            void act(() =>
-              api("POST", "/api/hours", {
-                name,
-                weekly: {
-                  1: [[540, 1020]],
-                  2: [[540, 1020]],
-                  3: [[540, 1020]],
-                  4: [[540, 1020]],
-                  5: [[540, 1020]],
-                },
-              }),
-            );
-            input.value = "";
-          }}
-        >
-          <input
-            name="name"
-            placeholder="Name of a new hours set"
-            aria-label="New hours set name"
-          />
-          <button type="submit">+ Custom hours</button>
-        </form>
-      </section>
+            <input
+              name="name"
+              placeholder="Name of a new hours set"
+              aria-label="New hours set name"
+            />
+            <button type="submit">+ Custom hours</button>
+          </form>
+        </section>
+      ) : (
+        <Pending key="hours" title="Hours" failed={loadFailed} />
+      )}
 
       <TravelSettings />
 
       <CalendarSettings />
       <MirrorSettings />
 
-      <section>
-        <h2>Buffers</h2>
-        <div class="actions">
-          <button
-            type="button"
-            onClick={() =>
-              void act(() =>
-                api("POST", "/api/buffers", {
-                  title: "Recovery",
-                  side: "after",
-                  minutesAfter: 15,
-                  level: 2,
-                  filter: { participants: { op: ">=", value: 2 } },
-                }),
-              )
-            }
-          >
-            Add 15 min recovery after meetings
-          </button>
-          <button
-            type="button"
-            onClick={() =>
-              void act(() =>
-                api("POST", "/api/buffers", {
-                  title: "Recovery",
-                  side: "after",
-                  minutesAfter: 15,
-                  level: 2,
-                  filter: { participants: { op: ">=", value: 2 }, videoLink: true },
-                }),
-              )
-            }
-          >
-            Add 15 min recovery after video meetings
-          </button>
-          <button
-            type="button"
-            onClick={() =>
-              void act(() =>
-                api("POST", "/api/buffers", {
-                  title: "Prep",
-                  side: "before",
-                  minutesBefore: 15,
-                  level: 3,
-                  filter: { participants: { op: ">=", value: 2 } },
-                }),
-              )
-            }
-          >
-            Add 15 min prep before meetings
-          </button>
-          <button
-            type="button"
-            onClick={() =>
-              void act(() =>
-                api("POST", "/api/buffers", {
-                  title: "Travel",
-                  side: "both",
-                  minutesBefore: 30,
-                  minutesAfter: 30,
-                  level: 2,
-                  filter: { travel: true },
-                }),
-              )
-            }
-          >
-            Add travel time (30 min)
-          </button>
-          <button
-            type="button"
-            onClick={() =>
-              void act(() =>
-                api("POST", "/api/buffers", {
-                  title: "Airport",
-                  side: "both",
-                  minutesBefore: 120,
-                  minutesAfter: 60,
-                  level: 1,
-                  filter: { flight: true },
-                }),
-              )
-            }
-          >
-            Add airport time (2 h before, 1 h after)
-          </button>
-        </div>
-        <BufferEditor calendars={calendars} onSaved={load} />
-        <div class="list" data-testid="buffer-list">
-          {buffers.map((b) => (
-            <div class="row" key={b.id} data-buffer-title={b.title}>
-              <span>
-                {b.title} ·{" "}
-                {b.side === "before"
-                  ? `${b.minutes_before} min before`
-                  : `${b.minutes_after} min after`}{" "}
-                ·{" "}
-                {b.calendar_scope
-                  ? `${calendars.find((c) => c.id === b.calendar_scope)?.name ?? "one calendar"} only`
-                  : "all calendars"}
-                {b.filter.videoLink ? " · video meetings only" : ""} <PolicyMark id={b.id} />
-              </span>
-              {!policyMarks.value[b.id] && (
-                <button
-                  type="button"
-                  class="danger"
-                  onClick={() => void act(() => api("DELETE", `/api/buffers/${b.id}`))}
-                >
-                  Delete
-                </button>
-              )}
-            </div>
-          ))}
-        </div>
-      </section>
+      {buffers && calendars ? (
+        <section key="buffers">
+          <h2>Buffers</h2>
+          <div class="actions">
+            <button
+              type="button"
+              onClick={() =>
+                void act(() =>
+                  api("POST", "/api/buffers", {
+                    title: "Recovery",
+                    side: "after",
+                    minutesAfter: 15,
+                    level: 2,
+                    filter: { participants: { op: ">=", value: 2 } },
+                  }),
+                )
+              }
+            >
+              Add 15 min recovery after meetings
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                void act(() =>
+                  api("POST", "/api/buffers", {
+                    title: "Recovery",
+                    side: "after",
+                    minutesAfter: 15,
+                    level: 2,
+                    filter: { participants: { op: ">=", value: 2 }, videoLink: true },
+                  }),
+                )
+              }
+            >
+              Add 15 min recovery after video meetings
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                void act(() =>
+                  api("POST", "/api/buffers", {
+                    title: "Prep",
+                    side: "before",
+                    minutesBefore: 15,
+                    level: 3,
+                    filter: { participants: { op: ">=", value: 2 } },
+                  }),
+                )
+              }
+            >
+              Add 15 min prep before meetings
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                void act(() =>
+                  api("POST", "/api/buffers", {
+                    title: "Travel",
+                    side: "both",
+                    minutesBefore: 30,
+                    minutesAfter: 30,
+                    level: 2,
+                    filter: { travel: true },
+                  }),
+                )
+              }
+            >
+              Add travel time (30 min)
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                void act(() =>
+                  api("POST", "/api/buffers", {
+                    title: "Airport",
+                    side: "both",
+                    minutesBefore: 120,
+                    minutesAfter: 60,
+                    level: 1,
+                    filter: { flight: true },
+                  }),
+                )
+              }
+            >
+              Add airport time (2 h before, 1 h after)
+            </button>
+          </div>
+          <BufferEditor calendars={calendars} onSaved={load} />
+          <div class="list" data-testid="buffer-list">
+            {buffers.map((b) => (
+              <div class="row" key={b.id} data-buffer-title={b.title}>
+                <span>
+                  {b.title} ·{" "}
+                  {b.side === "before"
+                    ? `${b.minutes_before} min before`
+                    : `${b.minutes_after} min after`}{" "}
+                  ·{" "}
+                  {b.calendar_scope
+                    ? `${calendars.find((c) => c.id === b.calendar_scope)?.name ?? "one calendar"} only`
+                    : "all calendars"}
+                  {b.filter.videoLink ? " · video meetings only" : ""} <PolicyMark id={b.id} />
+                </span>
+                {!policyMarks.value[b.id] && (
+                  <button
+                    type="button"
+                    class="danger"
+                    onClick={() => void act(() => api("DELETE", `/api/buffers/${b.id}`))}
+                  >
+                    Delete
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        </section>
+      ) : (
+        <Pending key="buffers" title="Buffers" failed={loadFailed} />
+      )}
 
-      <section>
-        <h2>Colors</h2>
-        <form
-          class="form"
-          data-testid="color-form"
-          onSubmit={(e) => {
-            e.preventDefault();
-            const f = new FormData(e.currentTarget as HTMLFormElement);
-            void act(() =>
-              api("PATCH", "/api/settings", {
-                colorScope: f.get("colorScope"),
-                categoryColors: Object.fromEntries(
-                  CATEGORIES.map((k) => [k, String(f.get(`color-${k}`))]),
-                ),
-              }),
-            );
-          }}
-        >
-          <label class="wide">
-            Paint
-            <select name="colorScope" aria-label="Paint">
-              <option value="managed_only" selected={settings.colorScope === "managed_only"}>
-                Only events Tempoloom manages
-              </option>
-              <option value="all_events" selected={settings.colorScope === "all_events"}>
-                All events on my calendars
-              </option>
-            </select>
-          </label>
-          {CATEGORIES.map((k) => (
-            <label key={k}>
-              {CATEGORY_LABELS[k]}
-              <select name={`color-${k}`} aria-label={CATEGORY_LABELS[k]}>
-                <option value="calendar_default">Calendar color</option>
-                {COLORS.map((c) => (
-                  <option value={c.id} key={c.id} selected={settings.categoryColors[k] === c.id}>
-                    {c.name}
+      {settings ? (
+        <Fragment key="colors">
+          <section>
+            <h2>Colors</h2>
+            <form
+              class="form"
+              data-testid="color-form"
+              onSubmit={(e) => {
+                e.preventDefault();
+                const f = new FormData(e.currentTarget as HTMLFormElement);
+                void act(() =>
+                  api("PATCH", "/api/settings", {
+                    colorScope: f.get("colorScope"),
+                    categoryColors: Object.fromEntries(
+                      CATEGORIES.map((k) => [k, String(f.get(`color-${k}`))]),
+                    ),
+                  }),
+                );
+              }}
+            >
+              <label class="wide">
+                Paint
+                <select name="colorScope" aria-label="Paint">
+                  <option value="managed_only" selected={settings.colorScope === "managed_only"}>
+                    Only events Tempoloom manages
                   </option>
-                ))}
-              </select>
-            </label>
-          ))}
-          <button type="submit" class="primary">
-            Save colors
-          </button>
-          <button
-            type="button"
-            onClick={() =>
-              void act(() => api("POST", "/api/settings/repaint"), "Repainted all events")
-            }
-          >
-            Repaint all events
-          </button>
-          <p class="meta wide">
-            Repaint all events puts every color back to these settings, also where a color was
-            changed in the calendar. Outlook calendars may not show these colors.
-          </p>
-        </form>
-      </section>
-
-      <section>
-        <h2>Title markers</h2>
-        <form
-          class="form"
-          data-testid="marker-form"
-          onSubmit={(e) => {
-            e.preventDefault();
-            const f = new FormData(e.currentTarget as HTMLFormElement);
-            void act(() =>
-              api("PATCH", "/api/settings", {
-                markers: {
-                  ...Object.fromEntries(MARKERS.map(([k]) => [k, String(f.get(k)).trim()])),
-                  position: f.get("position"),
-                },
-              }),
-            );
-          }}
-        >
-          {MARKERS.map(([k, label]) => (
-            <label key={k}>
-              {label}
-              <input name={k} defaultValue={settings.markers[k]} maxLength={8} />
-            </label>
-          ))}
-          <label>
-            Marker position
-            <select name="position">
-              <option value="start" selected={settings.markers.position === "start"}>
-                Before the title
-              </option>
-              <option value="end" selected={settings.markers.position === "end"}>
-                After the title
-              </option>
-            </select>
-          </label>
-          <button type="submit" class="primary">
-            Save markers
-          </button>
-          <p class="meta wide">
-            Tempoloom puts one of these in the calendar title of habits, task chunks, meetings and
-            buffers to show their state. Leave a field empty for no marker.
-          </p>
-        </form>
-      </section>
-
-      <section>
-        <h2>Focus time</h2>
-        <FocusRecommendation onDone={() => act(async () => {})} />
-        {focus.length === 0 ? (
-          <button
-            type="button"
-            onClick={() =>
-              void act(() =>
-                api("POST", "/api/focus", {
-                  weeklyGoalMinutes: 600,
-                  dailyMinMinutes: 60,
-                  dailyMaxMinutes: 240,
-                  minBlockMinutes: 60,
-                  maxBlockMinutes: 180,
-                }),
-              )
-            }
-          >
-            Protect 10 hours of focus time per week
-          </button>
-        ) : (
-          focus.map((f) => (
-            <div class="row" key={f.id} data-focus-title={f.title}>
-              <span>
-                {f.title} · {f.weekly_goal_minutes / 60} h per week <PolicyMark id={f.id} />
-              </span>
-              <FocusNotes
-                id={f.id}
-                notes={
-                  readEventSettings(f.event_settings, defaultEventSettings("focus_time"))
-                    .description
+                  <option value="all_events" selected={settings.colorScope === "all_events"}>
+                    All events on my calendars
+                  </option>
+                </select>
+              </label>
+              {CATEGORIES.map((k) => (
+                <label key={k}>
+                  {CATEGORY_LABELS[k]}
+                  <select name={`color-${k}`} aria-label={CATEGORY_LABELS[k]}>
+                    <option value="calendar_default">Calendar color</option>
+                    {COLORS.map((c) => (
+                      <option
+                        value={c.id}
+                        key={c.id}
+                        selected={settings.categoryColors[k] === c.id}
+                      >
+                        {c.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ))}
+              <button type="submit" class="primary">
+                Save colors
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  void act(() => api("POST", "/api/settings/repaint"), "Repainted all events")
                 }
-                act={act}
-              />
-              {!policyMarks.value[f.id] && (
-                <button
-                  type="button"
-                  class="danger"
-                  onClick={() => void act(() => api("DELETE", `/api/focus/${f.id}`))}
-                >
-                  Delete
-                </button>
-              )}
-            </div>
-          ))
-        )}
-        {focus.length > 0 && <FocusOptionsList key={focus.map((f) => f.id).join(",")} />}
-      </section>
+              >
+                Repaint all events
+              </button>
+              <p class="meta wide">
+                Repaint all events puts every color back to these settings, also where a color was
+                changed in the calendar. Outlook calendars may not show these colors.
+              </p>
+            </form>
+          </section>
+
+          <section>
+            <h2>Title markers</h2>
+            <form
+              class="form"
+              data-testid="marker-form"
+              onSubmit={(e) => {
+                e.preventDefault();
+                const f = new FormData(e.currentTarget as HTMLFormElement);
+                void act(() =>
+                  api("PATCH", "/api/settings", {
+                    markers: {
+                      ...Object.fromEntries(MARKERS.map(([k]) => [k, String(f.get(k)).trim()])),
+                      position: f.get("position"),
+                    },
+                  }),
+                );
+              }}
+            >
+              {MARKERS.map(([k, label]) => (
+                <label key={k}>
+                  {label}
+                  <input name={k} defaultValue={settings.markers[k]} maxLength={8} />
+                </label>
+              ))}
+              <label>
+                Marker position
+                <select name="position">
+                  <option value="start" selected={settings.markers.position === "start"}>
+                    Before the title
+                  </option>
+                  <option value="end" selected={settings.markers.position === "end"}>
+                    After the title
+                  </option>
+                </select>
+              </label>
+              <button type="submit" class="primary">
+                Save markers
+              </button>
+              <p class="meta wide">
+                Tempoloom puts one of these in the calendar title of habits, task chunks, meetings
+                and buffers to show their state. Leave a field empty for no marker.
+              </p>
+            </form>
+          </section>
+        </Fragment>
+      ) : (
+        <Pending key="colors" title="Colors and title markers" failed={loadFailed} />
+      )}
+
+      {focus ? (
+        <section key="focus">
+          <h2>Focus time</h2>
+          <FocusRecommendation onDone={() => act(async () => {})} />
+          {focus.length === 0 ? (
+            <button
+              type="button"
+              onClick={() =>
+                void act(() =>
+                  api("POST", "/api/focus", {
+                    weeklyGoalMinutes: 600,
+                    dailyMinMinutes: 60,
+                    dailyMaxMinutes: 240,
+                    minBlockMinutes: 60,
+                    maxBlockMinutes: 180,
+                  }),
+                )
+              }
+            >
+              Protect 10 hours of focus time per week
+            </button>
+          ) : (
+            focus.map((f) => (
+              <div class="row" key={f.id} data-focus-title={f.title}>
+                <span>
+                  {f.title} · {f.weekly_goal_minutes / 60} h per week <PolicyMark id={f.id} />
+                </span>
+                <FocusNotes
+                  id={f.id}
+                  notes={
+                    readEventSettings(f.event_settings, defaultEventSettings("focus_time"))
+                      .description
+                  }
+                  act={act}
+                />
+                {!policyMarks.value[f.id] && (
+                  <button
+                    type="button"
+                    class="danger"
+                    onClick={() => void act(() => api("DELETE", `/api/focus/${f.id}`))}
+                  >
+                    Delete
+                  </button>
+                )}
+              </div>
+            ))
+          )}
+          {focus.length > 0 && <FocusOptionsList key={focus.map((f) => f.id).join(",")} />}
+        </section>
+      ) : (
+        <Pending key="focus" title="Focus time" failed={loadFailed} />
+      )}
 
       <MeetingOverloadSection />
       <MeetingSettings />
