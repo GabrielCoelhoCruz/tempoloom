@@ -6,6 +6,7 @@ import { COLORS } from "../lib/categories.ts";
 import { duration, formatWhen, fromLocalInput, toLocalInput } from "../lib/format.ts";
 import { lazyComponent } from "../lib/lazy.ts";
 import { useLive } from "../lib/live.ts";
+import { useNewest } from "../lib/newest.ts";
 import { LEVEL_NAMES, me, planNow, zone } from "../lib/state.ts";
 import { Select } from "./event-settings.tsx";
 import { type HoursChoice, HoursField } from "./hours-field.tsx";
@@ -529,16 +530,24 @@ export function Tasks() {
   const editing = editId ? tasks.find((t) => t.id === editId) : undefined;
   const [loaded, setLoaded] = useState(false);
 
+  // A load reads the list of the view shown when it starts, also when an action
+  // or a live update that started in another view calls it; the open and the
+  // done list have their own URLs, so only the newest load may draw.
+  const shownFilter = useRef(filter);
+  shownFilter.current = filter;
+  const newest = useNewest();
   const load = useCallback(async () => {
+    const isNewest = newest();
     const [t, tm] = await Promise.all([
-      api<{ tasks: Task[] }>("GET", `/api/tasks?status=${filter}`),
+      api<{ tasks: Task[] }>("GET", `/api/tasks?status=${shownFilter.current}`),
       api<{ timer: Timer | null }>("GET", "/api/timer"),
     ]);
+    if (!isNewest()) return;
     setTasks(t.tasks);
     setTimer(tm.timer);
     setLoaded(true);
-  }, [filter]);
-  useEffect(() => void load(), [load]);
+  }, [newest]);
+  useEffect(() => void load(), [load, filter]);
   useEffect(() => {
     void api<{ hours: HoursChoice[] }>("GET", "/api/hours").then((h) => setHours(h.hours));
   }, []);

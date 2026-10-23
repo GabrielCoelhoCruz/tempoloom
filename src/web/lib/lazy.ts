@@ -14,7 +14,11 @@ export function lazyComponent<P extends object>(
   return (props: P) => {
     const [, setLoaded] = useState(false);
     useEffect(() => {
-      if (View) return;
+      // Another instance may have loaded the code after this one drew nothing.
+      if (View) {
+        setLoaded(true);
+        return;
+      }
       void load().then((v) => {
         View = v;
         setLoaded(true);

@@ -15,6 +15,7 @@ import { clockText, dateText, formatWhen } from "../lib/format.ts";
 import { lazyComponent } from "../lib/lazy.ts";
 import { useLive } from "../lib/live.ts";
 import { Markdown } from "../lib/markdown.tsx";
+import { useNewest } from "../lib/newest.ts";
 import {
   blockPreview,
   conflictIds,
@@ -202,15 +203,19 @@ export function NowBar({ from, to }: { from: number; to: number }) {
   const [stopping, setStopping] = useState(false);
   const [reviewing, setReviewing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The conflicts URL changes with the week: only the newest load may draw.
+  const newest = useNewest();
   const load = useCallback(async () => {
+    const isNewest = newest();
     const [n, c] = await Promise.all([
       api<Now>("GET", "/api/now"),
       api<{ conflicts: Conflict[] }>("GET", `/api/now/conflicts?from=${from}&to=${to}`),
     ]);
+    if (!isNewest()) return;
     setNow(n);
     setConflicts(c.conflicts);
     conflictIds.value = new Set(c.conflicts.flatMap((x) => x.ids));
-  }, [from, to]);
+  }, [newest, from, to]);
   useEffect(() => {
     void load();
     const t = setInterval(() => void load(), 60_000);
