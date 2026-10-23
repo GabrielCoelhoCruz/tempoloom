@@ -18,9 +18,13 @@
 //                                                one hours set
 // - an older help lookup answers after a newer one and shows its result
 //                                             -> the newer lookup's error stays
+// - a settings part that loads late takes the place of a part shown before
+//   it, so that part starts again: the team focus recommendation loses the
+//   typed goal, or does not show at all       -> the goal stays as typed
 import type { Page, Request, Route } from "@playwright/test";
 import { expect, test } from "./fixtures.ts";
 import { addTask } from "./helpers.ts";
+import { invite, joinLink, openTeam, teamOfTwo } from "./team-helpers.ts";
 
 const row = (page: Page, title: string) => page.locator(`[data-task-title="${title}"]`);
 
@@ -216,4 +220,37 @@ test("an older help lookup that answers last does not replace the newer one", as
   await drawn(page);
   await expect(alert).toContainText("No event with this link or id");
   await expect(alert).not.toContainText("cannot read this link");
+});
+
+test("a settings part that loads late does not start the focus recommendation again", async ({
+  page,
+  signIn,
+  colleague,
+  people,
+  mail,
+}) => {
+  const c = await people(3);
+  await teamOfTwo(page, signIn, colleague, mail);
+  await openTeam(page);
+  const template = page.getByTestId("focus-template");
+  await template.getByLabel("Weekly goal (hours)").fill("6");
+  await template.getByRole("button", { name: "Save focus template" }).click();
+  await expect(page.getByTestId("defaults-message")).toHaveText("Focus template saved.");
+  await invite(page, [c.email]);
+  const pc = await c.signIn(
+    new URL(joinLink((await mail.message(c.email, /invited you/)).text)).pathname,
+  );
+  await pc.getByRole("button", { name: "Join team" }).click();
+  await expect(pc.getByTestId("team-page")).toBeVisible();
+
+  // The hours part comes in after the focus part and its recommendation.
+  const release = await hold(pc, "**/api/hours");
+  await pc.getByRole("link", { name: "Settings", exact: true }).click();
+  const goal = pc.getByTestId("focus-recommendation").getByLabel("Weekly goal (hours)");
+  await expect(goal).toHaveValue("6");
+  await goal.fill("5");
+  release();
+  await expect(pc.getByTestId("hours-work")).toBeVisible();
+  await drawn(pc);
+  await expect(goal).toHaveValue("5");
 });

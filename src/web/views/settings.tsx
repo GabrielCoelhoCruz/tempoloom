@@ -1,4 +1,4 @@
-import type { ComponentChildren } from "preact";
+import { type ComponentChildren, Fragment } from "preact";
 import { useCallback, useEffect, useState } from "preact/hooks";
 import { CATEGORIES } from "../../scheduler/categories.ts";
 import type { BufferFilter } from "../../scheduler/model.ts";
@@ -335,8 +335,11 @@ export function Settings() {
         </p>
       )}
 
+      {/* Each part that loads late has its own key: a part that comes in never
+          takes the place of one shown before it, which would start that part
+          again (the focus recommendation lost its typed goal). */}
       {settings ? (
-        <>
+        <Fragment key="scheduling">
           <section>
             <h2>Scheduling</h2>
             <div class="form">
@@ -451,13 +454,13 @@ export function Settings() {
 
           <AlertSettings settings={settings} act={act} />
           <EventTipsSetting settings={settings} act={act} />
-        </>
+        </Fragment>
       ) : (
-        <Pending title="Scheduling" failed={loadFailed} />
+        <Pending key="scheduling" title="Scheduling" failed={loadFailed} />
       )}
 
       {hours ? (
-        <section id="hours">
+        <section key="hours" id="hours">
           <h2>Hours</h2>
           <HoursZoneNote />
           {hours.map((h) => (
@@ -509,7 +512,7 @@ export function Settings() {
           </form>
         </section>
       ) : (
-        <Pending title="Hours" failed={loadFailed} />
+        <Pending key="hours" title="Hours" failed={loadFailed} />
       )}
 
       <TravelSettings />
@@ -518,7 +521,7 @@ export function Settings() {
       <MirrorSettings />
 
       {buffers && calendars ? (
-        <section>
+        <section key="buffers">
           <h2>Buffers</h2>
           <div class="actions">
             <button
@@ -633,11 +636,11 @@ export function Settings() {
           </div>
         </section>
       ) : (
-        <Pending title="Buffers" failed={loadFailed} />
+        <Pending key="buffers" title="Buffers" failed={loadFailed} />
       )}
 
       {settings ? (
-        <>
+        <Fragment key="colors">
           <section>
             <h2>Colors</h2>
             <form
@@ -746,13 +749,13 @@ export function Settings() {
               </p>
             </form>
           </section>
-        </>
+        </Fragment>
       ) : (
-        <Pending title="Colors and title markers" failed={loadFailed} />
+        <Pending key="colors" title="Colors and title markers" failed={loadFailed} />
       )}
 
       {focus ? (
-        <section>
+        <section key="focus">
           <h2>Focus time</h2>
           <FocusRecommendation onDone={() => act(async () => {})} />
           {focus.length === 0 ? (
@@ -801,7 +804,7 @@ export function Settings() {
           {focus.length > 0 && <FocusOptionsList key={focus.map((f) => f.id).join(",")} />}
         </section>
       ) : (
-        <Pending title="Focus time" failed={loadFailed} />
+        <Pending key="focus" title="Focus time" failed={loadFailed} />
       )}
 
       <MeetingOverloadSection />
