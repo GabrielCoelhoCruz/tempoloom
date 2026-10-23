@@ -6,6 +6,7 @@ import { isValidTimeZone, localToUtc } from "../../shared/time.ts";
 import { ApiError, api } from "../lib/api.ts";
 import { Avatar } from "../lib/avatar.tsx";
 import { lazyComponent } from "../lib/lazy.ts";
+import { useNewest } from "../lib/newest.ts";
 import {
   addPages,
   dayOf,
@@ -232,7 +233,11 @@ function Times({
   const [from, setFrom] = useState(() =>
     Math.max(Date.now(), startDay ? localToUtc(view.zone, startDay, 0) : 0),
   );
+  // Each page of times has its own URL: only the newest load may draw.
+  const newestTimes = useNewest();
+  const newestMine = useNewest();
   useEffect(() => {
+    const isNewest = newestTimes();
     setTimes(null);
     const q = new URLSearchParams({
       duration: String(duration),
@@ -241,6 +246,7 @@ function Times({
     });
     if (token) q.set("token", token);
     void api<{ times: Offered[] }>("GET", `/pub/pages/${page}/${link}/times?${q}`).then((r) => {
+      if (!isNewest()) return;
       setTimes(r.times);
       const pick = preselect && r.times.find((t) => t.start === preselect.at);
       if (preselect && !preselect.done.current) {
@@ -250,6 +256,7 @@ function Times({
     });
   }, [page, link, duration, from, token, view.zone]);
   useEffect(() => {
+    const isNewest = newestMine();
     if (!overlay) {
       setMine([]);
       return;
@@ -257,7 +264,9 @@ function Times({
     void api<{ events: MyEvent[] }>(
       "GET",
       `/api/booking/overlay?from=${from}&to=${addPages(view, from, 1)}`,
-    ).then((r) => setMine(r.events));
+    ).then((r) => {
+      if (isNewest()) setMine(r.events);
+    });
   }, [overlay, from, view.zone]);
   const byDay = useMemo(() => {
     const m = new Map<string, Offered[]>();

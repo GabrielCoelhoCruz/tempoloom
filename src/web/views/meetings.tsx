@@ -15,6 +15,7 @@ import {
 } from "../lib/format.ts";
 import { freeName, templateFromUrl } from "../lib/library.ts";
 import { useLive } from "../lib/live.ts";
+import { useNewest } from "../lib/newest.ts";
 import { LEVEL_NAMES, planNow, zone } from "../lib/state.ts";
 import { EventSettingsFields, eventSettingsFrom } from "./event-settings.tsx";
 import { MeetingHabitDependencies } from "./habit-dependencies.tsx";
@@ -176,7 +177,10 @@ export function Meetings() {
     }
   };
 
+  // Each guest list has its own URLs: only the newest lookup may draw.
+  const newestLookup = useNewest();
   const lookup = async (text: string) => {
+    const isNewest = newestLookup();
     const list = await Promise.all(
       emails(text).map((email) =>
         api<Person>("GET", `/api/meetings/person?email=${encodeURIComponent(email)}`).catch(
@@ -184,7 +188,7 @@ export function Meetings() {
         ),
       ),
     );
-    setPeople(list.filter((p): p is Person => p !== null));
+    if (isNewest()) setPeople(list.filter((p): p is Person => p !== null));
   };
 
   const body = (form: HTMLFormElement) => {

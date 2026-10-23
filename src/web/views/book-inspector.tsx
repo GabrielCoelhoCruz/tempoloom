@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "preact/hooks";
 import { localToUtc, utcToLocal } from "../../shared/time.ts";
 import { api } from "../lib/api.ts";
+import { useNewest } from "../lib/newest.ts";
 import { addPages, dayOf, dayText, timeText, type View } from "../lib/zoned.ts";
 
 type Reason =
@@ -86,7 +87,10 @@ export function Inspector({
   const [from, setFrom] = useState(() => localToUtc(view.zone, startDay ?? today, 0));
   const [data, setData] = useState<{ until: number; times: Inspected[] } | null>(null);
   const [open, setOpen] = useState<number | null>(null);
+  // Each page has its own URL: only the newest load may draw.
+  const newest = useNewest();
   useEffect(() => {
+    const isNewest = newest();
     setData(null);
     const q = new URLSearchParams({
       page,
@@ -96,7 +100,9 @@ export function Inspector({
       to: String(addPages(view, from, 1)),
     });
     void api<{ until: number; times: Inspected[] }>("GET", `/api/booking/inspect?${q}`).then(
-      setData,
+      (r) => {
+        if (isNewest()) setData(r);
+      },
     );
   }, [page, link, duration, from, view.zone]);
   const days = useMemo(() => {

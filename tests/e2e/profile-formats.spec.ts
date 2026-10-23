@@ -143,11 +143,15 @@ test("the planner, the hours page and the task and habit lists use the time form
     (l) => expect(titled(l, "Format sync")).toHaveLength(1),
   );
   // The occurrence is an instance of the meeting's series: its period key is on its managed row.
+  // The plan run writes that row after it reads the new instances back from the calendar.
   const id = titled(meeting, "Format sync")[0]?.id ?? "";
-  const key =
-    app.query<{ key: string }>("SELECT key FROM managed_events WHERE event_id = ?", id)[0]?.key ??
-    "";
-  expect(key).toMatch(new RegExp(`^meeting:.+:${W}$`));
+  await expect
+    .poll(
+      () =>
+        app.query<{ key: string }>("SELECT key FROM managed_events WHERE event_id = ?", id)[0]
+          ?.key ?? "",
+    )
+    .toMatch(new RegExp(`^meeting:.+:${W}$`));
 
   // "Weekdays only" shows Monday to Friday of the Sunday week.
   const weekdays = await page.request.patch("/api/settings", {
