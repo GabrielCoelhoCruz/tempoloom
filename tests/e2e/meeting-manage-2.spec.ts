@@ -18,7 +18,7 @@
 // - a resize in the calendar is put back or does not lock; a title edit
 //   is put back; a free/busy edit is kept instead of written back      -> manual
 import type { Page } from "@playwright/test";
-import { addDays, weekdayOf } from "../../src/shared/time.ts";
+import { addDays } from "../../src/shared/time.ts";
 import {
   at,
   BACKEND,
@@ -31,7 +31,7 @@ import {
   planNow,
   test,
 } from "./fixtures.ts";
-import { openWeek, titled, W } from "./helpers.ts";
+import { openWeek, serverClockAt, titled, W } from "./helpers.ts";
 import { allDayBusy } from "./ics.ts";
 import {
   editRaw,
@@ -47,7 +47,6 @@ const day = (n: number) => addDays(W, n);
 const twoWeeks = (cal: CalendarDriver) => cal.events(at(W, "00:00"), at(day(14), "00:00"));
 const starts = (evs: Awaited<ReturnType<typeof twoWeeks>>, title: string) =>
   titled(evs, title).map((e) => `${local(e.start)}-${local(e.end).slice(11)}`);
-const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"] as const;
 const LONG = { timeout: 60_000 };
 
 /** The meeting form with a move notice and a choice for periods with no time. */
@@ -64,31 +63,34 @@ async function addMeeting(
 
 test("the move notice: an automatic move never starts sooner than the notice after the move, and a meeting with notice 0 takes the nearest time (MEET-02 rule 8)", async ({
   page,
+  app,
   cal,
   signIn,
 }) => {
-  // A weekday 1 to 3 days ahead, so its 10:00 is less than 168 hours away.
-  let d = addDays(local(Date.now()).slice(0, 10), 1);
-  while (weekdayOf(d) > 5) d = addDays(d, 1);
-  const weekday = DAYS[weekdayOf(d) - 1] as (typeof DAYS)[number];
+  // The server clock starts on Monday 07:00 of the test week, so the meeting's
+  // first period is that week and Monday is its first day: no occurrence of an
+  // earlier week moves it (cadence, meetings-flexible.md rule 18), whatever the
+  // real day and time of the run.
+  const d = W;
+  const now = await serverClockAt(app, at(d, "07:00"));
   // The notice ends between 10:00 and 11:00 on that day.
-  const notice = Math.ceil((at(d, "10:00") - Date.now()) / HOUR);
-  const earliest = Date.now() + notice * HOUR;
+  const notice = Math.ceil((at(d, "10:00") - now()) / HOUR);
+  const earliest = now() + notice * HOUR;
   await signIn();
   await addMeeting(page, {
     title: "Notice sync",
     guests: "dana@example.com",
-    days: [weekday],
+    days: ["Mon"],
     notice,
   });
   await addMeeting(page, {
     title: "Quick check",
     notice: 0,
     guests: "dana@example.com",
-    days: [weekday],
+    days: ["Mon"],
     idealTime: "14:00",
   });
-  const week = () => cal.events(Date.now(), at(addDays(d, 1), "00:00"));
+  const week = () => cal.events(at(d, "00:00"), at(addDays(d, 1), "00:00"));
   await eventually(week, (l) => {
     expect(starts(l, "Notice sync")).toEqual([`${d} 10:00-10:30`]);
     expect(starts(l, "Quick check")).toEqual([`${d} 14:00-14:30`]);

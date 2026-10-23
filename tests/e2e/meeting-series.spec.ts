@@ -100,10 +100,13 @@ test("a meeting from the form is one recurring series on the calendar: one event
     const ics = await rawObject(cal.calendarId, first.id);
     const master = masterOf(ics);
     return {
-      // Overrides from the test week on (an earlier, ended one may carry the done marker).
-      overrides: vevents(ics).filter(
-        (b) => (blockProp(b, "RECURRENCE-ID") ?? "") >= `${compact(W)}T`,
-      ).length,
+      // Overrides in the two test weeks (an earlier, ended one may carry the done
+      // marker; on a Monday the planning window ends on a Monday, so the third
+      // week's occurrence moves to that Monday, a period cut by the window).
+      overrides: vevents(ics).filter((b) => {
+        const rid = blockProp(b, "RECURRENCE-ID") ?? "";
+        return rid >= `${compact(W)}T` && rid < `${compact(day(14))}T`;
+      }).length,
       rule: blockProp(master, "RRULE"),
       // The rule time of the first period the plan placed: a Tuesday at 10:00, local.
       start: /^DTSTART;TZID=Europe\/Berlin:\d{8}T100000$/m.test(master),
