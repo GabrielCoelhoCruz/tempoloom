@@ -5,6 +5,14 @@ import { addDays, chosenMinute, localToUtc, utcToLocal } from "../../shared/time
 import { all, type Db, one, run, tx } from "../db.ts";
 import type { ManagedRow } from "../planner/push.ts";
 import { planningZone } from "../travel.ts";
+import { READ_BY_LAST_PULL_SQL } from "./pull.ts";
+
+/** A managed row with its cached event: c_id is null, with all c_ columns, when the cache has none. */
+type EditRow = ManagedRow &
+  (
+    | { c_id: null }
+    | { c_id: string; c_start: number; c_end: number; c_summary: string; c_etag: string | null }
+  );
 
 /**
  * Habits rule 29 for an occurrence whose date has passed: its event's day
@@ -65,13 +73,39 @@ export function moveTaskStart(db: Db, userId: string, row: ManagedRow, start: nu
     row.start_ms,
   );
   if (earlier) return;
-  run(
-    db,
-    "UPDATE tasks SET start_after = ? WHERE id = ? AND user_id = ?",
-    start,
-    row.source_id,
-    userId,
+  setTaskStart(db, userId, row.source_id, start);
+}
+
+function setTaskStart(db: Db, userId: string, taskId: string, start: number): void {
+  run(db, "UPDATE tasks SET start_after = ? WHERE id = ? AND user_id = ?", start, taskId, userId);
+}
+
+/**
+ * CED-11 for one edit pass: the start of each moved task's first chunk, from
+ * the rows as they were before the pass, so the order in which the pass reads
+ * the rows does not change the result. A chunk that the pass deletes is placed
+ * again later (CED-20), so it is not the first chunk.
+ */
+function firstChunkStarts(db: Db, userId: string, rows: EditRow[]): Map<string, number> {
+  const first = new Map<string, number>();
+  const tasks = new Set(
+    rows
+      .filter((r) => r.kind === "task" && r.c_id !== null && r.c_start !== r.start_ms)
+      .map((r) => r.source_id),
   );
+  if (tasks.size === 0) return first;
+  const gone = new Set(rows.filter((r) => r.c_id === null).map((r) => r.id));
+  for (const r of all<{ id: string; source_id: string; start_ms: number }>(
+    db,
+    `SELECT id, source_id, start_ms FROM managed_events
+     WHERE user_id = ? AND kind = 'task' AND source_id IN (${[...tasks].map(() => "?").join(",")})`,
+    userId,
+    ...tasks,
+  )) {
+    if (gone.has(r.id)) continue;
+    first.set(r.source_id, Math.min(first.get(r.source_id) ?? r.start_ms, r.start_ms));
+  }
+  return first;
 }
 
 /**
@@ -87,7 +121,10 @@ export function moveTaskStart(db: Db, userId: string, row: ManagedRow, start: nu
  * need nothing here: push never writes them over (MEET-02 rule 22).
  * An event outside the calendar's read window is not in the cache because it
  * was not read, not because it was deleted: its row stays as it is, so done
- * and logged work of old chunks still counts.
+ * and logged work of old chunks still counts (READ_BY_LAST_PULL_SQL in pull.ts).
+ * Known limit: a provider cancel for an event that ended before window_start
+ * is not applied (a Google sync token reports it, the row stays), so a delete
+ * of a chunk older than the window gives no minutes back (CED-21, CED-22).
  */
 export function applyCalendarEdits(
   db: Db,
@@ -99,43 +136,30 @@ export function applyCalendarEdits(
   const summary: EditSummary = { moved: 0, deleted: 0, locked: 0 };
   if (calendarIds.length === 0) return summary;
   const marks = calendarIds.map(() => "?").join(",");
-  const rows = all<ManagedRow>(
+  // One read for the pass: each row with its cached event, if any. A row that
+  // is not in the cache and was not read by the last pull (CED-22 needs a
+  // delete that the calendar reports) is not read here, so it stays as it is.
+  const rows = all<EditRow>(
     db,
-    `SELECT * FROM managed_events WHERE user_id = ? AND event_id IS NOT NULL AND calendar_id IN (${marks})`,
+    `SELECT m.*, e.event_id AS c_id, e.start_ms AS c_start, e.end_ms AS c_end, e.summary AS c_summary, e.etag AS c_etag
+     FROM managed_events m
+     JOIN calendars c ON c.id = m.calendar_id
+     LEFT JOIN events e ON e.calendar_id = m.calendar_id AND e.event_id = m.event_id
+     WHERE m.user_id = ? AND m.event_id IS NOT NULL AND m.calendar_id IN (${marks})
+       AND (e.event_id IS NOT NULL OR ${READ_BY_LAST_PULL_SQL})
+     ORDER BY m.calendar_id, m.event_id`,
     userId,
     ...calendarIds,
   );
-  // CED-22 needs a delete that the calendar reports: a chunk that ended before
-  // the start of the last read window is missing from the cache because the
-  // read did not ask for it, not because the user deleted it.
-  const windows = new Map(
-    all<{ id: string; window_start: number | null; window_end: number | null }>(
-      db,
-      `SELECT id, window_start, window_end FROM calendars WHERE id IN (${marks})`,
-      ...calendarIds,
-    ).map((c) => [c.id, c]),
-  );
-  const outsideWindow = (row: ManagedRow) => {
-    const w = windows.get(row.calendar_id);
-    if (!w || w.window_start === null || w.window_end === null) return false;
-    return row.end_ms <= w.window_start || row.start_ms >= w.window_end;
-  };
+  const firstStart = firstChunkStarts(db, userId, rows);
   let zoneOfPlan: string | undefined;
   const planZone = () => (zoneOfPlan ??= planningZone(db, userId, zone));
   tx(db, () => {
     for (const row of rows) {
-      const cached = one<{
-        start_ms: number;
-        end_ms: number;
-        summary: string;
-        etag: string | null;
-      }>(
-        db,
-        "SELECT start_ms, end_ms, summary, etag FROM events WHERE calendar_id = ? AND event_id = ?",
-        row.calendar_id,
-        row.event_id,
-      );
-      if (!cached && outsideWindow(row)) continue;
+      const cached =
+        row.c_id === null
+          ? undefined
+          : { start_ms: row.c_start, end_ms: row.c_end, summary: row.c_summary, etag: row.c_etag };
       if (row.kind === "mirror") {
         // The source event is the source of truth (mirroring rule 38): a deleted
         // or edited copy is written again by the next push, and never locks.
@@ -175,10 +199,7 @@ export function applyCalendarEdits(
             exclude(db, userId, row.kind, row.source_id, row.start_ms, row.end_ms);
             if (row.kind === "habit") keepDeletedOccurrence(db, userId, row, planZone(), now);
           }
-        } else if (
-          row.kind === "task" &&
-          row.end_ms > (windows.get(row.calendar_id)?.window_start ?? 0)
-        ) {
+        } else if (row.kind === "task") {
           // "This work did not happen": the minutes go back to the task, which is open again.
           run(
             db,
@@ -222,7 +243,9 @@ export function applyCalendarEdits(
       }
       if (moved && row.kind === "task") {
         exclude(db, userId, "task", row.source_id, row.start_ms, row.end_ms);
-        if (cached.start_ms !== row.start_ms) moveTaskStart(db, userId, row, cached.start_ms);
+        if (cached.start_ms !== row.start_ms && row.start_ms === firstStart.get(row.source_id)) {
+          setTaskStart(db, userId, row.source_id, cached.start_ms);
+        }
       }
       run(
         db,
