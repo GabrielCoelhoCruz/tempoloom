@@ -8,6 +8,7 @@ import {
   type LibraryEntry,
   type LibraryGroup,
 } from "../lib/library.ts";
+import { chatDraft, sidePanel } from "../lib/planner-signals.ts";
 import { navigate } from "../lib/router.ts";
 import { planNow } from "../lib/state.ts";
 
@@ -74,6 +75,13 @@ async function meetingEntries(): Promise<string[]> {
   return day.weekday === null ? on : [...on, "no-meeting-day"];
 }
 
+/** Rule 7: the planner opens with assistant chat and the prompt in its input box. */
+function openChat(prompt: string) {
+  chatDraft.value = prompt;
+  sidePanel.value = "assistant";
+  navigate("/");
+}
+
 export function Library() {
   const [tab, setTab] = useState<LibraryGroup | "all">("all");
   const [known, setKnown] = useState<{ names: string[]; templates: string[] }>({
@@ -90,12 +98,20 @@ export function Library() {
   }, []);
   useEffect(() => void load(), [load]);
 
-  const added = (e: LibraryEntry) =>
-    e.kind === "meeting_check" || e.kind === "no_meeting_day"
-      ? slugs.includes(e.slug)
-      : BY_TEMPLATE.has(e.kind)
-        ? known.templates.includes(e.slug)
-        : known.names.some((n) => n.toLowerCase() === e.name.toLowerCase());
+  const added = (e: LibraryEntry) => {
+    switch (e.kind) {
+      // A prompt entry makes no automation, so it never shows "Added".
+      case "chat_prompt":
+        return false;
+      case "meeting_check":
+      case "no_meeting_day":
+        return slugs.includes(e.slug);
+      default:
+        return BY_TEMPLATE.has(e.kind)
+          ? known.templates.includes(e.slug)
+          : known.names.some((n) => n.toLowerCase() === e.name.toLowerCase());
+    }
+  };
 
   /** "Add" saves a buffer or focus entry as it is; "Use" opens its form first. */
   const addNow = async (e: LibraryEntry) => {
@@ -153,12 +169,16 @@ export function Library() {
                   {e.name} {added(e) && <span class="badge">Added</span>}
                 </div>
                 <div class="meta">{e.summary}</div>
-                {e.kind === "unavailable" && <div class="meta warning">{e.reason}</div>}
               </div>
               <div class="actions">
                 {page && (
                   <button type="button" onClick={() => navigate(`${page}?template=${e.slug}`)}>
                     Use
+                  </button>
+                )}
+                {e.kind === "chat_prompt" && (
+                  <button type="button" onClick={() => openChat(e.preset.prompt)}>
+                    Open in chat
                   </button>
                 )}
                 {((e.kind === "buffer" && !e.form) || e.kind === "focus_time") && (
