@@ -92,7 +92,7 @@ const RSVP_WORDS = {
 } as const;
 
 /** Monday of the week of an instant, for the planner link. */
-function reviewUrl(baseUrl: string, zone: string, t: number): string {
+export function reviewUrl(baseUrl: string, zone: string, t: number): string {
   const d = utcToLocal(zone, t).date;
   return new URL(`/?week=${addDays(d, 1 - weekdayOf(d))}`, baseUrl).toString();
 }

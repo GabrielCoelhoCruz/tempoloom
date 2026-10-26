@@ -102,7 +102,7 @@ T = {
     "m_sync": "a weekly meeting sits at the ideal time, moves around a colleague's busy time but not an unanswered invite, and moves the colleague's habit (rules 4-5, 8, 10-16, 27; MEET-02 1, 17, 27)",
     "m_hours": "a colleague's meeting hours limit the time, a full slot shrinks to fit, optional guests do not count, and skip or delete drop one period (rules 11, 16-17, 35; MEET-02 20)",
     "lib_habit": "a habit entry fills the habit form; saving places it and shows Added; a second use gets a suffix; delete clears the badge (rules 3-5, 9; T1, T4)",
-    "lib_other": "buffer and focus entries add their automation as set; prompts offer no action (rule 4, entries 3, 21, 25)",
+    "lib_other": "buffer and focus entries add their automation as set; prompts offer only the chat (rule 4, entries 3, 21, 25)",
     "c_paint": "managed events take their category color, a new color repaints them, and external events change color only for the scope all events (rules 1, 4, 6-8, 11)",
     "c_buffer": "a buffer for external meetings adds prep before a meeting with another domain only (rule 14; library entry 13)",
     # Teams (tests/e2e/team.spec.ts, directory.spec.ts)
@@ -314,7 +314,7 @@ T.update({
     "s1_done": "an ended habit event gets the done marker; an ended task chunk gets the partly done marker until the task is done (marker table; rules 2, 5)",
     "s1_types": "travel buffers, flights Tempoloom may edit and personal mirror copies get their markers once (marker table; rules 2, 8)",
     "s1_emoji": "a template's emoji shows in the form and can be removed; the user's own emoji stays after the state marker (rules 3, 4)",
-    "lib_other": "buffer and focus entries add their automation as set; prompts offer no action (rule 4, entries 3, 21, 25)",
+    "lib_other": "buffer and focus entries add their automation as set; prompts offer only the chat (rule 4, entries 3, 21, 25)",
 })
 E2E.update({
     65: ["s1_list", "s1_drag"],
@@ -1072,12 +1072,11 @@ E2E_NOTES.update({
 # Chat rows: the assistant chat needs a language model, which the owner must supply.
 G2 = "Needs an LLM provider and key from the owner (gate G2)"
 # Rows 568, 674, 675, 676, 682, 685, 689: see the C1 block (assistant chat foundation).
-for n in [6, 47, 316, 369, 569, 582, 609, 612, 627, 661, 662, 677, 678, 679, 680, 681,
-          684, 686, 687, 688, 718]:
+# Rows 130, 569, 718, 723-749 (library prompts): see the C2 block.
+for n in [6, 47, 316, 369, 582, 609, 612, 627, 661, 662, 677, 678, 679, 680, 681,
+          684, 686, 687, 688]:
     BLOCKED[n] = G2
 # Row 672: see the U73 block (it names the built digest by E2E titles).
-for n in [723, 724, 730, 732, 733, 734, 735, 736, 738, 739, 740, 742, 749]:
-    BLOCKED[n] = G2 + ": a prompt entry opens the assistant chat"
 # Row 683: see the U73 block (it names the built digest by E2E titles).
 
 # Rows that need a named outside account, vendor app or API.
@@ -1222,8 +1221,6 @@ BLOCKED[78] = ("Needs a Google account in a new Google Calendar E2E run (docs/e2
                "each sync takes the home time zone from the primary Google calendar (src/server/sync/pull.ts). Built, with full UI E2E "
                "on CalDAV: a zone set in Tempoloom moves the work day, and the hours page shows the home zone and an active trip ("
                + quoted_titles("s_zone", "s3_utc") + ")")
-BLOCKED[130] = (G2 + " for the chat panel. Built, with full UI E2E on CalDAV: the automation list, on its own Automations page by decision "
-                "(automations-overview.md rule 6) (" + quoted_titles("s1_list") + "), and the suggested tasks in the planner (" + quoted_titles("s3_suggest", "s3_focus_tasks") + ")")
 BLOCKED[208] = ("Needs a Google Workspace account: Google Calendar has focus-time events only on Workspace primary calendars, and the "
                 "E2E must create one there. Built: the event type focusTime counts as focus time in code (src/scheduler/plan.ts, "
                 "src/server/api/stats.ts); the focus tag gives the same result on CalDAV and Google (row 209, full UI E2E: "
@@ -1754,6 +1751,64 @@ E2E_NOTES.update({
           "to the model. " + _FAKE),
 })
 # --- end C1 ---
+
+# --- C2: library prompt entries and the chat offer (tests/e2e/assistant-C2.spec.ts) ---
+T.update({
+    "c2_open": "every library prompt entry opens assistant chat in the planner with its prompt in the input box, and nothing goes to the model before the user sends (automations-library rule 7; entries 5, 6, 12, 14-18, 20-22, 24, 31)",
+    "c2_tasks": "task prompts reach the model with the planner dates and the open tasks; proposed work time, a break and a new priority wait in preview mode until applied (library entries 5, 6, 22, 24; assistant-chat rules 8, 12)",
+    "c2_meetings": "meeting prompts reach the model as the user edited them, with the dates in view; onboarding meetings, a cross-team meeting, an urgent review and a conflict fix wait in preview mode until applied (library entries 12, 15, 18, 21; assistant-chat rules 5, 6, 12)",
+    "c2_stats": "rhythm and burnout prompts reach the model with the user's stats of the last 4 weeks, read from the calendar (library entries 14, 16; assistant-chat rule 9)",
+    "c2_team": "the team health prompt reads team stats as the team stats page shows them: no values below 3 members, then means over the members and no names (library entry 17; team stats rules 1, edge case 1)",
+    "c2_day": "adaptive workday and prep task prompts read today's planned items and the next 7 days of meetings; a move of a planned item waits in preview mode until applied (library entries 20, 31; assistant-chat rules 6, 8, 12)",
+    "c2_offer": "after sign-up the planner offers assistant chat: Try the assistant opens the panel with a first question; after a chat, or after Not now, the offer stays away (teams-settings-templates rule 15)",
+    "c2_offer_off": "while the team switch is off, the offer lets an admin turn assistant chat on for the team, and a member gets no offer until then (teams-settings-templates rules 13, 15)",
+})
+E2E.update({
+    130: ["s1_list", "s3_suggest", "s3_focus_tasks", "c1_panel", "c1_events"],
+    569: ["c2_offer", "c2_offer_off"],
+    718: ["c2_open", "c2_tasks", "c2_meetings", "c2_stats", "c2_team", "c2_day"],
+    723: ["c2_open", "c2_tasks"], 724: ["c2_open", "c2_tasks"], 740: ["c2_open", "c2_tasks"],
+    742: ["c2_open", "c2_tasks"],
+    730: ["c2_open", "c2_meetings"], 733: ["c2_open", "c2_meetings"], 736: ["c2_open", "c2_meetings"],
+    739: ["c2_open", "c2_meetings"],
+    732: ["c2_open", "c2_stats"], 734: ["c2_open", "c2_stats"],
+    735: ["c2_open", "c2_team"],
+    738: ["c2_open", "c2_day"], 749: ["c2_open", "c2_day"],
+})
+_PROMPT = ("The entry's Open in chat button opens the planner with assistant chat and the prompt text in the input box; the "
+           "user edits it and sends (rule 7). The E2E checks the text, the planner dates and the tools the model got, and "
+           "what the app did with the model's tool calls. " + _FAKE)
+E2E_NOTES.update({
+    130: ("The automation list is on its own Automations page by decision (automations-overview.md rule 6); suggested tasks "
+          "show in the planner in suggestions mode; the assistant chat is a panel beside the week, and its proposals show "
+          "on the planner as a preview before apply (PLN-25). " + _FAKE),
+    569: ("A planner hint offers assistant chat to a user who has not chatted yet, when the server has a model. Try the "
+          "assistant opens the panel with a first question in the input box; Not now hides the offer for good. While the "
+          "team switch is off (open question 4), the offer shows to team admins only and turns chat on for the whole "
+          "team; members see the notice in the panel (rule 14). " + _FAKE),
+    718: ("Each of the 13 prompt entries (Prompts tab) opens assistant chat with its prompt; rule 8 (create a library "
+          "automation by name in chat) belongs to the automation rows of assistant chat. " + _PROMPT),
+    723: "The model reads the open tasks (list_tasks) and stages work time (propose_create_event). " + _PROMPT,
+    724: "The model reads the open tasks, due first (list_tasks), and answers. " + _PROMPT,
+    730: "The user adds the customer to the prompt; the model stages the three meetings with the customer as guest. " + _PROMPT,
+    732: "The model reads the user's stats (get_stats) of the last 4 weeks. " + _PROMPT,
+    733: ("The user replaces the placeholder with the colleagues; the model finds free time with them (find_free_time) and "
+         "stages the meeting with them as guests. " + _PROMPT),
+    734: "The model reads the user's stats (get_stats), with the meeting time outside work hours. " + _PROMPT,
+    735: ("The model reads team stats (get_team_stats, a chat tool): the same means as the team stats page, no values below "
+          "3 members with a calendar, and no names. " + _PROMPT),
+    736: ("The user names the people; the model finds the earliest free time with them and stages the review. Moving the "
+          "user's lower-priority items is a move of a planned item, as in entry 20. " + _PROMPT),
+    738: ("The user types the new hours; the model reads today's planned items and stages a move of one (propose_update_event "
+          "on a planned task). " + _PROMPT),
+    739: ("Tempoloom decision: the entry is a Recommendations request for the dates in view; the model gets the dates the "
+          "planner shows (the user moves to another week first) and stages a fix for a conflict there. " + _PROMPT),
+    740: "The model finds free time (find_free_time) and stages a short break. " + _PROMPT,
+    742: ("The model reads the open tasks and stages a new priority (propose_task_priority, a chat tool that replays the "
+          "task edit at apply; apply skips it when the task changed after it was staged). " + _PROMPT),
+    749: "The model reads the meetings of the next 7 days (list_events) and suggests prep tasks due before each. " + _PROMPT,
+})
+# --- end C2 ---
 
 # Google Calendar proof. docs/e2e-google-run.tsv records a full E2E run on Google
 # (a "# commit <sha>" line, then status, test id, title per line; docs/e2e-google-run.md
