@@ -159,7 +159,8 @@ export function orgReport(db: Db, teamId: string, q: OrgQuery) {
 
 export type OrgReport = ReturnType<typeof orgReport>;
 
-const COLUMNS: [string, (m: Metrics) => string][] = [
+/** The metrics of a report row: the CSV columns and the chat's names. */
+export const COLUMNS: [string, (m: Metrics) => string][] = [
   ["meeting_hours_per_person_week", (m) => (m.meetings / 60).toFixed(2)],
   ["one_on_one_hours_per_person_week", (m) => (m.oneOnOne / 60).toFixed(2)],
   ["team_meeting_hours_per_person_week", (m) => (m.teamMeetings / 60).toFixed(2)],

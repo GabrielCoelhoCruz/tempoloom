@@ -14,6 +14,7 @@ import type { Db } from "../db.ts";
 import type { LlmTool } from "../llm.ts";
 import { jsonSchema, type Tool, tool } from "../mcp/rpc.ts";
 import { type McpDeps, mcpTools } from "../mcp.ts";
+import { answerTools } from "./answers.ts";
 import { proposeMemory, type Ref } from "./store.ts";
 
 export type ChatToolDeps = Omit<McpDeps, "writeEnabled">;
@@ -87,6 +88,7 @@ export function chatTools(deps: ChatToolDeps): ChatTool[] {
             : { tool: t },
       ),
     memoryTool(deps.db, deps.now),
+    ...answerTools(deps),
   ];
 }
 

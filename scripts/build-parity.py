@@ -1072,8 +1072,8 @@ E2E_NOTES.update({
 # Chat rows: the assistant chat needs a language model, which the owner must supply.
 G2 = "Needs an LLM provider and key from the owner (gate G2)"
 # Rows 568, 674, 675, 676, 682, 685, 689: see the C1 block (assistant chat foundation).
-for n in [6, 47, 316, 369, 569, 582, 609, 612, 627, 661, 662, 677, 678, 679, 680, 681,
-          684, 686, 687, 688, 718]:
+# Rows 6, 47, 582, 609, 612, 627, 680, 681: see the C3 block (assistant chat answers).
+for n in [316, 369, 569, 661, 662, 677, 678, 679, 684, 686, 687, 688, 718]:
     BLOCKED[n] = G2
 # Row 672: see the U73 block (it names the built digest by E2E titles).
 for n in [723, 724, 730, 732, 733, 734, 735, 736, 738, 739, 740, 742, 749]:
@@ -1754,6 +1754,45 @@ E2E_NOTES.update({
           "to the model. " + _FAKE),
 })
 # --- end C1 ---
+
+# --- C3: assistant chat answers (tests/e2e/assistant-C3.spec.ts) ---
+T.update({
+    "c3_next": "the chat suggests what to work on from the tasks panel's lists and names recurring events that could become a flexible meeting or a habit (assistant-chat rule 8; NXT-34)",
+    "c3_task": "a task asked for in the chat is proposed with its fields and created only after approval; the scheduler then places it (planning-tasks TSK-5; assistant-chat rule 12)",
+    "c3_stats": "the chat answers about the user's own stats with the stats page's numbers and stages focus time as advice, written only after approval (analytics-personal-stats rule 14, open question 6; assistant-chat rule 9)",
+    "c3_away": "the chat answers who is away from the team's out-of-office calendar; a person of another team gets no absence of this team (teams-ooo-calendar open question 7)",
+    "c3_org": "the chat answers organization analytics with the organization page's numbers for an analytics admin and refuses a member (analytics-organization rules 9, 11; assistant-chat rule 9)",
+    "c3_help": "the chat answers how Tempoloom works from the help pages with the page's link, and says when the help does not cover a question (assistant-chat rule 10)",
+})
+E2E.update({
+    6: ["c3_task"],
+    47: ["c3_next"],
+    582: ["c3_away"],
+    609: ["c3_stats"],
+    612: ["c3_stats"],
+    627: ["c3_org"],
+    680: ["c3_next"],
+    681: ["c3_help"],
+})
+E2E_NOTES.update({
+    6: ("propose_create_task stages the request of the New task form (POST /api/tasks) in preview mode with the chunks a "
+        "dry run places; fields left out take the task defaults. The task and its events exist only after apply. " + _FAKE),
+    47: ("get_task_suggestions gives the next-up task, Suggested now (scheduler order) and At risk with the reason, the same "
+         "lists as the planner's tasks panel; the model picks the next task, a short task or another choice from them. " + _FAKE),
+    582: ("Tempoloom decision: list_team_time_away reads the absences that the team's out-of-office calendars copied "
+           "(teams-ooo-calendar.md rules 10-15), with the person and the span only, for the caller's own team. " + _FAKE),
+    609: "get_stats gives the numbers of the stats page for the dates asked (rule 14); a prompt part tells the model to answer with them. " + _FAKE,
+    612: ("Tempoloom decision for open question 6: the advice comes in the chat from get_stats (and the automations), names "
+           "the numbers it comes from, and offers focus time with propose_focus_time, which waits in preview mode. " + _FAKE),
+    627: ("get_org_analytics gives the organization report of the page (groups, 7-day periods, the CSV metrics, the privacy "
+           "guard of 3 people) to team admins, the analytics admins; a member gets a refusal (unit test and E2E). " + _FAKE),
+    680: ("Tasks for today as in row 47; suggest_automations lists recurring meetings with guests that the user organizes "
+           "(flexible meetings, the list of the daily email) and solo series (habits), each with the link to the form that "
+           "makes it. " + _FAKE),
+    681: ("The help pages are the user documentation: search_help finds the pages whose text holds most words of the "
+           "question and gives their text and link; with no match the model says the help does not cover it. " + _FAKE),
+})
+# --- end C3 ---
 
 # Google Calendar proof. docs/e2e-google-run.tsv records a full E2E run on Google
 # (a "# commit <sha>" line, then status, test id, title per line; docs/e2e-google-run.md
