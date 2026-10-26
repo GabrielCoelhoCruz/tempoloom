@@ -537,6 +537,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
         llm,
         tools: chatTools({ db, preview, baseUrl: config.BASE_URL, now }),
         now,
+        turnMs: config.TEMPOLOOM_LLM_TURN_MS,
       }),
     ),
   );

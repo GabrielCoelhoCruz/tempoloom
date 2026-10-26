@@ -1698,50 +1698,57 @@ E2E_NOTES[230] = ("All meetings: recovery follows each meeting with another atte
                   "covers on the same calendar; the editor offers the same \u201cVideo meetings only\u201d condition")
 # --- end U73 ---
 
-# --- C1: assistant chat foundation (tests/e2e/assistant-chat.spec.ts, assistant-real.spec.ts) ---
+# --- C1: assistant chat foundation (tests/e2e/assistant-chat.spec.ts) ---
 # The model is an outside service, like the calendar provider: the E2E suite runs
 # it as a fake OpenAI-compatible server (tests/e2e/fake-llm.ts) and checks what
-# the app sent to it; scripts/e2e-llm.sh runs the @llm-real tests on a real model.
+# the app sent to it. The @llm-real tests (tests/e2e/assistant-real.spec.ts) run
+# only with scripts/e2e-llm.sh on a real model, so they are not proof here.
 T.update({
     "c1_panel": "the assistant panel in the planner reads the calendar through tools and keeps the conversation after reload; a failed call keeps the draft (assistant-chat rules 1, 3, 11, edge case 5)",
     "c1_events": "events made, moved, resized and deleted by chat wait in preview mode; nothing is written before approval, the accepted ones after apply (assistant-chat rules 4, 12-14; preview mode rules 1, 6-8)",
     "c1_rsvp": "an invitation is answered by chat only after approval (assistant-chat rule 4; preview mode rules 8, 9)",
-    "c1_memories": "chat memories: remember stores one, the list keeps it after reload, the model gets it as a suggestion only, delete removes it (assistant-chat rules 22-25)",
+    "c1_memories": "chat memories: remember proposes one, the user saves it, the list keeps it after reload, the model gets it in its data, delete removes it (assistant-chat rules 22, 23, 25)",
+    "c1_suggest": "a memory only shapes suggestions: when the model acts on it, the change waits in preview mode and the calendar does not change (assistant-chat rule 24)",
+    "c1_inject": "an invitation whose title tells the assistant to remember something stores no memory without the user's approval (assistant-chat rules 22, 24)",
     "c1_quota": "the usage limit stops chat with the limit and its reset time; without a limit chat goes on (assistant-chat rule 27; plans-feature-inventory rule 2)",
     "c1_switch": "the team switch turns chat off for members with a notice and the admin list; on again, chat replies (teams-settings-templates rules 13-14, T4; assistant-chat rule 2)",
     "c1_unset": "without a configured model the panel says the assistant is not configured and sends nothing (assistant-chat rule 1)",
-    "c1_real_create": "a request in plain words stages a new event in preview mode; the calendar gets it only after approval @llm-real",
-    "c1_real_move": "a move by chat reads the calendar first and waits in preview mode until the user applies it @llm-real",
 })
 E2E.update({
     568: ["c1_switch"],
-    674: ["c1_panel", "c1_unset", "c1_real_create"],
-    675: ["c1_events", "c1_real_move"],
+    674: ["c1_panel", "c1_unset"],
+    675: ["c1_events"],
     676: ["c1_rsvp"],
-    682: ["c1_events", "c1_rsvp", "c1_memories", "c1_real_create", "c1_real_move", "s7_auto", "s7_manual", "u34_flow"],
-    685: ["c1_memories"],
+    682: ["c1_events", "c1_rsvp", "c1_suggest", "c1_inject", "s7_auto", "s7_manual", "u34_flow"],
+    685: ["c1_memories", "c1_suggest", "c1_inject"],
     689: ["c1_quota"],
 })
 _FAKE = ("The model is an outside service: the E2E runs a fake OpenAI-compatible server and checks the request the app "
-         "sent (tools, system prompt, history); scripts/e2e-llm.sh runs the @llm-real tests on a real model")
+         "sent (tools, system prompt, history)")
 E2E_NOTES.update({
     568: ("Team settings has the switch, on by default (open question 4). Off: the member's panel shows the notice and the "
           "team admins, and the server refuses a message (nothing reaches the model). On again: the message gets a reply. " + _FAKE),
     674: ("A panel beside the week (Assistant in the toolbar, or Ask the assistant in the event details). The model gets the "
-          "dates shown and the selected event (the chat message context), reads with the MCP read tools, and keeps the "
-          "conversation context per conversation; a reload shows the conversation. A model failure shows the error and keeps "
-          "the draft (edge case 5). " + _FAKE),
+          "dates shown and the selected event (the chat message context) in a fenced data block, reads with the MCP read "
+          "tools, and keeps the conversation context per conversation within a size budget; a reload shows the conversation. "
+          "A model failure shows the error and keeps the draft (edge case 5); changes that steps before the failure staged "
+          "show in the panel. A turn has one deadline and stops when the page leaves; a resent message (same client id) "
+          "gives the same answer (unit tests). " + _FAKE),
     675: ("Create, move, resize (a new end) and delete use the MCP propose tools, so they stage in preview mode with the source "
           "Assistant chat; accept, discard and reply are in the chat and in preview mode. " + _FAKE),
     676: "Accept, decline or maybe by propose_rsvp; the organizer gets the answer at apply. " + _FAKE,
-    682: ("Every write tool of the chat only stages; the chat has no apply tool. Each test reads Radicale before and after "
-          "apply. A staged change has Reply in chat (preview mode rule 6). " + _FAKE),
-    685: ("Remember stores a memory (save_memory), with the names the model gives and the emails in the text; the bookmark "
-          "opens the list, with Delete. The model gets the memories in its system prompt as suggestions only; a memory stages "
-          "nothing. Roles (manager, reports) are not resolved: the model asks for a name or email (rule 26, no reporting "
+    682: ("Every write tool of the chat only proposes; the chat has no apply tool (a model call of apply_staged_changes is "
+          "refused, unit test), and ids of another user stage nothing (unit test). Memories wait for the user's approval too. "
+          "Each test reads Radicale before and after apply. A staged change has Reply in chat (preview mode rule 6). " + _FAKE),
+    685: ("Remember proposes a memory (save_memory); the user saves or discards it in the chat, so calendar text cannot store "
+          "one. It keeps the names the model gives and the emails in the text; the bookmark opens the list, with Delete. The "
+          "model gets saved memories in a fenced data block as suggestions only; a change a memory leads to is only staged "
+          "(rule 24). Roles (manager, reports) are not resolved: the model asks for a name or email (rule 26, no reporting "
           "tree in the prompt). " + _FAKE),
-    689: ("The operator sets assistant_chat_quota (node src/server/cli.ts limit), messages per person per local day; the "
-          "panel names the limit and when it resets, and the server sends nothing to the model. " + _FAKE),
+    689: ("The operator sets assistant_chat_quota (node src/server/cli.ts limit), messages per person per UTC day, counted "
+          "before the model call in one statement with the check (a failed turn counts; parallel messages and a time zone "
+          "change cannot pass it, unit tests). The panel names the limit and when it resets, and the server sends nothing "
+          "to the model. " + _FAKE),
 })
 # --- end C1 ---
 

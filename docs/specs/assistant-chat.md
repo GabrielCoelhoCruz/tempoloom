@@ -60,7 +60,9 @@ All proposed changes go to preview mode (`assistant-preview-mode.md`).
    (optional) and `TEMPOLOOM_LLM_MODEL`. Without a base URL the panel says the
    assistant is not configured, and the server sends nothing. The chat uses the
    read and propose tools of the MCP server (`assistant-mcp-server.md`); it has
-   no apply tool.
+   no apply tool. Calendar text goes to the model as data, never as
+   instructions. One turn has a time limit (`TEMPOLOOM_LLM_TURN_MS`) and stops
+   when the page leaves.
 2. When the team switch is off, the panel shows the disabled notice
    described in `teams-settings-templates.md` rule 14, and sends nothing.
 
@@ -127,6 +129,11 @@ All proposed changes go to preview mode (`assistant-preview-mode.md`).
 
 22. When the user tells the assistant to remember something, the system
     stores it as a chat memory.
+
+    Tempoloom decision: the assistant proposes the memory in the chat, and the
+    user saves or discards it there. Only saved memories reach the model. So
+    text in the calendar (an invitation from someone else) cannot store a
+    memory without the user.
 23. A bookmark icon in the chat panel opens the memory list. The user can
     read and delete each memory.
 24. Memories shape suggestions only. A memory never triggers an action on
@@ -146,7 +153,9 @@ All proposed changes go to preview mode (`assistant-preview-mode.md`).
     says so and when it resets (proposal).
 
     Tempoloom decision: `assistant_chat_quota` counts the messages a person
-    sends per day in their home time zone; it resets at midnight there.
+    sends per UTC day, so a time zone change cannot reset it. A message counts
+    when it is sent, also when the model fails. The panel shows the reset
+    time in the user's time zone.
 
 ## Outputs
 

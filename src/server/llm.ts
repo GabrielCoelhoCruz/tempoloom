@@ -31,7 +31,7 @@ export interface LlmConfig {
 
 /** A failure the user may see: the text names no URL and no key. */
 export class LlmError extends Error {
-  readonly kind: "timeout" | "network" | "status" | "format";
+  readonly kind: "timeout" | "network" | "status" | "format" | "stopped";
   constructor(message: string, kind: LlmError["kind"]) {
     super(message);
     this.kind = kind;
@@ -40,14 +40,49 @@ export class LlmError extends Error {
 
 export interface Llm {
   model: string;
-  complete(messages: LlmMessage[], tools: LlmTool[]): Promise<LlmMessage & { role: "assistant" }>;
+  /** `signal` stops the call (the turn's deadline, or the client left); its reason, an LlmError, is thrown. */
+  complete(
+    messages: LlmMessage[],
+    tools: LlmTool[],
+    signal?: AbortSignal,
+  ): Promise<LlmMessage & { role: "assistant" }>;
 }
+
+/** The text of a content field: a string, or the text parts of an array of content parts. */
+function contentText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .map((p) =>
+      typeof p === "string"
+        ? p
+        : typeof (p as { text?: unknown })?.text === "string"
+          ? (p as { text: string }).text
+          : "",
+    )
+    .join("");
+}
+
+/** The error a stopped call throws: the signal's reason when it is an LlmError. */
+const stopped = (signal: AbortSignal) =>
+  signal.reason instanceof LlmError
+    ? signal.reason
+    : new LlmError("The request was stopped.", "stopped");
 
 export function createLlm(config: LlmConfig, fetchImpl: typeof fetch = fetch): Llm {
   const url = `${config.baseUrl.replace(/\/+$/, "")}/chat/completions`;
   return {
     model: config.model,
-    async complete(messages, tools) {
+    async complete(messages, tools, signal) {
+      if (signal?.aborted) throw stopped(signal);
+      const timeout = AbortSignal.timeout(config.timeoutMs);
+      const abort = signal ? AbortSignal.any([signal, timeout]) : timeout;
+      const failed = (fallback: LlmError) =>
+        signal?.aborted
+          ? stopped(signal)
+          : timeout.aborted
+            ? new LlmError("The language model did not answer in time.", "timeout")
+            : fallback;
       let res: Response;
       try {
         res = await fetchImpl(url, {
@@ -61,12 +96,10 @@ export function createLlm(config: LlmConfig, fetchImpl: typeof fetch = fetch): L
             messages,
             ...(tools.length ? { tools, tool_choice: "auto" } : {}),
           }),
-          signal: AbortSignal.timeout(config.timeoutMs),
+          signal: abort,
         });
-      } catch (err) {
-        if (err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError"))
-          throw new LlmError("The language model did not answer in time.", "timeout");
-        throw new LlmError("The language model cannot be reached.", "network");
+      } catch {
+        throw failed(new LlmError("The language model cannot be reached.", "network"));
       }
       if (!res.ok) {
         // The body may echo the request; only the status goes into the text.
@@ -79,10 +112,8 @@ export function createLlm(config: LlmConfig, fetchImpl: typeof fetch = fetch): L
       let body: unknown;
       try {
         body = await res.json();
-      } catch (err) {
-        if (err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError"))
-          throw new LlmError("The language model did not answer in time.", "timeout");
-        throw new LlmError("The language model sent an answer that is not JSON.", "format");
+      } catch {
+        throw failed(new LlmError("The language model sent an answer that is not JSON.", "format"));
       }
       const message = (body as { choices?: { message?: unknown }[] })?.choices?.[0]?.message;
       if (!message || typeof message !== "object")
@@ -106,9 +137,12 @@ export function createLlm(config: LlmConfig, fetchImpl: typeof fetch = fetch): L
           },
         });
       }
+      const text = contentText(m.content);
+      if (!text.trim() && toolCalls.length === 0)
+        throw new LlmError("The language model sent an empty answer.", "format");
       return {
         role: "assistant",
-        content: typeof m.content === "string" ? m.content : null,
+        content: text || null,
         ...(toolCalls.length ? { tool_calls: toolCalls } : {}),
       };
     },

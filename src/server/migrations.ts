@@ -1396,10 +1396,12 @@ export const MIGRATIONS: readonly string[] = [
   ALTER TABLE meetings ADD COLUMN auto_lock TEXT CHECK (auto_lock IN ('off', 'day', 'week'));
   `,
   // 51: assistant chat (assistant-chat.md). Conversations and their messages
-  // (rule 11: the context of each conversation; a reload shows it), chat
-  // memories (rules 22-25), the use per user and day for the instance quota
-  // (rule 27), and the team switch (teams-settings-templates.md rules 13-14;
-  // open question 4: on by default).
+  // (rule 11: the context of each conversation; a reload shows it). A message
+  // that staged a change or proposed a memory links to it (ref_kind, ref_id).
+  // Chat memories (rules 22-25) wait for the user's approval (state pending).
+  // assistant_requests makes a resent message idempotent (client_id). The use
+  // per user and UTC day for the instance quota (rule 27), and the team switch
+  // (teams-settings-templates.md rules 13-14; open question 4: on by default).
   `
   CREATE TABLE assistant_conversations (
     id TEXT PRIMARY KEY,
@@ -1419,6 +1421,8 @@ export const MIGRATIONS: readonly string[] = [
     content TEXT,
     tool_calls TEXT,
     tool_call_id TEXT,
+    ref_kind TEXT CHECK (ref_kind IN ('proposal', 'memory')),
+    ref_id TEXT,
     created_at INTEGER NOT NULL,
     PRIMARY KEY (conversation_id, seq)
   ) STRICT;
@@ -1428,9 +1432,20 @@ export const MIGRATIONS: readonly string[] = [
     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     text TEXT NOT NULL,
     people TEXT NOT NULL DEFAULT '[]',
+    state TEXT NOT NULL DEFAULT 'pending' CHECK (state IN ('pending', 'saved')),
     created_at INTEGER NOT NULL
   ) STRICT;
   CREATE INDEX assistant_memories_user ON assistant_memories (user_id, created_at);
+
+  CREATE TABLE assistant_requests (
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    client_id TEXT NOT NULL,
+    state TEXT NOT NULL CHECK (state IN ('running', 'done', 'failed')),
+    conversation_id TEXT,
+    message TEXT NOT NULL DEFAULT '',
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (user_id, client_id)
+  ) STRICT;
 
   CREATE TABLE assistant_usage (
     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,

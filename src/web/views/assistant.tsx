@@ -13,7 +13,7 @@ type Item =
   | { kind: "user"; text: string }
   | { kind: "assistant"; text: string }
   | { kind: "proposal"; changeId: string; summary: string; state: string }
-  | { kind: "memory"; text: string };
+  | { kind: "memory"; memoryId: string; text: string; state: "pending" | "saved" | "removed" };
 
 interface Refusal {
   error: "not_configured" | "chat_disabled" | "quota";
@@ -34,6 +34,12 @@ interface State {
   items: Item[];
   memories: Memory[];
 }
+
+/** A random message id; getRandomValues also works on plain HTTP, randomUUID does not. */
+const newId = () =>
+  Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) =>
+    b.toString(16).padStart(2, "0"),
+  ).join("");
 
 /** The open conversation, kept while the panel is closed; "new" starts one. */
 const current = signal<string | null>(null);
@@ -56,6 +62,8 @@ export function AssistantPanel() {
   const [showMemories, setShowMemories] = useState(false);
   const input = useRef<HTMLTextAreaElement>(null);
   const seq = useRef(0);
+  // The id of the draft's message: a resend after a lost answer gives the same turn.
+  const clientId = useRef(newId());
 
   const load = useCallback(async () => {
     const n = ++seq.current;
@@ -86,12 +94,19 @@ export function AssistantPanel() {
     setSending(true);
     setError(null);
     const ctx = plannerContext.value;
+    const shown = (r: { conversationId?: string; items?: Item[] }) => {
+      if (!r.conversationId || !r.items) return;
+      current.value = r.conversationId;
+      seq.current++;
+      setState({ ...state, conversationId: r.conversationId, items: r.items });
+    };
     try {
       const r = await api<{ conversationId: string; items: Item[] }>(
         "POST",
         "/api/assistant/messages",
         {
           conversationId: state.conversationId,
+          clientId: clientId.current,
           text,
           context: {
             ...(ctx.from ? { from: ctx.from, to: ctx.to } : {}),
@@ -99,20 +114,40 @@ export function AssistantPanel() {
           },
         },
       );
-      current.value = r.conversationId;
+      clientId.current = newId();
       setDraft("");
-      seq.current++;
-      setState({ ...state, conversationId: r.conversationId, items: r.items });
-      // The preview panel reads the staged changes again.
-      dispatchEvent(new Event("tl-staged"));
-      void load();
+      shown(r);
     } catch (err) {
       // Edge case 5: show the error and keep the draft.
-      const body = err instanceof ApiError ? (err.body as { message?: string } | undefined) : null;
+      const body =
+        err instanceof ApiError
+          ? (err.body as
+              | { error?: string; message?: string; conversationId?: string; items?: Item[] }
+              | undefined)
+          : undefined;
+      // The server answered this message: the next send is a new message. Without
+      // an answer (network, proxy) the same id makes the resend safe.
+      if (body?.error) clientId.current = newId();
+      // Steps that ran before the failure may have proposed changes: show them.
+      if (body) shown(body);
       setError(body?.message ?? (err instanceof Error ? err.message : String(err)));
     } finally {
       setSending(false);
+      // The preview panel reads the staged changes again.
+      dispatchEvent(new Event("tl-staged"));
+      void load();
     }
+  };
+
+  const decideMemory = async (id: string, save: boolean) => {
+    setError(null);
+    try {
+      if (save) await api("POST", `/api/assistant/memories/${id}/save`);
+      else await api("DELETE", `/api/assistant/memories/${id}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+    void load();
   };
 
   const decide = async (id: string, decision: "accept" | "discard") => {
@@ -229,9 +264,22 @@ export function AssistantPanel() {
                   </div>
                 );
               if (item.kind === "memory")
-                return (
+                return item.state === "pending" ? (
+                  <div key={i} class="proposal" data-testid="chat-memory">
+                    <strong>Remember: {item.text}</strong>
+                    <div class="meta">Save this memory? It shapes suggestions only.</div>
+                    <div class="actions">
+                      <button type="button" onClick={() => void decideMemory(item.memoryId, true)}>
+                        Save memory
+                      </button>
+                      <button type="button" onClick={() => void decideMemory(item.memoryId, false)}>
+                        Discard
+                      </button>
+                    </div>
+                  </div>
+                ) : (
                   <div key={i} class="msg note" data-testid="chat-memory">
-                    Saved to memories: {item.text}
+                    {item.state === "saved" ? `Saved to memories: ${item.text}` : "Memory removed"}
                   </div>
                 );
               const open = item.state === "pending" || item.state === "accepted";

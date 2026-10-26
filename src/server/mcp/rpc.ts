@@ -18,11 +18,8 @@ export interface Caller {
 /** An error the caller can fix: its message is the tool result. */
 export class ToolError extends Error {}
 
-/**
- * read: no change; stage: stages a change, no calendar write; apply: writes
- * staged changes, deletes too; store: saves a chat memory (assistant chat only).
- */
-export type Effect = "read" | "stage" | "apply" | "store";
+/** read: no change; stage: stages a change, no calendar write; apply: writes staged changes, deletes too. */
+export type Effect = "read" | "stage" | "apply";
 
 export interface Tool {
   name: string;
@@ -79,8 +76,6 @@ const FAILED: Record<Effect, string> = {
     "The tool failed on the server, and the change may have been staged. Call list_staged_changes to check before you try again.",
   apply:
     "The tool failed on the server, and some changes may have been applied. Call list_staged_changes to see which are still open, and list_events to check the calendar, before you try again.",
-  store:
-    "The tool failed on the server, and the memory may have been saved. Ask the user to check the memory list before you try again.",
 };
 
 export type CallResult =
@@ -92,7 +87,12 @@ export type CallResult =
  * chat both call tools through here. Bad arguments and a ToolError give an
  * error text for the caller; another failure says what to check (FAILED).
  */
-export async function callTool(t: Tool, caller: Caller, raw: unknown): Promise<CallResult> {
+export async function callTool(
+  t: Tool,
+  caller: Caller,
+  raw: unknown,
+  failedText: string = FAILED[t.effect],
+): Promise<CallResult> {
   const args = t.input.safeParse(raw ?? {});
   if (!args.success) {
     const issues = args.error.issues.map((i) => `${i.path.join(".") || "arguments"}: ${i.message}`);
@@ -100,7 +100,7 @@ export async function callTool(t: Tool, caller: Caller, raw: unknown): Promise<C
   }
   // A server failure after a write tool ran may come after its change was
   // staged or applied: say so, so the client checks before it tries again.
-  const failed = { isError: true, text: FAILED[t.effect] } as const;
+  const failed = { isError: true, text: failedText } as const;
   try {
     // The result must match the outputSchema that tools/list gave: parse
     // drops other keys, and a wrong type is a server failure, not a result.

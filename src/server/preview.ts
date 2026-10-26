@@ -17,6 +17,7 @@ import { createSession, deleteSession } from "./accounts.ts";
 import type { AppEnv } from "./app.ts";
 import { logChange } from "./change-log.ts";
 import { all, type Db, one, run, tx } from "./db.ts";
+import { extId } from "./event-ids.ts";
 import type { LiveHub } from "./live.ts";
 import type { Mailer } from "./mail.ts";
 import { stripMarker } from "./planner/markers.ts";
@@ -627,8 +628,8 @@ export function createPreview(deps: PreviewDeps) {
 
   /** The cached event behind an "ext:<calendar>:<event>" id, on a calendar of the user. */
   function cachedEvent(userId: string, target: string): Cached | undefined {
-    const rest = target.slice(4);
-    const cut = rest.indexOf(":");
+    const ref = extId(target);
+    if (!ref) return undefined;
     return one<Cached>(
       db,
       `SELECT e.calendar_id, e.event_id, e.summary, e.start_ms, e.end_ms, e.etag, e.attendees,
@@ -636,8 +637,8 @@ export function createPreview(deps: PreviewDeps) {
        FROM events e JOIN calendars c ON c.id = e.calendar_id JOIN accounts a ON a.id = c.account_id
        WHERE a.user_id = ? AND e.calendar_id = ? AND e.event_id = ?`,
       userId,
-      rest.slice(0, cut),
-      rest.slice(cut + 1),
+      ref.calendarId,
+      ref.eventId,
     );
   }
 

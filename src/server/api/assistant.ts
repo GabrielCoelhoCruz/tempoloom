@@ -3,12 +3,16 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import type { AppEnv } from "../app.ts";
-import { type Chat, LlmError } from "../assistant/chat.ts";
-import { conversations, deleteMemory, memories, ownsConversation } from "../assistant/store.ts";
+import type { Chat } from "../assistant/chat.ts";
+import {
+  conversations,
+  deleteMemory,
+  memories,
+  ownsConversation,
+  saveMemory,
+} from "../assistant/store.ts";
 import type { Db } from "../db.ts";
 import { jsonBody, notFound } from "../http.ts";
-
-const STATUS = { not_configured: 503, chat_disabled: 403, quota: 429 } as const;
 
 export function assistantRoutes(db: Db, chat: Chat): Hono<AppEnv> {
   const r = new Hono<AppEnv>();
@@ -35,12 +39,12 @@ export function assistantRoutes(db: Db, chat: Chat): Hono<AppEnv> {
   });
 
   r.post("/assistant/messages", async (c) => {
-    const user = c.get("user");
     const body = await jsonBody(
       c,
       z.object({
         conversationId: z.string().nullable().optional(),
         text: z.string().trim().min(1).max(4000),
+        clientId: z.string().min(8).max(100).optional(),
         context: z
           .object({
             from: z.string().max(10).optional(),
@@ -50,22 +54,15 @@ export function assistantRoutes(db: Db, chat: Chat): Hono<AppEnv> {
           .optional(),
       }),
     );
-    const refused = chat.refusal(user);
-    if (refused) return c.json(refused, STATUS[refused.error]);
-    try {
-      const { conversationId } = await chat.send(
-        user,
-        body.conversationId ?? null,
-        body.text,
-        body.context ?? {},
-      );
-      return c.json({ conversationId, items: chat.items(user.id, conversationId) });
-    } catch (err) {
-      if (!(err instanceof LlmError)) throw err;
-      // The text names no URL and no key (src/server/llm.ts).
-      console.error(`Assistant chat: ${err.message}`);
-      return c.json({ error: "llm_failed", message: err.message }, 502);
-    }
+    // The request's signal stops the turn when the client leaves.
+    const r = await chat.send(c.get("user"), body, c.req.raw.signal);
+    return c.json(r.body, r.status as 200);
+  });
+
+  /** The user approves a memory the assistant proposed (rule 22). */
+  r.post("/assistant/memories/:id/save", (c) => {
+    if (!saveMemory(db, c.get("user").id, c.req.param("id"))) notFound("memory");
+    return c.json({ ok: true });
   });
 
   r.get("/assistant/memories", (c) => c.json({ memories: memories(db, c.get("user").id) }));

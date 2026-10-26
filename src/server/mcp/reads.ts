@@ -7,6 +7,7 @@ import { addDays, localToUtc, utcToLocal } from "../../shared/time.ts";
 import type { User } from "../accounts.ts";
 import { plannerEvents } from "../api/planner.ts";
 import { all, type Db, one } from "../db.ts";
+import { extId } from "../event-ids.ts";
 import { externalEvents } from "../planner/events.ts";
 import { zoneOf } from "../preview.ts";
 import { ToolError } from "./rpc.ts";
@@ -48,16 +49,15 @@ export interface CachedRow {
 }
 
 export function cached(db: Db, userId: string, id: string): CachedRow | undefined {
-  if (!id.startsWith("ext:")) return undefined;
-  const rest = id.slice(4);
-  const cut = rest.indexOf(":");
+  const ref = extId(id);
+  if (!ref) return undefined;
   return one<CachedRow>(
     db,
     `SELECT e.*, c.writable FROM events e JOIN calendars c ON c.id = e.calendar_id
      JOIN accounts a ON a.id = c.account_id WHERE a.user_id = ? AND e.calendar_id = ? AND e.event_id = ?`,
     userId,
-    rest.slice(0, cut),
-    rest.slice(cut + 1),
+    ref.calendarId,
+    ref.eventId,
   );
 }
 

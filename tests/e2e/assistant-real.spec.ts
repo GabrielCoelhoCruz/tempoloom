@@ -1,11 +1,11 @@
-// Assistant chat checks that hold for any reasonable model answer. The suite
-// runs them with the fake model (scripted like a model would answer);
-// scripts/e2e-llm.sh runs them (tag @llm-real) against the real endpoint.
-// They check what the app does, not the words: a proposal appears in preview
-// mode, nothing is written before approval, and apply writes it.
+// Assistant chat checks against a real model (tag @llm-real). Only
+// scripts/e2e-llm.sh runs them: it sets TEMPOLOOM_E2E_LLM=real and the real
+// endpoint. Without it they are skipped; the fake-model tests are in
+// assistant-chat.spec.ts. They check what the app does, not the words: a
+// proposal appears in preview mode, nothing is written before approval, and
+// apply writes it.
 import { addDays } from "../../src/shared/time.ts";
 import { chatPanel, openAssistant, say } from "./assistant-helpers.ts";
-import { type ChatRequest, toolJson } from "./fake-llm.ts";
 import {
   at,
   type CalendarDriver,
@@ -17,36 +17,22 @@ import {
   test,
 } from "./fixtures.ts";
 import { W } from "./helpers.ts";
-import { iso, previewPanel, reviewAndApply } from "./preview-helpers.ts";
+import { previewPanel, reviewAndApply } from "./preview-helpers.ts";
 
 const tue = addDays(W, 1);
 const wed = addDays(W, 2);
 const weekEvents = (cal: CalendarDriver) => cal.events(at(W, "00:00"), at(addDays(W, 7), "00:00"));
 // A real model takes seconds per call and may call several tools.
-const MODEL_MS = REAL_LLM ? 150_000 : 30_000;
+const MODEL_MS = 150_000;
+
+test.skip(!REAL_LLM, "Needs the real model: run scripts/e2e-llm.sh");
 
 test("a request in plain words stages a new event in preview mode; the calendar gets it only after approval @llm-real", async ({
   page,
   cal,
   signIn,
-  llm,
 }) => {
-  test.setTimeout(REAL_LLM ? 400_000 : 180_000);
-  llm.on(/quarterly planning/i, [
-    {
-      tools: [
-        {
-          name: "propose_create_event",
-          arguments: {
-            title: "Quarterly planning",
-            start: iso(at(tue, "14:00")),
-            end: iso(at(tue, "15:00")),
-          },
-        },
-      ],
-    },
-    { content: "I staged Quarterly planning. It waits for your approval." },
-  ]);
+  test.setTimeout(400_000);
   await signIn();
   await page.goto(`/?week=${W}`);
   await openAssistant(page);
@@ -84,36 +70,9 @@ test("a move by chat reads the calendar first and waits in preview mode until th
   page,
   cal,
   signIn,
-  llm,
 }) => {
-  test.setTimeout(REAL_LLM ? 400_000 : 180_000);
+  test.setTimeout(400_000);
   await cal.addEvent({ title: "Vendor call", start: at(wed, "10:00"), end: at(wed, "11:00") });
-  llm.on(/vendor call/i, [
-    {
-      tools: [
-        {
-          name: "list_events",
-          arguments: { start: iso(at(wed, "00:00")), end: iso(at(addDays(wed, 1), "00:00")) },
-        },
-      ],
-    },
-    (req: ChatRequest) => ({
-      tools: [
-        {
-          name: "propose_update_event",
-          arguments: {
-            event_id: toolJson<{ events: { id: string; title: string }[] }>(
-              req,
-              "list_events",
-            ).events.find((e) => e.title === "Vendor call")?.id,
-            start: iso(at(wed, "16:00")),
-            end: iso(at(wed, "17:00")),
-          },
-        },
-      ],
-    }),
-    { content: "The move waits for your approval." },
-  ]);
   await signIn();
   await page.goto(`/?week=${W}`);
   await expect(page.locator(".ev", { hasText: "Vendor call" })).toBeVisible();

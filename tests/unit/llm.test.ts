@@ -1,5 +1,5 @@
-// The client of the OpenAI-compatible endpoint (src/server/llm.ts) and the turn
-// loop of assistant chat (src/server/assistant/chat.ts).
+// The client of the OpenAI-compatible endpoint (src/server/llm.ts). The turn
+// loop of assistant chat has its own tests (assistant-chat.test.ts).
 //
 // Ways it can fail:
 // 1. The request goes to the wrong path, without the bearer key, or without
@@ -7,26 +7,13 @@
 // 2. A tool call with object arguments, or without an id, is lost.
 // 3. An error, a timeout or a broken answer hangs, or its text (shown to the
 //    user and logged) holds the key or the base URL.
-// 4. The loop does not run the tools, sends no tool results back, or runs
-//    forever when the model keeps calling tools.
-// 5. A chat write tool writes instead of staging, or stages as an AI tool.
-// 6. A failed turn saves half a conversation; a finished one loses its history.
-// 7. A key reaches the server log on a failed turn.
-import { Hono } from "hono";
+// 4. Content as an array of parts is lost, or an empty answer counts as one.
+// 5. A stopped call (turn deadline, client left) keeps running, or loses its reason.
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ensureUser, type User } from "../../src/server/accounts.ts";
-import { assistantRoutes } from "../../src/server/api/assistant.ts";
-import type { AppEnv } from "../../src/server/app.ts";
-import { createChat, MAX_STEPS } from "../../src/server/assistant/chat.ts";
-import { messagesOf } from "../../src/server/assistant/store.ts";
-import { chatTools } from "../../src/server/assistant/tools.ts";
-import { all, openDb } from "../../src/server/db.ts";
-import { createLlm, type Llm, LlmError, type LlmMessage } from "../../src/server/llm.ts";
-import { createPreview, type PreviewDeps } from "../../src/server/preview.ts";
+import { createLlm, LlmError } from "../../src/server/llm.ts";
 
 const KEY = "sk-secret-key-123";
 const BASE = "https://llm.internal.example/v1/";
-const T0 = Date.parse("2026-10-19T08:00:00Z");
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -136,150 +123,42 @@ describe("LLM client", () => {
     expect((await failure(recorder(() => new Response("not json")).f)).kind).toBe("format");
     expect((await failure(recorder(() => Response.json({ choices: [] })).f)).kind).toBe("format");
   });
-});
 
-// ------------------------------------------------------------------ the turn loop
-
-function setup(script: (messages: LlmMessage[], n: number) => LlmMessage & { role: "assistant" }) {
-  const db = openDb(":memory:");
-  const now = () => T0;
-  const user = ensureUser(db, "owner@example.com", "Owner", T0) as User;
-  const writes: string[] = [];
-  const preview = createPreview({
-    db,
-    sync: {
-      runNow: async () => void writes.push("sync"),
-      idle: async () => {},
-      request: () => void writes.push("sync"),
-    },
-    mailer: {},
-    live: { notify: () => {} },
-    now,
-    app: () => new Hono(),
-    dry: () => null,
-  } as unknown as PreviewDeps);
-  const sent: { messages: LlmMessage[]; tools: string[] }[] = [];
-  const llm: Llm = {
-    model: "m",
-    complete: async (messages, tools) => {
-      sent.push({ messages: structuredClone(messages), tools: tools.map((t) => t.function.name) });
-      return script(messages, sent.length);
-    },
-  };
-  const chat = createChat({
-    db,
-    llm,
-    tools: chatTools({ db, preview, baseUrl: "http://localhost:3000", now }),
-    now,
-  });
-  return { db, user, chat, sent, writes };
-}
-
-const call = (name: string, args: unknown): LlmMessage & { role: "assistant" } => ({
-  role: "assistant",
-  content: null,
-  tool_calls: [
-    { id: `c-${name}`, type: "function", function: { name, arguments: JSON.stringify(args) } },
-  ],
-});
-
-describe("assistant chat turn", () => {
-  it("runs a write tool as a staged change from assistant chat, sends the result back, and saves the turn", async () => {
-    const { db, user, chat, sent, writes } = setup((_m, n) =>
-      n === 1
-        ? call("propose_create_event", {
-            title: "Deep work",
-            start: "2026-10-20T13:00:00+02:00",
-            end: "2026-10-20T15:00:00+02:00",
-          })
-        : { role: "assistant", content: "Staged." },
-    );
-    const { conversationId } = await chat.send(user, null, "Book deep work", {});
-    expect(sent).toHaveLength(2);
-    expect(sent[0]?.tools).toContain("propose_create_event");
-    expect(sent[0]?.tools).not.toContain("apply_staged_changes");
-    const toolMsg = sent[1]?.messages.at(-1);
-    expect(toolMsg).toMatchObject({ role: "tool", tool_call_id: "c-propose_create_event" });
-    expect(JSON.parse((toolMsg as { content: string }).content)).toMatchObject({
-      state: "pending",
-    });
+  it("joins the text parts of array content, and refuses an empty answer", async () => {
+    const llm = (message: unknown) =>
+      createLlm({ baseUrl: BASE, model: "m", timeoutMs: 1000 }, recorder(() => ok(message)).f);
     expect(
-      all(db, "SELECT source, kind, state FROM staged_changes WHERE user_id = ?", user.id),
-    ).toEqual([{ source: "assistant_chat", kind: "event_create", state: "pending" }]);
-    expect(writes).toEqual([]);
-    expect(messagesOf(db, conversationId).map((m) => m.role)).toEqual([
-      "user",
-      "assistant",
-      "tool",
-      "assistant",
-    ]);
-    expect(chat.items(user.id, conversationId)).toEqual([
-      { kind: "user", text: "Book deep work" },
-      expect.objectContaining({ kind: "proposal", state: "pending" }),
-      { kind: "assistant", text: "Staged." },
-    ]);
+      await llm({
+        role: "assistant",
+        content: [
+          { type: "text", text: "Hello " },
+          { type: "image_url", image_url: {} },
+          { type: "text", text: "there" },
+        ],
+      }).complete([], []),
+    ).toEqual({ role: "assistant", content: "Hello there" });
+    for (const content of [null, "", "  ", []]) {
+      const err = await llm({ role: "assistant", content })
+        .complete([], [])
+        .catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(LlmError);
+      expect((err as LlmError).message).toBe("The language model sent an empty answer.");
+    }
   });
 
-  it("sends the stored conversation as context on the next turn", async () => {
-    const { user, chat, sent } = setup((_m, n) => ({ role: "assistant", content: `answer ${n}` }));
-    const { conversationId } = await chat.send(user, null, "first", {});
-    await chat.send(user, conversationId, "second", { from: "2026-10-19", to: "2026-10-26" });
-    const last = sent.at(-1)?.messages ?? [];
-    expect(last.map((m) => [m.role, m.role === "system" ? "" : m.content])).toEqual([
-      ["system", ""],
-      ["user", "first"],
-      ["assistant", "answer 1"],
-      ["user", "second"],
-    ]);
-    expect(last[0]?.content).toContain("The planner shows the dates 2026-10-19 to 2026-10-26");
-  });
-
-  it("answers bad arguments and unknown tools with an error result, and stops after MAX_STEPS calls", async () => {
-    const { db, user, chat, sent } = setup(() => ({
-      role: "assistant",
-      content: null,
-      tool_calls: [
-        { id: "a", type: "function", function: { name: "nope", arguments: "{}" } },
-        { id: "b", type: "function", function: { name: "list_events", arguments: "{oops" } },
-      ],
-    }));
-    const { conversationId } = await chat.send(user, null, "loop", {});
-    expect(sent).toHaveLength(MAX_STEPS);
-    const results = sent[1]?.messages.filter((m) => m.role === "tool").map((m) => m.content);
-    expect(results).toEqual([
-      "Error: there is no tool nope.",
-      "Error: the arguments are not valid JSON.",
-    ]);
-    expect(messagesOf(db, conversationId).at(-1)?.content).toContain("too many steps");
-  });
-
-  it("saves nothing of a turn whose model call fails, and the route logs no key", async () => {
-    const { db, user, chat } = setup(() => {
-      throw new LlmError("The language model answered with an error (HTTP 500).", "status");
-    });
-    await expect(chat.send(user, null, "hello", {})).rejects.toBeInstanceOf(LlmError);
-    expect(all(db, "SELECT * FROM assistant_messages")).toEqual([]);
-
-    const app = new Hono<AppEnv>();
-    app.use("*", async (c, next) => {
-      c.set("user", user);
-      await next();
-    });
-    app.route("/api", assistantRoutes(db, chat));
-    const logged: string[] = [];
-    for (const k of ["log", "error", "warn", "info"] as const)
-      vi.spyOn(console, k).mockImplementation((...a: unknown[]) => void logged.push(a.join(" ")));
-    const res = await app.request("/api/assistant/messages", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ text: "hello" }),
-    });
-    expect(res.status).toBe(502);
-    expect(await res.json()).toEqual({
-      error: "llm_failed",
-      message: "The language model answered with an error (HTTP 500).",
-    });
-    expect(logged.join("\n")).not.toContain(KEY);
-    expect(all(db, "SELECT * FROM assistant_usage")).toEqual([]);
+  it("a stopped signal ends the call at once with the signal's reason", async () => {
+    const hang = ((_url: string, init: RequestInit) =>
+      new Promise((_, reject) => {
+        init.signal?.addEventListener("abort", () => reject(init.signal?.reason));
+      })) as unknown as typeof fetch;
+    const stop = new AbortController();
+    const reason = new LlmError("The assistant did not finish in time.", "timeout");
+    setTimeout(() => stop.abort(reason), 20);
+    const llm = createLlm({ baseUrl: BASE, model: "m", timeoutMs: 10_000 }, hang);
+    expect(await llm.complete([], [], stop.signal).catch((e: unknown) => e)).toBe(reason);
+    const other = new AbortController();
+    other.abort();
+    const err = await llm.complete([], [], other.signal).catch((e: unknown) => e);
+    expect((err as LlmError).kind).toBe("stopped");
   });
 });
