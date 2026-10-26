@@ -786,17 +786,21 @@ export function createPreview(deps: PreviewDeps) {
       ]);
       return;
     }
-    const v = ch.after as { title?: string; start: number; end: number };
+    // A description comes from the chat's video link fix (assistant-chat.md rule 16).
+    const v = ch.after as { title?: string; start: number; end: number; description?: string };
     const title = v.title ?? cur.summary;
     const ev = await deps.sync.exclusive(userId, (pool) =>
-      pool
-        .get(cur.account_id)
-        .editExternal(
-          cur.provider_id,
-          cur.event_id,
-          { start: v.start, end: v.end, ...(v.title ? { summary: v.title } : {}) },
-          cur.etag,
-        ),
+      pool.get(cur.account_id).editExternal(
+        cur.provider_id,
+        cur.event_id,
+        {
+          start: v.start,
+          end: v.end,
+          ...(v.title ? { summary: v.title } : {}),
+          ...(v.description !== undefined ? { description: v.description } : {}),
+        },
+        cur.etag,
+      ),
     );
     cacheEvent(db, cur.calendar_id, ev);
     logChange(
@@ -814,10 +818,21 @@ export function createPreview(deps: PreviewDeps) {
       },
       now(),
     );
-    await notifyAttendees(userId, attendees, `Updated: ${title}`, [
-      `${title} moved to ${when(zone, v.start, v.end)} (${zone}).`,
-      `It was ${when(zone, cur.start_ms, cur.end_ms)}.`,
-    ]);
+    const moved = v.start !== cur.start_ms || v.end !== cur.end_ms;
+    await notifyAttendees(
+      userId,
+      attendees,
+      `Updated: ${title}`,
+      moved
+        ? [
+            `${title} moved to ${when(zone, v.start, v.end)} (${zone}).`,
+            `It was ${when(zone, cur.start_ms, cur.end_ms)}.`,
+          ]
+        : [
+            `${title} on ${when(zone, v.start, v.end)} (${zone}) changed.`,
+            ...(v.description !== undefined ? ["", v.description] : []),
+          ],
+    );
   }
 
   /**

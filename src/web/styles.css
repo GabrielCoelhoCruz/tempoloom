@@ -970,8 +970,12 @@ fieldset {
 }
 .assistant-head {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
+}
+.assistant-head button {
+  white-space: nowrap;
 }
 .assistant-head .spacer {
   flex: 1;
@@ -987,6 +991,7 @@ fieldset {
   padding: 8px 10px;
   border-radius: var(--radius);
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
   max-width: 90%;
 }
 .assistant .msg.user {

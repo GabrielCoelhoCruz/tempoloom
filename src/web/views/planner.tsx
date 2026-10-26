@@ -177,6 +177,11 @@ export function Planner() {
   const fromDay = days[0] ?? weekStart;
   const toDay = addDays(days.at(-1) ?? weekStart, 1);
   const selectedId = selected?.id;
+  // A digest link (?assistant=<conversation>) opens the chat with its staged fixes.
+  useEffect(() => {
+    if (new URLSearchParams(location.search).has("assistant"))
+      void import("./assistant.tsx").then((m) => m.openFromLink());
+  }, []);
   useEffect(() => {
     plannerContext.value = {
       from: fromDay,

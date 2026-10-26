@@ -80,6 +80,12 @@ All proposed changes go to preview mode (`assistant-preview-mode.md`).
 7. Create, edit or disable automations (focus time, habits, buffers,
    flexible meetings, meeting checks), with the same settings as the
    automation forms (`automations-library.md`, automation specs).
+
+   Tempoloom decision: the chat stages the request that the automation form,
+   or for team admins the team policy form (`teams-policies.md`), sends. A dry
+   run checks it first, so a field the form refuses goes back to the model,
+   and the staged change shows its calendar impact. Apply sends the request
+   again as the user.
 8. Suggest which tasks to work on today, and which existing events could
    become automations.
 9. Answer questions about the user's stats (`analytics-personal-stats.md`)
@@ -115,6 +121,15 @@ All proposed changes go to preview mode (`assistant-preview-mode.md`).
     is only one daily digest.
 18. Opening the digest opens assistant chat with the recommended fixes
     already staged for review.
+
+    Tempoloom decision: the review runs at the digest time, just before the
+    digest, so its fixes see the newest calendar; there is no separate 02:00
+    run. It is one chat turn with the Recommendations request, in a new
+    conversation, and does not count toward `assistant_chat_quota`. It runs
+    only when the digest has issues to send and chat is on for the user. The
+    digest links to the planner with `?assistant=<conversation>`, which opens
+    the panel on that conversation. A missing video link is fixed only with a
+    link from the user or the memories.
 19. A "Recommendations" action in the chat panel runs the same review at
     any time.
 20. To review another week, the user moves the planner to that week and

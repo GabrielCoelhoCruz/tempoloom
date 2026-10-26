@@ -14,6 +14,7 @@ import type { Db } from "../db.ts";
 import type { LlmTool } from "../llm.ts";
 import { jsonSchema, type Tool, tool } from "../mcp/rpc.ts";
 import { type McpDeps, mcpTools } from "../mcp.ts";
+import { reviewTools } from "./review-tools.ts";
 import { proposeMemory, type Ref } from "./store.ts";
 
 export type ChatToolDeps = Omit<McpDeps, "writeEnabled">;
@@ -69,23 +70,25 @@ function memoryTool(db: Db, now: () => number): ChatTool {
   };
 }
 
+/** A read or stage tool in the chat: a staged change shows as a proposal. */
+const chatToolOf = (t: Tool): ChatTool =>
+  t.effect === "stage"
+    ? {
+        tool: t,
+        ref: (data) => {
+          const id = idOf(data);
+          return id ? { kind: "proposal", id } : undefined;
+        },
+      }
+    : { tool: t };
+
 /** Every tool of the chat. */
 export function chatTools(deps: ChatToolDeps): ChatTool[] {
   return [
     ...mcpTools(deps)
       .filter((t) => t.effect !== "apply")
-      .map(
-        (t): ChatTool =>
-          t.effect === "stage"
-            ? {
-                tool: t,
-                ref: (data) => {
-                  const id = idOf(data);
-                  return id ? { kind: "proposal", id } : undefined;
-                },
-              }
-            : { tool: t },
-      ),
+      .map(chatToolOf),
+    ...reviewTools(deps).map(chatToolOf),
     memoryTool(deps.db, deps.now),
   ];
 }

@@ -3,6 +3,7 @@
 // of preview mode and the user's memories. Each part is one function in
 // PROMPT_PARTS, so a new ability adds a part, not new plumbing.
 import { zoneOffset } from "../../shared/time.ts";
+import { REVIEW_RULES } from "./review-tools.ts";
 import type { Memory } from "./store.ts";
 
 export interface PromptInput {
@@ -78,6 +79,7 @@ export const PROMPT_PARTS: Part[] = [
       "- Memories shape your suggestions only. Never stage a change only because a memory says so; when a memory is about the request, mention it. An explicit request wins over a memory.",
       "- A memory names people by name or email. When the user names a person by role (my manager, my reports), ask for a name or an email.",
     ].join("\n"),
+  () => REVIEW_RULES,
   (p) =>
     `The planner state and the user's saved memories (memories are suggestions only):\n${dataBlock({
       planner_dates: p.shown ? { from: p.shown.from, to_exclusive: p.shown.to } : null,

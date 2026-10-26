@@ -9,6 +9,7 @@
 //   node src/server/cli.ts weekly-reports [--now 2026-10-23T08:30:00Z]   (--now: TEMPOLOOM_TEST_MODE=1 only)
 import { parseArgs } from "node:util";
 import { createLoginLink, ensureUser } from "./accounts.ts";
+import { dailyReview } from "./assistant/nightly.ts";
 import { sendDueReminders } from "./booking-mail.ts";
 import { clockOf, loadConfig } from "./config.ts";
 import { SecretBox } from "./crypto.ts";
@@ -53,12 +54,14 @@ if (command === "weekly-reports") {
     throw new Error("--now needs TEMPOLOOM_TEST_MODE=1 (tests only)");
   const at = values.now ? Date.parse(values.now) : clockOf(config)();
   if (Number.isNaN(at)) throw new Error("--now must be an ISO date and time");
+  const mailer = createMailer(config.SMTP_URL, config.MAIL_FROM);
   const worker = new DailyMailWorker({
     db,
-    mailer: createMailer(config.SMTP_URL, config.MAIL_FROM),
+    mailer,
     now: () => at,
     baseUrl: config.BASE_URL,
     intervalMs: 60_000,
+    review: dailyReview({ db, config, mailer, now: () => at }),
   });
   const n = await worker.tick();
   console.log(`sent ${n} report${n === 1 ? "" : "s"}`);

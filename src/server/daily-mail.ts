@@ -7,6 +7,7 @@
 // occurrence.
 import type { ReportEntry } from "../scheduler/model.ts";
 import { addDays, type LocalDate, localToUtc, utcToLocal, weekdayOf } from "../shared/time.ts";
+import type { Review } from "./assistant/nightly.ts";
 import { all, type Db, one, run } from "./db.ts";
 import type { Mailer, Message } from "./mail.ts";
 import { openIssues } from "./meeting-checks.ts";
@@ -109,6 +110,8 @@ export interface DailyMailDeps {
   intervalMs: number;
   /** false: no weekly reports (the operator's WEEKLY_REPORTS=off). */
   weeklyReports?: boolean;
+  /** Assistant chat's review of the digest days (assistant-chat.md rules 15-18), if a model is connected. */
+  review?: Review | undefined;
   log?: (msg: string, err?: unknown) => void;
 }
 
@@ -201,7 +204,7 @@ export class DailyMailWorker {
    * Rule 6: open issues of the days that assistant-chat.md rule 15 reviews
    * (`digestDays`); nothing when there are none.
    */
-  async #digest(u: { id: string; email: string; time_zone: string }, now: number) {
+  async #digest(u: { id: string; email: string; name: string; time_zone: string }, now: number) {
     const { db } = this.#d;
     const weekly = workHours(db, u.id);
     const { from, to } = digestDays(
@@ -213,6 +216,19 @@ export class DailyMailWorker {
     const issues = openIssues(db, u.id, now, localToUtc(u.time_zone, addDays(to, 1), 0));
     if (issues.length === 0) return;
     const lines = issues.map((i) => `- ${when(u.time_zone, i.start)} ${i.title}: ${i.message}`);
+    // Rules 16, 18: assistant chat stages the fixes, and the link opens it with them.
+    let conversation: string | null = null;
+    try {
+      conversation = (await this.#d.review?.(u, from, addDays(to, 1))) ?? null;
+    } catch (err) {
+      this.#log(`assistant review for ${u.email} failed`, err);
+    }
+    const open = conversation
+      ? [
+          "Assistant chat staged fixes for these issues. Nothing changes until you apply them.",
+          `Review the fixes: ${new URL(`/?assistant=${conversation}`, this.#d.baseUrl).toString()}`,
+        ]
+      : [`Open the planner to fix or ignore them: ${new URL("/", this.#d.baseUrl).toString()}`];
     await this.#send(
       u.email,
       `Meeting issues: ${issues.length} to look at`,
@@ -221,7 +237,7 @@ export class DailyMailWorker {
         "",
         ...lines,
         "",
-        `Open the planner to fix or ignore them: ${new URL("/", this.#d.baseUrl).toString()}`,
+        ...open,
       ].join("\n"),
     );
   }

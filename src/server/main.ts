@@ -1,5 +1,6 @@
 import { serve } from "@hono/node-server";
 import { createApp } from "./app.ts";
+import { dailyReview } from "./assistant/nightly.ts";
 import { sendDueReminders } from "./booking-mail.ts";
 import { clockOf, loadConfig } from "./config.ts";
 import { SecretBox } from "./crypto.ts";
@@ -69,6 +70,7 @@ const dailyMail = new DailyMailWorker({
   baseUrl: config.BASE_URL,
   intervalMs: config.SYNC_INTERVAL_SECONDS * 1000,
   weeklyReports: config.WEEKLY_REPORTS === "on",
+  review: dailyReview({ db, config, mailer, now }),
 });
 
 const server = serve({ fetch: app.fetch, port: config.PORT, hostname: config.HOST }, (info) => {

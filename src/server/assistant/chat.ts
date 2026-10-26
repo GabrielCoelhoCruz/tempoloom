@@ -10,6 +10,7 @@
 // fails later saves the steps that ran, so the panel shows what they proposed.
 // A message id from the client makes a resend give the same answer.
 import { randomUUID } from "node:crypto";
+import { reviewRequest } from "../../shared/assistant-review.ts";
 import type { User } from "../accounts.ts";
 import { all, type Db, one } from "../db.ts";
 import { instanceLimit, limitMessage } from "../limits.ts";
@@ -434,7 +435,23 @@ export function createChat(deps: ChatDeps) {
     return out;
   }
 
-  return { configured: llm !== null, refusal, quota, send, items, waitMs };
+  /**
+   * Rules 15, 16, 18: the review of the days from `from` to `toExclusive` in a
+   * new conversation, as the Recommendations action asks it; the fixes the
+   * model proposes wait in preview mode. The system starts it, so it does not
+   * count toward the user's quota. Returns the conversation, or null when chat
+   * is off for the user or the model failed before it proposed anything.
+   */
+  async function review(user: User, from: string, toExclusive: string): Promise<string | null> {
+    const refused = refusal(user);
+    if (refused && refused.error !== "quota") return null;
+    const r = await turn(user, null, reviewRequest(from, toExclusive), { from, to: toExclusive });
+    // The text names no URL and no key (src/server/llm.ts).
+    if (!r.ok) console.error(`Assistant review: ${r.error.message}`);
+    return r.conversationId;
+  }
+
+  return { configured: llm !== null, refusal, quota, send, items, review, waitMs };
 }
 
 export type Chat = ReturnType<typeof createChat>;
