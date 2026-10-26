@@ -22,6 +22,7 @@ import type { LiveHub } from "./live.ts";
 import type { Mailer } from "./mail.ts";
 import { stripMarker } from "./planner/markers.ts";
 import { planningSnapshot, writeCalendar } from "./planner/replan.ts";
+import type { ExternalChange } from "./providers/types.ts";
 import { getSettings } from "./settings.ts";
 import { cacheEvent } from "./sync/pull.ts";
 import type { SyncService } from "./sync/service.ts";
@@ -116,6 +117,17 @@ const fromRow = (r: Row): StagedChange => ({
   result: r.result,
   createdAt: r.created_at,
 });
+
+/**
+ * The full new description of a staged event change, or null: the user reads
+ * all of it before approval, because apply writes it to a shared event and
+ * mails it to the guests.
+ */
+export function newDescription(ch: Pick<StagedChange, "kind" | "after">): string | null {
+  if (ch.kind !== "event_update" && ch.kind !== "event_create") return null;
+  const d = (ch.after as { description?: unknown } | null)?.description;
+  return typeof d === "string" && d !== "" ? d : null;
+}
 
 // ---------------------------------------------------------------- mode
 
@@ -797,21 +809,24 @@ export function createPreview(deps: PreviewDeps) {
       ]);
       return;
     }
-    // A new time, title or description (an agenda by chat, assistant-chat.md).
-    const v = ch.after as { title?: string; start: number; end: number; description?: string };
-    const title = v.title ?? cur.summary;
+    // A new time, title or description. Only the fields that differ go to the
+    // calendar: an unchanged start and end are not sent, so an all-day event
+    // stays all-day and a provider does not ask the guests again.
+    const v = ch.after as { title?: string; start?: number; end?: number; description?: string };
+    const start = v.start ?? cur.start_ms;
+    const end = v.end ?? cur.end_ms;
+    const moved = start !== cur.start_ms || end !== cur.end_ms;
+    const renamed = v.title !== undefined && v.title !== cur.summary;
+    const described = v.description !== undefined && v.description !== cur.description;
+    const title = renamed ? (v.title as string) : cur.summary;
+    const change: ExternalChange = {
+      ...(moved ? { start, end } : {}),
+      ...(renamed ? { summary: title } : {}),
+      ...(described ? { description: v.description } : {}),
+    };
+    if (!moved && !renamed && !described) return;
     const ev = await deps.sync.exclusive(userId, (pool) =>
-      pool.get(cur.account_id).editExternal(
-        cur.provider_id,
-        cur.event_id,
-        {
-          start: v.start,
-          end: v.end,
-          ...(v.title ? { summary: v.title } : {}),
-          ...(v.description !== undefined ? { description: v.description } : {}),
-        },
-        cur.etag,
-      ),
+      pool.get(cur.account_id).editExternal(cur.provider_id, cur.event_id, change, cur.etag),
     );
     cacheEvent(db, cur.calendar_id, ev);
     logChange(
@@ -824,27 +839,21 @@ export function createPreview(deps: PreviewDeps) {
         item: `preview:${ch.id}`,
         reason: "applied from preview mode",
         title,
-        start: v.start,
-        end: v.end,
+        start,
+        end,
       },
       now(),
     );
-    const moved = v.start !== cur.start_ms || v.end !== cur.end_ms;
-    await notifyAttendees(
-      userId,
-      attendees,
-      `Updated: ${title}`,
-      moved || v.description === undefined
+    await notifyAttendees(userId, attendees, `Updated: ${title}`, [
+      ...(renamed ? [`“${cur.summary}” is now “${title}”.`] : []),
+      ...(moved
         ? [
-            `${title} moved to ${when(zone, v.start, v.end)} (${zone}).`,
+            `${title} moved to ${when(zone, start, end)} (${zone}).`,
             `It was ${when(zone, cur.start_ms, cur.end_ms)}.`,
           ]
-        : [
-            `${title} on ${when(zone, v.start, v.end)} (${zone}) has a new description:`,
-            "",
-            v.description,
-          ],
-    );
+        : [`When: ${when(zone, start, end)} (${zone})`]),
+      ...(described ? ["", "New description:", "", v.description as string] : []),
+    ]);
   }
 
   /**

@@ -1009,6 +1009,18 @@ fieldset {
   display: grid;
   gap: 6px;
 }
+/* The full new description of a staged change: it scrolls, nothing is cut. */
+.new-description {
+  margin: 0;
+  max-height: 12em;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+  font-size: 13px;
+  border-left: 3px solid var(--accent);
+  padding-left: 8px;
+}
 .assistant-form {
   display: grid;
   gap: 8px;

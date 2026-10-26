@@ -6,18 +6,21 @@
 //    deactivated manager, or exists for a user the directory did not provision.
 // 2. find_free_time reads the calendar of a person outside the team.
 // 3. find_people lists people outside the team or deactivated people.
-// 4. An agenda is staged for an event the user does not organize, or applies
-//    over a description that changed after staging.
+// 4. An agenda is staged for an event the user does not organize, applies over
+//    a description that changed after staging, or sends an unchanged start and
+//    end (an all-day event turns timed); a move and an agenda are two changes.
+// 6. "closest" is the earliest slots instead of the fewest busy colleagues.
 // 5. save_memory proposes past the memory limit.
 import { describe, expect, it } from "vitest";
 import { ensureUser, type User } from "../../src/server/accounts.ts";
-import { reportingOf } from "../../src/server/assistant/people.ts";
+import { MAX_PROMPT_REPORTS, reportingOf } from "../../src/server/assistant/people.ts";
+import { memories, proposeMemory, saveMemory } from "../../src/server/assistant/store.ts";
 import { chatTools } from "../../src/server/assistant/tools.ts";
-import { type Db, openDb, run } from "../../src/server/db.ts";
+import { all, type Db, openDb, run } from "../../src/server/db.ts";
 import { setInstanceLimit } from "../../src/server/limits.ts";
 import { callTool } from "../../src/server/mcp/rpc.ts";
 import { createPreview, type PreviewDeps } from "../../src/server/preview.ts";
-import { membership } from "../../src/server/teams.ts";
+import { createOwnTeam, membership } from "../../src/server/teams.ts";
 
 const T0 = Date.parse("2026-10-19T06:00:00Z");
 const HOUR = 3_600_000;
@@ -138,7 +141,7 @@ describe("reporting line", () => {
     const ana = ensureUser(db, "ana@example.com", "Ana", T0, team);
     const rui = ensureUser(db, "rui@example.com", "Rui", T0, team);
     profile(db, boss.id, team, {}, "ext-boss");
-    profile(db, user.id, team, { manager: "EXT-BOSS" });
+    profile(db, user.id, team, { manager: "ext-boss" });
     profile(db, ana.id, team, { manager: user.id });
     profile(db, rui.id, team, { manager: "owner@example.com" });
     profile(db, gone.id, team, { manager: user.id });
@@ -149,10 +152,36 @@ describe("reporting line", () => {
         { name: "Ana", email: "ana@example.com" },
         { name: "Rui", email: "rui@example.com" },
       ]),
+      reports_total: 2,
     });
     expect(reportingOf(db, user.id)?.reports).toHaveLength(2);
+    expect(reportingOf(db, user.id)?.reports_total).toBe(2);
     run(db, "UPDATE users SET deactivated_at = ? WHERE id = ?", T0, boss.id);
     expect(reportingOf(db, user.id)?.manager).toBeNull();
+  });
+
+  it("does not name a person who left the team, though their profile row stays", () => {
+    const { db, user, team } = setup();
+    const ana = ensureUser(db, "ana@example.com", "Ana", T0, team);
+    profile(db, user.id, team, {});
+    profile(db, ana.id, team, { manager: user.id });
+    expect(reportingOf(db, user.id)?.reports).toEqual([{ name: "Ana", email: "ana@example.com" }]);
+    // Ana leaves for a team of her own; directory_profiles keeps the old team id.
+    run(db, "DELETE FROM team_members WHERE user_id = ?", ana.id);
+    createOwnTeam(db, ana, T0);
+    expect(reportingOf(db, user.id)).toEqual({ manager: null, reports: [], reports_total: 0 });
+  });
+
+  it("caps the reports in the prompt and gives the total", () => {
+    const { db, user, team } = setup();
+    profile(db, user.id, team, {});
+    for (let i = 0; i < MAX_PROMPT_REPORTS + 3; i++) {
+      const r = ensureUser(db, `r${i}@example.com`, `R${i}`, T0, team);
+      profile(db, r.id, team, { manager: "owner@example.com" });
+    }
+    const line = reportingOf(db, user.id);
+    expect(line?.reports).toHaveLength(MAX_PROMPT_REPORTS);
+    expect(line?.reports_total).toBe(MAX_PROMPT_REPORTS + 3);
   });
 });
 
@@ -166,7 +195,7 @@ describe("find time and people", () => {
     const day = Date.parse("2026-10-20T09:00:00Z"); // Tuesday 09:00 in the user's zone (UTC)
     event(db, "cm", "m1", day, day + HOUR);
     event(db, "co", "o1", day + HOUR, day + 8 * HOUR);
-    const r = await call("find_free_time", {
+    const r = await call("find_meeting_time", {
       duration_minutes: 30,
       start: "2026-10-20T00:00:00Z",
       end: "2026-10-21T00:00:00Z",
@@ -179,28 +208,86 @@ describe("find time and people", () => {
     expect(data.unknown_attendees).toEqual(["alex@elsewhere.example"]);
     expect(data.slots[0]?.start).toBe(new Date(day + HOUR).toISOString());
 
+    // A name matches; a domain does not match everyone.
     const people = await call("find_people", { query: "alex" });
     expect((people as unknown as { data: { people: { email: string }[] } }).data.people).toEqual([
       { name: "Alex Mate", email: "mate@example.com" },
     ]);
+    const domain = await call("find_people", { query: "example" });
+    expect((domain as unknown as { data: { people: unknown[] } }).data.people).toEqual([]);
+    // A deactivated colleague is neither found nor called outside the team.
     run(db, "UPDATE users SET deactivated_at = ? WHERE id = ?", T0, mate.id);
     const none = await call("find_people", { query: "alex" });
     expect((none as unknown as { data: { people: unknown[] } }).data.people).toEqual([]);
+    const gone = await call("find_meeting_time", {
+      duration_minutes: 30,
+      start: "2026-10-20T00:00:00Z",
+      end: "2026-10-21T00:00:00Z",
+      attendees: ["mate@example.com"],
+    });
+    expect((gone as unknown as { data: Record<string, unknown> }).data).toMatchObject({
+      unknown_attendees: [],
+      deactivated_attendees: ["mate@example.com"],
+    });
+  });
+
+  it("two matches carry the note to ask", async () => {
+    const { db, team, call } = setup();
+    ensureUser(db, "alex.a@example.com", "Alex A", T0, team);
+    ensureUser(db, "alex.b@example.com", "Alex B", T0, team);
+    const r = (await call("find_people", { query: "alex" })) as unknown as {
+      data: { people: unknown[]; note?: string };
+    };
+    expect(r.data.people).toHaveLength(2);
+    expect(r.data.note).toContain("Ask the user which one");
+  });
+
+  it("with no common slot, closest ranks the fewest busy colleagues first, then the time", async () => {
+    const { db, team, call } = setup();
+    const a = ensureUser(db, "a@example.com", "A", T0, team);
+    const b = ensureUser(db, "b@example.com", "B", T0, team);
+    calendar(db, a, "ca");
+    calendar(db, b, "cb");
+    const nine = Date.parse("2026-10-20T09:00:00Z");
+    // A is busy all day; B is busy until 15:00. So no common slot; at 15:00 only A is busy.
+    event(db, "ca", "a1", nine, nine + 8 * HOUR);
+    event(db, "cb", "b1", nine, nine + 6 * HOUR);
+    const r = (await call("find_meeting_time", {
+      duration_minutes: 60,
+      start: "2026-10-20T00:00:00Z",
+      end: "2026-10-21T00:00:00Z",
+      attendees: ["a@example.com", "b@example.com"],
+    })) as unknown as {
+      data: {
+        slots: unknown[];
+        closest: { start: string; unavailable: string[] }[];
+        wider_range: { start: string }[];
+      };
+    };
+    expect(r.data.slots).toEqual([]);
+    expect(r.data.closest[0]).toEqual({
+      start: new Date(nine + 6 * HOUR).toISOString(),
+      end: new Date(nine + 7 * HOUR).toISOString(),
+      unavailable: ["a@example.com"],
+    });
+    expect(r.data.closest[1]?.start).toBe(new Date(nine + 6.5 * HOUR).toISOString());
+    expect(r.data.closest.at(-1)?.unavailable).toEqual(["a@example.com", "b@example.com"]);
+    expect(r.data.wider_range[0]?.start).toBe("2026-10-21T09:00:00.000Z");
   });
 });
 
-describe("agenda by chat", () => {
-  it("stages only for events the user organizes and applies only over the description it saw", async () => {
+describe("agenda by propose_update_event", () => {
+  it("stages only for events the user organizes, sends only the description, and applies only over the description it saw", async () => {
     const { db, user, call, preview, writes } = setup();
     calendar(db, user, "c1");
     event(db, "c1", "mine", T0 + 26 * HOUR, T0 + 27 * HOUR);
     event(db, "c1", "theirs", T0 + 28 * HOUR, T0 + 29 * HOUR, 0);
-    const refused = await call("propose_event_description", {
+    const refused = await call("propose_update_event", {
       event_id: "ext:c1:theirs",
       description: "Agenda",
     });
     expect(refused).toMatchObject({ isError: true });
-    const staged = await call("propose_event_description", {
+    const staged = await call("propose_update_event", {
       event_id: "ext:c1:mine",
       description: "Room 4\nAgenda: numbers",
     });
@@ -211,7 +298,7 @@ describe("agenda by chat", () => {
     expect(stale.stale.map((s) => s.id)).toEqual([id]);
     expect(writes).toEqual([]);
 
-    const again = await call("propose_event_description", {
+    const again = await call("propose_update_event", {
       event_id: "ext:c1:mine",
       description: "Room 5\nAgenda: numbers",
     });
@@ -220,9 +307,42 @@ describe("agenda by chat", () => {
     const done = await preview.apply(user.id, [id2]);
     expect(done).toMatchObject({ failed: [], stale: [] });
     expect(done.applied.map((s) => s.id)).toEqual([id2]);
-    expect(writes).toEqual([
-      expect.objectContaining({ description: "Room 5\nAgenda: numbers", start: T0 + 26 * HOUR }),
-    ]);
+    // No start or end: an all-day event stays all-day and no guest is asked again.
+    expect(writes).toEqual([{ description: "Room 5\nAgenda: numbers" }]);
+  });
+
+  it("a rename sends only the title; a move and an agenda are one change that sends both", async () => {
+    const { db, user, call, preview, writes } = setup();
+    calendar(db, user, "c1");
+    event(db, "c1", "mine", T0 + 26 * HOUR, T0 + 27 * HOUR);
+    const apply = async (args: Record<string, unknown>) => {
+      const r = await call("propose_update_event", { event_id: "ext:c1:mine", ...args });
+      const id = (r as unknown as { data: { id: string } }).data.id;
+      run(db, "UPDATE staged_changes SET state = 'accepted' WHERE id = ?", id);
+      return preview.apply(user.id, [id]);
+    };
+    await apply({ title: "Sync 2" });
+    expect(writes).toEqual([{ summary: "Sync 2" }]);
+    writes.length = 0;
+    run(db, "UPDATE events SET summary = 'Sync' WHERE event_id = 'mine'");
+    const start = new Date(T0 + 30 * HOUR).toISOString();
+    const end = new Date(T0 + 31 * HOUR).toISOString();
+    const r = await call("propose_update_event", { event_id: "ext:c1:mine", start, end });
+    const both = await call("propose_update_event", {
+      event_id: "ext:c1:mine",
+      start,
+      end,
+      description: "Agenda",
+    });
+    const open = all<{ id: string }>(
+      db,
+      "SELECT id FROM staged_changes WHERE state IN ('pending', 'accepted')",
+    );
+    expect(open.map((o) => o.id)).toEqual([(both as unknown as { data: { id: string } }).data.id]);
+    expect(r.isError).toBe(false);
+    run(db, "UPDATE staged_changes SET state = 'accepted' WHERE state = 'pending'");
+    await preview.apply(user.id, [open[0]?.id ?? ""]);
+    expect(writes).toEqual([{ start: T0 + 30 * HOUR, end: T0 + 31 * HOUR, description: "Agenda" }]);
   });
 });
 
@@ -238,5 +358,16 @@ describe("memory limit", () => {
       isError: true,
       text: expect.stringContaining("This server allows at most 1 chat memory per person."),
     });
+  });
+
+  it("Save checks the count and saves in one step", () => {
+    const { db, user } = setup();
+    const a = proposeMemory(db, user.id, "A", [], T0);
+    const b = proposeMemory(db, user.id, "B", [], T0);
+    expect(saveMemory(db, user.id, a.id, 1)).toBe("saved");
+    expect(saveMemory(db, user.id, b.id, 1)).toBe("limit");
+    expect(saveMemory(db, user.id, "nope", 1)).toBe("missing");
+    expect(memories(db, user.id).map((m) => m.text)).toEqual(["A"]);
+    expect(saveMemory(db, user.id, b.id, null)).toBe("saved");
   });
 });

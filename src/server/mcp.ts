@@ -111,7 +111,7 @@ export function mcpTools(deps: Omit<McpDeps, "writeEnabled">): Tool[] {
       effect: "read",
       title: "List events",
       description:
-        "Events on the user's calendars between start and end (at most 31 days): title, time, guests, location, video link, and whether Tempoloom plans the event.",
+        "Events on the user's calendars between start and end (at most 31 days): title, time, guests, location, video link, and whether Tempoloom plans the event. All-day events have kind all_day.",
       input: z.object({
         start: datetime.describe("Start of the range, ISO 8601 with an offset"),
         end: datetime.describe("End of the range, ISO 8601 with an offset"),
@@ -432,13 +432,14 @@ export function mcpTools(deps: Omit<McpDeps, "writeEnabled">): Tool[] {
       name: "propose_update_event",
       title: "Propose a change to an event",
       description:
-        "Stages a new time or title for an event the user organizes (an id from list_events). For events that Tempoloom plans, only the start can change. Nothing changes until the user approves and applies it.",
+        "Stages a new time, title or description (for example an agenda or a prep plan) for an event the user organizes (an id from list_events), as one change. Give the whole new description; keep the parts of the current one that still apply. For events that Tempoloom plans, only the start can change. Nothing changes until the user approves and applies it.",
       effect: "stage",
       input: z.object({
         event_id: z.string().min(1),
         start: datetime.optional(),
         end: datetime.optional(),
         title: z.string().trim().min(1).max(255).optional(),
+        description: z.string().max(10_000).optional(),
         reason: z.string().max(1000).optional(),
       }),
       output: stagedOutput,
@@ -691,6 +692,7 @@ export function mcpTools(deps: Omit<McpDeps, "writeEnabled">): Tool[] {
       start?: string | undefined;
       end?: string | undefined;
       title?: string | undefined;
+      description?: string | undefined;
       reason?: string | undefined;
     },
   ) {
@@ -703,8 +705,10 @@ export function mcpTools(deps: Omit<McpDeps, "writeEnabled">): Tool[] {
       caller.user.id,
     );
     if (managed) {
-      if (a.title)
-        throw new ToolError("Change the title of Tempoloom's events in their automation");
+      if (a.title || a.description !== undefined)
+        throw new ToolError(
+          "Change the title and description of Tempoloom's events in their automation",
+        );
       if (!a.start) throw new ToolError("start is required");
       const start = toMs(a.start);
       const end = start + (managed.end_ms - managed.start_ms);
@@ -744,29 +748,47 @@ export function mcpTools(deps: Omit<McpDeps, "writeEnabled">): Tool[] {
     const start = a.start ? toMs(a.start) : ev.start_ms;
     const end = a.end ? toMs(a.end) : start + (ev.end_ms - ev.start_ms);
     if (end <= start) throw new ToolError("end must be after start");
-    if (!a.start && !a.end && !a.title) throw new ToolError("Give a new start, end or title");
+    if (!a.start && !a.end && !a.title && a.description === undefined)
+      throw new ToolError("Give a new start, end, title or description");
     const title = a.title ?? ev.summary;
     const moved = start !== ev.start_ms || end !== ev.end_ms;
+    const described = a.description !== undefined;
+    // Only the fields that change: apply sends nothing else to the calendar, so an
+    // all-day event stays all-day and the guests' answers stay (preview mode).
+    const parts = [
+      ...(moved ? [`to ${when(zone, start, end, f)}`] : []),
+      ...(a.title ? [`as “${a.title}”`] : []),
+      ...(described ? ["with a new description"] : []),
+    ];
     return staged(
       caller,
       {
         kind: "event_update",
         target: a.event_id,
-        before: { title: ev.summary, start: ev.start_ms, end: ev.end_ms },
-        after: { start, end, ...(a.title ? { title: a.title } : {}) },
-        impact: [
-          {
-            op: "move",
-            title,
-            start,
-            end,
-            from: { start: ev.start_ms, end: ev.end_ms },
-            eventId: a.event_id,
-          },
-        ],
-        summary: moved
-          ? `Move “${ev.summary}” to ${when(zone, start, end, f)}${a.title ? ` as “${a.title}”` : ""}`
-          : `Rename “${ev.summary}” to “${title}”`,
+        before: {
+          title: ev.summary,
+          start: ev.start_ms,
+          end: ev.end_ms,
+          ...(described ? { description: ev.description } : {}),
+        },
+        after: {
+          ...(moved ? { start, end } : {}),
+          ...(a.title ? { title: a.title } : {}),
+          ...(described ? { description: a.description } : {}),
+        },
+        impact: moved
+          ? [
+              {
+                op: "move",
+                title,
+                start,
+                end,
+                from: { start: ev.start_ms, end: ev.end_ms },
+                eventId: a.event_id,
+              },
+            ]
+          : [],
+        summary: `${moved ? "Move" : "Change"} “${ev.summary}” ${parts.join(" ")}${moved ? "" : ` · ${when(zone, ev.start_ms, ev.end_ms, f)}`}`,
         reason: a.reason ?? "",
       },
       start,

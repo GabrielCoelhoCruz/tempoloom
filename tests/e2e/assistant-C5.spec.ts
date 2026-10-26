@@ -48,6 +48,7 @@ const tuesday = { start: iso(at(tue, "00:00")), end: iso(at(addDays(tue, 1), "00
 interface Free {
   slots: { start: string; end: string }[];
   unknown_attendees: string[];
+  deactivated_attendees: string[];
   closest?: { start: string; end: string; unavailable: string[] }[];
   wider_range?: { start: string; end: string }[];
 }
@@ -89,13 +90,13 @@ test("find time with a colleague uses their busy events and meeting hours, reads
     {
       tools: [
         {
-          name: "find_free_time",
+          name: "find_meeting_time",
           arguments: { duration_minutes: 30, ...tuesday, attendees: guests },
         },
       ],
     },
     (req) => {
-      const [slot] = toolJson<Free>(req, "find_free_time").slots;
+      const [slot] = toolJson<Free>(req, "find_meeting_time").slots;
       return {
         tools: [
           {
@@ -106,15 +107,17 @@ test("find time with a colleague uses their busy events and meeting hours, reads
       };
     },
     (req) => ({
-      content: `I staged Project sync. I cannot read the calendar of ${toolJson<Free>(req, "find_free_time").unknown_attendees.join(", ")}, so the time uses your side only.`,
+      content: `I staged Project sync. I cannot read the calendar of ${toolJson<Free>(req, "find_meeting_time").unknown_attendees.join(", ")}, so the time uses your side only.`,
     }),
   ]);
 
   await page.goto(`/?week=${W}`);
   await openAssistant(page);
   expect(await say(page, "Find 30 minutes with my colleague and Ben on Tuesday")).toBe(200);
-  const first = llm.requests.find((r) => toolResults(r).some((t) => t.name === "find_free_time"));
-  const free = toolJson<Free>(first as ChatRequest, "find_free_time");
+  const first = llm.requests.find((r) =>
+    toolResults(r).some((t) => t.name === "find_meeting_time"),
+  );
+  const free = toolJson<Free>(first as ChatRequest, "find_meeting_time");
   // After U's lunch and V's busy hour, inside V's meeting hours; Ben's calendar is not read.
   expect(local(Date.parse(free.slots[0]?.start ?? ""))).toBe(`${tue} 14:30`);
   expect(free.unknown_attendees).toEqual([ben.email]);
@@ -172,13 +175,13 @@ test("when no slot fits, the model gets the closest options and a wider range an
     {
       tools: [
         {
-          name: "find_free_time",
+          name: "find_meeting_time",
           arguments: { duration_minutes: 60, ...tuesday, attendees: [COLLEAGUE_EMAIL] },
         },
       ],
     },
     (req) => {
-      const r = toolJson<Free>(req, "find_free_time");
+      const r = toolJson<Free>(req, "find_meeting_time");
       const t = (s: string) => local(Date.parse(s));
       return {
         content: `No hour fits on Tuesday. Closest: ${t(r.closest?.[0]?.start ?? "")} without ${r.closest?.[0]?.unavailable.join(", ")}. Wider range: ${t(r.wider_range?.[0]?.start ?? "")}.`,
@@ -188,7 +191,7 @@ test("when no slot fits, the model gets the closest options and a wider range an
   await page.goto(`/?week=${W}`);
   await openAssistant(page);
   expect(await say(page, "Find an hour with my colleague on Tuesday")).toBe(200);
-  const r = toolJson<Free>(llm.requests.at(-1) as ChatRequest, "find_free_time");
+  const r = toolJson<Free>(llm.requests.at(-1) as ChatRequest, "find_meeting_time");
   expect(r.slots).toEqual([]);
   expect(r.closest?.[0]).toMatchObject({ unavailable: [COLLEAGUE_EMAIL] });
   expect(local(Date.parse(r.closest?.[0]?.start ?? ""))).toBe(`${tue} 09:00`);
@@ -232,15 +235,7 @@ test("two colleagues with the same name make the assistant ask instead of stagin
 
   llm.on(/30 minutes with alex/i, [
     { tools: [{ name: "find_people", arguments: { query: "Alex" } }] },
-    (req) => {
-      const { people: found } = toolJson<{ people: { name: string; email: string }[] }>(
-        req,
-        "find_people",
-      );
-      return {
-        content: `Which Alex do you mean: ${found.map((p) => `${p.name} (${p.email})`).join(" or ")}?`,
-      };
-    },
+    { content: "Which Alex?" },
   ]);
   // A model that resolves a role only from the reporting line the app gives it.
   llm.on(/from my manager/i, [
@@ -266,18 +261,26 @@ test("two colleagues with the same name make the assistant ask instead of stagin
   await page.goto(`/?week=${W}`);
   await openAssistant(page);
   expect(await say(page, "Find 30 minutes with Alex tomorrow")).toBe(200);
-  const found = toolJson<{ people: { email: string }[] }>(
-    llm.requests.at(-1) as ChatRequest,
+  // The app gave the model both team members (not the outsider), the instruction
+  // to ask in the tool result, and the same rule in the system prompt.
+  const asked = llm.requests.at(-1) as ChatRequest;
+  const found = toolJson<{ people: { name: string; email: string }[]; note?: string }>(
+    asked,
     "find_people",
   );
-  expect(found.people.map((p) => p.email)).toEqual([
-    "alex.lima@tempoloom.test",
-    "alex.moreno@tempoloom.test",
+  expect(found.people).toEqual([
+    { name: "Alex Lima", email: "alex.lima@tempoloom.test" },
+    { name: "Alex Moreno", email: "alex.moreno@tempoloom.test" },
   ]);
-  await expect(chatPanel(page).getByTestId("chat-assistant").last()).toHaveText(
-    "Which Alex do you mean: Alex Lima (alex.lima@tempoloom.test) or Alex Moreno (alex.moreno@tempoloom.test)?",
+  expect(found.note).toContain("Ask the user which one they mean, and stage nothing");
+  expect(systemOf(asked)).toContain(
+    "when more than one person matches, ask which one and stage nothing",
   );
+  // Nothing was staged: not in the chat, not in preview mode, also after a reload.
   await expect(chatPanel(page).getByTestId("chat-proposal")).toHaveCount(0);
+  await page.reload();
+  await expect(previewPanel(page).getByTestId("staged-change")).toHaveCount(0);
+  await openAssistant(page);
 
   // Rule 26 with the reporting tree: the model gets the manager and the reports.
   expect(await say(page, "Remember: accept invitations from my manager")).toBe(200);
@@ -351,8 +354,10 @@ test("an agenda and prep plan from the meeting context go into the event's descr
       ctx.event.description,
       "Agenda:",
       `1. Follow up on ${ctx.past_meetings.map((m) => m.title).join(", ")}`,
+      "2. Decide the budget owner for the next quarter and write it down for everyone",
       "Prep plan:",
       ...ctx.related_tasks.map((t) => `- Finish ${t.title}`),
+      "- Read the notes of the last meeting the evening before",
     ].join("\n");
   llm.on(/agenda and a prep plan/i, [
     {
@@ -382,7 +387,7 @@ test("an agenda and prep plan from the meeting context go into the event's descr
       return {
         tools: [
           {
-            name: "propose_event_description",
+            name: "propose_update_event",
             arguments: { event_id: ctx.event.id, description: agenda(ctx) },
           },
         ],
@@ -394,16 +399,28 @@ test("an agenda and prep plan from the meeting context go into the event's descr
   await page.goto(`/?week=${W}`);
   await openAssistant(page);
   expect(await say(page, "Write an agenda and a prep plan for the weekly sync")).toBe(200);
-  const description =
-    "Room 4\nAgenda:\n1. Follow up on Kickoff\nPrep plan:\n- Finish Sync budget numbers";
+  const description = [
+    "Room 4",
+    "Agenda:",
+    "1. Follow up on Kickoff",
+    "2. Decide the budget owner for the next quarter and write it down for everyone",
+    "Prep plan:",
+    "- Finish Sync budget numbers",
+    "- Read the notes of the last meeting the evening before",
+  ].join("\n");
   const call = llm.requests
     .at(-1)
     ?.messages.flatMap((m) => m.tool_calls ?? [])
-    .find((c) => c.function.name === "propose_event_description");
+    .find((c) => c.function.name === "propose_update_event");
   expect(JSON.parse(call?.function.arguments ?? "{}").description).toBe(description);
-  const card = proposal(page, "New description of “Weekly sync”");
-  await expect(card).toContainText("Agenda:");
+  const card = proposal(page, "Change “Weekly sync” with a new description");
   await expect(card).toContainText("Waiting for your approval");
+  // The whole new description is readable before approval, in the chat and in preview mode.
+  expect(description.length).toBeGreaterThan(200);
+  await expect(card.getByTestId("proposal-description")).toHaveText(description);
+  await expect(
+    previewPanel(page).getByTestId("staged-change").getByTestId("staged-description"),
+  ).toHaveText(description);
 
   // Nothing reaches the event or the guest before approval.
   await planNow(page);
@@ -420,13 +437,108 @@ test("an agenda and prep plan from the meeting context go into the event's descr
   await expect(page.getByTestId("apply-summary")).toContainText("Applied 1");
   await eventually(sync, (e) => expect(e?.description).toBe(description));
   expect([local((await sync())?.start ?? 0)]).toEqual([`${thu} 10:00`]);
-  expect((await mail.message(COLLEAGUE_EMAIL, /Updated: Weekly sync/)).text).toContain(
-    "1. Follow up on Kickoff",
-  );
+  const sent = (await mail.message(COLLEAGUE_EMAIL, /Updated: Weekly sync/)).text;
+  expect(sent).toContain("New description:");
+  expect(sent).toContain("1. Follow up on Kickoff");
+  expect(sent).not.toContain("moved to");
   await page.reload();
   await expect(previewPanel(page).getByTestId("staged-change")).toHaveCount(0);
   await openAssistant(page);
-  await expect(proposal(page, "New description of “Weekly sync”")).toContainText("Applied");
+  await expect(proposal(page, "Change “Weekly sync” with a new description")).toContainText(
+    "Applied",
+  );
+});
+
+test("an agenda on an all-day event keeps it all-day; a move and an agenda for one event are one change, and both apply (assistant-chat; agendas and prep plans)", async ({
+  page,
+  cal,
+  signIn,
+  llm,
+}) => {
+  const wed = addDays(W, 2);
+  await cal.addAllDay(thu, "Offsite", true);
+  await cal.addEvent({ title: "Planning", start: at(wed, "10:00"), end: at(wed, "11:00") });
+  await signIn();
+  const listed = (day: string) => ({
+    tools: [
+      {
+        name: "list_events",
+        arguments: { start: iso(at(day, "00:00")), end: iso(at(addDays(day, 1), "00:00")) },
+      },
+    ],
+  });
+  const idOf = (req: ChatRequest, title: string) =>
+    toolJson<{ events: { id: string; title: string }[] }>(req, "list_events").events.find(
+      (e) => e.title === title,
+    )?.id;
+  llm.on(/agenda for the offsite/i, [
+    listed(thu),
+    (req) => ({
+      tools: [
+        {
+          name: "propose_update_event",
+          arguments: { event_id: idOf(req, "Offsite"), description: "Agenda: goals for 2027" },
+        },
+      ],
+    }),
+    { content: "Staged." },
+  ]);
+  llm.on(/move planning/i, [
+    listed(wed),
+    (req) => ({
+      tools: [
+        {
+          name: "propose_update_event",
+          arguments: {
+            event_id: idOf(req, "Planning"),
+            start: iso(at(wed, "14:00")),
+            end: iso(at(wed, "15:00")),
+            description: "Agenda: roadmap",
+          },
+        },
+      ],
+    }),
+    { content: "Staged." },
+  ]);
+  await page.goto(`/?week=${W}`);
+  await openAssistant(page);
+  expect(await say(page, "Write an agenda for the offsite")).toBe(200);
+  expect(await say(page, "Move planning to 14:00 and add an agenda")).toBe(200);
+  // One change for the move and the agenda of Planning, one for the offsite.
+  await expect(chatPanel(page).getByTestId("chat-proposal")).toHaveCount(2);
+  const both = proposal(page, "Move “Planning”");
+  await expect(both).toContainText("14:00");
+  await expect(both).toContainText("with a new description");
+  await expect(both.getByTestId("proposal-description")).toHaveText("Agenda: roadmap");
+  await page.reload();
+  await expect(previewPanel(page).getByTestId("staged-change")).toHaveCount(2);
+
+  await planNow(page);
+  const offsite = async () => named(await weekEvents(cal), "Offsite")[0];
+  const planning = async () => named(await weekEvents(cal), "Planning")[0];
+  expect((await offsite())?.description).toBe("");
+  expect(local((await planning())?.start ?? 0)).toBe(`${wed} 10:00`);
+
+  await openAssistant(page);
+  for (const s of ["“Offsite”", "Move “Planning”"]) {
+    await proposal(page, s).getByRole("button", { name: "Accept" }).click();
+    await expect(proposal(page, s)).toContainText("Accepted");
+  }
+  await chatPanel(page).getByRole("button", { name: "Close" }).click();
+  await reviewAndApply(page);
+  await expect(page.getByTestId("apply-summary")).toContainText("Applied 2");
+  await eventually(offsite, (e) => expect(e?.description).toBe("Agenda: goals for 2027"));
+  const day = await offsite();
+  expect(day?.allDay).toBe(true);
+  expect(local(day?.start ?? 0)).toBe(`${thu} 00:00`);
+  const moved = await eventually(planning, (e) => expect(e?.description).toBe("Agenda: roadmap"));
+  expect([local(moved?.start ?? 0), local(moved?.end ?? 0)]).toEqual([
+    `${wed} 14:00`,
+    `${wed} 15:00`,
+  ]);
+  await page.reload();
+  await expect(previewPanel(page).getByTestId("staged-change")).toHaveCount(0);
+  expect((await offsite())?.allDay).toBe(true);
 });
 
 test("the chat memory limit refuses a new memory by chat and a Save past the limit, with the limit in the message; without a limit both work (plans-feature-inventory rules 2, 4; assistant-chat rule 22)", async ({

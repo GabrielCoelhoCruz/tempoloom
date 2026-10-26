@@ -8,11 +8,18 @@ import { ApiError, api } from "../lib/api.ts";
 import { useLive } from "../lib/live.ts";
 import { chatDraft, plannerContext, sidePanel } from "../lib/planner-signals.ts";
 import { onLinkClick } from "../lib/router.ts";
+import { messageOf } from "../lib/save.ts";
 
 type Item =
   | { kind: "user"; text: string }
   | { kind: "assistant"; text: string }
-  | { kind: "proposal"; changeId: string; summary: string; state: string }
+  | {
+      kind: "proposal";
+      changeId: string;
+      summary: string;
+      state: string;
+      description: string | null;
+    }
   | { kind: "memory"; memoryId: string; text: string; state: "pending" | "saved" | "removed" };
 
 interface Refusal {
@@ -222,8 +229,7 @@ export function AssistantPanel() {
       else await api("DELETE", `/api/assistant/memories/${id}`);
     } catch (err) {
       // A refusal names its reason, as the memory limit (plans rule 4).
-      const body = err instanceof ApiError ? (err.body as { message?: string } | undefined) : null;
-      setError(body?.message ?? (err instanceof Error ? err.message : String(err)));
+      setError(messageOf(err));
     }
     void load();
   };
@@ -364,6 +370,15 @@ export function AssistantPanel() {
               return (
                 <div key={i} class="proposal" data-testid="chat-proposal">
                   <strong>{item.summary}</strong>
+                  {item.description !== null && (
+                    <pre
+                      class="new-description"
+                      title="New description"
+                      data-testid="proposal-description"
+                    >
+                      {item.description}
+                    </pre>
+                  )}
                   <div class="meta" data-testid="proposal-state">
                     {STATE_WORDS[item.state] ?? item.state}
                   </div>

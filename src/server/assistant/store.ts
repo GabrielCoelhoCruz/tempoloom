@@ -293,13 +293,56 @@ export const memoryById = (db: Db, userId: string, id: string): Memory | undefin
   return m && memoryOf(m);
 };
 
-/** The user approves a proposed memory. */
-export const saveMemory = (db: Db, userId: string, id: string): boolean =>
-  db
-    .prepare(
-      "UPDATE assistant_memories SET state = 'saved' WHERE id = ? AND user_id = ? AND state = 'pending'",
-    )
-    .run(id, userId).changes > 0;
+const savedCount = (db: Db, userId: string) =>
+  one<{ n: number }>(
+    db,
+    "SELECT count(*) AS n FROM assistant_memories WHERE user_id = ? AND state = 'saved'",
+    userId,
+  )?.n ?? 0;
+
+/**
+ * The user approves a proposed memory. With a limit of saved memories (plans
+ * rule 4), the count and the save are one transaction.
+ */
+export const saveMemory = (
+  db: Db,
+  userId: string,
+  id: string,
+  limit: number | null = null,
+): "saved" | "missing" | "limit" =>
+  tx(db, () => {
+    if (limit !== null && savedCount(db, userId) >= limit) {
+      const pending = one(
+        db,
+        "SELECT 1 FROM assistant_memories WHERE id = ? AND user_id = ? AND state = 'pending'",
+        id,
+        userId,
+      );
+      return pending ? "limit" : "missing";
+    }
+    return db
+      .prepare(
+        "UPDATE assistant_memories SET state = 'saved' WHERE id = ? AND user_id = ? AND state = 'pending'",
+      )
+      .run(id, userId).changes > 0
+      ? "saved"
+      : "missing";
+  });
+
+/** Proposes a memory unless the user has `limit` saved ones; the check and the insert are one transaction. */
+export const proposeMemoryWithin = (
+  db: Db,
+  userId: string,
+  text: string,
+  people: string[],
+  now: number,
+  limit: number | null,
+): Memory | null =>
+  tx(db, () =>
+    limit !== null && savedCount(db, userId) >= limit
+      ? null
+      : proposeMemory(db, userId, text, people, now),
+  );
 
 /** Deletes a saved memory, or discards a proposed one. */
 export const deleteMemory = (db: Db, userId: string, id: string): boolean =>
