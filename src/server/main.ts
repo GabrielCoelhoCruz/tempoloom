@@ -1,10 +1,10 @@
 import { serve } from "@hono/node-server";
 import { createApp } from "./app.ts";
-import { dailyReview } from "./assistant/nightly.ts";
+import type { Chat } from "./assistant/chat.ts";
 import { sendDueReminders } from "./booking-mail.ts";
 import { clockOf, loadConfig } from "./config.ts";
 import { SecretBox } from "./crypto.ts";
-import { DailyMailWorker } from "./daily-mail.ts";
+import { DailyMailWorker, dailyReview } from "./daily-mail.ts";
 import { exitOnBroken, openDb } from "./db.ts";
 import type { OAuthClient } from "./google/oauth.ts";
 import { parseServiceAccountKey } from "./google/service-account.ts";
@@ -61,7 +61,20 @@ const provisioning = new ProvisionWorker({
   perMinute: config.PROVISION_PER_MINUTE,
   now,
 });
-const app = createApp({ db, config, box, oauth, sync, webhooks, mailer, now });
+let chat: Chat | undefined;
+const app = createApp({
+  db,
+  config,
+  box,
+  oauth,
+  sync,
+  webhooks,
+  mailer,
+  now,
+  onChat: (c) => {
+    chat = c;
+  },
+});
 // Meeting emails, the daily digests and the weekly report, checked on the sync interval.
 const dailyMail = new DailyMailWorker({
   db,
@@ -70,7 +83,7 @@ const dailyMail = new DailyMailWorker({
   baseUrl: config.BASE_URL,
   intervalMs: config.SYNC_INTERVAL_SECONDS * 1000,
   weeklyReports: config.WEEKLY_REPORTS === "on",
-  review: dailyReview({ db, config, mailer, now }),
+  review: dailyReview(config, chat),
 });
 
 const server = serve({ fetch: app.fetch, port: config.PORT, hostname: config.HOST }, (info) => {

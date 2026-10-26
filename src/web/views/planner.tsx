@@ -4,6 +4,7 @@ import type { ReportEntry } from "../../scheduler/model.ts";
 import type { AllDayBusy, CalendarRef, PlannerEvent } from "../../server/api/planner.ts";
 import { addDays, localToUtc, utcToLocal, weekdayOf } from "../../shared/time.ts";
 import { api } from "../lib/api.ts";
+import { hasAssistantLink } from "../lib/assistant-link.ts";
 import { calendarList, displayName, loadCalendars } from "../lib/calendars.tsx";
 import { CATEGORY_LABELS } from "../lib/categories.ts";
 import {
@@ -179,8 +180,11 @@ export function Planner() {
   const selectedId = selected?.id;
   // A digest link (?assistant=<conversation>) opens the chat with its staged fixes.
   useEffect(() => {
-    if (new URLSearchParams(location.search).has("assistant"))
-      void import("./assistant.tsx").then((m) => m.openFromLink());
+    if (hasAssistantLink()) void import("./assistant.tsx").then((m) => m.openFromLink());
+    // Off the planner, no dates are shown: the chat's Recommendations waits for them.
+    return () => {
+      plannerContext.value = { from: "", to: "" };
+    };
   }, []);
   useEffect(() => {
     plannerContext.value = {

@@ -60,7 +60,7 @@ import { teamDefaultRoutes } from "./api/team-defaults.ts";
 import { travelRoutes } from "./api/travel.ts";
 import { webhookRoutes } from "./api/webhooks.ts";
 import { apiKeyUser } from "./api-keys.ts";
-import { createChat } from "./assistant/chat.ts";
+import { type Chat, createChat } from "./assistant/chat.ts";
 import { chatTools } from "./assistant/tools.ts";
 import type { Config } from "./config.ts";
 import type { SecretBox } from "./crypto.ts";
@@ -102,6 +102,12 @@ export interface AppDeps {
   now?: () => number;
   /** Assistant chat's model; default: the endpoint in the config, if any. */
   llm?: Llm | null;
+  /**
+   * Gets the app's assistant chat, for the email worker's daily review
+   * (assistant-chat.md rules 15-18): the same chat, preview mode, dry run
+   * and live updates as the panel.
+   */
+  onChat?: (chat: Chat) => void;
 }
 
 /**
@@ -124,8 +130,11 @@ const MIME: Record<string, string> = {
   ".woff2": "font/woff2",
 };
 
-/** The sync service of a dry-run app: every call does nothing. */
-const DRY_SYNC = new Proxy({}, { get: () => () => undefined }) as SyncService;
+/**
+ * A sync service whose every call does nothing: for dry-run apps, and for the
+ * operator CLI's app, which only reads and stages (the server syncs).
+ */
+export const NO_SYNC = new Proxy({}, { get: () => () => undefined }) as SyncService;
 
 const caldavLogin = z.object({
   serverUrl: z.url({ protocol: /^https?$/ }),
@@ -136,6 +145,8 @@ const caldavLogin = z.object({
   /** Sign up with an email that several accounts hold as a secondary email (rule 3.3). */
   newAccount: z.boolean().optional(),
 });
+
+const withoutChatHook = ({ onChat: _, ...rest }: AppDeps): AppDeps => rest;
 
 /** A same-origin consent page URL (`/oauth/authorize?...`) to come back to, or null. */
 function pendingAuthorization(target: string | undefined, origin: string): string | null {
@@ -416,9 +427,10 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
         dry = dryDb && {
           db: dryDb,
           app: createApp({
-            ...deps,
+            // The dry app's chat is not the app's: it does not reach onChat.
+            ...withoutChatHook(deps),
             db: dryDb,
-            sync: DRY_SYNC,
+            sync: NO_SYNC,
             // No static client: the dry app answers API calls only.
             config: { ...config, WEB_DIST: join(config.DATA_DIR, "no-web-client") },
           }),
@@ -528,19 +540,15 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
             timeoutMs: config.TEMPOLOOM_LLM_TIMEOUT_MS,
           })
         : null;
-  app.route(
-    "/api",
-    assistantRoutes(
-      db,
-      createChat({
-        db,
-        llm,
-        tools: chatTools({ db, preview, baseUrl: config.BASE_URL, now }),
-        now,
-        turnMs: config.TEMPOLOOM_LLM_TURN_MS,
-      }),
-    ),
-  );
+  const chat = createChat({
+    db,
+    llm,
+    tools: chatTools({ db, preview, baseUrl: config.BASE_URL, now }),
+    now,
+    turnMs: config.TEMPOLOOM_LLM_TURN_MS,
+  });
+  deps.onChat?.(chat);
+  app.route("/api", assistantRoutes(db, chat));
   app.route("/api", helpRoutes(db, config.SUPPORT_URL, now, sync));
   app.route("/api", oauthConsentRoutes(db, config.BASE_URL, now));
   app.route("/api", insightRoutes(db, now));

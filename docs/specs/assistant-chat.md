@@ -124,12 +124,20 @@ All proposed changes go to preview mode (`assistant-preview-mode.md`).
 
     Tempoloom decision: the review runs at the digest time, just before the
     digest, so its fixes see the newest calendar; there is no separate 02:00
-    run. It is one chat turn with the Recommendations request, in a new
-    conversation, and does not count toward `assistant_chat_quota`. It runs
-    only when the digest has issues to send and chat is on for the user. The
-    digest links to the planner with `?assistant=<conversation>`, which opens
-    the panel on that conversation. A missing video link is fixed only with a
-    link from the user or the memories.
+    run. The operator turns it on with `DAILY_REVIEW=on` (default off: each
+    review costs model calls), with at most `DAILY_REVIEW_MAX_USERS` reviews
+    per run, 4 at a time, each within `DAILY_REVIEW_TURN_MS`; the other
+    emails of the run go out first. It is one chat turn with the
+    Recommendations request, in a new conversation, and does not count
+    toward `assistant_chat_quota`. It runs only when the digest has issues
+    to send and chat is on for the user. Nobody watches it, so it has only
+    the read tools and the fixes of single events (move, answer, video link),
+    it does not turn preview mode on (the digest says when preview mode is
+    off), and it leaves an event alone when the user already staged a change
+    for it. The digest links to the planner with `?assistant=<conversation>`,
+    which opens the panel on that conversation, also after a sign-in. A
+    missing video link is fixed only with a link from the user or the
+    memories.
 19. A "Recommendations" action in the chat panel runs the same review at
     any time.
 20. To review another week, the user moves the planner to that week and

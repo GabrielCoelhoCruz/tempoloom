@@ -659,6 +659,7 @@ export function mcpTools(deps: Omit<McpDeps, "writeEnabled">): Tool[] {
       ...input,
       source: caller.source ?? "mcp_client",
       client: caller.client,
+      unattended: caller.unattended === true,
     });
     return {
       id: s.id,

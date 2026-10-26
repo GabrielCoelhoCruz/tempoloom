@@ -6,6 +6,7 @@ import { signal } from "@preact/signals";
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import { reviewRequest } from "../../shared/assistant-review.ts";
 import { ApiError, api } from "../lib/api.ts";
+import { takeAssistantLink } from "../lib/assistant-link.ts";
 import { useLive } from "../lib/live.ts";
 import { chatDraft, plannerContext, sidePanel } from "../lib/planner-signals.ts";
 import { onLinkClick } from "../lib/router.ts";
@@ -97,17 +98,10 @@ const pick = (conversation: string) => {
   picks.value++;
 };
 
-/**
- * Rule 18: the daily digest links to the planner with ?assistant=<conversation>.
- * Opens the panel on that conversation, with its staged fixes, once.
- */
+/** Rule 18: a digest link opens the panel on its conversation, with its staged fixes, once. */
 export function openFromLink(): void {
-  const params = new URLSearchParams(location.search);
-  const id = params.get("assistant");
+  const id = takeAssistantLink();
   if (!id) return;
-  params.delete("assistant");
-  const q = params.toString();
-  history.replaceState(history.state, "", `${location.pathname}${q ? `?${q}` : ""}`);
   pick(id);
   sidePanel.value = "assistant";
 }
@@ -118,6 +112,8 @@ const STATE_WORDS: Record<string, string> = {
   discarded: "Discarded",
   applied: "Applied",
   stale: "Skipped: the event changed",
+  replaced: "Replaced by a later proposal",
+  merged: "Merged into the next proposal",
   failed: "Failed",
   expired: "Expired",
 };
@@ -265,7 +261,8 @@ export function AssistantPanel() {
         {state && !blocked && (
           <button
             type="button"
-            disabled={sending}
+            // Rules 19, 20: the dates shown in the planner; none shown, no review.
+            disabled={sending || !plannerContext.value.from}
             title="Review the dates shown in the planner and stage fixes"
             onClick={() => {
               // Rules 19, 20: the review covers the dates shown in the planner.

@@ -3,7 +3,7 @@
 // of preview mode and the user's memories. Each part is one function in
 // PROMPT_PARTS, so a new ability adds a part, not new plumbing.
 import { zoneOffset } from "../../shared/time.ts";
-import { REVIEW_RULES } from "./review-tools.ts";
+import { REVIEW_RULES, UNATTENDED_RULES } from "./review-tools.ts";
 import type { Memory } from "./store.ts";
 
 export interface PromptInput {
@@ -15,6 +15,8 @@ export interface PromptInput {
   /** The event selected in the planner. */
   selected?: { id: string; title: string; start: number; end: number } | undefined;
   memories: Memory[];
+  /** The daily review: nobody watches the turn (assistant-chat.md rules 15-18). */
+  unattended?: boolean | undefined;
 }
 
 /** An instant as local ISO 8601 with the zone's offset: what the tools take. */
@@ -80,6 +82,7 @@ export const PROMPT_PARTS: Part[] = [
       "- A memory names people by name or email. When the user names a person by role (my manager, my reports), ask for a name or an email.",
     ].join("\n"),
   () => REVIEW_RULES,
+  (p) => (p.unattended ? UNATTENDED_RULES : null),
   (p) =>
     `The planner state and the user's saved memories (memories are suggestions only):\n${dataBlock({
       planner_dates: p.shown ? { from: p.shown.from, to_exclusive: p.shown.to } : null,

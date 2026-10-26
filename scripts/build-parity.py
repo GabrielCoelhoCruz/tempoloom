@@ -1745,32 +1745,35 @@ E2E_NOTES.update({
 # (tests/e2e/assistant-C4.spec.ts, fake model as in the C1 block.)
 T.update({
     "c4_automations": "automations by chat: a new habit, a focus goal change and a buffer turned off wait in preview mode with their calendar impact; a field the form refuses goes back to the model; nothing changes before apply (assistant-chat rule 7; automations-overview rules 1, 5)",
-    "c4_policies": "team policies by chat: an admin's new policy and its change wait in preview mode and reach the team only after apply; a member who is not an admin stages nothing (assistant-chat rule 7; teams-policies rule 1)",
-    "c4_review": "Recommendations reviews the dates shown in the planner: the chat lists the conflict, the unanswered invitation, the missing video link and the guest who declined with a staged fix each; a discarded fix is not written, the others are after apply; another week reviews that week (assistant-chat rules 6, 16, 19, 20, T2, T5; meeting checks rule 6)",
+    "c4_automations2": "more automations by chat: a new flexible meeting, a habit turned on, a meeting overload edit and two meeting check changes in one proposal; an automation or setting changed after staging is skipped as stale; a flexible meeting turned off removes its events after apply (assistant-chat rule 7; automations-overview rule 5; preview mode rule 12)",
+    "c4_policies": "team policies by chat: an admin's new policy and its change wait in preview mode and reach the team only after apply; a change made elsewhere after staging makes it stale; a member who is not an admin stages nothing (assistant-chat rule 7; teams-policies rule 1)",
+    "c4_review": "Recommendations reviews the dates shown in the planner: the chat lists the conflict, the unanswered invitation, the missing video links and the guest who declined with a staged fix each, two fixes of one meeting merge; a discarded fix is not written, the others are after apply; another week reviews that week (assistant-chat rules 6, 16, 19, 20, T2, T5; meeting checks rule 6)",
     "c4_week": "moving a week of meetings by chat stages one move per meeting the user organizes; the calendar changes only after apply, and an invitation from someone else stays (meetings-flexible-rescheduling rule 24; assistant-chat rule 6)",
-    "c4_digest": "the daily review stages a fix for each open issue by assistant chat before the morning digest, and the digest link opens the chat with the fixes staged; they are written only after apply (assistant-chat rules 15-18; meeting checks rule 6)",
+    "c4_digest": "the daily review stages a fix for each open issue by assistant chat before the morning digest, outside the chat quota and with review tools only, and the digest link opens the chat with the fixes staged; preview mode stays off until the user turns it on; without DAILY_REVIEW or with chat off the digest has the plain link (assistant-chat rules 2, 15-18, 27; meeting checks rule 6)",
+    "c4_digest_sso": "a digest link keeps its conversation through single sign-on: after the identity provider's page the planner opens the chat on that conversation (assistant-chat rule 18)",
 })
 E2E.update({
-    301: ["s1_added", "s1_list", "c4_automations"],
-    679: ["c4_automations"],
+    301: ["s1_added", "s1_list", "c4_automations", "c4_automations2"],
+    679: ["c4_automations", "c4_automations2"],
     688: ["c4_policies"],
     316: ["c4_review", "s5_checks"],
     684: ["c4_review"],
     678: ["c4_review", "c4_week"],
     369: ["c4_week"],
-    672: ["c4_digest", "s5_digest", "u73_digest"],
+    672: ["c4_digest", "c4_digest_sso", "s5_digest", "u73_digest"],
     769: ["c4_automations", "c4_review", "c1_events", "s7_auto", "s1_list", "s3_focus_tasks", "s5_checks", "s5_agenda",
           "u9_balance", "an_org", "s7_mcp_read"],
 })
 E2E_NOTES.update({
     301: ("Library and the top-bar create menu open the forms; in chat, propose_automation stages the same request as the form, "
           "checked by a dry run (a refused field goes back to the model) and staged with its calendar impact. " + _FAKE),
-    679: ("Create, edit, turn off and turn on habits, focus time, buffers, meeting overloads and flexible meetings, and edit the "
-          "meeting checks, by propose_automation: the form's request, dry-run and staged in preview mode with the calendar "
-          "impact; apply runs it again and skips it when the automation changed meanwhile. " + _FAKE),
+    679: ("By propose_automation, with E2E for each: create (habit, flexible meeting), edit (focus time, meeting overload, "
+          "meeting checks, two check changes merged into one proposal), turn off (buffer, flexible meeting, which removes its "
+          "events) and turn on (habit). The form's request is dry-run and staged in preview mode with the calendar impact; "
+          "apply runs it again and skips it as stale when the automation or the meeting check settings changed meanwhile. " + _FAKE),
     688: ("propose_team_policy stages the policy form's request (create, edit, delete) for team admins only; list_team_policies "
-          "reads them. A member's call is refused and stages nothing. Policies are a Tempoloom object (teams-policies.md "
-          "open questions 1, 2). " + _FAKE),
+          "reads them. A member's call is refused and stages nothing. Apply skips a change when the policy changed after "
+          "staging (updated_at). Policies are a Tempoloom object (teams-policies.md open questions 1, 2). " + _FAKE),
     316: ("The chat reads the meeting check issues of the dates shown with review_schedule (with each event id for a fix) "
           "and the planner's recommendations; the Issues tab has them too. " + _FAKE),
     684: ("A Recommendations button in the chat panel sends the review request for the dates shown in the planner; another "
@@ -1780,10 +1783,12 @@ E2E_NOTES.update({
     369: ("The model lists the week and stages one propose_update_event per meeting the user organizes; the prompt tells it "
           "so, and to offer an answer for invitations from others. All moves wait in preview mode. " + _FAKE),
     672: ("Tempoloom decision: the review runs at the digest time, just before the one daily digest (assistant-chat rules 15-17 "
-          "propose 02:00), so the fixes see the newest calendar. It is one chat turn with the review request in a new "
-          "conversation, outside the chat quota; the digest links to /?assistant=<conversation>, which opens the chat with "
-          "the staged fixes. The \u201cagenda\u201d in the title has no rule in the specs; the digest lists no-agenda "
-          "issues when that check is on. " + _FAKE),
+          "propose 02:00), so the fixes see the newest calendar. The operator turns it on (DAILY_REVIEW=on; a cap of users "
+          "per run and a time limit per turn). It is one chat turn with the review request in a new conversation, outside "
+          "the chat quota, with read tools and single-event fixes only; it keeps preview mode as it is and leaves the "
+          "user's own staged changes. The digest links to /?assistant=<conversation>, which opens the chat with the staged "
+          "fixes, also after single sign-on. The \u201cagenda\u201d in the title has no rule in the specs; the digest lists "
+          "no-agenda issues when that check is on. " + _FAKE),
     769: ("Each part of the current version has E2E on CalDAV: the chat (with the fake model), preview mode, automations "
           "(also by chat), suggested tasks, issues and recommendations (also by chat), insights and the MCP server. " + _FAKE),
 })

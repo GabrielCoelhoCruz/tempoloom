@@ -9,16 +9,18 @@
 //   node src/server/cli.ts weekly-reports [--now 2026-10-23T08:30:00Z]   (--now: TEMPOLOOM_TEST_MODE=1 only)
 import { parseArgs } from "node:util";
 import { createLoginLink, ensureUser } from "./accounts.ts";
-import { dailyReview } from "./assistant/nightly.ts";
+import { createApp, NO_SYNC } from "./app.ts";
+import type { Chat } from "./assistant/chat.ts";
 import { sendDueReminders } from "./booking-mail.ts";
 import { clockOf, loadConfig } from "./config.ts";
 import { SecretBox } from "./crypto.ts";
-import { DailyMailWorker } from "./daily-mail.ts";
+import { DailyMailWorker, dailyReview } from "./daily-mail.ts";
 import { one, openDb, run } from "./db.ts";
 import { connectGoogleOauth, connectGoogleServiceAccount } from "./google/connect.ts";
 import { parseServiceAccountKey } from "./google/service-account.ts";
 import { instanceLimit, LIMITS, type LimitName, setInstanceLimit } from "./limits.ts";
 import { createMailer } from "./mail.ts";
+import { WebhookWorker } from "./webhooks.ts";
 
 const [command, ...rest] = process.argv.slice(2);
 const { values } = parseArgs({
@@ -55,13 +57,38 @@ if (command === "weekly-reports") {
   const at = values.now ? Date.parse(values.now) : clockOf(config)();
   if (Number.isNaN(at)) throw new Error("--now must be an ISO date and time");
   const mailer = createMailer(config.SMTP_URL, config.MAIL_FROM);
+  // The daily review uses the app's assistant chat, as in the server. This app
+  // only reads and stages; the server syncs and sends webhooks (not started here).
+  let chat: Chat | undefined;
+  createApp({
+    db,
+    config,
+    box,
+    oauth: undefined,
+    sync: NO_SYNC,
+    webhooks: new WebhookWorker({
+      db,
+      box,
+      allowPrivate: config.WEBHOOK_ALLOW_PRIVATE,
+      retryBaseMs: config.WEBHOOK_RETRY_BASE_MS,
+      suspendAfterMs: config.WEBHOOK_SUSPEND_AFTER_SECONDS * 1000,
+      mailer,
+      baseUrl: config.BASE_URL,
+      now: () => at,
+    }),
+    mailer,
+    now: () => at,
+    onChat: (c) => {
+      chat = c;
+    },
+  });
   const worker = new DailyMailWorker({
     db,
     mailer,
     now: () => at,
     baseUrl: config.BASE_URL,
     intervalMs: 60_000,
-    review: dailyReview({ db, config, mailer, now: () => at }),
+    review: dailyReview(config, chat),
   });
   const n = await worker.tick();
   console.log(`sent ${n} report${n === 1 ? "" : "s"}`);

@@ -7,13 +7,15 @@
 // occurrence.
 import type { ReportEntry } from "../scheduler/model.ts";
 import { addDays, type LocalDate, localToUtc, utcToLocal, weekdayOf } from "../shared/time.ts";
-import type { Review } from "./assistant/nightly.ts";
+import type { Chat, Review } from "./assistant/chat.ts";
+import type { Config } from "./config.ts";
 import { all, type Db, one, run } from "./db.ts";
 import type { Mailer, Message } from "./mail.ts";
 import { openIssues } from "./meeting-checks.ts";
 import { getPrefs } from "./meeting-prefs.ts";
 import { adoptableSeries } from "./meeting-series.ts";
 import { attendeesOf } from "./planner/meetings.ts";
+import { previewMode } from "./preview.ts";
 import { getSettings } from "./settings.ts";
 import { claimWeeklyReport, weeklyReport, workHours } from "./weekly-report.ts";
 import { pruneWeeklyShares } from "./weekly-share.ts";
@@ -102,6 +104,43 @@ function due(db: Db, userId: string, kind: DailyKind, zone: string, hhmm: string
   return row !== undefined;
 }
 
+/** Daily reviews that run at the same time: bounds how long the digests of one run wait. */
+export const REVIEW_CONCURRENCY = 4;
+
+interface DigestUser {
+  id: string;
+  email: string;
+  name: string;
+  time_zone: string;
+}
+
+/** A digest that is due: its days and open issues. */
+interface Digest {
+  u: DigestUser;
+  from: string;
+  to: string;
+  lines: string[];
+}
+
+/** What the daily review gave a digest. */
+interface Reviewed {
+  conversationId: string | null;
+  complete: boolean;
+}
+
+/** The daily review for the worker: the app's chat, when the operator turned it on and a model is connected. */
+export function dailyReview(
+  config: Pick<Config, "DAILY_REVIEW" | "DAILY_REVIEW_MAX_USERS" | "DAILY_REVIEW_TURN_MS">,
+  chat: Chat | undefined,
+): DailyMailDeps["review"] {
+  if (config.DAILY_REVIEW !== "on" || !chat?.configured) return undefined;
+  return {
+    run: chat.review,
+    maxUsers: config.DAILY_REVIEW_MAX_USERS,
+    turnMs: config.DAILY_REVIEW_TURN_MS,
+  };
+}
+
 export interface DailyMailDeps {
   db: Db;
   mailer: Mailer;
@@ -110,8 +149,12 @@ export interface DailyMailDeps {
   intervalMs: number;
   /** false: no weekly reports (the operator's WEEKLY_REPORTS=off). */
   weeklyReports?: boolean;
-  /** Assistant chat's review of the digest days (assistant-chat.md rules 15-18), if a model is connected. */
-  review?: Review | undefined;
+  /**
+   * Assistant chat's review of the digest days (assistant-chat.md rules
+   * 15-18), when the operator turned it on (DAILY_REVIEW): at most `maxUsers`
+   * reviews per run, REVIEW_CONCURRENCY at a time, each within `turnMs`.
+   */
+  review?: { run: Review; maxUsers: number; turnMs: number } | undefined;
   log?: (msg: string, err?: unknown) => void;
 }
 
@@ -175,7 +218,8 @@ export class DailyMailWorker {
     await this.#guestUpdates();
     const { db } = this.#d;
     const now = this.#d.now();
-    for (const u of all<{ id: string; email: string; name: string; time_zone: string }>(
+    const digests: Digest[] = [];
+    for (const u of all<DigestUser>(
       db,
       `SELECT u.id, u.email, u.name, u.time_zone FROM users u
        WHERE u.deactivated_at IS NULL AND u.first_sign_in_at IS NOT NULL
@@ -183,7 +227,8 @@ export class DailyMailWorker {
     )) {
       const prefs = getPrefs(db, u.id);
       if (prefs.digest === "email" && due(db, u.id, "checks", u.time_zone, prefs.digestTime, now)) {
-        await this.#digest(u, now);
+        const d = this.#digestOf(u, now);
+        if (d) digests.push(d);
       }
       if (
         (prefs.atRiskDigest || prefs.newSeriesEmail) &&
@@ -197,14 +242,47 @@ export class DailyMailWorker {
         if (week && (await this.#mail(weeklyReport(db, u, week, this.#d.baseUrl, now)))) reports++;
       }
     }
+    // The daily reviews run after the other emails of this run, bounded, then the digests go.
+    const reviewed = await this.#review(digests);
+    for (const [i, d] of digests.entries()) await this.#sendDigest(d, reviewed[i]);
     return reports;
   }
 
   /**
-   * Rule 6: open issues of the days that assistant-chat.md rule 15 reviews
-   * (`digestDays`); nothing when there are none.
+   * Rules 15, 16: the daily review of the first `maxUsers` digests, at most
+   * REVIEW_CONCURRENCY at a time. A failed or skipped review gives the plain digest.
    */
-  async #digest(u: { id: string; email: string; name: string; time_zone: string }, now: number) {
+  async #review(digests: Digest[]): Promise<(Reviewed | undefined)[]> {
+    const review = this.#d.review;
+    const out: (Reviewed | undefined)[] = digests.map(() => undefined);
+    if (!review) return out;
+    const todo = digests.slice(0, review.maxUsers);
+    let next = 0;
+    const worker = async () => {
+      while (next < todo.length) {
+        const i = next++;
+        const d = todo[i] as Digest;
+        try {
+          out[i] = await review.run(d.u, d.from, addDays(d.to, 1), { turnMs: review.turnMs });
+        } catch (err) {
+          this.#log(`assistant review for ${d.u.email} failed`, err);
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(REVIEW_CONCURRENCY, todo.length) }, worker));
+    // The operator sees how many model turns the daily review used.
+    if (todo.length > 0)
+      console.log(
+        `daily review: ${todo.length} turn${todo.length === 1 ? "" : "s"}${digests.length > todo.length ? `, ${digests.length - todo.length} digests without review (DAILY_REVIEW_MAX_USERS)` : ""}`,
+      );
+    return out;
+  }
+
+  /**
+   * Rule 6: open issues of the days that assistant-chat.md rule 15 reviews
+   * (`digestDays`); none when there are none.
+   */
+  #digestOf(u: DigestUser, now: number): Digest | null {
     const { db } = this.#d;
     const weekly = workHours(db, u.id);
     const { from, to } = digestDays(
@@ -214,24 +292,30 @@ export class DailyMailWorker {
       [1, 2, 3, 4, 5, 6, 7].filter((d) => (weekly?.[String(d)] ?? []).length > 0),
     );
     const issues = openIssues(db, u.id, now, localToUtc(u.time_zone, addDays(to, 1), 0));
-    if (issues.length === 0) return;
+    if (issues.length === 0) return null;
     const lines = issues.map((i) => `- ${when(u.time_zone, i.start)} ${i.title}: ${i.message}`);
-    // Rules 16, 18: assistant chat stages the fixes, and the link opens it with them.
-    let conversation: string | null = null;
-    try {
-      conversation = (await this.#d.review?.(u, from, addDays(to, 1))) ?? null;
-    } catch (err) {
-      this.#log(`assistant review for ${u.email} failed`, err);
-    }
-    const open = conversation
+    return { u, from, to, lines };
+  }
+
+  /** The digest; with a review, rule 18: the link opens the chat with the staged fixes. */
+  async #sendDigest({ u, from, to, lines }: Digest, reviewed: Reviewed | undefined) {
+    const id = reviewed?.conversationId;
+    const planner = new URL("/", this.#d.baseUrl).toString();
+    const open = id
       ? [
-          "Assistant chat staged fixes for these issues. Nothing changes until you apply them.",
-          `Review the fixes: ${new URL(`/?assistant=${conversation}`, this.#d.baseUrl).toString()}`,
+          reviewed.complete
+            ? "Assistant chat staged fixes for these issues. Nothing changes until you apply them."
+            : "Assistant chat stopped before it finished the review: it staged fixes for some of these issues at most. Nothing changes until you apply them.",
+          // The review keeps preview mode as it is (it does not turn it on by itself).
+          ...(previewMode(this.#d.db, u.id).on
+            ? []
+            : ["Preview mode is off: turn it on in the planner to review and apply the fixes."]),
+          `Review the fixes: ${new URL(`/?assistant=${id}`, this.#d.baseUrl).toString()}`,
         ]
-      : [`Open the planner to fix or ignore them: ${new URL("/", this.#d.baseUrl).toString()}`];
+      : [`Open the planner to fix or ignore them: ${planner}`];
     await this.#send(
       u.email,
-      `Meeting issues: ${issues.length} to look at`,
+      `Meeting issues: ${lines.length} to look at`,
       [
         `Tempoloom found these problems with your meetings from ${from} to ${to} (the rest of this week and the first 2 workdays of next week):`,
         "",
