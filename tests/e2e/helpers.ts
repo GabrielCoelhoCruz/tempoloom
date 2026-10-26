@@ -163,6 +163,24 @@ export async function openWeek(page: Page, monday = W): Promise<void> {
   await expect(page.getByTestId("week-label")).toContainText(monday);
 }
 
+/**
+ * Waits until the planner parts above the week have drawn. They draw after the
+ * week (src/web/lib/lazy.ts `settled`) and push it down by up to 150 px, so a
+ * click at a time in a day column before that lands on an earlier time.
+ */
+export async function weekInPlace(page: Page): Promise<void> {
+  await expect(page.getByRole("button", { name: "Planner options" })).toBeVisible();
+  await expect(page.getByTestId("planner-hints")).toHaveAttribute("data-loaded", "true");
+  await expect(page.getByTestId("preview-panel")).toBeVisible();
+  // The mirroring hint loads the calendars before it draws.
+  const { hints } = await page.evaluate(() =>
+    fetch("/api/hints").then((r) => r.json() as Promise<{ hints: string[] }>),
+  );
+  if (hints.includes("first-mirror")) {
+    await expect(page.getByTestId("hint-first-mirror")).toBeVisible();
+  }
+}
+
 /** Opens the details panel of a managed event in the planner by title text. */
 export async function openEvent(page: Page, text: string): Promise<void> {
   await page.locator(".ev", { hasText: text }).first().click();
