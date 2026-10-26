@@ -4,12 +4,14 @@
 import type { Context } from "hono";
 import { Hono } from "hono";
 import { z } from "zod";
-import { addDays, diffDays, type LocalDate, utcToLocal } from "../../shared/time.ts";
+import { type LocalDate, utcToLocal } from "../../shared/time.ts";
 import { loadMemberDays } from "../analytics/member.ts";
 import { teamStats } from "../analytics/metrics.ts";
 import {
   MIN_GROUP,
   orgReport,
+  type RangeProblem,
+  rangeProblem,
   reportCsv,
   salaries,
   saveSalaries,
@@ -21,31 +23,12 @@ import { all, type Db, one } from "../db.ts";
 import { jsonBody } from "../http.ts";
 import { membership } from "../teams.ts";
 
-/** Personal stats rule 10: the earliest start is 12 weeks before today. */
-const HISTORY_DAYS = 84;
-const MAX_SPAN_DAYS = 120;
-
 const range = z.object({ from: z.iso.date(), to: z.iso.date() });
 
 export type Range = { from: LocalDate; to: LocalDate };
 
-export type RangeProblem = "invalid_range" | "range_too_long" | "range_too_early";
-
-/**
- * What is wrong with a stats range, or null: the end is before the start, it
- * is longer than MAX_SPAN_DAYS, or it starts more than HISTORY_DAYS before today.
- * The stats pages and assistant chat's get_team_stats check ranges with it.
- */
-export function rangeProblem(
-  from: LocalDate,
-  to: LocalDate,
-  today: LocalDate,
-): RangeProblem | null {
-  if (to < from) return "invalid_range";
-  if (diffDays(from, to) > MAX_SPAN_DAYS) return "range_too_long";
-  if (from < addDays(today, -HISTORY_DAYS)) return "range_too_early";
-  return null;
-}
+// One range check for the stats pages, assistant chat and the MCP tools (src/server/analytics/org.ts).
+export { type RangeProblem, rangeProblem };
 
 /** Parses and checks a range in the user's zone; returns an error response or the range. */
 function parseRange(c: Context<AppEnv>, now: number): Range | Response {

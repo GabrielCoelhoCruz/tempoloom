@@ -2,7 +2,7 @@
 // (meetings-flexible.md rules 1 and 3; planning-notifications.md NTF-30).
 import { createHash } from "node:crypto";
 import { diffDays, type LocalDate, utcToLocal, weekdayOf } from "../shared/time.ts";
-import { all, type Db, one } from "./db.ts";
+import { all, type Db } from "./db.ts";
 import { planningZone } from "./travel.ts";
 
 export interface Series {
@@ -74,14 +74,42 @@ function seriesFrequency(
   return step / 7;
 }
 
+/** A solo series of the user's: one that could become a habit (planning-habits rule 8). */
+export interface SoloSeries {
+  calendarId: string;
+  /** The planner id of its next instance, for /habits?from=. */
+  eventId: string;
+  title: string;
+  /** ISO weekdays of its instances, 1 is Monday. */
+  days: number[];
+  idealTime: string;
+  minutes: number;
+}
+
+/** The user's own addresses: the sign-in email and every connected account's email, lower case. */
+export function ownEmails(db: Db, userId: string): Set<string> {
+  return new Set(
+    all<{ email: string }>(
+      db,
+      "SELECT email FROM users WHERE id = ? UNION SELECT email FROM accounts WHERE user_id = ?",
+      userId,
+      userId,
+    ).map((r) => r.email.toLowerCase()),
+  );
+}
+
 /**
- * Series with at least one guest that the user organizes on a calendar
- * Tempoloom can write, and that no meeting manages yet (Proposed rule 3: a
- * series where the user is only a guest is not listed).
+ * The recurring series the user organizes on a calendar Tempoloom can write,
+ * that Tempoloom does not write and no meeting manages yet, in one pass: a
+ * series with a guest (anyone but the user's own addresses) is in `guests`,
+ * the others are in `solo`. So one series is in one list only.
  */
-export function adoptableSeries(db: Db, userId: string, now: number): Series[] {
-  const user = one<{ email: string }>(db, "SELECT email FROM users WHERE id = ?", userId);
-  if (!user) return [];
+export function ownSeries(
+  db: Db,
+  userId: string,
+  now: number,
+): { guests: Series[]; solo: SoloSeries[] } {
+  const mine = ownEmails(db, userId);
   const zone = planningZone(db, userId);
   const rows = all<{
     calendar_id: string;
@@ -113,18 +141,32 @@ export function adoptableSeries(db: Db, userId: string, now: number): Series[] {
     const k = `${r.calendar_id}\n${r.recurring_id}`;
     groups.set(k, [...(groups.get(k) ?? []), r]);
   }
-  const out: Series[] = [];
+  const guests: Series[] = [];
+  const solo: SoloSeries[] = [];
   for (const list of groups.values()) {
     const [first] = list;
     if (!first) continue;
+    const local = utcToLocal(zone, first.start_ms);
+    const idealTime = `${pad(Math.floor(local.minuteOfDay / 60))}:${pad(local.minuteOfDay % 60)}`;
+    const attendees = (JSON.parse(first.attendees) as string[]).filter(
+      (e) => !mine.has(e.toLowerCase()),
+    );
+    if (attendees.length === 0) {
+      solo.push({
+        calendarId: first.calendar_id,
+        eventId: `ext:${first.calendar_id}:${first.event_id}`,
+        title: first.summary,
+        days: [...new Set(list.map((o) => utcToLocal(zone, o.start_ms).weekday))].sort(
+          (a, b) => a - b,
+        ),
+        idealTime,
+        minutes: Math.round((first.end_ms - first.start_ms) / 60_000),
+      });
+      continue;
+    }
     const everyWeeks = seriesFrequency(zone, list);
     if (everyWeeks === null) continue;
-    const attendees = (JSON.parse(first.attendees) as string[]).filter(
-      (e) => e !== user.email.toLowerCase(),
-    );
-    if (attendees.length === 0) continue;
-    const local = utcToLocal(zone, first.start_ms);
-    out.push({
+    guests.push({
       key: seriesKey(first.calendar_id, first.recurring_id),
       calendarId: first.calendar_id,
       seriesId: first.recurring_id,
@@ -134,11 +176,19 @@ export function adoptableSeries(db: Db, userId: string, now: number): Series[] {
       attendees,
       start: first.start_ms,
       end: first.end_ms,
-      idealTime: `${pad(Math.floor(local.minuteOfDay / 60))}:${pad(local.minuteOfDay % 60)}`,
+      idealTime,
       idealDay: weekdayOf(local.date),
       everyWeeks,
       firstDate: local.date,
     });
   }
-  return out;
+  return { guests, solo };
 }
+
+/**
+ * Series with at least one guest that the user organizes on a calendar
+ * Tempoloom can write, and that no meeting manages yet (Proposed rule 3: a
+ * series where the user is only a guest is not listed).
+ */
+export const adoptableSeries = (db: Db, userId: string, now: number): Series[] =>
+  ownSeries(db, userId, now).guests;

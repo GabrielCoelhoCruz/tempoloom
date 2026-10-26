@@ -13,6 +13,7 @@ import { AUTOMATION_TYPES, listAutomationsPage, listKeySchema } from "./api/auto
 import { CATEGORIES, computeStats } from "./api/stats.ts";
 import { apiKeyUser } from "./api-keys.ts";
 import { all, type Db, one } from "./db.ts";
+import { answerTools } from "./mcp/answers.ts";
 import { cursorKey, cursorOf, cut, nextCursor, PAGE_SIZE, pageInput } from "./mcp/pages.ts";
 import { type CachedRow, cached, DAY, isoOf, rangeOf, readers, toMs } from "./mcp/reads.ts";
 import {
@@ -698,6 +699,7 @@ export function mcpTools(deps: Omit<McpDeps, "writeEnabled">): Tool[] {
         };
       },
     }),
+    ...answerTools(deps),
   ];
 
   function staged(caller: Caller, input: StageArgs, at: number) {

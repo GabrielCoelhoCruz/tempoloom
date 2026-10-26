@@ -637,8 +637,20 @@ export function createPreview(deps: PreviewDeps) {
    * Rule 2: the managed events an automation change would create, move or
    * delete. The call runs on a second connection inside a transaction that is
    * rolled back, so nothing is saved; the plans before and after are compared.
+   * Dry runs share one connection, so they run one at a time: a second BEGIN
+   * while the first run awaits its call would fail.
    */
-  async function dryRun(
+  let dryQueue: Promise<unknown> = Promise.resolve();
+  function dryRun(
+    userId: string,
+    r: ReplayedRequest,
+  ): Promise<{ status: number; body: unknown; impact: ImpactItem[] }> {
+    const run = dryQueue.then(() => dryRunNow(userId, r));
+    dryQueue = run.catch(() => {});
+    return run;
+  }
+
+  async function dryRunNow(
     userId: string,
     r: ReplayedRequest,
   ): Promise<{ status: number; body: unknown; impact: ImpactItem[] }> {
