@@ -493,7 +493,7 @@ test("the chat memory limit refuses a new memory by chat and a Save past the lim
   expect(await memories()).toEqual(["No meetings on Friday", "Mornings for focus"]);
 });
 
-test("find time with a colleague by name stages an event with them as attendee inside their meeting hours, written only after approval @llm-real", async ({
+test("find time with a colleague stages an event with them as attendee inside their meeting hours, written only after approval @llm-real", async ({
   page,
   cal,
   signIn,
