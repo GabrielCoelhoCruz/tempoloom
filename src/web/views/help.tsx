@@ -54,8 +54,6 @@ function Block({ block }: { block: HelpBlock }) {
   return "ul" in block ? <ul>{lis}</ul> : <ol>{lis}</ol>;
 }
 
-const PAGES = HELP_PAGES;
-
 const GROUPS: { name: string; entries: [string, string][] }[] = [
   { name: "Flexible meetings", entries: [["meeting-not-placed", ""]] },
   { name: "Booking links", entries: [["booked-guests", ""]] },
@@ -101,7 +99,7 @@ function Index() {
           <ul>
             {g.entries.map(([slug, label]) => (
               <li key={slug + label}>
-                <A href={`/help/${slug}`}>{label || PAGES[slug]?.title}</A>
+                <A href={`/help/${slug}`}>{label || HELP_PAGES[slug]?.title}</A>
               </li>
             ))}
           </ul>
@@ -291,7 +289,7 @@ export function HelpPage() {
   const slug = path.value.replace(/^\/help\/?/, "");
   if (!slug) return <Index />;
   if (slug === "lookup") return <LookupView />;
-  const page = PAGES[slug];
+  const page = HELP_PAGES[slug];
   if (!page) {
     navigate("/help");
     return null;

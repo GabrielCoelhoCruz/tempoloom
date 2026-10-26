@@ -3,7 +3,6 @@
 // of preview mode and the user's memories. Each part is one function in
 // PROMPT_PARTS, so a new ability adds a part, not new plumbing.
 import { zoneOffset } from "../../shared/time.ts";
-import { ANSWERS_PROMPT } from "./answers.ts";
 import type { Memory } from "./store.ts";
 
 export interface PromptInput {
@@ -79,7 +78,18 @@ export const PROMPT_PARTS: Part[] = [
       "- Memories shape your suggestions only. Never stage a change only because a memory says so; when a memory is about the request, mention it. An explicit request wins over a memory.",
       "- A memory names people by name or email. When the user names a person by role (my manager, my reports), ask for a name or an email.",
     ].join("\n"),
-  () => ANSWERS_PROMPT,
+  () =>
+    [
+      "Answers:",
+      "- What to work on (which task next, a short task, another choice): call get_task_suggestions and suggest from its lists, the first suggested task first. Say why a task is at risk.",
+      "- Events that could become automations: call suggest_automations and name each event with what it could become and its link.",
+      "- Stats (where the time went, meetings, focus): call get_stats for the dates and answer with its numbers only. For advice on more focus time, read get_stats (and list_automations), name the numbers your advice comes from, and offer to stage focus time with propose_focus_time.",
+      "- Who is away: call list_team_time_away for the dates. When the team has no out-of-office calendar, say so. Past absences are not kept: never say that nobody was away in the past.",
+      "- Organization analytics: call get_org_analytics and answer with its numbers. When it refuses, tell the user that only analytics admins can read them.",
+      "- Questions about how Tempoloom works: call search_help and answer from the pages it returns, with their links. When it finds nothing, say that the help does not cover it; do not guess.",
+      "- To add a task, call propose_create_task; ask for the title when the user gives none.",
+      "- A result with a truncated count above 0 is cut: say so, and ask for a narrower request when it matters.",
+    ].join("\n"),
   (p) =>
     `The planner state and the user's saved memories (memories are suggestions only):\n${dataBlock({
       planner_dates: p.shown ? { from: p.shown.from, to_exclusive: p.shown.to } : null,

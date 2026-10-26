@@ -260,6 +260,11 @@ const READ = [
   "list_tasks",
   "list_automations",
   "list_staged_changes",
+  "get_task_suggestions",
+  "suggest_automations",
+  "list_team_time_away",
+  "get_org_analytics",
+  "search_help",
 ];
 const STAGE = [
   "propose_create_event",
@@ -268,6 +273,7 @@ const STAGE = [
   "propose_rsvp",
   "propose_focus_time",
   "propose_log_task_time",
+  "propose_create_task",
 ];
 
 describe("MCP tool annotations", () => {
@@ -360,6 +366,14 @@ describe("MCP output schemas", () => {
       start: new Date(T0 - 3 * HOUR).toISOString(),
       minutes: 90,
     });
+    await check("get_task_suggestions");
+    await check("suggest_automations");
+    await check("list_team_time_away", { start_date: "2026-10-19", end_date: "2026-10-25" });
+    await check("get_org_analytics", { start_date: "2026-10-12", end_date: "2026-10-18" });
+    await check("search_help", { query: "copies appear twice" });
+    // The dry run plans the week: the seeded habits need a frequency the planner reads.
+    run(s.db, `UPDATE habits SET frequency = '{"period":"daily"}'`);
+    await check("propose_create_task", { title: "Plan the offsite", minutes: 60 });
     await check("list_staged_changes");
     // m1 moves after its move was staged: that change is stale.
     run(s.db, "UPDATE managed_events SET start_ms = start_ms + 900000 WHERE id = 'm1'");

@@ -4,12 +4,13 @@
 import type { Context } from "hono";
 import { Hono } from "hono";
 import { z } from "zod";
-import { addDays, diffDays, type LocalDate, utcToLocal } from "../../shared/time.ts";
+import { type LocalDate, utcToLocal } from "../../shared/time.ts";
 import { loadMemberDays } from "../analytics/member.ts";
 import { teamStats } from "../analytics/metrics.ts";
 import {
   MIN_GROUP,
   orgReport,
+  rangeProblem,
   reportCsv,
   salaries,
   saveSalaries,
@@ -21,10 +22,6 @@ import { all, type Db, one } from "../db.ts";
 import { jsonBody } from "../http.ts";
 import { membership } from "../teams.ts";
 
-/** Personal stats rule 10: the earliest start is 12 weeks before today. */
-const HISTORY_DAYS = 84;
-const MAX_SPAN_DAYS = 120;
-
 const range = z.object({ from: z.iso.date(), to: z.iso.date() });
 
 type Range = { from: LocalDate; to: LocalDate };
@@ -32,12 +29,13 @@ type Range = { from: LocalDate; to: LocalDate };
 /** Parses and checks a range in the user's zone; returns an error response or the range. */
 function parseRange(c: Context<AppEnv>, now: number): Range | Response {
   const q = range.safeParse(c.req.query());
-  if (!q.success || q.data.to < q.data.from) return c.json({ error: "invalid_range" }, 400);
-  if (diffDays(q.data.from, q.data.to) > MAX_SPAN_DAYS)
-    return c.json({ error: "range_too_long" }, 400);
-  const today = utcToLocal(c.get("user").time_zone, now).date;
-  if (q.data.from < addDays(today, -HISTORY_DAYS)) return c.json({ error: "range_too_early" }, 400);
-  return q.data;
+  if (!q.success) return c.json({ error: "invalid_range" }, 400);
+  const problem = rangeProblem(
+    q.data.from,
+    q.data.to,
+    utcToLocal(c.get("user").time_zone, now).date,
+  );
+  return problem ? c.json({ error: problem }, 400) : q.data;
 }
 
 const LEVEL_LABEL = (groupBy: string) =>

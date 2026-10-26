@@ -199,7 +199,7 @@ export function helpText(page: HelpPage): string {
 
 /** Words that say nothing about a topic. */
 const COMMON = new Set(
-  "the and are but can could does doesn did for from get got has have how into its not now one our out should that the their them then there they this was what when where which who why will with would you your tempoloom".split(
+  "and are but can could does doesn did for from get got has have how into its not now one our out should that the their them then there they this was what when where which who why will with would you your tempoloom".split(
     " ",
   ),
 );
@@ -211,14 +211,30 @@ const words = (t: string) =>
     .split(/[^\p{L}\p{N}#_]+/u)
     .filter((w) => w.length > 2 && !COMMON.has(w));
 
-/** Each word's stem: a few English endings off, so "deleted" finds "delete". */
-const stem = (w: string) => w.replace(/(ing|ed|es|s|e)$/, "") || w;
+/**
+ * Each word's stem, so the forms of one word meet: the plural first ("copies"
+ * to "copy", "meetings" to "meeting"; not "focus" or "class"), then -ing and
+ * -ed, then a final "e" ("placed", "placing" and "place" all give "plac").
+ * The rules run once, in order, on words of 3 letters or more.
+ */
+export function stem(word: string): string {
+  let w = word;
+  if (w.endsWith("ies") && w.length > 4) w = `${w.slice(0, -3)}y`;
+  else if (w.endsWith("sses")) w = w.slice(0, -2);
+  else if (w.endsWith("s") && !/(ss|us|is)$/.test(w) && w.length > 3) w = w.slice(0, -1);
+  if (w.endsWith("ing") && w.length > 5) w = w.slice(0, -3);
+  else if (w.endsWith("ied") && w.length > 4) w = `${w.slice(0, -3)}y`;
+  else if (w.endsWith("ed") && w.length > 4) w = w.slice(0, -2);
+  if (w.endsWith("e") && w.length > 3) w = w.slice(0, -1);
+  return w;
+}
 
 /**
  * The help pages that match a question, best first: a page scores by the
  * question's words found in it, a word in the title counts double. A page
- * must hold more than half of the question's words, so one common word (such
- * as "order") does not make an answer.
+ * must hold more than half of the question's words, and either two of them or
+ * one in its title: so a single word that a page only uses in passing (such as
+ * "order" in "in order") finds no page.
  */
 export function searchHelp(
   query: string,
@@ -231,10 +247,17 @@ export function searchHelp(
       const body = new Set(words(helpText(page)).map(stem));
       const found = asked.filter((w) => title.has(w) || body.has(w));
       const score = found.reduce((s, w) => s + (title.has(w) ? 2 : 0) + (body.has(w) ? 1 : 0), 0);
-      return { slug, title: page.title, text: helpText(page), score, found: found.length };
+      return {
+        slug,
+        title: page.title,
+        text: helpText(page),
+        score,
+        found: found.length,
+        inTitle: found.some((w) => title.has(w)),
+      };
     })
-    .filter((r) => r.found * 2 > asked.length)
+    .filter((r) => r.found * 2 > asked.length && (r.found >= 2 || r.inTitle))
     .sort((a, b) => b.score - a.score || a.slug.localeCompare(b.slug))
     .slice(0, limit)
-    .map(({ found: _, ...r }) => r);
+    .map(({ found: _, inTitle: __, ...r }) => r);
 }

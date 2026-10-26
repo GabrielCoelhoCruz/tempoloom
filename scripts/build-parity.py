@@ -1776,16 +1776,20 @@ E2E.update({
 })
 E2E_NOTES.update({
     6: ("propose_create_task stages the request of the New task form (POST /api/tasks) in preview mode with the chunks a "
-        "dry run places; fields left out take the task defaults. The task and its events exist only after apply. " + _FAKE),
+        "dry run places (E2E checks them); fields left out take the task defaults. The dry run and apply both run "
+        "POST /api/tasks, which refuses a due date before the start. The task and its events exist only after apply. "
+        "The tool is also an MCP tool. " + _FAKE),
     47: ("get_task_suggestions gives the next-up task, Suggested now (scheduler order) and At risk with the reason, the same "
          "lists as the planner's tasks panel; the model picks the next task, a short task or another choice from them. " + _FAKE),
     582: ("Tempoloom decision: list_team_time_away reads the absences that the team's out-of-office calendars copied "
-           "(teams-ooo-calendar.md rules 10-15), with the person and the span only, for the caller's own team. " + _FAKE),
+           "(teams-ooo-calendar.md rules 10-15), with the person and the span only, for every member of the caller's own "
+           "team. Copies of past absences are not kept, so a past range is refused, not answered with nobody. " + _FAKE),
     609: "get_stats gives the numbers of the stats page for the dates asked (rule 14); a prompt part tells the model to answer with them. " + _FAKE,
     612: ("Tempoloom decision for open question 6: the advice comes in the chat from get_stats (and the automations), names "
            "the numbers it comes from, and offers focus time with propose_focus_time, which waits in preview mode. " + _FAKE),
     627: ("get_org_analytics gives the organization report of the page (groups, 7-day periods, the CSV metrics, the privacy "
-           "guard of 3 people) to team admins, the analytics admins; a member gets a refusal (unit test and E2E). " + _FAKE),
+           "guard of 3 people) to team admins, the analytics admins; a member gets a refusal (unit test and E2E). A long "
+           "report is cut to a bounded size with a count of the groups left out (unit test). " + _FAKE),
     680: ("Tasks for today as in row 47; suggest_automations lists recurring meetings with guests that the user organizes "
            "(flexible meetings, the list of the daily email) and solo series (habits), each with the link to the form that "
            "makes it. " + _FAKE),

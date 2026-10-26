@@ -175,6 +175,7 @@ test("the chat suggests what to work on from the tasks panel's lists and names r
 
 test("a task asked for in the chat is proposed with its fields and created only after approval; the scheduler then places it (planning-tasks TSK-5; assistant-chat rule 12)", async ({
   page,
+  app,
   cal,
   signIn,
   llm,
@@ -202,6 +203,25 @@ test("a task asked for in the chat is proposed with its fields and created only 
   const card = proposal(page, "New task “Write the budget”");
   await expect(card).toContainText("90 min · P2 · due");
   await expect(card).toContainText("Waiting for your approval");
+  // The proposal carries the chunks a dry run of the request places: 90 min, before the due date.
+  const [staged] = app.query<{ impact: string }>(
+    "SELECT impact FROM staged_changes WHERE summary LIKE 'New task “Write the budget”%'",
+  );
+  const impact = JSON.parse(staged?.impact ?? "[]") as { op: string; start: number; end: number }[];
+  expect(impact.length).toBeGreaterThan(0);
+  expect(impact.every((c) => c.op === "create" && c.end <= due)).toBe(true);
+  expect(impact.reduce((m, c) => m + (c.end - c.start), 0)).toBe(90 * 60_000);
+
+  // A due date that already passed: the tasks API refuses it in the dry run, so nothing is staged.
+  llm.on(/due yesterday/i, [
+    call("propose_create_task", { title: "Late report", due: iso(Date.now() - 86_400_000) }),
+    (req) => ({ content: `Not proposed: ${toolResults(req)[0]?.content}` }),
+  ]);
+  expect(await say(page, "Propose the late report, due yesterday")).toBe(200);
+  await expect(answers(page).last()).toHaveText(
+    "Not proposed: Error: Due date must be after the start date",
+  );
+  await expect(chatPanel(page).getByTestId("chat-proposal")).toHaveCount(1);
 
   // Nothing exists before approval: no task, no event.
   const tasks = async () =>
@@ -215,6 +235,9 @@ test("a task asked for in the chat is proposed with its fields and created only 
   expect((await weekEvents(cal)).filter((e) => e.summary.includes("Write the budget"))).toEqual([]);
 
   await page.reload();
+  await expect(
+    page.locator(".ev-staged-new", { hasText: "Write the budget" }).first(),
+  ).toBeVisible();
   await expect(stagedRow(page, "Write the budget")).toContainText("Assistant chat");
   await expect(stagedRow(page, "Write the budget")).toContainText("You asked for it.");
   await openAssistant(page);
@@ -356,6 +379,10 @@ test("the chat answers who is away from the team's out-of-office calendar; a per
   llm,
 }) => {
   test.skip(BACKEND === "google", "Out-of-office copies use CalDAV shared calendars.");
+  // A person of another team, away the same week: never in this team's answer.
+  const outsider = await people(3);
+  await outOfOffice(outsider.cal.calendarId, "Holiday", { from: day(1), to: day(3) });
+  const pc = await outsider.signIn();
   await signIn();
   const pb = await colleague.signIn();
   await invite(page, [colleague.email]);
@@ -401,12 +428,18 @@ test("the chat answers who is away from the team's out-of-office calendar; a per
     from: W,
     to: day(6),
     out_of_office_calendars: 1,
+    note: null,
+    truncated: 0,
     absences: [{ name: "e2e2", email: colleague.email, start: day(2), end: day(3), all_day: true }],
   });
 
-  // A person of another team asks the same: none of this team's absences.
-  const outsider = await people(3);
-  const pc = await outsider.signIn();
+  // A teammate who does not own the out-of-office calendar gets the same answer.
+  await pb.goto(`/?week=${W}`);
+  await openAssistant(pb);
+  expect(await say(pb, "Who is away next week, as a teammate?")).toBe(200);
+  await expect(answers(pb)).toHaveText([`e2e2 is away from ${day(2)} to ${day(3)}.`]);
+
+  // The person of another team asks the same: none of this team's absences.
   await pc.goto(`/?week=${W}`);
   await openAssistant(pc);
   expect(await say(pc, "Who is away next week, please?")).toBe(200);

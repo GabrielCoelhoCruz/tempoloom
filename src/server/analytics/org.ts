@@ -159,23 +159,40 @@ export function orgReport(db: Db, teamId: string, q: OrgQuery) {
 
 export type OrgReport = ReturnType<typeof orgReport>;
 
-/** The metrics of a report row: the CSV columns and the chat's names. */
-export const COLUMNS: [string, (m: Metrics) => string][] = [
-  ["meeting_hours_per_person_week", (m) => (m.meetings / 60).toFixed(2)],
-  ["one_on_one_hours_per_person_week", (m) => (m.oneOnOne / 60).toFixed(2)],
-  ["team_meeting_hours_per_person_week", (m) => (m.teamMeetings / 60).toFixed(2)],
-  ["external_meeting_hours_per_person_week", (m) => (m.externalMeetings / 60).toFixed(2)],
-  ["meeting_hours_per_person_workday", (m) => (m.dailyMeetingLoad / 60).toFixed(2)],
-  ["focus_hours_per_person_week", (m) => (m.focus / 60).toFixed(2)],
-  ["deep_work_hours_per_person_week", (m) => (m.deepWork / 60).toFixed(2)],
-  ["avg_focus_session_minutes", (m) => (m.focusSession === null ? "" : m.focusSession.toFixed(2))],
-  ["fragmented_minutes_per_person_workday", (m) => m.fragmented.toFixed(2)],
-  ["free_hours_per_person_week", (m) => (m.free / 60).toFixed(2)],
-  ["travel_hours_per_person_week", (m) => (m.travel / 60).toFixed(2)],
-  ["break_hours_per_person_week", (m) => (m.breaks / 60).toFixed(2)],
-  ["deep_work_score", (m) => (m.score === null ? "" : String(m.score))],
-  ["meeting_cost_usd", (m) => String(Math.round(m.cost))],
+/** The metrics of a report row: the name (CSV column and chat key), the value, and its CSV text. */
+const two = (v: number) => v.toFixed(2);
+export const COLUMNS: [string, (m: Metrics) => number | null, (v: number) => string][] = [
+  ["meeting_hours_per_person_week", (m) => m.meetings / 60, two],
+  ["one_on_one_hours_per_person_week", (m) => m.oneOnOne / 60, two],
+  ["team_meeting_hours_per_person_week", (m) => m.teamMeetings / 60, two],
+  ["external_meeting_hours_per_person_week", (m) => m.externalMeetings / 60, two],
+  ["meeting_hours_per_person_workday", (m) => m.dailyMeetingLoad / 60, two],
+  ["focus_hours_per_person_week", (m) => m.focus / 60, two],
+  ["deep_work_hours_per_person_week", (m) => m.deepWork / 60, two],
+  ["avg_focus_session_minutes", (m) => m.focusSession, two],
+  ["fragmented_minutes_per_person_workday", (m) => m.fragmented, two],
+  ["free_hours_per_person_week", (m) => m.free / 60, two],
+  ["travel_hours_per_person_week", (m) => m.travel / 60, two],
+  ["break_hours_per_person_week", (m) => m.breaks / 60, two],
+  ["deep_work_score", (m) => m.score, String],
+  ["meeting_cost_usd", (m) => Math.round(m.cost), String],
 ];
+
+/** Personal stats rule 10 and organization analytics: 12 weeks of history, at most 120 days. */
+export const HISTORY_DAYS = 84;
+export const MAX_SPAN_DAYS = 120;
+
+/** What is wrong with a report range, or null; `today` in the user's zone. */
+export function rangeProblem(
+  from: LocalDate,
+  to: LocalDate,
+  today: LocalDate,
+): "invalid_range" | "range_too_long" | "range_too_early" | null {
+  if (to < from) return "invalid_range";
+  if (diffDays(from, to) > MAX_SPAN_DAYS) return "range_too_long";
+  if (from < addDays(today, -HISTORY_DAYS)) return "range_too_early";
+  return null;
+}
 
 const cell = (v: string) => (/[",\n\r]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
 
@@ -190,7 +207,10 @@ export function reportCsv(r: OrgReport, groupLabel: string): string {
         String(g.people),
         p.start,
         p.end,
-        ...COLUMNS.map(([, f]) => (m ? f(m) : "")),
+        ...COLUMNS.map(([, f, text]) => {
+          const v = m ? f(m) : null;
+          return v === null ? "" : text(v);
+        }),
       ]);
     });
   return `${lines.map((l) => l.map(cell).join(",")).join("\r\n")}\r\n`;

@@ -13,6 +13,7 @@ import { AUTOMATION_TYPES, listAutomationsPage, listKeySchema } from "./api/auto
 import { CATEGORIES, computeStats } from "./api/stats.ts";
 import { apiKeyUser } from "./api-keys.ts";
 import { all, type Db, one } from "./db.ts";
+import { answerTools, stagedOutput } from "./mcp/answers.ts";
 import { cursorKey, cursorOf, cut, nextCursor, PAGE_SIZE, pageInput } from "./mcp/pages.ts";
 import { type CachedRow, cached, DAY, isoOf, rangeOf, readers, toMs } from "./mcp/reads.ts";
 import {
@@ -64,13 +65,6 @@ const datetime = z.iso.datetime({ offset: true });
 
 const instant = z.string().describe("ISO 8601 UTC");
 const date = z.string().describe("YYYY-MM-DD");
-const stagedOutput = z.object({
-  id: z.string(),
-  state: z.string(),
-  summary: z.string(),
-  review_url: z.string(),
-  message: z.string(),
-});
 const hourFields = {
   meeting_hours: z.number(),
   focus_hours: z.number(),
@@ -648,6 +642,7 @@ export function mcpTools(deps: Omit<McpDeps, "writeEnabled">): Tool[] {
         };
       },
     }),
+    ...answerTools(deps, staged),
   ];
 
   function staged(
