@@ -18,7 +18,13 @@ interface Member {
 }
 
 export interface TeamInfo {
-  team: { id: string; name: string; joinMode: string; invitePermission: string };
+  team: {
+    id: string;
+    name: string;
+    joinMode: string;
+    invitePermission: string;
+    assistantChat: boolean;
+  };
   role: "admin" | "member";
   members: Member[];
   invites: { id: string; email: string; canManage: boolean }[];
@@ -148,6 +154,7 @@ function TeamSettingsForm({ info, onSaved }: { info: TeamInfo; onSaved: () => vo
           name: String(f.get("name") ?? ""),
           joinMode: String(f.get("joinMode")),
           invitePermission: String(f.get("invitePermission")),
+          assistantChat: f.get("assistantChat") === "on",
         });
         setSaved(true);
         onSaved();
@@ -171,6 +178,10 @@ function TeamSettingsForm({ info, onSaved }: { info: TeamInfo; onSaved: () => vo
           <option value="admins">Admins only</option>
           <option value="all_members">All members</option>
         </select>
+      </label>
+      <label class="inline">
+        <input type="checkbox" name="assistantChat" defaultChecked={info.team.assistantChat} />
+        Assistant chat for all members
       </label>
       <button type="submit" class="primary">
         Save team settings

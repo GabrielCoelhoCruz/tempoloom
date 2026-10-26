@@ -134,6 +134,7 @@ export function teamRoutes(deps: TeamDeps): Hono<AppEnv> {
         name: team.name,
         joinMode: team.join_mode,
         invitePermission: team.invite_permission,
+        assistantChat: team.assistant_chat_enabled === 1,
       },
       role,
       members: teamMembers(db, team.id),
@@ -169,14 +170,16 @@ export function teamRoutes(deps: TeamDeps): Hono<AppEnv> {
         name: z.string().trim().min(1).max(100).optional(),
         joinMode: z.enum(["invite_only", "request", "automatic"]).optional(),
         invitePermission: z.enum(["admins", "all_members"]).optional(),
+        assistantChat: z.boolean().optional(),
       }),
     );
     run(
       db,
-      "UPDATE teams SET name = ?, join_mode = ?, invite_permission = ? WHERE id = ?",
+      "UPDATE teams SET name = ?, join_mode = ?, invite_permission = ?, assistant_chat_enabled = ? WHERE id = ?",
       body.name ?? team.name,
       body.joinMode ?? team.join_mode,
       body.invitePermission ?? team.invite_permission,
+      (body.assistantChat ?? team.assistant_chat_enabled === 1) ? 1 : 0,
       team.id,
     );
     return c.json({ ok: true });

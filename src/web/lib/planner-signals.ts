@@ -18,6 +18,15 @@ export const extraZone = signal<string | null>(null);
 /** Bumped when the planner should read its events again. */
 export const plannerReload = signal(0);
 /** PLN-21: the one panel open beside the week; "details" shows the clicked event. */
-export const sidePanel = signal<"tasks" | "priorities" | "conflicts" | "details" | null>(null);
+export const sidePanel = signal<
+  "tasks" | "priorities" | "conflicts" | "details" | "assistant" | null
+>(null);
+/** assistant-chat.md chat message context: the dates shown and the selected event. */
+export const plannerContext = signal<{ from: string; to: string; eventId?: string }>({
+  from: "",
+  to: "",
+});
 /** PLN-6: show the week as the user sees it, or as others see it. */
 export const viewAs = signal<"me" | "others">("me");
+/** Text that "Reply in chat" in preview mode puts in the assistant's draft. */
+export const chatDraft = signal<string | null>(null);

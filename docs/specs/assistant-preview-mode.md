@@ -81,8 +81,9 @@ turns it off.
 
    Tempoloom decision: the planner shows each change's source ("AI tool"
    with the API key's name, "Automation edit", "Your edit"), its reason and
-   the number of calendar events it creates, moves and removes. The reply in
-   assistant chat needs the assistant chat, which is not built.
+   the number of calendar events it creates, moves and removes. A change from
+   assistant chat has "Reply in chat", which opens the chat panel with a reply
+   about that change in the draft.
 7. A "Review and apply changes" action opens a final list of all accepted
    and pending changes. In that list the user can remove single items, then
    confirm.

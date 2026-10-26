@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import { api } from "../lib/api.ts";
 import { useLive } from "../lib/live.ts";
+import { chatDraft, sidePanel } from "../lib/planner-signals.ts";
 import { type OverlayItem, overlay } from "../lib/preview.ts";
 import { onLinkClick } from "../lib/router.ts";
 
@@ -162,6 +163,17 @@ export function PreviewPanel({ onApplied }: { onApplied: () => void }) {
                 >
                   Discard
                 </button>
+                {c.source === "assistant_chat" && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      chatDraft.value = `About “${c.summary}”: `;
+                      sidePanel.value = "assistant";
+                    }}
+                  >
+                    Reply in chat
+                  </button>
+                )}
               </div>
             </div>
           ))}
