@@ -8,6 +8,8 @@ export type HelpBlock = { p: string } | { warning: string } | { ul: string[] } |
 
 export interface HelpPage {
   title: string;
+  /** Other words people use for the page's topic; the search counts them as title words. */
+  keywords?: string[];
   body: HelpBlock[];
 }
 
@@ -95,6 +97,7 @@ export const HELP_PAGES: Record<string, HelpPage> = {
   },
   "buffer-missing": {
     title: "A buffer does not appear",
+    keywords: ["missing", "gone"],
     body: [
       {
         p: "A buffer follows only the events that match its filter, and it needs free time next to the event. When an item with a higher priority holds that time, the buffer is removed or kept as a conflict, as you chose.",
@@ -103,6 +106,7 @@ export const HELP_PAGES: Record<string, HelpPage> = {
   },
   colors: {
     title: "Colors do not show",
+    keywords: ["gone", "missing", "color"],
     body: [
       {
         p: "Tempoloom colors the events it manages by category. To color your other events too, choose “All events on my calendars” in [Settings](/settings). Outlook calendars may not show these colors.",
@@ -111,6 +115,7 @@ export const HELP_PAGES: Record<string, HelpPage> = {
   },
   "item-not-placed": {
     title: "An item does not get placed",
+    keywords: ["habit", "scheduled", "missing"],
     body: [
       {
         p: "Open the planner: “items need attention” lists each item that has no place and the reason, for example no free time in its hours or a due date that is too close.",
@@ -219,6 +224,7 @@ const words = (t: string) =>
  */
 export function stem(word: string): string {
   let w = word;
+  if (w === "series") return w;
   if (w.endsWith("ies") && w.length > 4) w = `${w.slice(0, -3)}y`;
   else if (w.endsWith("sses")) w = w.slice(0, -2);
   else if (w.endsWith("s") && !/(ss|us|is)$/.test(w) && w.length > 3) w = w.slice(0, -1);
@@ -231,10 +237,11 @@ export function stem(word: string): string {
 
 /**
  * The help pages that match a question, best first: a page scores by the
- * question's words found in it, a word in the title counts double. A page
- * must hold more than half of the question's words, and either two of them or
- * one in its title: so a single word that a page only uses in passing (such as
- * "order" in "in order") finds no page.
+ * question's words found in it, a word in the title or the keywords (the
+ * topic) counts double. A page qualifies when a word of the question names its
+ * topic ("buffers missing"), or when it holds more than half of the question's
+ * words and at least two of them. So a single word that a page only uses in
+ * passing (such as "order" in "in order") finds no page.
  */
 export function searchHelp(
   query: string,
@@ -243,7 +250,7 @@ export function searchHelp(
   const asked = [...new Set(words(query).map(stem))];
   return Object.entries(HELP_PAGES)
     .map(([slug, page]) => {
-      const title = new Set(words(page.title).map(stem));
+      const title = new Set(words(`${page.title} ${(page.keywords ?? []).join(" ")}`).map(stem));
       const body = new Set(words(helpText(page)).map(stem));
       const found = asked.filter((w) => title.has(w) || body.has(w));
       const score = found.reduce((s, w) => s + (title.has(w) ? 2 : 0) + (body.has(w) ? 1 : 0), 0);
@@ -256,7 +263,7 @@ export function searchHelp(
         inTitle: found.some((w) => title.has(w)),
       };
     })
-    .filter((r) => r.found * 2 > asked.length && (r.found >= 2 || r.inTitle))
+    .filter((r) => r.inTitle || (r.found * 2 > asked.length && r.found >= 2))
     .sort((a, b) => b.score - a.score || a.slug.localeCompare(b.slug))
     .slice(0, limit)
     .map(({ found: _, inTitle: __, ...r }) => r);

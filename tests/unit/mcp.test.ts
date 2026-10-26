@@ -177,7 +177,7 @@ function seedAutomations({ db, user, hours }: Setup) {
       db,
       `INSERT INTO habits (id, user_id, title, level, rank, hours_set_id, ideal_minute, min_minutes, max_minutes,
          frequency, defense, when_unplaceable, created_at, rules_changed_at)
-       VALUES (?, ?, ?, ?, 0, ?, 540, 30, 60, '{}', 'adaptive', 'remove', ?, ?)`,
+       VALUES (?, ?, ?, ?, 0, ?, 540, 30, 60, '{"period":"daily"}', 'adaptive', 'remove', ?, ?)`,
       `habit-${i}`,
       user.id,
       `Habit ${i}`,
@@ -371,8 +371,6 @@ describe("MCP output schemas", () => {
     await check("list_team_time_away", { start_date: "2026-10-19", end_date: "2026-10-25" });
     await check("get_org_analytics", { start_date: "2026-10-12", end_date: "2026-10-18" });
     await check("search_help", { query: "copies appear twice" });
-    // The dry run plans the week: the seeded habits need a frequency the planner reads.
-    run(s.db, `UPDATE habits SET frequency = '{"period":"daily"}'`);
     await check("propose_create_task", { title: "Plan the offsite", minutes: 60 });
     await check("list_staged_changes");
     // m1 moves after its move was staged: that change is stale.

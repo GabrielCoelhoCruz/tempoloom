@@ -379,29 +379,42 @@ test("the chat answers who is away from the team's out-of-office calendar; a per
   llm,
 }) => {
   test.skip(BACKEND === "google", "Out-of-office copies use CalDAV shared calendars.");
-  // A person of another team, away the same week: never in this team's answer.
+  /** Adds a team out-of-office calendar on the team page of `p`. */
+  const addOoo = async (p: Page, name: string) => {
+    await openTeam(p);
+    const section = p.getByTestId("ooo");
+    await section.getByRole("button", { name: "Add a calendar" }).click();
+    const form = p.getByTestId("ooo-form");
+    await form.getByLabel("Name").fill(name);
+    await form.getByLabel("Shared calendar").selectOption({ label: "Shared" });
+    await form.getByRole("button", { name: "Create" }).click();
+    await expect(section.locator(`[data-ooo="${name}"]`)).toBeVisible();
+  };
+  const copied = (c: CalendarDriver) => async () =>
+    (await c.events(at(W, "00:00"), at(day(7), "00:00"))).map((e) => e.summary);
+
+  // A person of another team, with their own team out-of-office calendar, away the same week.
   const outsider = await people(3);
   await outOfOffice(outsider.cal.calendarId, "Holiday", { from: day(1), to: day(3) });
   const pc = await outsider.signIn();
+  const theirShared = await outsider.cal.newCalendar("Shared");
+  await addOoo(pc, "Their OOO");
+  // The owner's own sync run writes the copies.
+  await planNow(pc);
+  await eventually(copied(theirShared), (l) => expect(l).toEqual(["e2e3 out of office"]), 60_000);
+
+  // This team: the owner, the person away (e2e2), and a teammate who asks (e2e4).
+  const asker = await people(4);
   await signIn();
   const pb = await colleague.signIn();
-  await invite(page, [colleague.email]);
+  const pd = await asker.signIn();
+  await invite(page, [colleague.email, asker.email]);
   await accept(pb, joinLink((await mail.message(colleague.email, /invited you/)).text));
+  await accept(pd, joinLink((await mail.message(asker.email, /invited you/)).text));
   const shared = await cal.newCalendar("Shared");
   await outOfOffice(colleague.cal.calendarId, "Vacation", { from: day(2), to: day(4) });
-  await openTeam(page);
-  const section = page.getByTestId("ooo");
-  await section.getByRole("button", { name: "Add a calendar" }).click();
-  const form = page.getByTestId("ooo-form");
-  await form.getByLabel("Name").fill("Team OOO");
-  await form.getByLabel("Shared calendar").selectOption({ label: "Shared" });
-  await form.getByRole("button", { name: "Create" }).click();
-  await expect(section.locator('[data-ooo="Team OOO"]')).toBeVisible();
-  await eventually(
-    async () => (await shared.events(at(W, "00:00"), at(day(7), "00:00"))).map((e) => e.summary),
-    (l) => expect(l).toEqual(["e2e2 out of office"]),
-    60_000,
-  );
+  await addOoo(page, "Team OOO");
+  await eventually(copied(shared), (l) => expect(l).toEqual(["e2e2 out of office"]), 60_000);
 
   const range = { start_date: W, end_date: day(6) };
   type Away = {
@@ -433,20 +446,21 @@ test("the chat answers who is away from the team's out-of-office calendar; a per
     absences: [{ name: "e2e2", email: colleague.email, start: day(2), end: day(3), all_day: true }],
   });
 
-  // A teammate who does not own the out-of-office calendar gets the same answer.
-  await pb.goto(`/?week=${W}`);
-  await openAssistant(pb);
-  expect(await say(pb, "Who is away next week, as a teammate?")).toBe(200);
-  await expect(answers(pb)).toHaveText([`e2e2 is away from ${day(2)} to ${day(3)}.`]);
+  // A teammate who neither owns the out-of-office calendar nor is away gets the same answer.
+  await pd.goto(`/?week=${W}`);
+  await openAssistant(pd);
+  expect(await say(pd, "Who is away next week, as a teammate?")).toBe(200);
+  await expect(answers(pd)).toHaveText([`e2e2 is away from ${day(2)} to ${day(3)}.`]);
 
-  // The person of another team asks the same: none of this team's absences.
+  // The person of another team asks the same: their own team's absence only.
   await pc.goto(`/?week=${W}`);
   await openAssistant(pc);
   expect(await say(pc, "Who is away next week, please?")).toBe(200);
-  await expect(answers(pc)).toHaveText(["Nobody is away (0 out-of-office calendars)."]);
-  expect(
-    toolJson<Away>(llm.requests.at(-1) as ChatRequest, "list_team_time_away").absences,
-  ).toEqual([]);
+  await expect(answers(pc)).toHaveText([`e2e3 is away from ${day(1)} to ${day(2)}.`]);
+  expect(toolJson<Away>(llm.requests.at(-1) as ChatRequest, "list_team_time_away")).toMatchObject({
+    out_of_office_calendars: 1,
+    absences: [{ email: outsider.email }],
+  });
 
   await page.reload();
   await openAssistant(page);
@@ -481,21 +495,18 @@ test("the chat answers organization analytics with the organization page's numbe
 
   const range = { start_date: P, end_date: addDays(P, 6) };
   type Org = {
-    groups: {
-      label: string;
-      people: number;
-      periods: { metrics: Record<string, number | null> | null }[];
-    }[];
+    metrics: string[];
+    groups: { label: string; people: number; values: ((number | null)[] | null)[] }[];
   };
   llm.on(/meetings across the company/i, [
     call("get_org_analytics", range),
     (req) => {
       const r = toolResults(req).find((x) => x.name === "get_org_analytics");
       if (r?.content.startsWith("Error:")) return { content: `I cannot: ${r.content}` };
-      const g = toolJson<Org>(req, "get_org_analytics").groups[0];
-      return {
-        content: `${g?.label}: ${g?.periods[0]?.metrics?.meeting_hours_per_person_week} h of meetings per person, ${g?.people} people.`,
-      };
+      const org = toolJson<Org>(req, "get_org_analytics");
+      const g = org.groups[0];
+      const hours = g?.values[0]?.[org.metrics.indexOf("meeting_hours_per_person_week")];
+      return { content: `${g?.label}: ${hours} h of meetings per person, ${g?.people} people.` };
     },
   ]);
 

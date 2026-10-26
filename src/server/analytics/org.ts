@@ -110,7 +110,12 @@ export function orgReport(db: Db, teamId: string, q: OrgQuery) {
         add(m, p);
         m = byName.get(m)?.attributes.manager;
       }
-    } else add(p.attributes[q.groupBy] ?? missing(q.groupBy), p);
+    } else
+      add(
+        (Object.hasOwn(p.attributes, q.groupBy) ? p.attributes[q.groupBy] : undefined) ??
+          missing(q.groupBy),
+        p,
+      );
   }
   const length = diffDays(q.from, q.to) + 1;
   const chunks = periods(length, "week");

@@ -16,30 +16,36 @@
 //    or list a series that a habit, Tempoloom or a meeting already covers.
 // 7. The help search misses another form of a word, or answers a single word
 //    that a page only uses in passing.
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Hono } from "hono";
 import { describe, expect, it } from "vitest";
 import { ensureUser, type User } from "../../src/server/accounts.ts";
 import { itemRoutes } from "../../src/server/api/items.ts";
+import { meetingRoutes } from "../../src/server/api/meetings.ts";
+import { createApiKey } from "../../src/server/api-keys.ts";
 import type { AppEnv } from "../../src/server/app.ts";
 import { chatTools } from "../../src/server/assistant/tools.ts";
+import { DailyMailWorker } from "../../src/server/daily-mail.ts";
 import { all, type Db, one, openDb, run } from "../../src/server/db.ts";
+import type { Message } from "../../src/server/mail.ts";
 import { MAX_CHARS } from "../../src/server/mcp/answers.ts";
 import { callTool } from "../../src/server/mcp/rpc.ts";
+import { mcpRoutes } from "../../src/server/mcp.ts";
+import { updatePrefs } from "../../src/server/meeting-prefs.ts";
 import { createPreview, type PreviewDeps } from "../../src/server/preview.ts";
 import type { SyncService } from "../../src/server/sync/service.ts";
 import { createTask } from "../../src/server/tasks.ts";
 import { membership } from "../../src/server/teams.ts";
-import { searchHelp } from "../../src/shared/help-pages.ts";
+import { searchHelp, stem } from "../../src/shared/help-pages.ts";
 
 const T0 = Date.parse("2026-10-19T08:00:00Z"); // Monday
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
 
-function setup() {
-  const db = openDb(":memory:");
-  let t = T0;
-  const now = () => t;
-  // The app that apply replays a staged request on: the real tasks API.
+/** The real tasks API on a connection, as the first user of the database. */
+function tasksApp(db: Db, now: () => number) {
   const app = new Hono<AppEnv>();
   app.use("*", async (c, next) => {
     const user = one<User>(db, "SELECT id, email, name, time_zone FROM users LIMIT 1") as User;
@@ -47,6 +53,21 @@ function setup() {
     await next();
   });
   app.route("/api", itemRoutes(db, { request: () => {} } as unknown as SyncService, now));
+  return app;
+}
+
+/**
+ * `file`: a database file with a second connection for dry runs, as the
+ * server has; else an in-memory database without dry runs.
+ */
+function setup(file?: string) {
+  const db = openDb(file ?? ":memory:");
+  let t = T0;
+  const now = () => t;
+  // The app that apply replays a staged request on: the real tasks API.
+  const app = tasksApp(db, now);
+  const dryDb = file ? openDb(file) : null;
+  const dry = dryDb && { db: dryDb, app: tasksApp(dryDb, now) };
   const preview = createPreview({
     db,
     sync: { runNow: async () => {}, idle: async () => {}, request: () => {} },
@@ -54,9 +75,26 @@ function setup() {
     live: { notify: () => {} },
     now,
     app: () => app,
-    dry: () => null,
+    dry: () => dry,
   } as unknown as PreviewDeps);
   const tools = chatTools({ db, preview, baseUrl: "http://localhost:3000", now });
+  // The MCP server of the same tools, called with a user's API key.
+  const mcp = mcpRoutes({ db, preview, baseUrl: "http://localhost:3000", writeEnabled: true, now });
+  const viaMcp = async (user: User, name: string, args: Record<string, unknown>) => {
+    const { secret } = createApiKey(db, user.id, { name: "Claude", expires: "never" }, T0);
+    const res = await mcp.request("/", {
+      method: "POST",
+      headers: { authorization: `Bearer ${secret}`, "content-type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name, arguments: args },
+      }),
+    });
+    return ((await res.json()) as { result: { isError?: boolean; content: { text: string }[] } })
+      .result;
+  };
   const call = async (user: User, name: string, args: unknown = {}) => {
     const tool = tools.find((x) => x.tool.name === name);
     if (!tool) throw new Error(`no tool ${name}`);
@@ -67,7 +105,7 @@ function setup() {
     if (r.isError) throw new Error(r.text);
     return r.data;
   };
-  return { db, call, ok, preview, setNow: (x: number) => (t = x) };
+  return { db, call, ok, preview, viaMcp, setNow: (x: number) => (t = x) };
 }
 
 /** A user in the team of `admin`, as a member. */
@@ -206,6 +244,14 @@ describe("organization analytics", () => {
     expect(again.group_by).toBe("company");
     const manager = await ok(admin, "get_org_analytics", { ...args, group_by: "manager" });
     expect(manager).toMatchObject({ group_by: "manager", groups: [{ label: "No manager" }] });
+    // The CSV's name of the manager line is the same grouping.
+    expect(await ok(admin, "get_org_analytics", { ...args, group_by: "manager_line" })).toEqual(
+      manager,
+    );
+    // A name of an object property is only an attribute that nobody has.
+    expect(
+      await ok(admin, "get_org_analytics", { ...args, group_by: "constructor" }),
+    ).toMatchObject({ group_by: "constructor", groups: [{ label: "No constructor" }] });
 
     const old = await call(admin, "get_org_analytics", {
       start_date: "2026-01-05",
@@ -217,7 +263,7 @@ describe("organization analytics", () => {
   it("cut a large report to a bounded size and say how many groups were left out", async () => {
     const { db, ok } = setup();
     const admin = ensureUser(db, "a@example.com", "Ann", T0);
-    for (let i = 0; i < 80; i++) member(db, `person${i}@example.com`, admin);
+    for (let i = 0; i < 300; i++) member(db, `person${i}@example.com`, admin);
     const r = await ok(admin, "get_org_analytics", {
       start_date: "2026-08-01",
       end_date: "2026-11-27",
@@ -225,9 +271,71 @@ describe("organization analytics", () => {
     });
     const groups = r.groups as unknown[];
     expect(groups.length).toBeGreaterThan(0);
-    expect(groups.length + (r.truncated as number)).toBe(81);
+    expect(groups.length + (r.truncated as number)).toBe(301);
     expect(r.truncated).toBeGreaterThan(0);
     expect(JSON.stringify(groups).length).toBeLessThanOrEqual(MAX_CHARS);
+  });
+  it("keep every group of a quarter: five people over 12 and over 18 weeks", async () => {
+    const { db, ok } = setup();
+    const admin = ensureUser(db, "a@example.com", "Ann", T0);
+    const people = [admin, ...[1, 2, 3, 4].map((i) => member(db, `p${i}@example.com`, admin))];
+    // A connected calendar each, so every person has values.
+    for (const p of people)
+      run(
+        db,
+        "INSERT INTO accounts (id, user_id, provider, external_id, email, credentials, created_at) VALUES (?, ?, 'caldav', ?, ?, '{}', ?)",
+        `acc-${p.id}`,
+        p.id,
+        p.id,
+        p.email,
+        T0,
+      );
+    for (const [from, to, periods] of [
+      ["2026-07-27", "2026-10-18", 12],
+      ["2026-07-27", "2026-11-23", 18],
+    ] as const) {
+      const r = await ok(admin, "get_org_analytics", {
+        start_date: from,
+        end_date: to,
+        group_by: "person",
+      });
+      expect(r.truncated).toBe(0);
+      const groups = r.groups as { people: number; values: (number[] | null)[] }[];
+      expect(groups).toHaveLength(5);
+      expect((r.periods as unknown[]).length).toBe(periods);
+      for (const g of groups) {
+        expect(g.people).toBe(1);
+        expect(g.values).toHaveLength(periods);
+        expect(g.values[0]).toHaveLength((r.metrics as string[]).length);
+      }
+    }
+  });
+});
+
+describe("the team tools through the MCP server", () => {
+  it("refuse organization analytics to a member and give a user of another team none of this team's absences", async () => {
+    const { db, viaMcp } = setup();
+    const admin = ensureUser(db, "a@example.com", "Ann", T0);
+    const bob = member(db, "b@example.com", admin);
+    const out = ensureUser(db, "x@example.com", "Xena", T0);
+    oooCalendar(db, "ooo-1", membership(db, admin.id).team.id, admin.id);
+    oooCalendar(db, "ooo-2", membership(db, out.id).team.id, out.id);
+    absence(db, "ooo-1", bob, "2026-10-21", "2026-10-23");
+    absence(db, "ooo-2", out, "2026-10-21", "2026-10-22");
+    const range = { start_date: "2026-10-12", end_date: "2026-10-18" };
+
+    const refused = await viaMcp(bob, "get_org_analytics", range);
+    expect(refused.isError).toBe(true);
+    expect(refused.content[0]?.text).toMatch(/^Only analytics admins/);
+    expect((await viaMcp(admin, "get_org_analytics", range)).isError).toBeFalsy();
+
+    const week = { start_date: "2026-10-19", end_date: "2026-10-25" };
+    const theirs = await viaMcp(out, "list_team_time_away", week);
+    expect(theirs.content[0]?.text).toContain("x@example.com");
+    expect(theirs.content[0]?.text).not.toContain("b@example.com");
+    expect((await viaMcp(admin, "list_team_time_away", week)).content[0]?.text).toContain(
+      "b@example.com",
+    );
   });
 });
 
@@ -313,6 +421,42 @@ describe("automation ideas", () => {
     ]);
     expect(r.habits.map((h) => h.title).sort()).toEqual(["Morning run", "Plan the week"]);
     expect(r.habits[0]?.days).toEqual(["Tuesday"]);
+
+    // The other callers of the same rule: the /meetings adopt list and the daily email (NTF-30).
+    const app = new Hono<AppEnv>();
+    app.use("*", async (c, next) => {
+      c.set("user", u);
+      await next();
+    });
+    app.route(
+      "/api",
+      meetingRoutes(db, { request: () => {} } as unknown as SyncService, () => T0),
+    );
+    const listed = (await (await app.request("/api/meetings/series")).json()) as {
+      series: { title: string; attendees: string[] }[];
+    };
+    expect(listed.series.map((x) => [x.title, x.attendees])).toEqual([
+      ["Weekly sync", ["dana@example.com"]],
+    ]);
+    updatePrefs(db, u.id, { dailyTime: "08:00", atRiskDigest: false, newSeriesEmail: true });
+    run(db, "UPDATE users SET first_sign_in_at = ? WHERE id = ?", T0 - DAY, u.id);
+    const sent: Message[] = [];
+    let clock = T0 - HOUR;
+    const worker = new DailyMailWorker({
+      db,
+      mailer: { configured: true, send: async (m) => void sent.push(m) },
+      now: () => clock,
+      baseUrl: "http://localhost",
+      intervalMs: 60_000,
+      weeklyReports: false,
+    });
+    // The first tick sets the send time (08:00); the second comes after it.
+    await worker.tick();
+    clock = T0 + 5 * 60_000;
+    await worker.tick();
+    const offer = sent.find((m) => m.subject === "Recurring meetings you could make flexible");
+    expect(offer?.text).toContain("Weekly sync");
+    expect(offer?.text).not.toContain("Plan the week");
   });
 });
 
@@ -326,6 +470,11 @@ describe("help search", () => {
     expect(searchHelp("Why is my focus time not placed?")[0]?.slug).toBe("focus-not-placed");
     expect(searchHelp("copy appears twice")[0]?.slug).toBe("copies-twice");
     expect(searchHelp("focus")[0]?.slug).toBe("focus-not-placed");
+    // A word that names the page's topic is enough.
+    expect(searchHelp("buffers missing")[0]?.slug).toBe("buffer-missing");
+    expect(searchHelp("my colors are gone")[0]?.slug).toBe("colors");
+    expect(searchHelp("why are my habits not scheduled")[0]?.slug).toBe("item-not-placed");
+    expect(stem("series")).toBe("series");
     expect(searchHelp("order")).toEqual([]);
     expect(searchHelp("Can Tempoloom order pizza?")).toEqual([]);
     expect(searchHelp("pizza recipe")).toEqual([]);
@@ -392,5 +541,35 @@ describe("task proposal", () => {
     expect(all<{ title: string }>(db, "SELECT title FROM tasks").map((t) => t.title)).toEqual([
       "Soon",
     ]);
+  });
+});
+
+describe("dry runs", () => {
+  it("run one at a time on the shared connection: parallel task proposals all stage, with their chunks", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "tl-dry-"));
+    try {
+      const { db, call } = setup(join(dir, "tempoloom.db"));
+      const u = ensureUser(db, "u@example.com", "U", T0);
+      const results = await Promise.all(
+        ["Task A", "Task B", "Task C"].map((title) =>
+          call(u, "propose_create_task", { title, minutes: 60 }),
+        ),
+      );
+      expect(results.map((r) => (r.isError ? r.text : "ok"))).toEqual(["ok", "ok", "ok"]);
+      const staged = all<{ impact: string }>(
+        db,
+        "SELECT impact FROM staged_changes WHERE user_id = ? ORDER BY summary",
+        u.id,
+      );
+      expect(staged).toHaveLength(3);
+      for (const row of staged) {
+        const impact = JSON.parse(row.impact) as { start: number; end: number }[];
+        expect(impact.reduce((m, c) => m + (c.end - c.start), 0)).toBe(HOUR);
+      }
+      // The dry runs were rolled back: no task exists.
+      expect(all(db, "SELECT id FROM tasks")).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

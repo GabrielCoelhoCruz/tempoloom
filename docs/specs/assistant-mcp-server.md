@@ -95,7 +95,25 @@ before it tries again, so a retry does not stage the change twice.
 | `propose_rsvp` | stage | `event_id` of an invitation from someone else, `response` (`accepted`, `declined`, `tentative`); optional `reason` | as `propose_create_event` |
 | `propose_focus_time` | stage | `duration_minutes` (15 to 480); optional `start`, `end` (the range, as `find_free_time`), `title` (default "Focus time"), `reason`. The first free slot of `find_free_time` becomes a busy event with the `#tl_focus` tag, so it counts as focus time | as `propose_create_event` |
 | `propose_log_task_time` | stage | `task_id`, `start`, `minutes` (1 to 720); the session must end before now. At apply it is a locked task event on the task's calendar, as a timer log | as `propose_create_event` |
+| `get_task_suggestions` | read | none | `next_up`; `suggested_now` (at most 5); `at_risk` with `why`; each task `id`, `title`, `priority`, `remaining_minutes`, `due`, `next_up` (the planner's tasks panel, `planning-next-up.md` NXT-30 to NXT-33) |
+| `suggest_automations` | read | none | `flexible_meetings` (series with guests that the user organizes: `title`, `attendees`, `repeats`, `time`, `link`); `habits` (solo series: `title`, `days`, `time`, `minutes`, `link`) |
+| `list_team_time_away` | read | optional `start_date` (default today; a past date counts from today), `end_date` (default 7 days after the start; at most 62 days; a range that ends before today is refused) | `from`, `to`, `out_of_office_calendars`, `note`; `absences`: `name`, `email`, `start`, `end`, `all_day` |
+| `get_org_analytics` | read | `start_date`, `end_date` (as the organization page: at most 120 days, from 12 weeks ago); optional `group_by` (`company` default, `person`, `manager` or `manager_line`, or a directory attribute), `filters` | `from`, `to`, `group_by`, `attributes`, `metrics` (names), `periods`; `groups`: `label`, `people`, `without_calendar`, `values` (one row per period, null below the privacy guard) |
+| `search_help` | read | `query` | `pages`: `title`, `link`, `text` of the best help pages (at most 3) |
+| `propose_create_task` | stage | `title`; optional `minutes`, `priority`, `due`, `start_after`, `notes`, `next_up`, `reason`. A dry run of `POST /api/tasks` checks it and gives the chunks it would place | as `propose_create_event` |
 | `apply_staged_changes` | apply | `ids` (1 to 100) | `results`: `id` and `result` `applied`, `stale` (with `reason`), `failed` (with `error`) or `refused` (with `reason`: not a pending change of an AI tool) |
+
+Tempoloom decision: two tools return team data, `list_team_time_away` and
+`get_org_analytics`. Each returns only what the caller can already see in
+the web app, under the same role checks: the absences that the out-of-office
+calendars of the caller's own team copied, with the person and the span only
+(any member sees them in team settings and on the shared calendar;
+`teams-ooo-calendar.md`), and the organization report for team admins only,
+the analytics admins (`analytics-organization.md` rule 9); another caller
+gets a tool error. Every other tool reads the caller's own data. A list in a
+result has at most 50 rows and 12 000 characters; a `truncated` count says
+how many rows were left out. Assistant chat uses the same tools
+(`assistant-chat.md`).
 
 Annotations: a read tool has `readOnlyHint` and `idempotentHint` true. A
 stage tool has both false and `destructiveHint` false: it writes nothing to

@@ -12,7 +12,6 @@ import { addDays, diffDays, utcToLocal } from "../../shared/time.ts";
 import { COLUMNS, orgReport, rangeProblem } from "../analytics/org.ts";
 import { taskInput } from "../api/items.ts";
 import { all, type Db, one } from "../db.ts";
-import type { McpDeps } from "../mcp.ts";
 import { ownSeries } from "../meeting-series.ts";
 import { type TaskLite, tasksPanel } from "../planner/now.ts";
 import { type Preview, userFormatsOf, whenAt, zoneOf } from "../preview.ts";
@@ -285,8 +284,21 @@ function awayTool(db: Db, now: () => number): Tool {
   });
 }
 
-/** The groupings of get_org_analytics in its own words, and orgReport's. */
-const GROUPINGS: Record<string, string> = { company: "", person: "person", manager: "manager" };
+/**
+ * The groupings of get_org_analytics in its own words (and the CSV's), and
+ * orgReport's. Another word is a directory attribute.
+ */
+const GROUPINGS = new Map([
+  ["company", ""],
+  ["person", "person"],
+  ["manager", "manager"],
+  ["manager_line", "manager"],
+]);
+const ORG_NAMES = new Map([
+  ["", "company"],
+  ["person", "person"],
+  ["manager", "manager"],
+]);
 
 /**
  * Organization analytics rules 9-11: the same report as the organization page,
@@ -298,7 +310,7 @@ function orgTool(db: Db, now: () => number): Tool {
     effect: "read",
     title: "Organization analytics",
     description:
-      'Organization analytics of the user\'s team for analytics admins (team admins): per group and 7-day period, meeting, focus, free and travel hours per person, the deep work score and the meeting cost. group_by: "company" (default), "person", "manager" (manager line) or a directory attribute such as "department". Groups under 3 people have no values. Long reports are cut: narrow the dates or the filters. Other users get an error.',
+      'Organization analytics of the user\'s team for analytics admins (team admins): per group and 7-day period, meeting, focus, free and travel hours per person, the deep work score and the meeting cost. The metric names come once in "metrics"; each group has one row of values per period, in the order of "periods" and "metrics" (null: no value). group_by: "company" (default), "person", "manager" (manager line) or a directory attribute such as "department". Groups under 3 people have no values. Long reports are cut: narrow the dates or the filters. Other users get an error.',
     input: z.object({
       start_date: z.iso.date(),
       end_date: z.iso.date(),
@@ -313,18 +325,16 @@ function orgTool(db: Db, now: () => number): Tool {
       to: z.string(),
       group_by: z.string(),
       attributes: z.array(z.object({ key: z.string(), values: z.array(z.string()) })),
+      metrics: z.array(z.string()),
+      periods: z.array(z.object({ start: z.string(), end: z.string() })),
       groups: z.array(
         z.object({
           label: z.string(),
           people: z.number(),
           without_calendar: z.number(),
-          periods: z.array(
-            z.object({
-              start: z.string(),
-              end: z.string(),
-              metrics: z.record(z.string(), z.number().nullable()).nullable(),
-            }),
-          ),
+          values: z
+            .array(z.array(z.number().nullable()).nullable())
+            .describe("One row per period, one value per metric; null: below the privacy guard"),
         }),
       ),
       truncated,
@@ -349,10 +359,11 @@ function orgTool(db: Db, now: () => number): Tool {
           }[problem],
         );
       const asked = a.group_by || "company";
+      const groupBy = GROUPINGS.get(asked) ?? asked;
       const r = orgReport(db, team.id, {
         from: a.start_date,
         to: a.end_date,
-        groupBy: GROUPINGS[asked] ?? asked,
+        groupBy,
         filters: Object.entries(a.filters ?? {}),
       });
       const groups = bounded(
@@ -360,28 +371,23 @@ function orgTool(db: Db, now: () => number): Tool {
           label: g.label,
           people: g.people,
           without_calendar: g.withoutCalendar,
-          periods: r.periods.map((p, i) => {
-            const m = g.periods[i];
-            return {
-              start: p.start,
-              end: p.end,
-              metrics: m
-                ? Object.fromEntries(
-                    COLUMNS.map(([name, f]) => {
-                      const v = f(m);
-                      return [name, v === null ? null : Math.round(v * 100) / 100];
-                    }),
-                  )
-                : null,
-            };
-          }),
+          values: g.periods.map((m) =>
+            m
+              ? COLUMNS.map(([, f]) => {
+                  const v = f(m);
+                  return v === null ? null : Math.round(v * 100) / 100;
+                })
+              : null,
+          ),
         })),
       );
       return {
         from: r.from,
         to: r.to,
-        group_by: asked,
+        group_by: ORG_NAMES.get(groupBy) ?? groupBy,
         attributes: r.attributes,
+        metrics: COLUMNS.map(([name]) => name),
+        periods: r.periods,
         groups: groups.rows,
         truncated: groups.truncated,
       };
@@ -487,7 +493,10 @@ function createTaskTool(db: Db, preview: Preview, staged: Staged, now: () => num
 }
 
 /** The tools of this file, for mcpTools. */
-export function answerTools(deps: Omit<McpDeps, "writeEnabled">, staged: Staged): Tool[] {
+export function answerTools(
+  deps: { db: Db; preview: Preview; now: () => number },
+  staged: Staged,
+): Tool[] {
   const { db, now } = deps;
   return [
     suggestionsTool(db, now),
