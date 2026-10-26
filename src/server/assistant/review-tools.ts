@@ -14,15 +14,11 @@ import { recommendations } from "../api/meeting-checks.ts";
 import { all, type Db, one } from "../db.ts";
 import { cached, isoOf } from "../mcp/reads.ts";
 import { type Caller, callTool, type Tool, ToolError, tool } from "../mcp/rpc.ts";
+import { busyAsToolError } from "../mcp.ts";
 import { openIssues } from "../meeting-checks.ts";
 import { POLICY_TYPES, type PolicyRow, parsePolicy } from "../policies/model.ts";
-import {
-  AUTOMATION_KINDS,
-  type Preview,
-  type ReplayedRequest,
-  versionOf,
-  zoneOf,
-} from "../preview.ts";
+import { type Preview, type ReplayedRequest, zoneOf } from "../preview.ts";
+import { AUTOMATION_KINDS, versionOf } from "../preview-kinds.ts";
 import { membership } from "../teams.ts";
 
 const stagedOutput = z.object({
@@ -108,19 +104,21 @@ export function reviewTools(deps: ReviewToolDeps): Tool[] {
   ) {
     const dry = await preview.dryRun(caller.user.id, request);
     if (dry.status >= 400) throw new ToolError(apiError(dry.body, dry.status));
-    const staged = preview.stage(caller.user.id, {
-      source: caller.source ?? "mcp_client",
-      client: caller.client,
-      kind: "request",
-      target: s.target,
-      before: s.before,
-      after: request,
-      impact: dry.impact,
-      summary: s.summary,
-      reason: s.reason,
-      unattended: caller.unattended === true,
-      merges: s.merges === true,
-    });
+    const staged = busyAsToolError(() =>
+      preview.stage(caller.user.id, {
+        source: caller.source ?? "mcp_client",
+        client: caller.client,
+        kind: "request",
+        target: s.target,
+        before: s.before,
+        after: request,
+        impact: dry.impact,
+        summary: s.summary,
+        reason: s.reason,
+        unattended: caller.unattended === true,
+        merges: s.merges === true,
+      }),
+    );
     return {
       id: staged.id,
       state: staged.state,

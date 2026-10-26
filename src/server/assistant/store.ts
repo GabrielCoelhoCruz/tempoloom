@@ -386,3 +386,44 @@ export function reserveUse(db: Db, userId: string, day: string, limit: number | 
   );
   return row !== undefined;
 }
+
+// ---------------------------------------------------------------- daily review usage
+// The daily review's turns (assistant-chat.md rules 15-18) are in assistant_usage
+// too, on the day "review:<UTC day>": apart from the chat quota's days, and
+// per user, so the operator's daily cap counts them and the worker rotates.
+
+const REVIEW_DAY = (day: string) => `review:${day}`;
+
+/** Review turns of the instance on a UTC day. */
+export const reviewsOn = (db: Db, day: string): number =>
+  one<{ n: number }>(
+    db,
+    "SELECT coalesce(sum(count), 0) AS n FROM assistant_usage WHERE day = ?",
+    REVIEW_DAY(day),
+  )?.n ?? 0;
+
+/** The UTC day of each user's last review turn (users never reviewed are missing). */
+export function lastReviews(db: Db): Map<string, string> {
+  return new Map(
+    all<{ user_id: string; day: string }>(
+      db,
+      "SELECT user_id, max(day) AS day FROM assistant_usage WHERE day LIKE 'review:%' GROUP BY user_id",
+    ).map((r) => [r.user_id, r.day.slice("review:".length)]),
+  );
+}
+
+/** Counts one review turn; review days older than 30 days go. */
+export function recordReview(db: Db, userId: string, day: string): void {
+  run(
+    db,
+    `INSERT INTO assistant_usage (user_id, day, count) VALUES (?, ?, 1)
+     ON CONFLICT (user_id, day) DO UPDATE SET count = count + 1`,
+    userId,
+    REVIEW_DAY(day),
+  );
+  run(
+    db,
+    "DELETE FROM assistant_usage WHERE day LIKE 'review:%' AND day < ?",
+    REVIEW_DAY(utcDay(Date.parse(`${day}T00:00:00Z`) - 30 * DAY)),
+  );
+}

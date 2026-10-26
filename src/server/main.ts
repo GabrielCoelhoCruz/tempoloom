@@ -1,6 +1,5 @@
 import { serve } from "@hono/node-server";
-import { createApp } from "./app.ts";
-import type { Chat } from "./assistant/chat.ts";
+import { createAppWithChat } from "./app.ts";
 import { sendDueReminders } from "./booking-mail.ts";
 import { clockOf, loadConfig } from "./config.ts";
 import { SecretBox } from "./crypto.ts";
@@ -61,8 +60,7 @@ const provisioning = new ProvisionWorker({
   perMinute: config.PROVISION_PER_MINUTE,
   now,
 });
-let chat: Chat | undefined;
-const app = createApp({
+const { app, chat } = createAppWithChat({
   db,
   config,
   box,
@@ -71,9 +69,6 @@ const app = createApp({
   webhooks,
   mailer,
   now,
-  onChat: (c) => {
-    chat = c;
-  },
 });
 // Meeting emails, the daily digests and the weekly report, checked on the sync interval.
 const dailyMail = new DailyMailWorker({

@@ -10,13 +10,14 @@
 // fails later saves the steps that ran, so the panel shows what they proposed.
 // A message id from the client makes a resend give the same answer.
 import { randomUUID } from "node:crypto";
+import { z } from "zod";
 import { reviewRequest } from "../../shared/assistant-review.ts";
 import type { User } from "../accounts.ts";
 import { all, type Db, one } from "../db.ts";
 import { instanceLimit, limitMessage } from "../limits.ts";
 import { type Llm, LlmError, type LlmMessage } from "../llm.ts";
 import { cached } from "../mcp/reads.ts";
-import { type Caller, callTool } from "../mcp/rpc.ts";
+import { type Caller, callTool, type Tool } from "../mcp/rpc.ts";
 import {
   type ChangeKind,
   MERGED,
@@ -117,17 +118,27 @@ export const DAILY_REVIEW_CLIENT = "daily review";
 /**
  * The tools of the unattended daily review: reads, and fixes of single events
  * (move, answer, video link). No automation, policy, delete, new event or
- * memory: calendar text from other people reaches this turn.
+ * memory: calendar text from other people reaches this turn. A list of
+ * argument names narrows a tool: propose_update_event only moves (no title,
+ * no description text), and propose_video_link adds only a video link.
  */
-export const REVIEW_TOOLS: ReadonlySet<string> = new Set([
-  "list_events",
-  "find_meeting_time",
-  "get_meeting_context",
-  "review_schedule",
-  "propose_update_event",
-  "propose_rsvp",
-  "propose_video_link",
+export const REVIEW_TOOLS: ReadonlyMap<string, readonly string[] | null> = new Map([
+  ["list_events", null],
+  ["find_meeting_time", null],
+  ["get_meeting_context", null],
+  ["review_schedule", null],
+  ["propose_update_event", ["event_id", "start", "end", "reason"]],
+  ["propose_rsvp", null],
+  ["propose_video_link", null],
 ]);
+
+/** A tool as the model sees it, with only the arguments `keep` names. */
+function narrowed(t: Tool, keep: readonly string[] | null): Tool {
+  if (!keep) return t;
+  const shape = t.input.shape;
+  const fields = keep.filter((k) => k in shape).map((k) => [k, shape[k]]);
+  return { ...t, input: z.object(Object.fromEntries(fields)) };
+}
 
 /** A request still running this long after the turn's deadline was cut off (the server stopped). */
 const STALE_MARGIN_MS = 30_000;
@@ -285,7 +296,7 @@ export function createChat(deps: ChatDeps) {
     caller: Caller,
     name: string,
     raw: string,
-    allowed: ReadonlySet<string> | undefined,
+    allowed: ReadonlyMap<string, readonly string[] | null> | undefined,
   ): Promise<{ content: string; ref?: Ref | undefined }> {
     const t = allowed && !allowed.has(name) ? undefined : byName.get(name);
     if (!t) return { content: `Error: there is no tool ${name}.` };
@@ -295,6 +306,15 @@ export function createChat(deps: ChatDeps) {
     } catch {
       return { content: "Error: the arguments are not valid JSON." };
     }
+    const keep = allowed?.get(name);
+    const extra =
+      keep && args && typeof args === "object"
+        ? Object.keys(args).filter((k) => !keep.includes(k))
+        : [];
+    if (extra.length > 0)
+      return {
+        content: `Error: here ${name} takes only ${keep?.join(", ")}; ${extra.join(", ")} cannot change. Nothing was staged.`,
+      };
     const r = await callTool(t.tool, caller, args, t.failed);
     if (r.isError) return { content: `Error: ${r.text}` };
     return { content: r.text, ref: t.ref?.(r.data) };
@@ -329,7 +349,11 @@ export function createChat(deps: ChatDeps) {
       ? { user, client: DAILY_REVIEW_CLIENT, source: "assistant_chat", unattended: true }
       : { user, client: "", source: "assistant_chat" };
     const allowed = mode.unattended ? REVIEW_TOOLS : undefined;
-    const offered = allowed ? llmTools.filter((t) => allowed.has(t.function.name)) : llmTools;
+    const offered = allowed
+      ? tools
+          .filter((t) => allowed.has(t.tool.name))
+          .map((t) => llmTool(narrowed(t.tool, allowed.get(t.tool.name) ?? null)))
+      : llmTools;
     const base: LlmMessage[] = [
       { role: "system", content: systemPrompt(promptInput(user, ctx, mode.unattended)) },
       ...history(conversationId),

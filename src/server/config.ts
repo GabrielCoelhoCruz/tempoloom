@@ -87,7 +87,10 @@ const schema = z
      * Off by default: each turn costs model calls, so the operator opts in.
      */
     DAILY_REVIEW: z.enum(["on", "off"]).default("off"),
-    /** Users reviewed in one run of the email worker, at most; the others get the plain digest. */
+    /**
+     * Review turns per UTC day for the whole instance, at most (counted in
+     * assistant_usage); the users over it get the plain digest, in rotation.
+     */
     DAILY_REVIEW_MAX_USERS: z.coerce.number().int().min(1).max(1000).default(20),
     /** Milliseconds one daily review turn may take. */
     DAILY_REVIEW_TURN_MS: z.coerce.number().int().min(1000).default(45_000),

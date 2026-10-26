@@ -133,12 +133,14 @@ All proposed changes go to preview mode (`assistant-preview-mode.md`).
     digest, so its fixes see the newest calendar; there is no separate 02:00
     run. The operator turns it on with `DAILY_REVIEW=on` (default off: each
     review costs model calls), with at most `DAILY_REVIEW_MAX_USERS` reviews
-    per run, 4 at a time, each within `DAILY_REVIEW_TURN_MS`; the other
-    emails of the run go out first. It is one chat turn with the
+    per day for the instance (counted with the chat usage; the users who
+    waited longest go first), 4 at a time, each within
+    `DAILY_REVIEW_TURN_MS`; the other emails of the run go out first. It is one chat turn with the
     Recommendations request, in a new conversation, and does not count
     toward `assistant_chat_quota`. It runs only when the digest has issues
     to send and chat is on for the user. Nobody watches it, so it has only
-    the read tools and the fixes of single events (move, answer, video link),
+    the read tools and the fixes of single events (a move without a new
+    title or description, an answer, a video link),
     it does not turn preview mode on (the digest says when preview mode is
     off), and it leaves an event alone when the user already staged a change
     for it. The digest links to the planner with `?assistant=<conversation>`,

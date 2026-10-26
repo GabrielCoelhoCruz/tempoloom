@@ -8,6 +8,7 @@
 import type { ReportEntry } from "../scheduler/model.ts";
 import { addDays, type LocalDate, localToUtc, utcToLocal, weekdayOf } from "../shared/time.ts";
 import type { Chat, Review } from "./assistant/chat.ts";
+import { lastReviews, recordReview, reviewsOn, utcDay } from "./assistant/store.ts";
 import type { Config } from "./config.ts";
 import { all, type Db, one, run } from "./db.ts";
 import type { Mailer, Message } from "./mail.ts";
@@ -93,15 +94,51 @@ export function scheduleDaily(
 
 /** True when the email is due now; then its next time moves to the next day. */
 function due(db: Db, userId: string, kind: DailyKind, zone: string, hhmm: string, now: number) {
+  if (!dueNow(db, userId, kind, zone, hhmm, now)) return false;
+  scheduleDaily(db, userId, kind, zone, hhmm, now);
+  return true;
+}
+
+/**
+ * True when the email is due now, without claiming it: the caller moves the
+ * next time (scheduleDaily) once it went out. A user with no time yet gets one.
+ */
+function dueNow(
+  db: Db,
+  userId: string,
+  kind: DailyKind,
+  zone: string,
+  hhmm: string,
+  now: number,
+): boolean {
   const row = one<{ next_at: number }>(
     db,
     "SELECT next_at FROM daily_mail WHERE user_id = ? AND kind = ?",
     userId,
     kind,
   );
-  if (row && row.next_at > now) return false;
-  scheduleDaily(db, userId, kind, zone, hhmm, now);
-  return row !== undefined;
+  if (!row) scheduleDaily(db, userId, kind, zone, hhmm, now);
+  return row !== undefined && row.next_at <= now;
+}
+
+/**
+ * The digests the daily review takes today: at most `budget`, users with the
+ * oldest last review first (never reviewed before them all), then by id, so
+ * the users over the cap differ from day to day.
+ */
+export function pickReviews<T extends { u: { id: string } }>(
+  digests: T[],
+  budget: number,
+  last: ReadonlyMap<string, string>,
+): T[] {
+  if (budget <= 0) return [];
+  return [...digests]
+    .sort(
+      (a, b) =>
+        (last.get(a.u.id) ?? "").localeCompare(last.get(b.u.id) ?? "") ||
+        a.u.id.localeCompare(b.u.id),
+    )
+    .slice(0, budget);
 }
 
 /** Daily reviews that run at the same time: bounds how long the digests of one run wait. */
@@ -120,6 +157,8 @@ interface Digest {
   from: string;
   to: string;
   lines: string[];
+  /** The user's digest time: the next one is claimed after this one goes out. */
+  digestTime: string;
 }
 
 /** What the daily review gave a digest. */
@@ -226,9 +265,15 @@ export class DailyMailWorker {
          AND EXISTS (SELECT 1 FROM accounts a WHERE a.user_id = u.id AND a.status = 'ok')`,
     )) {
       const prefs = getPrefs(db, u.id);
-      if (prefs.digest === "email" && due(db, u.id, "checks", u.time_zone, prefs.digestTime, now)) {
+      // Claimed (next time moved) only after the digest went out or had nothing to say,
+      // so a restart during the daily review loses no digest.
+      if (
+        prefs.digest === "email" &&
+        dueNow(db, u.id, "checks", u.time_zone, prefs.digestTime, now)
+      ) {
         const d = this.#digestOf(u, now);
-        if (d) digests.push(d);
+        if (d) digests.push({ ...d, digestTime: prefs.digestTime });
+        else scheduleDaily(db, u.id, "checks", u.time_zone, prefs.digestTime, now);
       }
       if (
         (prefs.atRiskDigest || prefs.newSeriesEmail) &&
@@ -243,38 +288,48 @@ export class DailyMailWorker {
       }
     }
     // The daily reviews run after the other emails of this run, bounded, then the digests go.
-    const reviewed = await this.#review(digests);
-    for (const [i, d] of digests.entries()) await this.#sendDigest(d, reviewed[i]);
+    const reviewed = await this.#review(digests, now);
+    for (const [i, d] of digests.entries()) {
+      await this.#sendDigest(d, reviewed[i]);
+      scheduleDaily(db, d.u.id, "checks", d.u.time_zone, d.digestTime, now);
+    }
     return reports;
   }
 
   /**
-   * Rules 15, 16: the daily review of the first `maxUsers` digests, at most
-   * REVIEW_CONCURRENCY at a time. A failed or skipped review gives the plain digest.
+   * Rules 15, 16: the daily review of the digests that today's instance cap
+   * (`maxUsers` review turns per UTC day) still allows, in rotation
+   * (pickReviews), at most REVIEW_CONCURRENCY at a time. Each turn is counted
+   * in assistant_usage before it runs. A failed or skipped review gives the
+   * plain digest.
    */
-  async #review(digests: Digest[]): Promise<(Reviewed | undefined)[]> {
+  async #review(digests: Digest[], now: number): Promise<(Reviewed | undefined)[]> {
     const review = this.#d.review;
     const out: (Reviewed | undefined)[] = digests.map(() => undefined);
-    if (!review) return out;
-    const todo = digests.slice(0, review.maxUsers);
+    if (!review || digests.length === 0) return out;
+    const { db } = this.#d;
+    const day = utcDay(now);
+    const todo = pickReviews(digests, review.maxUsers - reviewsOn(db, day), lastReviews(db));
     let next = 0;
     const worker = async () => {
       while (next < todo.length) {
-        const i = next++;
-        const d = todo[i] as Digest;
+        const d = todo[next++] as Digest;
+        recordReview(db, d.u.id, day);
         try {
-          out[i] = await review.run(d.u, d.from, addDays(d.to, 1), { turnMs: review.turnMs });
+          out[digests.indexOf(d)] = await review.run(d.u, d.from, addDays(d.to, 1), {
+            turnMs: review.turnMs,
+          });
         } catch (err) {
           this.#log(`assistant review for ${d.u.email} failed`, err);
         }
       }
     };
     await Promise.all(Array.from({ length: Math.min(REVIEW_CONCURRENCY, todo.length) }, worker));
-    // The operator sees how many model turns the daily review used.
-    if (todo.length > 0)
-      console.log(
-        `daily review: ${todo.length} turn${todo.length === 1 ? "" : "s"}${digests.length > todo.length ? `, ${digests.length - todo.length} digests without review (DAILY_REVIEW_MAX_USERS)` : ""}`,
-      );
+    // The operator sees the turns in the log too.
+    const skipped = digests.length - todo.length;
+    console.log(
+      `daily review: ${todo.length} turn${todo.length === 1 ? "" : "s"}, ${reviewsOn(db, day)} of ${review.maxUsers} today${skipped ? `, ${skipped} digests without review (DAILY_REVIEW_MAX_USERS)` : ""}`,
+    );
     return out;
   }
 
@@ -282,7 +337,7 @@ export class DailyMailWorker {
    * Rule 6: open issues of the days that assistant-chat.md rule 15 reviews
    * (`digestDays`); none when there are none.
    */
-  #digestOf(u: DigestUser, now: number): Digest | null {
+  #digestOf(u: DigestUser, now: number): Omit<Digest, "digestTime"> | null {
     const { db } = this.#d;
     const weekly = workHours(db, u.id);
     const { from, to } = digestDays(

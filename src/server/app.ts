@@ -102,12 +102,6 @@ export interface AppDeps {
   now?: () => number;
   /** Assistant chat's model; default: the endpoint in the config, if any. */
   llm?: Llm | null;
-  /**
-   * Gets the app's assistant chat, for the email worker's daily review
-   * (assistant-chat.md rules 15-18): the same chat, preview mode, dry run
-   * and live updates as the panel.
-   */
-  onChat?: (chat: Chat) => void;
 }
 
 /**
@@ -146,8 +140,6 @@ const caldavLogin = z.object({
   newAccount: z.boolean().optional(),
 });
 
-const withoutChatHook = ({ onChat: _, ...rest }: AppDeps): AppDeps => rest;
-
 /** A same-origin consent page URL (`/oauth/authorize?...`) to come back to, or null. */
 function pendingAuthorization(target: string | undefined, origin: string): string | null {
   if (!target?.startsWith("/oauth/authorize?")) return null;
@@ -158,6 +150,15 @@ function pendingAuthorization(target: string | undefined, origin: string): strin
 }
 
 export function createApp(deps: AppDeps): Hono<AppEnv> {
+  return createAppWithChat(deps).app;
+}
+
+/**
+ * The app and its assistant chat: the email worker's daily review
+ * (assistant-chat.md rules 15-18) uses the same chat, preview mode, dry run
+ * and live updates as the panel.
+ */
+export function createAppWithChat(deps: AppDeps): { app: Hono<AppEnv>; chat: Chat } {
   const { db, config, box, sync } = deps;
   const now = deps.now ?? Date.now;
   const secure = config.BASE_URL.startsWith("https://");
@@ -427,8 +428,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
         dry = dryDb && {
           db: dryDb,
           app: createApp({
-            // The dry app's chat is not the app's: it does not reach onChat.
-            ...withoutChatHook(deps),
+            ...deps,
             db: dryDb,
             sync: NO_SYNC,
             // No static client: the dry app answers API calls only.
@@ -547,7 +547,6 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
     now,
     turnMs: config.TEMPOLOOM_LLM_TURN_MS,
   });
-  deps.onChat?.(chat);
   app.route("/api", assistantRoutes(db, chat));
   app.route("/api", helpRoutes(db, config.SUPPORT_URL, now, sync));
   app.route("/api", oauthConsentRoutes(db, config.BASE_URL, now));
@@ -639,5 +638,5 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
     }
   });
 
-  return app;
+  return { app, chat };
 }

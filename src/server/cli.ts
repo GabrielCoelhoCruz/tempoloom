@@ -9,8 +9,7 @@
 //   node src/server/cli.ts weekly-reports [--now 2026-10-23T08:30:00Z]   (--now: TEMPOLOOM_TEST_MODE=1 only)
 import { parseArgs } from "node:util";
 import { createLoginLink, ensureUser } from "./accounts.ts";
-import { createApp, NO_SYNC } from "./app.ts";
-import type { Chat } from "./assistant/chat.ts";
+import { createAppWithChat, NO_SYNC } from "./app.ts";
 import { sendDueReminders } from "./booking-mail.ts";
 import { clockOf, loadConfig } from "./config.ts";
 import { SecretBox } from "./crypto.ts";
@@ -59,8 +58,7 @@ if (command === "weekly-reports") {
   const mailer = createMailer(config.SMTP_URL, config.MAIL_FROM);
   // The daily review uses the app's assistant chat, as in the server. This app
   // only reads and stages; the server syncs and sends webhooks (not started here).
-  let chat: Chat | undefined;
-  createApp({
+  const { chat } = createAppWithChat({
     db,
     config,
     box,
@@ -78,9 +76,6 @@ if (command === "weekly-reports") {
     }),
     mailer,
     now: () => at,
-    onChat: (c) => {
-      chat = c;
-    },
   });
   const worker = new DailyMailWorker({
     db,

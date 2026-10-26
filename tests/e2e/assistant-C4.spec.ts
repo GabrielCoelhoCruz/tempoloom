@@ -168,6 +168,9 @@ test("automations by chat: a new habit, a focus goal change and a buffer turned 
             minMinutes: 30,
             maxMinutes: 30,
             frequency: { period: "weekly", days },
+            // The blocker fills the days before the test week: without "remove" the
+            // habit would be kept there as a conflict at a time that depends on the clock.
+            whenUnplaceable: "remove",
           },
           reason: "You asked for a lunch break.",
         },
@@ -245,12 +248,14 @@ test("automations by chat: a new habit, a focus goal change and a buffer turned 
     third as ChatRequest,
     "propose_automation",
   ).calendar_impact;
-  // Lunch events are created; other planned events may move aside (the full plan difference).
+  // Lunch events are created, all in the test week or later; other planned events
+  // may move aside (the full plan difference).
   const lunches = impact.filter((i) => i.op === "create" && i.title.includes("Lunch"));
   expect(lunches.length).toBeGreaterThan(0);
-  // Near the ideal 12:00: the scheduler may move a habit a little to fit (habits rule).
-  const nearNoon = (t: number) => local(t).slice(11) >= "12:00" && local(t).slice(11) < "13:00";
-  for (const l of lunches) expect(nearNoon(Date.parse(l.start))).toBe(true);
+  for (const l of lunches) {
+    expect(Date.parse(l.start)).toBeGreaterThanOrEqual(at(W, "00:00"));
+    expect(local(Date.parse(l.start)).slice(11)).toBe("12:00");
+  }
   await expect(chatPanel(page).getByTestId("chat-assistant").last()).toHaveText(
     `I staged the Lunch habit. It adds ${impact.length} events and waits for your approval.`,
   );
@@ -289,7 +294,7 @@ test("automations by chat: a new habit, a focus goal change and a buffer turned 
     () => weekEvents(cal),
     (evs) => expect(titled(evs, "Lunch").length).toBeGreaterThan(0),
   );
-  for (const e of titled(after, "Lunch")) expect(nearNoon(e.start)).toBe(true);
+  for (const e of titled(after, "Lunch")) expect(local(e.start).slice(11)).toBe("12:00");
 
   await page.reload();
   await expect(previewPanel(page).getByTestId("staged-change")).toHaveCount(0);
@@ -899,6 +904,105 @@ test("a video link by chat on an all-day meeting with a guest who accepted keeps
   await expect(previewPanel(page).getByTestId("staged-change")).toHaveCount(0);
 });
 
+test("a staged move is skipped as stale when the user moved the meeting in the calendar meanwhile; a later video link for it is staged alone, and apply keeps the user's move and mails the guests no move (preview mode rule 12; assistant-chat rules 13, 16)", async ({
+  page,
+  cal,
+  signIn,
+  llm,
+  mail,
+  app,
+}) => {
+  const c = cal.calendarId;
+  const retro = {
+    title: "Retro",
+    start: at(tue, "14:00"),
+    end: at(tue, "14:30"),
+    organizer: EMAIL,
+    attendees: [{ email: "dana@example.com", answer: "ACCEPTED" as const }],
+  };
+  const id = await putMeeting(c, retro);
+  await signIn();
+  await openPlanner(page);
+  await expect(page.locator(".ev", { hasText: "Retro" })).toBeVisible();
+  interface Listed {
+    events: { id: string; title: string }[];
+  }
+  const retroOf = (req: ChatRequest) =>
+    toolJson<Listed>(req, "list_events").events.find((e) => e.title === "Retro")?.id;
+  const week = {
+    tools: [
+      {
+        name: "list_events",
+        arguments: { start: iso(at(W, "00:00")), end: iso(at(addDays(W, 7), "00:00")) },
+      },
+    ],
+  };
+  llm.on(/move the retro/i, [
+    week,
+    (req) => ({
+      tools: [
+        {
+          name: "propose_update_event",
+          arguments: {
+            event_id: retroOf(req),
+            start: iso(at(tue, "16:00")),
+            end: iso(at(tue, "16:30")),
+          },
+        },
+      ],
+    }),
+    { content: "Staged." },
+  ]);
+  llm.on(/link to the retro/i, [
+    week,
+    (req) => ({
+      tools: [{ name: "propose_video_link", arguments: { event_id: retroOf(req), link: LINK } }],
+    }),
+    { content: "Staged." },
+  ]);
+
+  await openAssistant(page);
+  await say(page, "Move the retro to 16:00");
+  await expect(proposal(page, "Move “Retro”")).toContainText("Waiting for your approval");
+  // The user moves the retro to 15:00 in the calendar app; Tempoloom reads it.
+  await putMeeting(c, { ...retro, start: at(tue, "15:00"), end: at(tue, "15:30") }, id);
+  await planNow(page);
+  await eventually(
+    async () =>
+      app.query<{ s: number }>("SELECT start_ms AS s FROM events WHERE summary = 'Retro'")[0]?.s,
+    (s) => expect(s).toBe(at(tue, "15:00")),
+  );
+  await say(page, "Add our video link to the retro");
+  await expect(proposal(page, "New description for “Retro”")).toContainText(
+    "Waiting for your approval",
+  );
+  // The move was made for 14:00; the event is at 15:00 now: it is stale, not merged.
+  await expect(proposal(page, "Move “Retro”")).toContainText("Skipped: the event changed");
+  expect(
+    app
+      .query<{ after: string }>("SELECT after FROM staged_changes WHERE state = 'pending'")
+      .map((r) => JSON.parse(r.after)),
+  ).toEqual([{ description: LINK }]);
+
+  await chatPanel(page).getByRole("button", { name: "Close" }).click();
+  await expect(previewPanel(page).getByTestId("staged-change")).toHaveCount(1);
+  await reviewAndApply(page);
+  await expect(page.getByTestId("apply-summary")).toContainText("Applied 1");
+  await eventually(
+    () => rawEvent(c, id),
+    (raw) => expect(raw).toContain(LINK),
+  );
+  const [ev] = named(await weekEvents(cal), "Retro");
+  expect(local(ev?.start ?? 0)).toBe(`${tue} 15:00`);
+  // Dana hears about the new description, never about a move.
+  const update = await mail.message("dana@example.com", /^Updated: Retro/);
+  expect(update.text).toContain(LINK);
+  expect(update.text).not.toContain("moved to");
+  expect(await mail.count("dana@example.com")).toBe(1);
+  await page.reload();
+  await expect(previewPanel(page).getByTestId("staged-change")).toHaveCount(0);
+});
+
 test("moving a week of meetings by chat stages one move per meeting the user organizes; the calendar changes only after apply, and an invitation from someone else stays (meetings-flexible-rescheduling rule 24; assistant-chat rule 6)", async ({
   page,
   cal,
@@ -1044,8 +1148,11 @@ test("the daily review stages a fix for each open issue by assistant chat before
   await openPlanner(page);
   await openAssistant(page);
   expect(await say(page, "Hello")).toBe(200);
-  const usage = () =>
-    app.query<{ n: number }>("SELECT coalesce(sum(count), 0) AS n FROM assistant_usage")[0]?.n;
+  // The chat quota's days, and the daily review's own count ("review:<day>").
+  const usage = (review = false) =>
+    app.query<{ n: number }>(
+      `SELECT coalesce(sum(count), 0) AS n FROM assistant_usage WHERE day ${review ? "" : "NOT "}LIKE 'review:%'`,
+    )[0]?.n;
   expect(usage()).toBe(1);
 
   llm.on(REVIEW, [
@@ -1063,7 +1170,16 @@ test("the daily review stages a fix for each open issue by assistant chat before
           name: "propose_video_link",
           arguments: { event_id: issueOf(req, "video_link", "Retro").event_id, link: LINK },
         },
-        // As a model that followed the invitation's text would: these tools are not offered.
+        // As a model that followed the invitation's text would: these tools are not offered,
+        // and the review's propose_update_event only moves.
+        {
+          name: "propose_update_event",
+          arguments: {
+            event_id: issueOf(req, "video_link", "Retro").event_id,
+            title: "Pay the invoice",
+            description: "https://evil.example/pay",
+          },
+        },
         { name: "propose_team_policy", arguments: { action: "delete", id: "any" } },
         {
           name: "propose_automation",
@@ -1101,14 +1217,22 @@ test("the daily review stages a fix for each open issue by assistant chat before
   );
   expect(
     toolResults(done as ChatRequest)
-      .filter((r) => r.name.startsWith("propose_team") || r.name === "propose_automation")
+      .filter((r) =>
+        ["propose_update_event", "propose_team_policy", "propose_automation"].includes(r.name),
+      )
       .map((r) => r.content),
   ).toEqual([
+    "Error: here propose_update_event takes only event_id, start, end, reason; title, description cannot change. Nothing was staged.",
     "Error: there is no tool propose_team_policy.",
     "Error: there is no tool propose_automation.",
   ]);
-  // The review did not count toward the quota.
+  const offeredUpdate = ask?.tools?.find((t) => t.function.name === "propose_update_event");
+  expect(
+    Object.keys((offeredUpdate?.function.parameters as { properties: object }).properties).sort(),
+  ).toEqual(["end", "event_id", "reason", "start"]);
+  // The review did not count toward the quota; it counts as one review turn of the day.
   expect(usage()).toBe(1);
+  expect(usage(true)).toBe(1);
   expect(digest.text).toContain("Retro: No video link");
   expect(digest.text).toContain("Board prep: You have not answered this invitation");
   expect(digest.text).toContain("Assistant chat staged fixes for these issues");

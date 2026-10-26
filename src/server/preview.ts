@@ -20,9 +20,9 @@ import { all, type Db, one, run, tx } from "./db.ts";
 import { extId } from "./event-ids.ts";
 import type { LiveHub } from "./live.ts";
 import type { Mailer } from "./mail.ts";
-import { ToolError } from "./mcp/rpc.ts";
 import { stripMarker } from "./planner/markers.ts";
 import { planningSnapshot, writeCalendar } from "./planner/replan.ts";
+import { GUARDED, VERSION_NOUNS, type Version, versionOf } from "./preview-kinds.ts";
 import type { ExternalChange } from "./providers/types.ts";
 import { getSettings } from "./settings.ts";
 import { cacheEvent } from "./sync/pull.ts";
@@ -224,8 +224,19 @@ export interface StageInput {
   merges?: boolean;
 }
 
-/** An unattended change met an open change of the same target from someone else; a tool error. */
-export class TargetBusy extends ToolError {}
+/**
+ * The summary of a merged change: the new part first, then the older parts of
+ * other kinds (move, new description, rename). A part of the same kind is
+ * replaced, so repeated merges do not grow the summary.
+ */
+function mergedSummary(older: string, newer: string): string {
+  const kind = (part: string) => part.split(" “")[0];
+  const parts = older.split("; ").filter((p) => kind(p) !== kind(newer));
+  return [newer, ...parts].join("; ");
+}
+
+/** An unattended change met an open change of the same target from someone else (the tool layer says why). */
+export class TargetBusy extends Error {}
 
 export const REPLACED = "Replaced by a later change";
 export const MERGED = "Merged into a later change";
@@ -254,25 +265,47 @@ export function stage(db: Db, userId: string, input: StageInput, now: number): S
         throw new TargetBusy(
           "A change the user staged for this is waiting; it stays as it is. Do not stage another one.",
         );
-      const merged = open.find((o) => o.kind === "event_update" && input.kind === "event_update");
-      if (merged) {
+      // Two edits of one event merge only when they come from the same place (an
+      // AI tool applies only its own changes) and the older one is still pending:
+      // an accepted change stays as the user accepted it.
+      const same = open.find(
+        (o) =>
+          o.kind === "event_update" &&
+          input.kind === "event_update" &&
+          o.state === "pending" &&
+          o.source === input.source &&
+          o.client === (input.client ?? ""),
+      );
+      const older = same ? (JSON.parse(same.before) as Record<string, unknown>) : null;
+      const now$ = (input.before ?? {}) as Record<string, unknown>;
+      // The event changed since the older change was staged: that one is stale now,
+      // and the new change goes alone, so apply never writes the older values.
+      const outdated =
+        older !== null && Object.keys(older).some((k) => k in now$ && older[k] !== now$[k]);
+      const merged = same && !outdated ? same : undefined;
+      if (merged && older) {
         after = { ...(JSON.parse(merged.after) as object), ...(input.after as object) };
-        // Both stale checks stay: a description in either `before` is checked at apply.
-        before = { ...(JSON.parse(merged.before) as object), ...(input.before as object) };
-        summary = `${input.summary}; ${merged.summary}`;
+        // Each stale check stays: the older change's values where it has them.
+        before = { ...now$, ...older };
+        summary = mergedSummary(merged.summary, input.summary);
         if (impact.length === 0) impact = JSON.parse(merged.impact) as ImpactItem[];
       }
-      run(
-        db,
-        `UPDATE staged_changes SET state = 'discarded', result = CASE WHEN id = ?1 OR ?1 = '*' THEN ?2 ELSE ?3 END, decided_at = ?4
-         WHERE user_id = ?5 AND target = ?6 AND state IN ('pending', 'accepted')`,
-        input.merges ? "*" : (merged?.id ?? ""),
-        MERGED,
-        REPLACED,
-        now,
-        userId,
-        input.target,
-      );
+      for (const o of open) {
+        const [state, result] =
+          o.id === merged?.id
+            ? ["discarded", MERGED]
+            : o.id === same?.id && outdated
+              ? ["stale", "The event changed after it was staged"]
+              : ["discarded", REPLACED];
+        run(
+          db,
+          "UPDATE staged_changes SET state = ?, result = ?, decided_at = ? WHERE id = ?",
+          state,
+          input.merges && state === "discarded" ? MERGED : result,
+          now,
+          o.id,
+        );
+      }
     }
     run(
       db,
@@ -497,79 +530,6 @@ const isReplay = (env: unknown) => (env as { tlReplay?: boolean } | undefined)?.
 
 class Stale extends Error {}
 
-/**
- * Shared settings a replayed request changes, with what tells that they
- * changed since staging: a team policy's updated_at, and the meeting
- * preferences' stored text (it has no time column; any change differs).
- */
-const VERSIONED = {
-  team_policy: {
-    noun: "team policy",
-    sql: `SELECT updated_at AS v FROM team_policies WHERE id = ?
-          AND team_id = (SELECT team_id FROM team_members WHERE user_id = ?)`,
-  },
-  meeting_prefs: {
-    noun: "meeting check setting",
-    sql: "SELECT prefs AS v FROM meeting_prefs WHERE ? = ? AND user_id = ?",
-  },
-} as const;
-
-export interface Version {
-  of: keyof typeof VERSIONED;
-  id: string;
-  value: number | string | null;
-}
-
-/** The version of a shared setting now; undefined when it is gone. Meeting prefs not saved yet: null. */
-export function versionOf(
-  db: Db,
-  of: Version["of"],
-  id: string,
-  userId: string,
-): number | string | null | undefined {
-  if (of === "meeting_prefs")
-    return one<{ v: string }>(db, VERSIONED[of].sql, id, id, userId)?.v ?? null;
-  return one<{ v: number }>(db, VERSIONED[of].sql, id, userId)?.v;
-}
-
-/**
- * The automation kinds whose saves preview mode knows: the API path (`/api/<plural>`),
- * the table, the noun in summaries and the method of an edit. `guarded`: a form
- * save stages while preview mode is on, so it replaces an open chat proposal of
- * the same automation (target `<plural>:<id>`). The other kinds save at once;
- * apply then skips an older proposal by the stale check (rules_changed_at).
- */
-export const AUTOMATION_KINDS = {
-  habit: { plural: "habits", table: "habits", noun: "habit", edit: "PATCH", guarded: true },
-  focus_time: {
-    plural: "focus",
-    table: "focus_goals",
-    noun: "focus goal",
-    edit: "PATCH",
-    guarded: true,
-  },
-  buffer: { plural: "buffers", table: "buffers", noun: "buffer", edit: "PATCH", guarded: true },
-  meeting_overload: {
-    plural: "meeting-overloads",
-    table: "meeting_overloads",
-    noun: "meeting overload",
-    edit: "PATCH",
-    guarded: false,
-  },
-  flexible_meeting: {
-    plural: "meetings",
-    table: "meetings",
-    noun: "flexible meeting",
-    edit: "PUT",
-    guarded: false,
-  },
-} as const;
-export type AutomationKind = keyof typeof AUTOMATION_KINDS;
-const GUARDED = new Map(
-  Object.values(AUTOMATION_KINDS)
-    .filter((k) => k.guarded)
-    .map((k) => [k.plural as string, k]),
-);
 const AUTOMATION = /^\/api\/([a-z-]+)(?:\/([^/]+))?$/;
 const MOVE = /^\/api\/planner\/events\/([^/]+)\/move$/;
 
@@ -796,9 +756,9 @@ export function createPreview(deps: PreviewDeps) {
         const { of, id, value } = before.version;
         const cur = versionOf(db, of, id, userId);
         if (cur === undefined)
-          throw new Stale(`The ${VERSIONED[of].noun} was deleted after this change was staged`);
+          throw new Stale(`The ${VERSION_NOUNS[of]} was deleted after this change was staged`);
         if (cur !== value)
-          throw new Stale(`The ${VERSIONED[of].noun} changed after this change was staged`);
+          throw new Stale(`The ${VERSION_NOUNS[of]} changed after this change was staged`);
       } else if (before && "table" in before) {
         const cur = one<{ rules_changed_at: number }>(
           db,

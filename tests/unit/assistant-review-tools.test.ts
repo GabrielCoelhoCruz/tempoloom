@@ -11,12 +11,17 @@
 //    or merged another.
 // 6. The daily review discards a change the user staged, turns preview mode on,
 //    offers policy, automation or event-create tools, or counts toward the quota.
+// 7. A merge drops the older change's stale check, crosses sources, or grows the summary.
+// 8. The daily review renames an event or writes description text other than a link.
+// 9. The daily cap counts per run, or skips the same users every day.
 import { Hono } from "hono";
 import { describe, expect, it } from "vitest";
 import { ensureUser, type User } from "../../src/server/accounts.ts";
 import { createChat, REVIEW_TOOLS } from "../../src/server/assistant/chat.ts";
 import { reviewTools } from "../../src/server/assistant/review-tools.ts";
+import { lastReviews, recordReview, reviewsOn, usedOn } from "../../src/server/assistant/store.ts";
 import { chatTools } from "../../src/server/assistant/tools.ts";
+import { pickReviews } from "../../src/server/daily-mail.ts";
 import { all, type Db, one, openDb, run } from "../../src/server/db.ts";
 import { setInstanceLimit } from "../../src/server/limits.ts";
 import type { Llm, LlmMessage } from "../../src/server/llm.ts";
@@ -321,7 +326,7 @@ describe("the daily review (6)", () => {
     );
     const r = await chat.review(user, "2026-10-19", "2026-10-26");
     expect(r.complete).toBe(true);
-    expect(new Set(sent[0]?.tools)).toEqual(REVIEW_TOOLS);
+    expect(new Set(sent[0]?.tools)).toEqual(new Set(REVIEW_TOOLS.keys()));
     expect(sent[0]?.system).toContain("This turn is the daily review");
     const tool = all<{ content: string }>(
       db,
@@ -372,5 +377,163 @@ describe("the daily review (6)", () => {
       ["New description for “Retro”", "daily review"],
     ]);
     expect(previewMode(db, user.id).on).toBe(false);
+  });
+});
+
+describe("merge rules (7)", () => {
+  const moveTo = (h: number) => ({
+    start: new Date(T0 + h * HOUR).toISOString(),
+    end: new Date(T0 + (h + 1) * HOUR).toISOString(),
+  });
+  function tools(db: Db) {
+    return new Map(
+      chatTools({ db, preview: makePreview(db), baseUrl: "http://x", now: () => T0 }).map((t) => [
+        t.tool.name,
+        t.tool,
+      ]),
+    );
+  }
+  const rows = (db: Db) =>
+    all<{ state: string; result: string; source: string; summary: string; after: string }>(
+      db,
+      "SELECT state, result, source, summary, after FROM staged_changes ORDER BY created_at, rowid",
+    );
+
+  it("marks the older change stale when the event changed since, and stages the new one alone", async () => {
+    const { db, admin } = setup();
+    const id = meeting(db, admin);
+    const t = tools(db);
+    const caller = { user: admin, client: "", source: "assistant_chat" } as Caller;
+    await callTool(t.get("propose_update_event") as Tool, caller, { event_id: id, ...moveTo(30) });
+    // The user moves the meeting in the calendar app; the cache reads the new time.
+    run(db, "UPDATE events SET start_ms = ?, end_ms = ?", T0 + 40 * HOUR, T0 + 41 * HOUR);
+    await callTool(t.get("propose_video_link") as Tool, caller, {
+      event_id: id,
+      link: "https://zoom.us/j/1",
+    });
+    const [move, link] = rows(db);
+    expect(move).toMatchObject({ state: "stale", result: "The event changed after it was staged" });
+    expect(link?.state).toBe("pending");
+    expect(JSON.parse(link?.after ?? "{}")).toEqual({ description: "https://zoom.us/j/1" });
+  });
+
+  it("keeps changes from different sources apart, with the replace message", async () => {
+    const { db, admin } = setup();
+    const id = meeting(db, admin);
+    const t = tools(db);
+    const chat = { user: admin, client: "", source: "assistant_chat" } as Caller;
+    const mcp = { user: admin, client: "Claude", source: "mcp_client" } as Caller;
+    await callTool(t.get("propose_update_event") as Tool, chat, { event_id: id, ...moveTo(30) });
+    await callTool(t.get("propose_update_event") as Tool, mcp, {
+      event_id: id,
+      description: "Agenda",
+    });
+    const [first, second] = rows(db);
+    expect(first).toMatchObject({
+      state: "discarded",
+      result: "Replaced by a later change",
+      source: "assistant_chat",
+    });
+    expect(second?.source).toBe("mcp_client");
+    // The AI tool's change holds only its own part: the chat's move is not in it.
+    expect(JSON.parse(second?.after ?? "{}")).toEqual({ description: "Agenda" });
+  });
+
+  it("does not merge into an accepted change, and repeated merges keep one part per kind", async () => {
+    const { db, admin } = setup();
+    const id = meeting(db, admin);
+    const t = tools(db);
+    const caller = { user: admin, client: "", source: "assistant_chat" } as Caller;
+    const update = t.get("propose_update_event") as Tool;
+    await callTool(update, caller, { event_id: id, ...moveTo(30) });
+    await callTool(update, caller, { event_id: id, description: "One" });
+    await callTool(update, caller, { event_id: id, ...moveTo(32) });
+    await callTool(update, caller, { event_id: id, description: "Two" });
+    const open1 = rows(db).filter((r) => r.state === "pending");
+    expect(open1).toHaveLength(1);
+    expect(open1[0]?.summary.split("; ").map((p) => p.split(" “")[0])).toEqual([
+      "New description for",
+      "Move",
+    ]);
+    run(db, "UPDATE staged_changes SET state = 'accepted' WHERE state = 'pending'");
+    await callTool(update, caller, { event_id: id, description: "Three" });
+    const last = rows(db).at(-1);
+    expect(JSON.parse(last?.after ?? "{}")).toEqual({ description: "Three" });
+    expect(rows(db).filter((r) => r.result === "Merged into a later change")).toHaveLength(3);
+  });
+});
+
+describe("the daily review's narrow update and its cap (8, 9)", () => {
+  it("offers propose_update_event without title and description, and refuses them", async () => {
+    const db = openDb(":memory:");
+    const user = ensureUser(db, "owner@example.com", "Owner", T0) as User;
+    const id = meeting(db, user);
+    const offered: { name: string; parameters: { properties?: object } }[] = [];
+    const llm: Llm = {
+      model: "m",
+      complete: async (messages, tools) => {
+        if (offered.length === 0) offered.push(...tools.map((t) => t.function as never));
+        return messages.at(-1)?.role === "user"
+          ? {
+              role: "assistant",
+              content: null,
+              tool_calls: [
+                {
+                  id: "c1",
+                  type: "function",
+                  function: {
+                    name: "propose_update_event",
+                    arguments: JSON.stringify({
+                      event_id: id,
+                      title: "Pay here",
+                      description: "https://evil.example",
+                    }),
+                  },
+                },
+              ],
+            }
+          : { role: "assistant", content: "done" };
+      },
+    };
+    const preview = makePreview(db);
+    const chat = createChat({
+      db,
+      llm,
+      tools: chatTools({ db, preview, baseUrl: "http://x", now: () => T0 }),
+      now: () => T0,
+    });
+    await chat.review(user, "2026-10-19", "2026-10-26");
+    const update = offered.find((t) => t.name === "propose_update_event");
+    expect(Object.keys(update?.parameters.properties ?? {}).sort()).toEqual([
+      "end",
+      "event_id",
+      "reason",
+      "start",
+    ]);
+    const tool = all<{ content: string }>(
+      db,
+      "SELECT content FROM assistant_messages WHERE role = 'tool'",
+    );
+    expect(tool[0]?.content).toMatch(
+      /^Error: here propose_update_event takes only event_id, start, end, reason; title, description cannot change/,
+    );
+    expect(all(db, "SELECT id FROM staged_changes")).toHaveLength(0);
+  });
+
+  it("counts review turns per day and rotates the users over the cap", () => {
+    const db = openDb(":memory:");
+    const users = ["a", "b", "c"].map((n) => ensureUser(db, `${n}@example.com`, n, T0) as User);
+    const digests = users.map((u) => ({ u })).sort((x, y) => x.u.id.localeCompare(y.u.id));
+    const run1 = pickReviews(digests, 2 - reviewsOn(db, "2026-10-19"), lastReviews(db));
+    for (const d of run1) recordReview(db, d.u.id, "2026-10-19");
+    expect(run1).toHaveLength(2);
+    // A later run the same day: the cap is used up.
+    expect(pickReviews(digests, 2 - reviewsOn(db, "2026-10-19"), lastReviews(db))).toEqual([]);
+    // The next day the user skipped yesterday goes first.
+    const run2 = pickReviews(digests, 2 - reviewsOn(db, "2026-10-20"), lastReviews(db));
+    const skipped = digests.find((d) => !run1.includes(d));
+    expect(run2[0]).toBe(skipped);
+    // The chat quota's day stays apart from the review count.
+    expect(usedOn(db, users[0]?.id ?? "", "2026-10-19")).toBe(0);
   });
 });

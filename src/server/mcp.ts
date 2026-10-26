@@ -33,6 +33,7 @@ import {
   type Preview,
   plainTitle,
   SOURCES,
+  TargetBusy,
   userFormatsOf,
   when,
   zoneOf,
@@ -50,6 +51,16 @@ export const TASKS_PAGE = `SELECT id, title, level, total_minutes, due_at, statu
   WHERE user_id = ? AND status = ? AND COALESCE(due_at, ${NO_DUE}) >= ?
     AND (COALESCE(due_at, ${NO_DUE}), created_at, id) > (?, ?, ?)
   ORDER BY COALESCE(due_at, ${NO_DUE}), created_at, id LIMIT ?`;
+
+/** Staging refused because another open change of the target stays: a tool error the caller reads. */
+export function busyAsToolError<T>(f: () => T): T {
+  try {
+    return f();
+  } catch (err) {
+    if (err instanceof TargetBusy) throw new ToolError(err.message);
+    throw err;
+  }
+}
 
 export interface McpDeps {
   db: Db;
@@ -662,12 +673,14 @@ export function mcpTools(deps: Omit<McpDeps, "writeEnabled">): Tool[] {
     input: Omit<Parameters<Preview["stage"]>[1], "source" | "client">,
     at: number,
   ) {
-    const s = preview.stage(caller.user.id, {
-      ...input,
-      source: caller.source ?? "mcp_client",
-      client: caller.client,
-      unattended: caller.unattended === true,
-    });
+    const s = busyAsToolError(() =>
+      preview.stage(caller.user.id, {
+        ...input,
+        source: caller.source ?? "mcp_client",
+        client: caller.client,
+        unattended: caller.unattended === true,
+      }),
+    );
     return {
       id: s.id,
       state: s.state,
