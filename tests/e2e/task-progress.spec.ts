@@ -24,7 +24,7 @@ import { addDays, localToUtc } from "../../src/shared/time.ts";
 import { openSettings } from "./calendar-helpers.ts";
 import type { AppServer, CalendarDriver } from "./fixtures.ts";
 import { at, BACKEND, eventually, expect, local, test, ZONE } from "./fixtures.ts";
-import { addHabit, addTask, MIN, openEvent, openWeek, titled, W } from "./helpers.ts";
+import { addHabit, addTask, MIN, openEvent, openWeek, titled, W, weekInPlace } from "./helpers.ts";
 import { alwaysHours, chooseSetting } from "./s3-helpers.ts";
 
 /** Wednesday of the test week. */
@@ -346,6 +346,7 @@ test("logging past work in the planner writes a past event for a task or a habit
   const yesterday = addDays(D, -1);
   await openWeek(page, W);
   const logAt = async (date: string, hour: number) => {
+    await weekInPlace(page);
     // Scroll the hour into view, then click on the empty day column there.
     await page
       .locator(".week-scroll")
