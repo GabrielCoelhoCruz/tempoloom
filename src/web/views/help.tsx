@@ -2,6 +2,7 @@
 // page per problem with the fix, and the event lookup with Tempoloom's change log.
 import type { ComponentChildren } from "preact";
 import { useEffect, useState } from "preact/hooks";
+import { HELP_PAGES, type HelpBlock, helpInline } from "../../shared/help-pages.ts";
 import { ApiError, api } from "../lib/api.ts";
 import { useNewest } from "../lib/newest.ts";
 import { navigate, onLinkClick, path } from "../lib/router.ts";
@@ -14,214 +15,44 @@ function A({ href, children }: { href: string; children: ComponentChildren }) {
   );
 }
 
-interface HelpPageContent {
-  title: string;
-  body: () => ComponentChildren;
+/** A text of the help pages, with its [label](/path) links. */
+function Text({ text }: { text: string }) {
+  return (
+    <>
+      {helpInline(text).map((x, i) =>
+        typeof x === "string" ? (
+          x
+        ) : (
+          <A key={i} href={x.href}>
+            {x.label}
+          </A>
+        ),
+      )}
+    </>
+  );
 }
 
-const LOOKUP = "/help/lookup";
-
-const PAGES: Record<string, HelpPageContent> = {
-  "meeting-not-placed": {
-    title: "A flexible meeting is not placed",
-    body: () => (
-      <>
-        <p>
-          Tempoloom places a flexible meeting only inside the meeting hours of every required guest
-          who uses this server, and only where all of them are free.
-        </p>
-        <ul>
-          <li>Open the planner: “items need attention” names the meeting and the reason.</li>
-          <li>Make a guest optional, or widen the meeting hours, to give it more room.</li>
-        </ul>
-      </>
-    ),
-  },
-  "booked-guests": {
-    title: "Guests do not see a booked meeting",
-    body: () => (
-      <>
-        <p>
-          Google Calendar can keep invitations from unknown senders off a guest's calendar until the
-          guest accepts by email, and the email can land in spam. Tempoloom does not answer the
-          invitation for the guest.
-        </p>
-        <ul>
-          <li>
-            In Google Calendar settings, set the automatic adding of invitations to “from everyone”,
-            and ask your guests to do the same.
-          </li>
-          <li>When Google shows an unknown-sender notice, mark the sender as known.</li>
-          <li>The booking reminder email reaches guests even when the invitation is hidden.</li>
-        </ul>
-      </>
-    ),
-  },
-  "copies-missing": {
-    title: "Copies are missing",
-    body: () => (
-      <>
-        <p>When an event on a source calendar has no copy, do these steps in order:</p>
-        <ol>
-          <li>
-            Turn the mirroring off in <A href="/settings">Calendar mirroring settings</A>, wait a
-            few minutes, and turn it on again. Then Tempoloom reads the source calendar again and
-            writes each copy that is missing.
-          </li>
-          <li>
-            If a copy is still missing, <A href={LOOKUP}>look the event up</A> and send its event
-            link to the person who runs this server.
-          </li>
-        </ol>
-        <p class="warning">
-          Do not turn mirroring off and on many times in a short time: your calendar provider can
-          slow down your account when it gets many changes quickly.
-        </p>
-      </>
-    ),
-  },
-  "copies-twice": {
-    title: "Copies appear twice",
-    body: () => (
-      <>
-        <p>Two mirrorings that copy the same source calendar to one calendar make two copies.</p>
-        <ul>
-          <li>
-            Open <A href="/settings">Calendar mirroring settings</A> and delete one of them.
-          </li>
-          <li>
-            Another tool that also copies events between these calendars makes copies too: turn it
-            off.
-          </li>
-        </ul>
-      </>
-    ),
-  },
-  "copies-details": {
-    title: "Copies miss details",
-    body: () => (
+function Block({ block }: { block: HelpBlock }) {
+  if ("p" in block)
+    return (
       <p>
-        A copy shows only what its mirroring allows: a label, “Busy”, or the title and description.
-        To copy the details, change “Copies show” of the mirroring in{" "}
-        <A href="/settings">Calendar mirroring settings</A>. Guests, alerts and attachments are
-        never copied.
+        <Text text={block.p} />
       </p>
-    ),
-  },
-  "focus-not-placed": {
-    title: "Focus time is not placed",
-    body: () => (
-      <p>
-        Focus time fills its weekly goal inside your work hours, between the daily minimum and
-        maximum, in blocks of the shortest and longest length you set. Meetings and items with a
-        higher priority come first. Lower the goal or the shortest block to give it more room.
+    );
+  if ("warning" in block)
+    return (
+      <p class="warning">
+        <Text text={block.warning} />
       </p>
-    ),
-  },
-  "task-not-placed": {
-    title: "A task is not placed",
-    body: () => (
-      <p>
-        A task is placed between its start date and due date, inside its hours and the scheduling
-        window. The task list and the planner's “items need attention” give the reason. A chunk
-        longer than any free range of its hours cannot be placed.
-      </p>
-    ),
-  },
-  "buffer-missing": {
-    title: "A buffer does not appear",
-    body: () => (
-      <p>
-        A buffer follows only the events that match its filter, and it needs free time next to the
-        event. When an item with a higher priority holds that time, the buffer is removed or kept as
-        a conflict, as you chose.
-      </p>
-    ),
-  },
-  colors: {
-    title: "Colors do not show",
-    body: () => (
-      <p>
-        Tempoloom colors the events it manages by category. To color your other events too, choose
-        “All events on my calendars” in <A href="/settings">Settings</A>. Outlook calendars may not
-        show these colors.
-      </p>
-    ),
-  },
-  "item-not-placed": {
-    title: "An item does not get placed",
-    body: () => (
-      <p>
-        Open the planner: “items need attention” lists each item that has no place and the reason,
-        for example no free time in its hours or a due date that is too close.
-      </p>
-    ),
-  },
-  "wrong-hours": {
-    title: "Events are placed at the wrong hours",
-    body: () => (
-      <p>
-        Check the time zone and the hours in <A href="/settings">Settings</A>. Each task, habit and
-        focus goal uses one set of hours: work, personal, meeting or your own.
-      </p>
-    ),
-  },
-  "apple-alerts": {
-    title: "Alerts for copies on Apple devices",
-    body: () => (
-      <>
-        <p>
-          Copies never alert: Tempoloom writes them without alerts. Apple Calendar can still alert,
-          because its default alert time applies to events without alerts. On each device:
-        </p>
-        <ol>
-          <li>In the device's calendar settings, set the default alert time for events to None.</li>
-          <li>Turn off the calendar account on the device and delete its local data.</li>
-          <li>Turn the calendar account on again and wait for the full download.</li>
-        </ol>
-      </>
-    ),
-  },
-  "events-come-back": {
-    title: "Events come back after you delete them",
-    body: () => (
-      <>
-        <p>
-          Tempoloom treats a deleted event as a skip for that time, and places the item at another
-          time. To stop an item for good:
-        </p>
-        <ul>
-          <li>
-            Habit: delete the habit, or turn the habit off, on the <A href="/habits">Habits</A>{" "}
-            page.
-          </li>
-          <li>
-            Focus time: turn focus time off by deleting its goal in <A href="/settings">Settings</A>
-            .
-          </li>
-          <li>
-            Task: delete it (Tempoloom removes all its events, past ones too), or mark it done (past
-            events stay), on the <A href="/tasks">Tasks</A> page.
-          </li>
-          <li>
-            Mirrored copy: decline or delete the source event, or add #tl_nosync to its title or
-            description.
-          </li>
-        </ul>
-      </>
-    ),
-  },
-  "other-tools": {
-    title: "Turn off other scheduling tools",
-    body: () => (
-      <p>
-        Before Tempoloom plans your week, turn off any other scheduling tool that creates events on
-        the same calendars, such as another planner or a focus time app. Two tools that plan the
-        same calendar create competing events and move each other's events.
-      </p>
-    ),
-  },
-};
+    );
+  const items = "ul" in block ? block.ul : block.ol;
+  const lis = items.map((x) => (
+    <li key={x}>
+      <Text text={x} />
+    </li>
+  ));
+  return "ul" in block ? <ul>{lis}</ul> : <ol>{lis}</ol>;
+}
 
 const GROUPS: { name: string; entries: [string, string][] }[] = [
   { name: "Flexible meetings", entries: [["meeting-not-placed", ""]] },
@@ -268,7 +99,7 @@ function Index() {
           <ul>
             {g.entries.map(([slug, label]) => (
               <li key={slug + label}>
-                <A href={`/help/${slug}`}>{label || PAGES[slug]?.title}</A>
+                <A href={`/help/${slug}`}>{label || HELP_PAGES[slug]?.title}</A>
               </li>
             ))}
           </ul>
@@ -458,7 +289,7 @@ export function HelpPage() {
   const slug = path.value.replace(/^\/help\/?/, "");
   if (!slug) return <Index />;
   if (slug === "lookup") return <LookupView />;
-  const page = PAGES[slug];
+  const page = HELP_PAGES[slug];
   if (!page) {
     navigate("/help");
     return null;
@@ -469,7 +300,9 @@ export function HelpPage() {
         <A href="/help">‹ All help topics</A>
       </p>
       <h1>{page.title}</h1>
-      {page.body()}
+      {page.body.map((b, i) => (
+        <Block key={i} block={b} />
+      ))}
     </div>
   );
 }
