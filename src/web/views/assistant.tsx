@@ -221,7 +221,9 @@ export function AssistantPanel() {
       if (save) await api("POST", `/api/assistant/memories/${id}/save`);
       else await api("DELETE", `/api/assistant/memories/${id}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      // A refusal names its reason, as the memory limit (plans rule 4).
+      const body = err instanceof ApiError ? (err.body as { message?: string } | undefined) : null;
+      setError(body?.message ?? (err instanceof Error ? err.message : String(err)));
     }
     void load();
   };

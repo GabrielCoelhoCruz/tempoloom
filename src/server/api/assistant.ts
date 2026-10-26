@@ -8,11 +8,13 @@ import {
   conversations,
   deleteMemory,
   memories,
+  memoryById,
   ownsConversation,
   saveMemory,
 } from "../assistant/store.ts";
 import type { Db } from "../db.ts";
 import { jsonBody, notFound } from "../http.ts";
+import { limitRefusal } from "../limits.ts";
 
 const REFUSED = { not_configured: 503, chat_disabled: 403, quota: 429 } as const;
 
@@ -94,7 +96,12 @@ export function assistantRoutes(db: Db, chat: Chat): Hono<AppEnv> {
   r.post("/assistant/memories/:id/save", (c) => {
     const refused = chat.refusal(c.get("user"));
     if (refused && refused.error !== "quota") return c.json(refused, REFUSED[refused.error]);
-    if (!saveMemory(db, c.get("user").id, c.req.param("id"))) notFound("memory");
+    const user = c.get("user");
+    if (memoryById(db, user.id, c.req.param("id"))?.state !== "pending") notFound("memory");
+    // Plans rule 4: a proposed memory that would pass the limit stays proposed.
+    const limit = limitRefusal(db, "max_chat_memories", memories(db, user.id).length);
+    if (limit) return c.json(limit, 409);
+    if (!saveMemory(db, user.id, c.req.param("id"))) notFound("memory");
     return c.json({ ok: true });
   });
 

@@ -18,6 +18,7 @@ import { cached } from "../mcp/reads.ts";
 import { type Caller, callTool } from "../mcp/rpc.ts";
 import { userFormatsOf, whenAt, zoneOf } from "../preview.ts";
 import { membership } from "../teams.ts";
+import { reportingOf } from "./people.ts";
 import { type PromptInput, systemPrompt } from "./prompt.ts";
 import {
   endRequest,
@@ -175,6 +176,7 @@ export function createChat(deps: ChatDeps) {
       shown,
       selected: ctx.eventId ? selectedEvent(user.id, ctx.eventId) : undefined,
       memories: memories(db, user.id),
+      reporting: reportingOf(db, user.id),
     };
   }
 

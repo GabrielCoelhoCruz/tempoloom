@@ -1072,8 +1072,9 @@ E2E_NOTES.update({
 # Chat rows: the assistant chat needs a language model, which the owner must supply.
 G2 = "Needs an LLM provider and key from the owner (gate G2)"
 # Rows 568, 674, 675, 676, 682, 685, 689: see the C1 block (assistant chat foundation).
-for n in [6, 47, 316, 369, 569, 582, 609, 612, 627, 661, 662, 677, 678, 679, 680, 681,
-          684, 686, 687, 688, 718]:
+# Rows 661, 662, 677, 686, 687: see the C5 block (people and meetings by chat).
+for n in [6, 47, 316, 369, 569, 582, 609, 612, 627, 678, 679, 680, 681,
+          684, 688, 718]:
     BLOCKED[n] = G2
 # Row 672: see the U73 block (it names the built digest by E2E titles).
 for n in [723, 724, 730, 732, 733, 734, 735, 736, 738, 739, 740, 742, 749]:
@@ -1754,6 +1755,41 @@ E2E_NOTES.update({
           "to the model. " + _FAKE),
 })
 # --- end C1 ---
+
+# --- C5: people and meetings by chat (tests/e2e/assistant-C5.spec.ts) ---
+T.update({
+    "c5_find": "find time with a colleague uses their busy events and meeting hours, reads nobody outside the team, and invites only after approval (assistant-chat rule 5; edge case 6; T3)",
+    "c5_none": "when no slot fits, the model gets the closest options and a wider range and stages nothing (assistant-chat edge case 2)",
+    "c5_roles": "two colleagues with the same name make the assistant ask instead of staging; a role in a memory resolves through the directory's reporting tree, and without one the assistant asks (assistant-chat rules 25, 26; edge case 1)",
+    "c5_agenda": "an agenda and prep plan from the meeting context go into the event's description only after approval (assistant-chat; agendas and prep plans)",
+    "c5_memory_limit": "the chat memory limit refuses a new memory by chat and a Save past the limit, with the limit in the message; without a limit both work (plans-feature-inventory rules 2, 4; assistant-chat rule 22)",
+})
+E2E.update({
+    661: ["c1_quota"],
+    662: ["c5_memory_limit"],
+    677: ["c5_find", "c5_none", "c5_roles"],
+    686: ["c5_roles", "c1_memories"],
+    687: ["c5_agenda"],
+})
+E2E_NOTES.update({
+    661: ("No tiers: the per-tier usage level is the operator's assistant_chat_quota (messages per person per UTC day), "
+          "off by default (plans-feature-inventory rule 2). " + _FAKE),
+    662: ("No tiers: the free-tier memory limit is the operator's max_chat_memories (saved memories per person), off by "
+          "default. save_memory refuses with the limit message, and Save of a proposed memory past the limit is refused "
+          "in the chat with the same message (plans rule 4). " + _FAKE),
+    677: ("find_free_time in the chat reads the busy events and meeting hours of colleagues in the user's team; other "
+          "guests are outside the organization, so it does not read them and the model says the slots use the user's "
+          "side (edge case 6). With no slot it gives the closest options (who is not available) and the next 7 days "
+          "(edge case 2). find_people finds team members by name; with two matches the model asks (edge case 1). The "
+          "event with the colleague as attendee is staged; the invitation goes out at apply. " + _FAKE),
+    686: ("The reporting line (manager and reports) comes from the SCIM manager attribute of directory provisioning and "
+          "goes to the model as data; a memory by role holds the person's name and email. Without directory data the "
+          "prompt has no reporting line and the model asks for a name or email. " + _FAKE),
+    687: ("propose_event_description stages an agenda or prep plan in the description of an event the user organizes, "
+          "built from get_meeting_context (past meetings with the same guests, related tasks); apply writes the "
+          "description and mails the guests. " + _FAKE),
+})
+# --- end C5 ---
 
 # Google Calendar proof. docs/e2e-google-run.tsv records a full E2E run on Google
 # (a "# commit <sha>" line, then status, test id, title per line; docs/e2e-google-run.md

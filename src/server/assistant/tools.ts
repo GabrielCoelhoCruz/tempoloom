@@ -11,10 +11,12 @@
 // and name what it proposed with `ref`, so the chat shows it for approval.
 import { z } from "zod";
 import type { Db } from "../db.ts";
+import { limitRefusal } from "../limits.ts";
 import type { LlmTool } from "../llm.ts";
-import { jsonSchema, type Tool, tool } from "../mcp/rpc.ts";
+import { jsonSchema, type Tool, ToolError, tool } from "../mcp/rpc.ts";
 import { type McpDeps, mcpTools } from "../mcp.ts";
-import { proposeMemory, type Ref } from "./store.ts";
+import { peopleTools } from "./people.ts";
+import { memories, proposeMemory, type Ref } from "./store.ts";
 
 export type ChatToolDeps = Omit<McpDeps, "writeEnabled">;
 
@@ -52,6 +54,12 @@ function memoryTool(db: Db, now: () => number): ChatTool {
       }),
       output: z.object({ id: z.string(), text: z.string(), message: z.string() }),
       run: ({ user }, a) => {
+        // Plans rule 4: the limit of saved memories (plans-feature-inventory.md).
+        const limit = limitRefusal(db, "max_chat_memories", memories(db, user.id).length);
+        if (limit)
+          throw new ToolError(
+            `${limit.message} Nothing was proposed. Tell the user to delete a memory in the memory list first.`,
+          );
         const m = proposeMemory(db, user.id, a.text, a.people ?? [], now());
         return {
           id: m.id,
@@ -69,23 +77,27 @@ function memoryTool(db: Db, now: () => number): ChatTool {
   };
 }
 
-/** Every tool of the chat. */
+/** A read tool as is; a stage tool names the change it staged in preview mode. */
+const asChatTool = (t: Tool): ChatTool =>
+  t.effect === "stage"
+    ? {
+        tool: t,
+        ref: (data) => {
+          const id = idOf(data);
+          return id ? { kind: "proposal", id } : undefined;
+        },
+      }
+    : { tool: t };
+
+/** Every tool of the chat. A chat tool replaces the MCP tool of the same name. */
 export function chatTools(deps: ChatToolDeps): ChatTool[] {
+  const own = peopleTools(deps);
+  const names = new Set(own.map((t) => t.name));
   return [
     ...mcpTools(deps)
-      .filter((t) => t.effect !== "apply")
-      .map(
-        (t): ChatTool =>
-          t.effect === "stage"
-            ? {
-                tool: t,
-                ref: (data) => {
-                  const id = idOf(data);
-                  return id ? { kind: "proposal", id } : undefined;
-                },
-              }
-            : { tool: t },
-      ),
+      .filter((t) => t.effect !== "apply" && !names.has(t.name))
+      .map(asChatTool),
+    ...own.map(asChatTool),
     memoryTool(deps.db, deps.now),
   ];
 }

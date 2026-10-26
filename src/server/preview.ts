@@ -618,6 +618,7 @@ export function createPreview(deps: PreviewDeps) {
     calendar_id: string;
     event_id: string;
     summary: string;
+    description: string;
     start_ms: number;
     end_ms: number;
     etag: string | null;
@@ -632,7 +633,7 @@ export function createPreview(deps: PreviewDeps) {
     if (!ref) return undefined;
     return one<Cached>(
       db,
-      `SELECT e.calendar_id, e.event_id, e.summary, e.start_ms, e.end_ms, e.etag, e.attendees,
+      `SELECT e.calendar_id, e.event_id, e.summary, e.description, e.start_ms, e.end_ms, e.etag, e.attendees,
          c.account_id, c.provider_id
        FROM events e JOIN calendars c ON c.id = e.calendar_id JOIN accounts a ON a.id = c.account_id
        WHERE a.user_id = ? AND e.calendar_id = ? AND e.event_id = ?`,
@@ -725,10 +726,20 @@ export function createPreview(deps: PreviewDeps) {
     }
 
     // An external event: it must still be as it was at staging time (rule 12).
-    const before = ch.before as { title: string; start: number; end: number };
+    const before = ch.before as {
+      title: string;
+      start: number;
+      end: number;
+      description?: string;
+    };
     const cur = cachedEvent(userId, ch.target ?? "");
     if (!cur) throw new Stale("The event was deleted after this change was staged");
-    if (cur.start_ms !== before.start || cur.end_ms !== before.end || cur.summary !== before.title)
+    if (
+      cur.start_ms !== before.start ||
+      cur.end_ms !== before.end ||
+      cur.summary !== before.title ||
+      (before.description !== undefined && cur.description !== before.description)
+    )
       throw new Stale("The event changed after it was staged");
     const attendees = JSON.parse(cur.attendees) as string[];
     if (ch.kind === "event_rsvp") {
@@ -786,17 +797,21 @@ export function createPreview(deps: PreviewDeps) {
       ]);
       return;
     }
-    const v = ch.after as { title?: string; start: number; end: number };
+    // A new time, title or description (an agenda by chat, assistant-chat.md).
+    const v = ch.after as { title?: string; start: number; end: number; description?: string };
     const title = v.title ?? cur.summary;
     const ev = await deps.sync.exclusive(userId, (pool) =>
-      pool
-        .get(cur.account_id)
-        .editExternal(
-          cur.provider_id,
-          cur.event_id,
-          { start: v.start, end: v.end, ...(v.title ? { summary: v.title } : {}) },
-          cur.etag,
-        ),
+      pool.get(cur.account_id).editExternal(
+        cur.provider_id,
+        cur.event_id,
+        {
+          start: v.start,
+          end: v.end,
+          ...(v.title ? { summary: v.title } : {}),
+          ...(v.description !== undefined ? { description: v.description } : {}),
+        },
+        cur.etag,
+      ),
     );
     cacheEvent(db, cur.calendar_id, ev);
     logChange(
@@ -814,10 +829,22 @@ export function createPreview(deps: PreviewDeps) {
       },
       now(),
     );
-    await notifyAttendees(userId, attendees, `Updated: ${title}`, [
-      `${title} moved to ${when(zone, v.start, v.end)} (${zone}).`,
-      `It was ${when(zone, cur.start_ms, cur.end_ms)}.`,
-    ]);
+    const moved = v.start !== cur.start_ms || v.end !== cur.end_ms;
+    await notifyAttendees(
+      userId,
+      attendees,
+      `Updated: ${title}`,
+      moved || v.description === undefined
+        ? [
+            `${title} moved to ${when(zone, v.start, v.end)} (${zone}).`,
+            `It was ${when(zone, cur.start_ms, cur.end_ms)}.`,
+          ]
+        : [
+            `${title} on ${when(zone, v.start, v.end)} (${zone}) has a new description:`,
+            "",
+            v.description,
+          ],
+    );
   }
 
   /**
