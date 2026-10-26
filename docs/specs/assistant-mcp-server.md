@@ -62,6 +62,10 @@ given length, every 30 minutes and earliest first, inside the user's meeting
 hours (work hours when there are none), where the user, and guests who use
 the same instance, have no event that blocks planning; Tempoloom's own tasks,
 habits and focus time do not count as busy, because the planner moves them.
+This read of other users is instance-wide by design: an MCP client can see
+the busy times of any active user of the same instance, also of another team.
+Assistant chat does not use this tool; its `find_meeting_time` reads only the
+user's team (`assistant-chat.md` rule 5).
 `get_meeting_context` lists the meetings of the last 12 weeks that share a
 guest, and open tasks that share a word of four letters or more with the
 title. `propose_update_event` on an event that Tempoloom plans can change
@@ -81,7 +85,7 @@ before it tries again, so a retry does not stage the change twice.
 
 | Tool | Annotations | Input | Output (`structuredContent`) |
 |---|---|---|---|
-| `list_events` | read | `start`, `end` (at most 31 days) | `time_zone`; `events`: `id`, `title`, `start`, `end`, `managed`, `kind`, `busy`, `attendees`, `location`, `organizer_self`, `video_link` |
+| `list_events` | read | `start`, `end` (at most 31 days) | `time_zone`; `events`: `id`, `title`, `start`, `end`, `managed`, `kind`, `busy`, `attendees`, `location`, `organizer_self`, `video_link`; all-day events have `kind` `all_day` |
 | `find_free_time` | read | `duration_minutes` (15 to 480); optional `start` (default now), `end` (default 7 days after start), `attendees` (at most 20) | `slots` (`start`, `end`; at most 20); `unknown_attendees` |
 | `get_week_summary` | read | `week_start` (`YYYY-MM-DD`) | `week_start`, `time_zone`; `days`: `date`, `meetings`, `meeting_hours`, `focus_hours`, `task_hours`, `habit_hours`, `other_hours`; `totals` of the hours |
 | `get_meeting_context` | read | `event_id` | `event`; `past_meetings` (at most 10); `related_tasks` |
@@ -90,7 +94,7 @@ before it tries again, so a retry does not stage the change twice.
 | `list_automations` | read | optional `limit`, `cursor` | `automations`: `type`, `id`, `title`, `level` (null for meeting checks), `enabled`; `next_cursor` |
 | `list_staged_changes` | read | optional `limit`, `cursor` | `changes`: `id`, `source`, `summary`, `reason`, `state` (`pending` or `accepted`), `created_at`; `next_cursor` |
 | `propose_create_event` | stage | `title`, `start`, `end` (at most 24 hours); optional `attendees` (at most 50), `description`, `location`, `reason` | `id`, `state`, `summary`, `review_url`, `message` |
-| `propose_update_event` | stage | `event_id`; optional `start`, `end`, `title`, `reason` | as `propose_create_event` |
+| `propose_update_event` | stage | `event_id`; optional `start`, `end`, `title`, `description` (not empty), `reason`. One change carries all of them; apply writes only the fields that differ. A move of an all-day event and a call that changes nothing are refused | as `propose_create_event` |
 | `propose_delete_event` | stage | `event_id`; optional `reason` | as `propose_create_event` |
 | `propose_rsvp` | stage | `event_id` of an invitation from someone else, `response` (`accepted`, `declined`, `tentative`); optional `reason` | as `propose_create_event` |
 | `propose_focus_time` | stage | `duration_minutes` (15 to 480); optional `start`, `end` (the range, as `find_free_time`), `title` (default "Focus time"), `reason`. The first free slot of `find_free_time` becomes a busy event with the `#tl_focus` tag, so it counts as focus time | as `propose_create_event` |

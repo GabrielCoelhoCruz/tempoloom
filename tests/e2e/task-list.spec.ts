@@ -26,7 +26,7 @@ import type { Page } from "@playwright/test";
 import { addDays, addLocalDays, utcToLocal, weekdayOf } from "../../src/shared/time.ts";
 import { eventProp, rawEvent } from "./automation-list-helpers.ts";
 import { at, BACKEND, blockUntil, eventually, expect, planNow, test, ZONE } from "./fixtures.ts";
-import { addTask, allEvents, inHours, MIN, openWeek, titled, W } from "./helpers.ts";
+import { addTask, allEvents, inHours, MIN, openWeek, titled, W, weekInPlace } from "./helpers.ts";
 
 const day = (n: number) => addDays(W, n);
 const row = (page: Page, title: string) => page.locator(`[data-task-title="${title}"]`);
@@ -580,20 +580,10 @@ test("task defaults in Settings: the shortest and longest chunk fill new split t
   }
 });
 
-/**
- * Viewport point of a local time in the planner column of a date. Parts of the
- * planner load after the week (hints, notes, preview mode) and push it down, so
- * this waits until the column has kept its place for a second.
- */
+/** Viewport point of a local time in the planner column of a date, once the week is in place. */
 async function point(page: Page, date: string, minute: number) {
-  const col = page.locator(`.day-col[data-date="${date}"]`);
-  let box = await col.boundingBox();
-  for (let still = 0; still < 4; ) {
-    await page.waitForTimeout(250);
-    const next = await col.boundingBox();
-    still = next && box && next.x === box.x && next.y === box.y ? still + 1 : 0;
-    box = next;
-  }
+  await weekInPlace(page);
+  const box = await page.locator(`.day-col[data-date="${date}"]`).boundingBox();
   if (!box) throw new Error(`no column for ${date}`);
   return { x: box.x + box.width / 2, y: box.y + (minute / 60) * 48 };
 }

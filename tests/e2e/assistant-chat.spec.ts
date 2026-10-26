@@ -109,7 +109,7 @@ test("the assistant panel in the planner reads the calendar through tools and ke
   expect(tools).toEqual(
     expect.arrayContaining([
       "list_events",
-      "find_free_time",
+      "find_meeting_time",
       "propose_create_event",
       "propose_update_event",
       "propose_delete_event",

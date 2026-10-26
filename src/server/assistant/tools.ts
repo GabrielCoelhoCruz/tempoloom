@@ -11,10 +11,13 @@
 // and name what it proposed with `ref`, so the chat shows it for approval.
 import { z } from "zod";
 import type { Db } from "../db.ts";
+import { instanceLimit, limitMessage } from "../limits.ts";
 import type { LlmTool } from "../llm.ts";
-import { jsonSchema, type Tool, tool } from "../mcp/rpc.ts";
+import { jsonSchema, type Tool, ToolError, tool } from "../mcp/rpc.ts";
 import { type McpDeps, mcpTools } from "../mcp.ts";
-import { proposeMemory, type Ref } from "./store.ts";
+import { libraryTools } from "./library-tools.ts";
+import { peopleTools } from "./people.ts";
+import { proposeMemoryWithin, type Ref } from "./store.ts";
 
 export type ChatToolDeps = Omit<McpDeps, "writeEnabled">;
 
@@ -52,7 +55,13 @@ function memoryTool(db: Db, now: () => number): ChatTool {
       }),
       output: z.object({ id: z.string(), text: z.string(), message: z.string() }),
       run: ({ user }, a) => {
-        const m = proposeMemory(db, user.id, a.text, a.people ?? [], now());
+        // Plans rule 4: the limit of saved memories (plans-feature-inventory.md).
+        const limit = instanceLimit(db, "max_chat_memories");
+        const m = proposeMemoryWithin(db, user.id, a.text, a.people ?? [], now(), limit);
+        if (!m)
+          throw new ToolError(
+            `${limitMessage("max_chat_memories", limit ?? 0)} Nothing was proposed. Tell the user to delete a memory in the memory list first.`,
+          );
         return {
           id: m.id,
           text: m.text,
@@ -69,23 +78,34 @@ function memoryTool(db: Db, now: () => number): ChatTool {
   };
 }
 
+/** A read tool as is; a stage tool names the change it staged in preview mode. */
+const asChatTool = (t: Tool): ChatTool =>
+  t.effect === "stage"
+    ? {
+        tool: t,
+        ref: (data) => {
+          const id = idOf(data);
+          return id ? { kind: "proposal", id } : undefined;
+        },
+      }
+    : { tool: t };
+
+/**
+ * MCP tools the chat does not get. find_free_time reads the free/busy of any
+ * user of the server, as assistant-mcp-server.md allows ("guests who use the
+ * same instance"); the chat reads only the user's team (assistant-chat.md edge
+ * case 6), so it has find_meeting_time instead.
+ */
+const NOT_IN_CHAT = new Set(["find_free_time"]);
+
 /** Every tool of the chat. */
 export function chatTools(deps: ChatToolDeps): ChatTool[] {
   return [
     ...mcpTools(deps)
-      .filter((t) => t.effect !== "apply")
-      .map(
-        (t): ChatTool =>
-          t.effect === "stage"
-            ? {
-                tool: t,
-                ref: (data) => {
-                  const id = idOf(data);
-                  return id ? { kind: "proposal", id } : undefined;
-                },
-              }
-            : { tool: t },
-      ),
+      .filter((t) => t.effect !== "apply" && !NOT_IN_CHAT.has(t.name))
+      .map(asChatTool),
+    ...peopleTools(deps).map(asChatTool),
+    ...libraryTools(deps).map(asChatTool),
     memoryTool(deps.db, deps.now),
   ];
 }

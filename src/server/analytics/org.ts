@@ -187,12 +187,19 @@ export const COLUMNS: [string, (m: Metrics) => number | null, (v: number) => str
 export const HISTORY_DAYS = 84;
 export const MAX_SPAN_DAYS = 120;
 
-/** What is wrong with a report range, or null; `today` in the user's zone. */
+export type RangeProblem = "invalid_range" | "range_too_long" | "range_too_early";
+
+/**
+ * What is wrong with a stats range, or null: the end is before the start, it
+ * is longer than MAX_SPAN_DAYS, or it starts more than HISTORY_DAYS before
+ * today (in the user's zone). The stats pages, assistant chat and the MCP
+ * tools check ranges with it.
+ */
 export function rangeProblem(
   from: LocalDate,
   to: LocalDate,
   today: LocalDate,
-): "invalid_range" | "range_too_long" | "range_too_early" | null {
+): RangeProblem | null {
   if (to < from) return "invalid_range";
   if (diffDays(from, to) > MAX_SPAN_DAYS) return "range_too_long";
   if (from < addDays(today, -HISTORY_DAYS)) return "range_too_early";

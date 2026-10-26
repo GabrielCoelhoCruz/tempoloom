@@ -75,6 +75,13 @@ All proposed changes go to preview mode (`assistant-preview-mode.md`).
    colleague's free/busy and, for Tempoloom users, their meeting hours. It
    proposes the best slot and creates the event with them as attendees only
    after approval.
+
+   Tempoloom decision: the organization is the user's team. The chat tool
+   `find_meeting_time` reads the free/busy and meeting hours only of active
+   members of the user's team; it does not read anyone else's calendar
+   (edge case 6) and names them `unknown_attendees`. The MCP tool
+   `find_free_time` is instance-wide by design (`assistant-mcp-server.md`)
+   and is not a chat tool.
 6. Detect and fix conflicts. Rearrange a day or move a group of meetings
    (for example all Monday morning meetings to Tuesday).
 7. Create, edit or disable automations (focus time, habits, buffers,

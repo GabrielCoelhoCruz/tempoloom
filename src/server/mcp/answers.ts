@@ -12,27 +12,13 @@ import { addDays, diffDays, utcToLocal } from "../../shared/time.ts";
 import { COLUMNS, orgReport, rangeProblem } from "../analytics/org.ts";
 import { taskInput } from "../api/items.ts";
 import { all, type Db, one } from "../db.ts";
+import { stagedOutput, stagedResult } from "../mcp.ts";
 import { ownSeries } from "../meeting-series.ts";
 import { type TaskLite, tasksPanel } from "../planner/now.ts";
 import { type Preview, userFormatsOf, whenAt, zoneOf } from "../preview.ts";
 import { membership } from "../teams.ts";
 import { isoOf, toMs } from "./reads.ts";
-import { type Caller, type Tool, ToolError, tool } from "./rpc.ts";
-
-export const stagedOutput = z.object({
-  id: z.string(),
-  state: z.string(),
-  summary: z.string(),
-  review_url: z.string(),
-  message: z.string(),
-});
-
-/** Stages a change as the caller (src/server/mcp.ts). */
-export type Staged = (
-  caller: Caller,
-  input: Omit<Parameters<Preview["stage"]>[1], "source" | "client">,
-  at: number,
-) => z.input<typeof stagedOutput>;
+import { type Tool, ToolError, tool } from "./rpc.ts";
 
 /** Rows of one list in a result, at most. */
 export const MAX_ROWS = 50;
@@ -422,7 +408,8 @@ function helpTool(): Tool {
  * that request checks it (POST /api/tasks refuses a bad body) and gives the
  * chunks the task would get.
  */
-function createTaskTool(db: Db, preview: Preview, staged: Staged, now: () => number): Tool {
+function createTaskTool(deps: AnswerDeps): Tool {
+  const { db, preview, now } = deps;
   return tool({
     name: "propose_create_task",
     effect: "stage",
@@ -472,7 +459,8 @@ function createTaskTool(db: Db, preview: Preview, staged: Staged, now: () => num
       }
       const zone = zoneOf(db, caller.user.id);
       const f = userFormatsOf(db, caller.user.id);
-      return staged(
+      return stagedResult(
+        deps,
         caller,
         {
           kind: "request",
@@ -493,10 +481,15 @@ function createTaskTool(db: Db, preview: Preview, staged: Staged, now: () => num
 }
 
 /** The tools of this file, for mcpTools. */
-export function answerTools(
-  deps: { db: Db; preview: Preview; now: () => number },
-  staged: Staged,
-): Tool[] {
+/** What the tools of this file read: the database, preview mode, the clock and the base URL for links. */
+export interface AnswerDeps {
+  db: Db;
+  preview: Preview;
+  now: () => number;
+  baseUrl: string;
+}
+
+export function answerTools(deps: AnswerDeps): Tool[] {
   const { db, now } = deps;
   return [
     suggestionsTool(db, now),
@@ -504,6 +497,6 @@ export function answerTools(
     awayTool(db, now),
     orgTool(db, now),
     helpTool(),
-    createTaskTool(db, deps.preview, staged, now),
+    createTaskTool(deps),
   ];
 }

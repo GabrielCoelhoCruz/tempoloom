@@ -528,20 +528,15 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
             timeoutMs: config.TEMPOLOOM_LLM_TIMEOUT_MS,
           })
         : null;
-  app.route(
-    "/api",
-    assistantRoutes(
-      db,
-      createChat({
-        db,
-        llm,
-        tools: chatTools({ db, preview, baseUrl: config.BASE_URL, now }),
-        now,
-        turnMs: config.TEMPOLOOM_LLM_TURN_MS,
-      }),
-    ),
-  );
-  app.route("/api", helpRoutes(db, config.SUPPORT_URL, now, sync));
+  const chat = createChat({
+    db,
+    llm,
+    tools: chatTools({ db, preview, baseUrl: config.BASE_URL, now }),
+    now,
+    turnMs: config.TEMPOLOOM_LLM_TURN_MS,
+  });
+  app.route("/api", assistantRoutes(db, chat));
+  app.route("/api", helpRoutes(db, config.SUPPORT_URL, now, sync, chat));
   app.route("/api", oauthConsentRoutes(db, config.BASE_URL, now));
   app.route("/api", insightRoutes(db, now));
   app.route(

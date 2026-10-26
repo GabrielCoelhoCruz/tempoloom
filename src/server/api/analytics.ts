@@ -10,6 +10,7 @@ import { teamStats } from "../analytics/metrics.ts";
 import {
   MIN_GROUP,
   orgReport,
+  type RangeProblem,
   rangeProblem,
   reportCsv,
   salaries,
@@ -24,7 +25,10 @@ import { membership } from "../teams.ts";
 
 const range = z.object({ from: z.iso.date(), to: z.iso.date() });
 
-type Range = { from: LocalDate; to: LocalDate };
+export type Range = { from: LocalDate; to: LocalDate };
+
+// One range check for the stats pages, assistant chat and the MCP tools (src/server/analytics/org.ts).
+export { type RangeProblem, rangeProblem };
 
 /** Parses and checks a range in the user's zone; returns an error response or the range. */
 function parseRange(c: Context<AppEnv>, now: number): Range | Response {
@@ -41,6 +45,24 @@ function parseRange(c: Context<AppEnv>, now: number): Range | Response {
 const LEVEL_LABEL = (groupBy: string) =>
   groupBy === "" ? "company" : groupBy === "manager" ? "manager_line" : groupBy;
 
+/**
+ * Team stats of the user's team (rules 1-6), as the team stats page shows
+ * them; assistant chat reads the same (src/server/assistant/library-tools.ts).
+ */
+export function teamStatsOf(db: Db, userId: string, range: Range, grouping: "day" | "week") {
+  const people = teamPeople(db, membership(db, userId).team.id);
+  const included = people.filter((p) => p.hasCalendar);
+  const head = {
+    included: included.length,
+    withoutCalendar: people.length - included.length,
+    analyticsOnly: isAnalyticsOnly(db, userId),
+  };
+  // Edge case 1 (proposed): fewer than 3 members show no values.
+  if (included.length < MIN_GROUP) return { enough: false as const, ...head };
+  const days = included.map((p) => loadMemberDays(db, p.userId, range.from, range.to));
+  return { enough: true as const, ...head, ...teamStats(days, grouping) };
+}
+
 export function analyticsRoutes(db: Db, now: () => number): Hono<AppEnv> {
   const r = new Hono<AppEnv>();
   const admin = (c: Context<AppEnv>) => {
@@ -53,18 +75,7 @@ export function analyticsRoutes(db: Db, now: () => number): Hono<AppEnv> {
     const parsed = parseRange(c, now());
     if (parsed instanceof Response) return parsed;
     const grouping = c.req.query("grouping") === "week" ? "week" : "day";
-    const user = c.get("user");
-    const people = teamPeople(db, membership(db, user.id).team.id);
-    const included = people.filter((p) => p.hasCalendar);
-    const head = {
-      included: included.length,
-      withoutCalendar: people.length - included.length,
-      analyticsOnly: isAnalyticsOnly(db, user.id),
-    };
-    // Edge case 1 (proposed): fewer than 3 members show no values.
-    if (included.length < MIN_GROUP) return c.json({ enough: false, ...head });
-    const days = included.map((p) => loadMemberDays(db, p.userId, parsed.from, parsed.to));
-    return c.json({ enough: true, ...head, ...teamStats(days, grouping) });
+    return c.json(teamStatsOf(db, c.get("user").id, parsed, grouping));
   });
 
   const orgQuery = (c: Context<AppEnv>, parsed: Range) => ({
