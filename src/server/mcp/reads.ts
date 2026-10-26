@@ -16,6 +16,15 @@ export const DAY = 86_400_000;
 const MAX_RANGE_DAYS = 31;
 
 export const toMs = (s: string) => Date.parse(s);
+
+/** Slots of `length` every 30 minutes inside the free time, earliest first, at most `max`. */
+export function slotsOf(free: TimeSet, length: number, max = 20): { start: number; end: number }[] {
+  const out: { start: number; end: number }[] = [];
+  for (const i of free.intervals())
+    for (let s = i.start; s + length <= i.end && out.length < max; s += 30 * 60_000)
+      out.push({ start: s, end: s + length });
+  return out;
+}
 export const isoOf = (t: number) => new Date(t).toISOString();
 
 export function rangeOf(start: string | undefined, end: string | undefined, now: number) {
@@ -68,16 +77,16 @@ export const others = (attendees: string, self: string) =>
 export function readers(db: Db, now: () => number) {
   function listEvents(user: User, from: number, to: number) {
     const details = new Map(
-      all<CachedRow>(
+      all<CachedRow & { check_availability: number }>(
         db,
-        `SELECT e.*, c.writable FROM events e JOIN calendars c ON c.id = e.calendar_id
+        `SELECT e.*, c.writable, c.check_availability FROM events e JOIN calendars c ON c.id = e.calendar_id
          JOIN accounts a ON a.id = c.account_id WHERE a.user_id = ? AND e.end_ms > ? AND e.start_ms < ?`,
         user.id,
         from,
         to,
       ).map((e) => [`ext:${e.calendar_id}:${e.event_id}`, e]),
     );
-    return plannerEvents(db, user.id, from, to).map((e) => {
+    const timed = plannerEvents(db, user.id, from, to).map((e) => {
       const d = details.get(e.id);
       const text = `${d?.location ?? ""} ${d?.description ?? ""}`;
       return {
@@ -94,6 +103,31 @@ export function readers(db: Db, now: () => number) {
         video_link: VIDEO.exec(text)?.[0] ?? null,
       };
     });
+    // All-day events are not planner blocks, but a tool can still read them and
+    // change their title or description (an agenda for an offsite), so they are
+    // listed with kind "all_day". A move of one is refused (propose_update_event).
+    const allDay = [...details.entries()]
+      .filter(
+        ([, d]) =>
+          d.all_day === 1 &&
+          // As the planner: calendars the user does not check are not listed.
+          d.check_availability === 1 &&
+          (JSON.parse(d.private_props) as Record<string, string>).tl !== "1",
+      )
+      .map(([id, d]) => ({
+        id,
+        title: d.summary,
+        start: isoOf(d.start_ms),
+        end: isoOf(d.end_ms),
+        managed: false,
+        kind: "all_day",
+        busy: d.busy === 1,
+        attendees: others(d.attendees, user.email),
+        location: d.location,
+        organizer_self: d.organizer_self === 1,
+        video_link: VIDEO.exec(`${d.location} ${d.description}`)?.[0] ?? null,
+      }));
+    return [...allDay, ...timed].sort((a, b) => a.start.localeCompare(b.start));
   }
 
   function hoursOf(userId: string, from: number, to: number): TimeSet {
@@ -112,6 +146,25 @@ export function readers(db: Db, now: () => number) {
     return hoursToTimeSet(JSON.parse(row?.weekly ?? "{}") as WeeklyHours, zone, from, to);
   }
 
+  /** The person's meeting hours (work hours without them) less their busy events. */
+  function availability(userId: string, from: number, to: number): TimeSet {
+    const free = hoursOf(userId, from, to);
+    for (const b of blockingIntervals(externalEvents(db, userId, from, to))) free.subtract(b);
+    return free;
+  }
+
+  /** The searched range: from now at the earliest, on a quarter hour. */
+  function searchRange(start: string | undefined, end: string | undefined) {
+    const t = now();
+    const range = rangeOf(start, end, t);
+    return { from: Math.max(range.from, Math.ceil(t / (15 * 60_000)) * 15 * 60_000), to: range.to };
+  }
+
+  /**
+   * assistant-mcp-server.md (find_free_time decision): the user and "guests who
+   * use the same instance". The MCP tool reads the free/busy of any active user
+   * of this server; assistant chat limits it to the team (src/server/assistant/people.ts).
+   */
   function findFree(
     user: User,
     a: {
@@ -121,35 +174,27 @@ export function readers(db: Db, now: () => number) {
       attendees?: string[] | undefined;
     },
   ) {
-    const t = now();
-    const range = rangeOf(a.start, a.end, t);
-    const from = Math.max(range.from, Math.ceil(t / (15 * 60_000)) * 15 * 60_000);
-    const to = range.to;
+    const { from, to } = searchRange(a.start, a.end);
     if (to <= from) return { slots: [], unknown_attendees: [] };
-    const people = [user.id];
     const unknown: string[] = [];
+    let free = availability(user.id, from, to);
     for (const email of a.attendees ?? []) {
       const u = one<{ id: string }>(
         db,
         "SELECT id FROM users WHERE email = ? AND deactivated_at IS NULL",
         email.toLowerCase(),
       );
-      if (u) people.push(u.id);
-      else unknown.push(email);
+      if (u) {
+        if (u.id !== user.id) free = free.intersect(availability(u.id, from, to));
+      } else unknown.push(email);
     }
-    let free = hoursOf(user.id, from, to);
-    for (const id of people) {
-      if (id !== user.id) free = free.intersect(hoursOf(id, from, to));
-      for (const b of blockingIntervals(externalEvents(db, id, from, to))) free.subtract(b);
-    }
-    const length = a.duration_minutes * 60_000;
-    const step = 30 * 60_000;
-    const slots: { start: string; end: string }[] = [];
-    for (const i of free.intervals()) {
-      for (let s = i.start; s + length <= i.end && slots.length < 20; s += step)
-        slots.push({ start: isoOf(s), end: isoOf(s + length) });
-    }
-    return { slots, unknown_attendees: unknown };
+    return {
+      slots: slotsOf(free, a.duration_minutes * 60_000).map((s) => ({
+        start: isoOf(s.start),
+        end: isoOf(s.end),
+      })),
+      unknown_attendees: unknown,
+    };
   }
 
   function weekSummary(user: User, weekStart: string) {
@@ -304,5 +349,5 @@ export function readers(db: Db, now: () => number) {
     };
   }
 
-  return { listEvents, findFree, weekSummary, meetingContext };
+  return { listEvents, findFree, availability, searchRange, weekSummary, meetingContext };
 }

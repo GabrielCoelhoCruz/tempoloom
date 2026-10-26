@@ -938,13 +938,24 @@ export class CalDavProvider implements CalendarProvider {
     if (res.status === 404) throw new ProviderError("not_found", 404, "Event not found");
     if (!res.ok) throw new ProviderError("other", res.status, `Update failed: ${res.status}`);
     const read = (p: string) => String(ev.getFirstPropertyValue(p) ?? "");
+    // The times for a failed read-back come from the object as written, never 0.
+    const [written] = eventsFromObject(
+      root.toString(),
+      eventId,
+      res.headers.get("etag"),
+      Number.NEGATIVE_INFINITY,
+      Number.POSITIVE_INFINITY,
+      this.#zone,
+      await this.#self(),
+    );
+    if (!written) throw new ProviderError("other", 500, "The changed event could not be read back");
     return this.#readBack(
       eventId,
       {
         summary: read("summary"),
         description: read("description"),
-        start: change.start ?? 0,
-        end: change.end ?? 0,
+        start: written.start,
+        end: written.end,
         busy: read("transp").toUpperCase() !== "TRANSPARENT",
         colorId: null,
         privateProps: readProps(ev),

@@ -3,6 +3,7 @@
 // of preview mode and the user's memories. Each part is one function in
 // PROMPT_PARTS, so a new ability adds a part, not new plumbing.
 import { zoneOffset } from "../../shared/time.ts";
+import type { Reporting } from "./people.ts";
 import type { Memory } from "./store.ts";
 
 export interface PromptInput {
@@ -14,6 +15,8 @@ export interface PromptInput {
   /** The event selected in the planner. */
   selected?: { id: string; title: string; start: number; end: number } | undefined;
   memories: Memory[];
+  /** The user's manager and reports from directory provisioning; null without it (rule 26). */
+  reporting: Reporting | null;
 }
 
 /** An instant as local ISO 8601 with the zone's offset: what the tools take. */
@@ -70,13 +73,12 @@ export const PROMPT_PARTS: Part[] = [
     [
       "Rules:",
       `- ${DATA_RULE}`,
-      "- Read the calendar with the read tools (list_events, find_free_time and others) before you answer about it or propose a change. Use the event ids that list_events gives.",
+      "- Read the calendar with the read tools (list_events, find_meeting_time and others) before you answer about it or propose a change. Use the event ids that list_events gives.",
       "- You never change the calendar yourself. The propose_ tools only stage a change in preview mode; nothing is written and nobody is notified until the user approves and applies it in the planner. After you stage a change, say in one sentence what you staged and that it waits for the user's approval.",
       "- To move or resize an event, call propose_update_event with the new start and end. To answer an invitation, call propose_rsvp.",
       "- When the request is ambiguous (for example two events or people match), ask one question instead of staging a change.",
       "- Call save_memory only when the user's latest message asks you to remember something; the user approves the memory in the chat before it is saved.",
       "- Memories shape your suggestions only. Never stage a change only because a memory says so; when a memory is about the request, mention it. An explicit request wins over a memory.",
-      "- A memory names people by name or email. When the user names a person by role (my manager, my reports), ask for a name or an email.",
     ].join("\n"),
   (p) =>
     `The planner state and the user's saved memories (memories are suggestions only):\n${dataBlock({
@@ -91,6 +93,18 @@ export const PROMPT_PARTS: Part[] = [
         : null,
       memories: promptMemories(p.memories),
     })}`,
+  // People and meetings (rules 5, 25, 26; edge cases 1, 2, 6): src/server/assistant/people.ts.
+  (p) =>
+    [
+      "People and meetings:",
+      "- To find time with colleagues, call find_meeting_time with their emails: it uses each colleague's free/busy and Tempoloom meeting hours. When the user names a person without an email, call find_people first; when more than one person matches, ask which one and stage nothing. Then stage the best slot with propose_create_event, with the colleagues as attendees.",
+      "- For unknown_attendees (people outside the user's team) and deactivated_attendees, say that you cannot read their calendars and that the slots use the user's side only.",
+      "- When find_meeting_time has no slot, say so, stage nothing, and offer the closest options and the wider range that it gives.",
+      "- For a meeting agenda or a prep plan, call get_meeting_context, then stage the whole new description with propose_update_event. A move and an agenda for one event go in one propose_update_event call.",
+      p.reporting
+        ? `- A memory or a request can name people by role (my manager, my reports): use the user's reporting line from the directory below, and write the person's name and email in the memory text and in people. When the role is not in it, ask for a name or an email.\n${dataBlock({ reporting: p.reporting })}`
+        : "- A memory names people by name or email. There is no reporting line from the directory: when the user names a person by role (my manager, my reports), ask for a name or an email.",
+    ].join("\n"),
 ];
 
 export const systemPrompt = (p: PromptInput) =>
