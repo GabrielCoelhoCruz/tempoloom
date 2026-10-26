@@ -28,7 +28,6 @@ import {
 import { oauthUser, resourceMetadataUrl } from "./oauth.ts";
 import {
   allDayWhen,
-  managedEventBefore,
   openChanges,
   openChangesPage,
   type Preview,
@@ -40,6 +39,7 @@ import {
   when,
   zoneOf,
 } from "./preview.ts";
+import { managedEventBefore } from "./preview-kinds.ts";
 
 /** The sort key of a task without a due date: after every due date. */
 const NO_DUE = 9e15;
@@ -113,7 +113,9 @@ function reviewUrl(baseUrl: string, zone: string, t: number): string {
 
 /**
  * Stages a change in preview mode for the caller and gives a stage tool's
- * result (stagedOutput). Every stage tool of MCP and of assistant chat uses it.
+ * result (stagedOutput). The MCP stage tools and the chat's library tools use
+ * it; the chat's automation and policy tools stage through stageRequest
+ * (src/server/assistant/review-tools.ts), whose result adds the calendar impact.
  */
 export function stagedResult(
   deps: Pick<McpDeps, "db" | "preview" | "baseUrl">,

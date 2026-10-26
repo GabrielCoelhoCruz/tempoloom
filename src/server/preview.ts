@@ -22,7 +22,14 @@ import type { LiveHub } from "./live.ts";
 import type { Mailer } from "./mail.ts";
 import { stripMarker } from "./planner/markers.ts";
 import { planningSnapshot, writeCalendar } from "./planner/replan.ts";
-import { GUARDED, VERSION_NOUNS, type Version, versionOf } from "./preview-kinds.ts";
+import {
+  automationBefore,
+  GUARDED,
+  managedEventBefore,
+  type RequestBefore,
+  VERSION_NOUNS,
+  versionOf,
+} from "./preview-kinds.ts";
 import type { ExternalChange } from "./providers/types.ts";
 import { getSettings } from "./settings.ts";
 import { cacheEvent } from "./sync/pull.ts";
@@ -205,45 +212,6 @@ export function openChangesPage(
 }
 
 /**
- * What apply checks before it replays a staged request (its stale check),
- * tagged by `kind`. Build it with the constructors below; apply switches on
- * `kind`, and a shape it does not know fails the change instead of skipping
- * the check.
- */
-export type RequestBefore =
-  /** An automation edit: stale when the automation's rules changed. */
-  | { kind: "automation"; table: string; id: string; rulesChangedAt: number }
-  /** A new task priority: stale only when that task's priority or state changed. */
-  | { kind: "task_level"; task: string; title: string; level: number }
-  /** A move of a planned event: stale when the event moved or is gone. */
-  | { kind: "managed_event"; id: string; start: number; end: number }
-  /** A shared setting (team policy, meeting checks): stale when its version changed. */
-  | { kind: "version"; version: Version };
-
-export const versionBefore = (version: Version): RequestBefore => ({ kind: "version", version });
-
-export const automationBefore = (
-  table: string,
-  id: string,
-  rulesChangedAt: number,
-): RequestBefore => ({ kind: "automation", table, id, rulesChangedAt });
-export const taskLevelBefore = (t: {
-  id: string;
-  title: string;
-  level: number;
-}): RequestBefore => ({
-  kind: "task_level",
-  task: t.id,
-  title: t.title,
-  level: t.level,
-});
-export const managedEventBefore = (e: {
-  id: string;
-  start_ms: number;
-  end_ms: number;
-}): RequestBefore => ({ kind: "managed_event", id: e.id, start: e.start_ms, end: e.end_ms });
-
-/**
  * The stale check of a stored request. Rows staged before `kind` existed have
  * the same fields without it. Any other shape is an error: apply fails the
  * change, it never replays it unchecked.
@@ -293,14 +261,29 @@ export type StageArgs = StageInput extends infer T
   : never;
 
 /**
- * The summary of a merged change: the new part first, then the older parts of
- * other kinds (move, new description, rename). A part of the same kind is
- * replaced, so repeated merges do not grow the summary.
+ * The summary of a merged event edit, built from what the merged change does
+ * (a move, a new title, a new description), in the words of propose_update_event.
  */
-function mergedSummary(older: string, newer: string): string {
-  const kind = (part: string) => part.split(" “")[0];
-  const parts = older.split("; ").filter((p) => kind(p) !== kind(newer));
-  return [newer, ...parts].join("; ");
+function eventUpdateSummary(
+  db: Db,
+  userId: string,
+  before: { title?: unknown },
+  after: { start?: unknown; end?: unknown; title?: unknown; description?: unknown },
+): string {
+  const title = String(before.title ?? "");
+  const renamed = typeof after.title === "string" ? after.title : null;
+  const described = after.description !== undefined;
+  if (typeof after.start === "number" && typeof after.end === "number") {
+    const extra = [
+      ...(renamed !== null ? [`renamed “${renamed}”`] : []),
+      ...(described ? ["with a new description"] : []),
+    ].join(" and ");
+    const at = when(zoneOf(db, userId), after.start, after.end, userFormatsOf(db, userId));
+    return `Move “${title}” to ${at}${extra ? `, ${extra}` : ""}`;
+  }
+  if (renamed !== null)
+    return `Rename “${title}” to “${renamed}”${described ? " and set a new description" : ""}`;
+  return `New description for “${title}”`;
 }
 
 /** An unattended change met an open change of the same target from someone else (the tool layer says why). */
@@ -333,6 +316,12 @@ export function stage(db: Db, userId: string, input: StageInput, now: number): S
         throw new TargetBusy(
           "A change the user staged for this is waiting; it stays as it is. Do not stage another one.",
         );
+      // A change the user accepted is never replaced or merged: it waits for apply as accepted.
+      const accepted = open.find((o) => o.state === "accepted");
+      if (accepted)
+        throw new TargetBusy(
+          `“${accepted.summary}” is accepted and waits for apply. Apply or discard it first; nothing was staged.`,
+        );
       // Two edits of one event merge only when they come from the same place (an
       // AI tool applies only its own changes) and the older one is still pending:
       // an accepted change stays as the user accepted it.
@@ -355,7 +344,7 @@ export function stage(db: Db, userId: string, input: StageInput, now: number): S
         after = { ...(JSON.parse(merged.after) as object), ...(input.after as object) };
         // Each stale check stays: the older change's values where it has them.
         before = { ...now$, ...older };
-        summary = mergedSummary(merged.summary, input.summary);
+        summary = eventUpdateSummary(db, userId, before as object, after as object);
         if (impact.length === 0) impact = JSON.parse(merged.impact) as ImpactItem[];
       }
       for (const o of open) {
@@ -396,6 +385,21 @@ export function stage(db: Db, userId: string, input: StageInput, now: number): S
       setPreviewMode(db, userId, true, false, now);
   });
   return fromRow(one<Row>(db, "SELECT * FROM staged_changes WHERE id = ?", id) as Row);
+}
+
+/** stage(), or the reason it refused (an accepted change waits for the same target). */
+function stageOrBusy(
+  db: Db,
+  userId: string,
+  input: StageInput,
+  now: number,
+): StagedChange | TargetBusy {
+  try {
+    return stage(db, userId, input, now);
+  } catch (err) {
+    if (err instanceof TargetBusy) return err;
+    throw err;
+  }
 }
 
 function setState(db: Db, id: string, state: State, result: string, now: number): void {
@@ -685,7 +689,7 @@ export function createPreview(deps: PreviewDeps) {
       if (!row || typeof start !== "number") return next();
       const title = plainTitle(db, user.id, row.title);
       const end = start + (row.end_ms - row.start_ms);
-      const staged = stage(
+      const staged = stageOrBusy(
         db,
         user.id,
         {
@@ -708,6 +712,8 @@ export function createPreview(deps: PreviewDeps) {
         },
         now(),
       );
+      if (staged instanceof TargetBusy)
+        return c.json({ error: "change_waits", message: staged.message }, 409);
       return c.json({ staged }, 202);
     }
 
@@ -736,7 +742,7 @@ export function createPreview(deps: PreviewDeps) {
           ? " (turn on)"
           : " (turn off)"
         : "";
-    const staged = stage(
+    const staged = stageOrBusy(
       db,
       user.id,
       {
@@ -751,6 +757,8 @@ export function createPreview(deps: PreviewDeps) {
       },
       now(),
     );
+    if (staged instanceof TargetBusy)
+      return c.json({ error: "change_waits", message: staged.message }, 409);
     return c.json({ staged }, 202);
   };
 

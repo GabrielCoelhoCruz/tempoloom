@@ -28,11 +28,10 @@ import {
   createPreview,
   decide,
   type PreviewDeps,
-  type RequestBefore,
   type StageInput,
   stage,
-  taskLevelBefore,
 } from "../../src/server/preview.ts";
+import { type RequestBefore, taskLevelBefore } from "../../src/server/preview-kinds.ts";
 import type { SyncService } from "../../src/server/sync/service.ts";
 
 const T0 = Date.parse("2026-10-19T08:00:00Z");

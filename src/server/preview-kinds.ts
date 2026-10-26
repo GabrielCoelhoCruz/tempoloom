@@ -85,3 +85,42 @@ export function versionOf(
 ): number | string | null | undefined {
   return VERSIONS[of](db, id, userId);
 }
+
+/**
+ * What apply checks before it replays a staged request (its stale check),
+ * tagged by `kind`. Build it with the constructors below; apply switches on
+ * `kind`, and a shape it does not know fails the change instead of skipping
+ * the check.
+ */
+export type RequestBefore =
+  /** An automation edit: stale when the automation's rules changed. */
+  | { kind: "automation"; table: string; id: string; rulesChangedAt: number }
+  /** A new task priority: stale only when that task's priority or state changed. */
+  | { kind: "task_level"; task: string; title: string; level: number }
+  /** A move of a planned event: stale when the event moved or is gone. */
+  | { kind: "managed_event"; id: string; start: number; end: number }
+  /** A shared setting (team policy, meeting checks): stale when its version changed. */
+  | { kind: "version"; version: Version };
+
+export const versionBefore = (version: Version): RequestBefore => ({ kind: "version", version });
+
+export const automationBefore = (
+  table: string,
+  id: string,
+  rulesChangedAt: number,
+): RequestBefore => ({ kind: "automation", table, id, rulesChangedAt });
+export const taskLevelBefore = (t: {
+  id: string;
+  title: string;
+  level: number;
+}): RequestBefore => ({
+  kind: "task_level",
+  task: t.id,
+  title: t.title,
+  level: t.level,
+});
+export const managedEventBefore = (e: {
+  id: string;
+  start_ms: number;
+  end_ms: number;
+}): RequestBefore => ({ kind: "managed_event", id: e.id, start: e.start_ms, end: e.end_ms });

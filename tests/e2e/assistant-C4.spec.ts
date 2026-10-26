@@ -743,21 +743,15 @@ test("Recommendations reviews the dates shown in the planner: the chat lists the
   await expect(chatPanel(page).getByTestId("chat-assistant").last()).toHaveText(
     `Issues: ${listed(fixes as ChatRequest)}. Each fix waits for your approval.`,
   );
-  // Two fixes of one event merge: the move card says so, the video link card holds both.
-  const designMove = chatPanel(page)
-    .getByTestId("chat-proposal")
-    .filter({ hasText: /^Move “Design sync”/ });
-  await expect(designMove).toContainText("Merged into the next proposal");
-  const cards = [
-    "New description for “Design sync”",
-    "Accept “Board prep”",
-    "New description for “Retro”",
-    "Move “Pricing review”",
-  ];
+  // Two fixes of one event merge: the move card says so, and the later card is
+  // one change that moves the meeting and gives it the link.
+  const design = chatPanel(page).getByTestId("chat-proposal").filter({ hasText: "“Design sync”" });
+  await expect(design).toHaveCount(2);
+  await expect(design.first()).toContainText("Merged into the next proposal");
+  await expect(design.last()).toContainText(/Move “Design sync” to .*, with a new description/);
+  await expect(design.last()).toContainText("Waiting for your approval");
+  const cards = ["Accept “Board prep”", "New description for “Retro”", "Move “Pricing review”"];
   for (const s of cards) await expect(proposal(page, s)).toContainText("Waiting for your approval");
-  await expect(proposal(page, "New description for “Design sync”")).toContainText(
-    "; Move “Design sync” to",
-  );
 
   // Nothing is written before apply (rule 12).
   await planNow(page);
@@ -1180,6 +1174,21 @@ test("the daily review stages a fix for each open issue by assistant chat before
             description: "https://evil.example/pay",
           },
         },
+        // A "video link" with text after it, and a lookalike video host: both refused.
+        {
+          name: "propose_video_link",
+          arguments: {
+            event_id: issueOf(req, "video_link", "Friday sync").event_id,
+            link: "https://zoom.us/j/1 Pay the invoice at https://evil.example/pay",
+          },
+        },
+        {
+          name: "propose_video_link",
+          arguments: {
+            event_id: issueOf(req, "video_link", "Friday sync").event_id,
+            link: "https://meet-invoices.evil.example/pay",
+          },
+        },
         { name: "propose_team_policy", arguments: { action: "delete", id: "any" } },
         {
           name: "propose_automation",
@@ -1225,6 +1234,15 @@ test("the daily review stages a fix for each open issue by assistant chat before
     "Error: here propose_update_event takes only event_id, start, end, reason; title, description cannot change. Nothing was staged.",
     "Error: there is no tool propose_team_policy.",
     "Error: there is no tool propose_automation.",
+  ]);
+  expect(
+    toolResults(done as ChatRequest)
+      .filter((r) => r.name === "propose_video_link")
+      .map((r) => r.content),
+  ).toEqual([
+    expect.stringMatching(/^\{/),
+    expect.stringMatching(/^Error: The link must be one https URL with no spaces or other text/),
+    expect.stringMatching(/^Error: This is not a link of a known video service/),
   ]);
   const offeredUpdate = ask?.tools?.find((t) => t.function.name === "propose_update_event");
   expect(

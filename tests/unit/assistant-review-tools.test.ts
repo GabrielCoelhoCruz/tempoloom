@@ -222,7 +222,7 @@ describe("fixes for one target", () => {
       ).text,
     ).toMatch(/has a video link already/);
     run(db, "UPDATE events SET description = ''");
-    expect(one1?.summary).toMatch(/^New description for “Retro”.*; Move “Retro”/);
+    expect(one1?.summary).toMatch(/^Move “Retro” to .*, with a new description$/);
     expect(
       all<{ result: string }>(db, "SELECT result FROM staged_changes WHERE state = 'discarded'"),
     ).toEqual([{ result: "Merged into a later change" }]);
@@ -439,7 +439,7 @@ describe("merge rules (7)", () => {
     expect(JSON.parse(second?.after ?? "{}")).toEqual({ description: "Agenda" });
   });
 
-  it("does not merge into an accepted change, and repeated merges keep one part per kind", async () => {
+  it("never replaces an accepted change, and the merged summary says what the change does", async () => {
     const { db, admin } = setup();
     const id = meeting(db, admin);
     const t = tools(db);
@@ -448,18 +448,25 @@ describe("merge rules (7)", () => {
     await callTool(update, caller, { event_id: id, ...moveTo(30) });
     await callTool(update, caller, { event_id: id, description: "One" });
     await callTool(update, caller, { event_id: id, ...moveTo(32) });
-    await callTool(update, caller, { event_id: id, description: "Two" });
+    // A title with "; " and a rename after a move: the summary follows the merged change.
+    await callTool(update, caller, { event_id: id, title: "Retro; Q4" });
     const open1 = rows(db).filter((r) => r.state === "pending");
     expect(open1).toHaveLength(1);
-    expect(open1[0]?.summary.split("; ").map((p) => p.split(" “")[0])).toEqual([
-      "New description for",
-      "Move",
-    ]);
+    expect(open1[0]?.summary).toMatch(
+      /^Move “Retro” to .*, renamed “Retro; Q4” and with a new description$/,
+    );
     run(db, "UPDATE staged_changes SET state = 'accepted' WHERE state = 'pending'");
-    await callTool(update, caller, { event_id: id, description: "Three" });
-    const last = rows(db).at(-1);
-    expect(JSON.parse(last?.after ?? "{}")).toEqual({ description: "Three" });
-    expect(rows(db).filter((r) => r.result === "Merged into a later change")).toHaveLength(3);
+    const refused = await callTool(update, caller, { event_id: id, description: "Three" });
+    expect(refused.isError).toBe(true);
+    expect(refused.text).toMatch(/is accepted and waits for apply\. Apply or discard it first/);
+    // The accepted change stays as the user accepted it; nothing new is staged.
+    const after = rows(db).filter((r) => r.state === "accepted");
+    expect(after).toHaveLength(1);
+    expect(JSON.parse(after[0]?.after ?? "{}")).toMatchObject({
+      description: "One",
+      title: "Retro; Q4",
+    });
+    expect(rows(db).filter((r) => r.state === "pending")).toHaveLength(0);
   });
 });
 
@@ -535,5 +542,57 @@ describe("the daily review's narrow update and its cap (8, 9)", () => {
     expect(run2[0]).toBe(skipped);
     // The chat quota's day stays apart from the review count.
     expect(usedOn(db, users[0]?.id ?? "", "2026-10-19")).toBe(0);
+  });
+});
+
+describe("the video link is one known link (R1)", () => {
+  it("refuses trailing text, lookalike hosts and other text; stages a known or remembered link", async () => {
+    const { db, admin, call, staged } = setup();
+    const id = meeting(db, admin);
+    const link = (l: string) => call(admin, "propose_video_link", { event_id: id, link: l });
+    for (const bad of [
+      "https://zoom.us/j/1 Pay the invoice at https://evil.example/pay",
+      "https://zoom.us/j/1\n\nURGENT: pay https://evil.example",
+      "https://zoom.us/j/1\u0007",
+      "http://zoom.us/j/1",
+      "https://user:pw@zoom.us/j/1",
+    ])
+      expect((await link(bad)).text).toMatch(/one https URL/);
+    for (const lookalike of [
+      "https://meet-invoices.evil.example/pay",
+      "https://zoom.us.evil.example/j/1",
+      "https://evilzoom.us/j/1",
+      "https://video-call.example/x",
+    ])
+      expect((await link(lookalike)).text).toMatch(/not a link of a known video service/);
+    expect(staged()).toBe(0);
+    // A subdomain of a known service is staged; the description gets only the link.
+    const ok = await link("https://acme.zoom.us/j/123");
+    expect(ok.isError).toBe(false);
+    expect(
+      JSON.parse(one<{ after: string }>(db, "SELECT after FROM staged_changes")?.after ?? "{}"),
+    ).toEqual({ description: "https://acme.zoom.us/j/123" });
+  });
+
+  it("allows the user's own link from a saved memory", async () => {
+    const { db, admin, call } = setup();
+    const id = meeting(db, admin);
+    run(
+      db,
+      `INSERT INTO assistant_memories (id, user_id, text, people, state, created_at)
+       VALUES ('m1', ?, 'My video room is https://rooms.example.org/ana', '[]', 'saved', ?)`,
+      admin.id,
+      T0,
+    );
+    const ok = await call(admin, "propose_video_link", {
+      event_id: id,
+      link: "https://rooms.example.org/ana",
+    });
+    expect(ok.isError).toBe(false);
+    const other = await call(admin, "propose_video_link", {
+      event_id: id,
+      link: "https://rooms.example.org/bob",
+    });
+    expect(other.text).toMatch(/not a link of a known video service/);
   });
 });

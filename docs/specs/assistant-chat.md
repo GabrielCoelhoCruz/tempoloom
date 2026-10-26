@@ -145,8 +145,12 @@ All proposed changes go to preview mode (`assistant-preview-mode.md`).
     off), and it leaves an event alone when the user already staged a change
     for it. The digest links to the planner with `?assistant=<conversation>`,
     which opens the panel on that conversation, also after a sign-in. A
-    missing video link is fixed only with a link from the user or the
-    memories.
+    missing video link is fixed only with one https link (one URL, no other
+    text) whose host is a known video service (zoom.us, meet.google.com,
+    teams.microsoft.com and others, the domain or a subdomain of it), or a
+    link from the user's saved memories or own booking links. A change the
+    user accepted is never replaced: a new change for the same target is
+    refused until the accepted one is applied or discarded.
 19. A "Recommendations" action in the chat panel runs the same review at
     any time.
 20. To review another week, the user moves the planner to that week and

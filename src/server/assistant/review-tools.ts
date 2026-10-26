@@ -11,22 +11,23 @@ import { hasVideoLink } from "../../shared/meeting-checks.ts";
 import { addDays, localToUtc } from "../../shared/time.ts";
 import type { User } from "../accounts.ts";
 import { recommendations } from "../api/meeting-checks.ts";
+import { locationsOf } from "../booking-location.ts";
 import { all, type Db, one } from "../db.ts";
 import { cached, isoOf } from "../mcp/reads.ts";
 import { type Caller, callTool, type Tool, ToolError, tool } from "../mcp/rpc.ts";
 import { busyAsToolError } from "../mcp.ts";
 import { openIssues } from "../meeting-checks.ts";
 import { POLICY_TYPES, type PolicyRow, parsePolicy } from "../policies/model.ts";
+import { type Preview, type ReplayedRequest, zoneOf } from "../preview.ts";
 import {
+  AUTOMATION_KINDS,
   automationBefore,
-  type Preview,
-  type ReplayedRequest,
   type RequestBefore,
   versionBefore,
-  zoneOf,
-} from "../preview.ts";
-import { AUTOMATION_KINDS, versionOf } from "../preview-kinds.ts";
+  versionOf,
+} from "../preview-kinds.ts";
 import { membership } from "../teams.ts";
+import { memories } from "./store.ts";
 
 const stagedOutput = z.object({
   id: z.string(),
@@ -72,6 +73,47 @@ function apiError(body: unknown, status: number): string {
 
 /** The checks a meeting_check change turns on or off. */
 const checksInput = z.record(z.string(), z.boolean());
+
+/** Characters of a video link, at most. */
+const MAX_LINK_CHARS = 500;
+
+/**
+ * Video services the video link fix accepts by host: the domain itself or a
+ * subdomain of it (an exact suffix after a dot, never a substring).
+ */
+export const VIDEO_DOMAINS = [
+  "zoom.us",
+  "zoom.com",
+  "meet.google.com",
+  "teams.microsoft.com",
+  "teams.live.com",
+  "webex.com",
+  "whereby.com",
+  "meet.jit.si",
+  "gotomeeting.com",
+  "goto.com",
+  "chime.aws",
+  "bluejeans.com",
+];
+
+export const knownVideoHost = (host: string): boolean =>
+  VIDEO_DOMAINS.some((d) => host === d || host.endsWith(`.${d}`));
+
+/**
+ * The link as one https URL token, or null: printable ASCII only (no spaces,
+ * new lines or control characters, no lookalike letters), no user name or
+ * password, at most MAX_LINK_CHARS.
+ */
+export function linkToken(raw: string): string | null {
+  if (raw.length > MAX_LINK_CHARS || !/^https:\/\/[\x21-\x7e]+$/.test(raw)) return null;
+  try {
+    const u = new URL(raw);
+    if (u.protocol !== "https:" || u.username || u.password || !u.hostname) return null;
+    return raw;
+  } catch {
+    return null;
+  }
+}
 
 export interface ReviewToolDeps {
   db: Db;
@@ -485,6 +527,28 @@ export function reviewTools(deps: ReviewToolDeps): Tool[] {
    * the guests' answers, and skips the change when the description changed
    * after staging.
    */
+  /**
+   * The links the user gave Tempoloom: URL tokens in saved memories and the
+   * locations of the user's own booking links.
+   */
+  function ownLinks(userId: string): Set<string> {
+    const texts = [
+      ...memories(db, userId).map((m) => m.text),
+      ...all<{ locations: string }>(
+        db,
+        "SELECT locations FROM booking_links WHERE user_id = ?",
+        userId,
+      ).flatMap((l) => locationsOf(l).map((o) => o.value)),
+    ];
+    const out = new Set<string>();
+    for (const t of texts)
+      for (const m of t.matchAll(/https:\/\/[^\s<>"')]+/g)) {
+        const token = linkToken(m[0]);
+        if (token) out.add(token);
+      }
+    return out;
+  }
+
   const video = tool({
     name: "propose_video_link",
     effect: "stage",
@@ -493,7 +557,7 @@ export function reviewTools(deps: ReviewToolDeps): Tool[] {
       "Stages adding a video link to the description of a meeting the user organizes (an event_id from list_events or review_schedule). Use a link the user gave you or one from the user's memories; never invent one. Nothing changes until the user approves and applies it.",
     input: z.object({
       event_id: z.string().min(1),
-      link: z.url({ protocol: /^https$/ }).max(2000),
+      link: z.string().max(MAX_LINK_CHARS).describe("One https URL, nothing else"),
       reason: z.string().max(1000).optional(),
     }),
     output: z.object({
@@ -503,12 +567,20 @@ export function reviewTools(deps: ReviewToolDeps): Tool[] {
       message: z.string(),
     }),
     run: async (caller, a) => {
-      if (!hasVideoLink(a.link)) throw new ToolError("This is not a link of a known video service");
+      const link = linkToken(a.link);
+      if (!link)
+        throw new ToolError(
+          "The link must be one https URL with no spaces or other text. Nothing was staged.",
+        );
+      if (!knownVideoHost(new URL(link).hostname) && !ownLinks(caller.user.id).has(link))
+        throw new ToolError(
+          "This is not a link of a known video service, nor one from the user's memories or booking links. Ask the user for the link. Nothing was staged.",
+        );
       const ev = cached(db, caller.user.id, a.event_id);
       if (!ev) throw new ToolError(`No event ${a.event_id} on your calendars`);
       if (hasVideoLink(ev.description) || hasVideoLink(ev.location))
         throw new ToolError("This meeting has a video link already. Nothing was staged.");
-      const description = ev.description.trim() ? `${ev.description.trim()}\n\n${a.link}` : a.link;
+      const description = ev.description.trim() ? `${ev.description.trim()}\n\n${link}` : link;
       const r = await callTool(deps.update, caller, {
         event_id: a.event_id,
         description,
