@@ -14,152 +14,49 @@
 //   team stats), or the tools read nothing real;
 // - a change the model proposes (work time, a break, a priority, a meeting,
 //   a move) reaches the calendar or the task before approval, or not after;
-// - team stats show values for fewer than 3 members, or a member's own values;
-// - after sign-up the planner does not offer chat, offers it again after the
-//   user chatted or said Not now, or offers it to a member who cannot turn it on.
-import type { Page } from "@playwright/test";
-import { addDays, diffDays, utcToLocal, weekdayOf } from "../../src/shared/time.ts";
+// - team stats show values for fewer than 3 members, or a member's own values.
+// The chat offer after sign-up and the real-model test are in assistant-C2-offer.spec.ts.
+import { addDays, diffDays, utcToLocal } from "../../src/shared/time.ts";
 import { directory, lastWeek, meet, synced } from "./analytics-helpers.ts";
 import { chatPanel, openAssistant, proposal } from "./assistant-helpers.ts";
-import { type ChatRequest, type FakeLlm, lastUser, toolJson, toolResults } from "./fake-llm.ts";
+import { type ChatRequest, lastUser, toolJson, toolResults } from "./fake-llm.ts";
 import {
   at,
   BACKEND,
   blockUntil,
-  type CalendarDriver,
-  COLLEAGUE_EMAIL,
   EMAIL,
   eventually,
   expect,
   local,
   planNow,
-  REAL_LLM,
   test,
 } from "./fixtures.ts";
 import { addTask, serverClockAt, titled, W } from "./helpers.ts";
 import { iso, previewPanel, reviewAndApply } from "./preview-helpers.ts";
-import { openTeam, teamOfTwo } from "./team-helpers.ts";
 
 test.skip(BACKEND === "google", "Assistant chat E2E runs on CalDAV.");
 
-const ZONE = "Europe/Berlin";
-/** The prompts of automations-library.md, "Entries". */
-const PROMPTS: Record<string, string> = {
-  "Back-plan work from due dates":
-    "Look at my open tasks with due dates and propose work time before each due date.",
-  "What to do now": "Which task should I start now, and why?",
-  "Customer onboarding meeting plan":
-    "Plan onboarding meetings with this customer: a 60 min kickoff, a 30 min check-in after 1 week and a 30 min review after 30 days.",
-  "Work rhythm review":
-    "Over the last 4 weeks, when do I do deep work and when do I meet? Suggest a better weekly rhythm.",
-  "Cross-team meeting time": "Find the best time this week for a meeting with these colleagues: …",
-  "Burnout risk review":
-    "Check my last 4 weeks for burnout signs: meetings outside work hours, few breaks, little time off, little focus time.",
-  "Team meeting health review":
-    "Summarize my team's meeting load and one-on-one time from team stats.",
-  "Urgent review meeting":
-    "Find the earliest slot this week for an urgent review with these people. You may move my lower-priority items.",
-  "Adaptive workday":
-    "My day changed: I now work from … to …. Rearrange my flexible items for today.",
-  // Entry 21 runs Recommendations for the dates in view (decision: as a request with those dates).
-  "Conflict fixes":
-    "Recommendations: check the dates shown in the planner for conflicts and other meeting problems, and propose a fix for each.",
-  "Plan my day": "Plan my day: place my top tasks in free focus time and add short breaks.",
-  "Task re-ranking":
-    "Re-rank my open tasks by due date and remaining work, and propose new priorities.",
-  "Prep task suggestions":
-    "For my meetings in the next 7 days, suggest prep tasks due before each meeting.",
-};
-const prompt = (name: string) => {
-  const p = PROMPTS[name];
-  if (!p) throw new Error(`no prompt ${name}`);
-  return p;
-};
-const literal = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-const matches = (text: string) => new RegExp(`^${literal(text)}$`);
-
-/** Monday of the week the planner shows first: the browser's today. */
-const shownMonday = () => {
-  const d = utcToLocal(ZONE, Date.now()).date;
-  return addDays(d, 1 - weekdayOf(d));
-};
-const systemOf = (req: ChatRequest | undefined) =>
-  req?.messages.find((m) => m.role === "system")?.content ?? "";
-/** The planner dates the app gave the model, from the data block of the system prompt. */
-const plannerDates = (req: ChatRequest) => {
-  const s = systemOf(req);
-  const from = /"from": "(\d{4}-\d{2}-\d{2})"/.exec(s)?.[1];
-  const to = /"to_exclusive": "(\d{4}-\d{2}-\d{2})"/.exec(s)?.[1];
-  if (!from || !to) throw new Error("no planner dates in the system prompt");
-  return { from, to };
-};
-/** The first request of the turn that sent `text`. */
-const turnOf = (llm: FakeLlm, text: string) => {
-  const req = llm.requests.find(
-    (r) => r.messages.at(-1)?.role === "user" && r.messages.at(-1)?.content === text,
-  );
-  if (!req) throw new Error(`the model got no “${text}”`);
-  return req;
-};
-const toolNames = (req: ChatRequest) => req.tools?.map((t) => t.function.name) ?? [];
-
-/** Opens a prompt entry of the library; the planner shows the chat with the prompt in its input box. */
-async function openEntry(page: Page, name: string) {
-  await page.getByRole("link", { name: "Library" }).click();
-  await expect(page.getByTestId("library-page")).toBeVisible();
-  await page.getByRole("tab", { name: "Prompts" }).click();
-  await page
-    .locator(`[data-entry="${name}"]`)
-    .getByRole("button", { name: "Open in chat" })
-    .click();
-  await expect(page).toHaveURL((u) => u.pathname === "/");
-  const box = chatPanel(page).getByLabel("Message to the assistant");
-  await expect(box).toHaveValue(prompt(name));
-  return box;
-}
-
-/** Sends the text in the input box and waits for the answer. */
-async function sendDraft(page: Page): Promise<string> {
-  const text = await chatPanel(page).getByLabel("Message to the assistant").inputValue();
-  const answer = page.waitForResponse(
-    (r) => r.url().endsWith("/api/assistant/messages") && r.request().method() === "POST",
-  );
-  await chatPanel(page).getByRole("button", { name: "Send" }).click();
-  expect((await answer).status()).toBe(200);
-  await expect(chatPanel(page).getByTestId("chat-user").last()).toHaveText(text);
-  return text;
-}
-
-const reply = (page: Page) => chatPanel(page).getByTestId("chat-assistant").last();
-const weekOf = (cal: CalendarDriver, monday: string) =>
-  cal.events(at(monday, "00:00"), at(addDays(monday, 7), "00:00"));
-const named = <T extends { summary: string }>(evs: T[], title: string) =>
-  evs.filter((e) => e.summary === title);
-
-/** The proposals of the re-ranking, in the order the model staged them. */
-const RANKS = [
-  'New priority P3 to P4 for task "Budget review"',
-  'New priority P2 to P1 for task "Quarterly report"',
-  'New priority P2 to P3 for task "Expense notes"',
-];
-/** The priorities on the tasks page of Budget review, Expense notes and Quarterly report. */
-async function expectLevels(page: Page, want: string[]) {
-  for (const [i, t] of ["Budget review", "Expense notes", "Quarterly report"].entries())
-    await expect(page.locator(`[data-task-title="${t}"]`).getByTestId("task-level"), t).toHaveText(
-      want[i] ?? "",
-    );
-}
-
-interface Tasks {
-  tasks: { id: string; title: string; priority: number; due: string | null }[];
-}
-interface Listed {
-  events: { id: string; title: string; start: string; end: string }[];
-}
-interface Slots {
-  slots: { start: string; end: string }[];
-  unknown_attendees: string[];
-}
+import {
+  expectLevels,
+  type Listed,
+  matches,
+  named,
+  openEntry,
+  PROMPTS,
+  plannerDates,
+  prompt,
+  RANKS,
+  reply,
+  type Slots,
+  sendDraft,
+  shownMonday,
+  systemOf,
+  type Tasks,
+  toolNames,
+  turnOf,
+  weekOf,
+  ZONE,
+} from "./assistant-C2-helpers.ts";
 
 test("every library prompt entry opens assistant chat in the planner with its prompt in the input box, and nothing goes to the model before the user sends (automations-library rule 7; entries 5, 6, 12, 14-18, 20-22, 24, 31)", async ({
   page,
@@ -856,169 +753,4 @@ test("adaptive workday and prep task prompts read today's planned items and the 
         [`${W} 13:00`, `${W} 14:00`],
       ]),
   );
-});
-
-test("after sign-up the planner offers assistant chat: Try the assistant opens the panel with a first question; after a chat, or after Not now, the offer stays away (teams-settings-templates rule 15)", async ({
-  page,
-  signIn,
-  colleague,
-  llm,
-}) => {
-  llm.on(/what is on my calendar this week/i, [{ content: "Nothing yet this week." }]);
-  await signIn();
-  const offer = page.getByTestId("hint-assistant-chat");
-  await expect(offer).toContainText("Ask the assistant about your calendar");
-  await page.reload();
-  await expect(offer).toBeVisible();
-  await offer.getByRole("button", { name: "Try the assistant" }).click();
-  await expect(chatPanel(page).getByLabel("Message to the assistant")).toHaveValue(
-    "What is on my calendar this week?",
-  );
-  await expect(offer).toHaveCount(0);
-  expect(llm.requests).toHaveLength(0);
-  await sendDraft(page);
-  await expect(reply(page)).toHaveText("Nothing yet this week.");
-  expect(llm.requests).toHaveLength(1);
-  await page.reload();
-  await expect(page.getByTestId("planner-hints")).toHaveAttribute("data-loaded", "true");
-  await expect(offer).toHaveCount(0);
-
-  // Another new user says Not now: the offer stays away after reload, and nothing is sent.
-  const pb = await colleague.signIn();
-  await pb.goto("/");
-  const other = pb.getByTestId("hint-assistant-chat");
-  await other.getByRole("button", { name: "Not now" }).click();
-  await expect(other).toHaveCount(0);
-  await pb.reload();
-  await expect(pb.getByTestId("planner-hints")).toHaveAttribute("data-loaded", "true");
-  await expect(other).toHaveCount(0);
-  expect(llm.requests).toHaveLength(1);
-});
-
-test("while the team switch is off, the offer lets an admin turn assistant chat on for the team, and a member gets no offer until then (teams-settings-templates rules 13, 15)", async ({
-  page,
-  signIn,
-  colleague,
-  mail,
-  llm,
-}) => {
-  llm.on(/what is on my calendar this week/i, [{ content: "Nothing yet this week." }]);
-  const pb = await teamOfTwo(page, signIn, colleague, mail);
-  await openTeam(page);
-  const form = page.getByTestId("team-settings");
-  await form.getByLabel("Assistant chat for all members").uncheck();
-  await form.getByRole("button", { name: "Save team settings" }).click();
-  await expect(form.getByTestId("team-settings-saved")).toBeVisible();
-
-  // The member cannot turn chat on: no offer.
-  await pb.goto("/");
-  await expect(pb.getByTestId("planner-hints")).toHaveAttribute("data-loaded", "true");
-  await expect(pb.getByTestId("hint-assistant-chat")).toHaveCount(0);
-
-  // The admin's offer turns chat on for the whole team, then opens the panel.
-  await page.goto("/");
-  const offer = page.getByTestId("hint-assistant-chat");
-  await expect(offer).toContainText("Assistant chat is off for your team.");
-  await offer.getByRole("button", { name: "Turn on assistant chat" }).click();
-  await expect(chatPanel(page).getByLabel("Message to the assistant")).toHaveValue(
-    "What is on my calendar this week?",
-  );
-  await sendDraft(page);
-  await expect(reply(page)).toHaveText("Nothing yet this week.");
-  await openTeam(page);
-  await page.reload();
-  await expect(
-    page.getByTestId("team-settings").getByLabel("Assistant chat for all members"),
-  ).toBeChecked();
-
-  // Now the member gets the offer, and the panel works for them.
-  await pb.reload();
-  const theirs = pb.getByTestId("hint-assistant-chat");
-  await expect(theirs).toContainText("Ask the assistant about your calendar");
-  await theirs.getByRole("button", { name: "Try the assistant" }).click();
-  await sendDraft(pb);
-  await expect(reply(pb)).toHaveText("Nothing yet this week.");
-  expect(llm.requests).toHaveLength(2);
-  expect(llm.requests.map((r) => systemOf(r))).toEqual([
-    expect.stringContaining(EMAIL),
-    expect.stringContaining(COLLEAGUE_EMAIL),
-  ]);
-});
-
-test("the Task re-ranking entry with a real model stages new priorities in preview mode; the tasks change only after apply, and every staged priority applies @llm-real", async ({
-  page,
-  cal,
-  signIn,
-}) => {
-  test.skip(!REAL_LLM, "Needs the real model: run scripts/e2e-llm.sh");
-  test.setTimeout(400_000);
-  await blockUntil(cal, W);
-  await signIn();
-  // The priorities are the wrong way round: the task due first has the lowest one.
-  await addTask(page, {
-    title: "Tax filing",
-    minutes: 120,
-    due: `${addDays(W, 1)}T17:00`,
-    level: 4,
-  });
-  await addTask(page, {
-    title: "Team offsite ideas",
-    minutes: 30,
-    due: `${addDays(W, 25)}T17:00`,
-    level: 1,
-  });
-  const box = await openEntry(page, "Task re-ranking");
-  await box.fill(
-    `${prompt("Task re-ranking")} Stage the changes directly; do not ask me questions.`,
-  );
-  const answer = page.waitForResponse(
-    (r) => r.url().endsWith("/api/assistant/messages") && r.request().method() === "POST",
-    { timeout: 150_000 },
-  );
-  await chatPanel(page).getByRole("button", { name: "Send" }).click();
-  expect((await answer).status()).toBe(200);
-  const cards = chatPanel(page)
-    .getByTestId("chat-proposal")
-    .filter({ hasText: "New priority" })
-    .filter({ hasText: "Waiting for your approval" });
-  await expect(cards.first()).toBeVisible();
-  // The priority each task gets when every staged change applies.
-  const want = new Map([
-    ["Tax filing", "P4 low"],
-    ["Team offsite ideas", "P1 critical"],
-  ]);
-  const NAMES: Record<string, string> = {
-    1: "P1 critical",
-    2: "P2 high",
-    3: "P3 medium",
-    4: "P4 low",
-  };
-  const staged = await cards.locator("strong").allTextContents();
-  for (const text of staged) {
-    const m = /New priority P\d to P(\d) for task "(.+)"$/.exec(text);
-    if (!m) throw new Error(`unexpected proposal: ${text}`);
-    want.set(m[2] as string, NAMES[m[1] as string] as string);
-  }
-
-  // Nothing changed before approval.
-  const levels = async () => {
-    await page.getByRole("link", { name: "Tasks" }).click();
-    return Promise.all(
-      ["Tax filing", "Team offsite ideas"].map((t) =>
-        page.locator(`[data-task-title="${t}"]`).getByTestId("task-level").textContent(),
-      ),
-    );
-  };
-  expect(await levels()).toEqual(["P4 low", "P1 critical"]);
-
-  await page.goto("/");
-  await expect(previewPanel(page).getByTestId("staged-change")).toHaveCount(staged.length);
-  await reviewAndApply(page);
-  // Every staged priority applies: none is skipped as stale.
-  await expect(page.getByTestId("apply-summary")).toContainText(
-    `Applied ${staged.length} · Skipped as stale 0 · Failed 0`,
-  );
-  await page.reload();
-  expect(await levels()).toEqual([want.get("Tax filing"), want.get("Team offsite ideas")]);
-  expect(await levels()).not.toEqual(["P4 low", "P1 critical"]);
 });

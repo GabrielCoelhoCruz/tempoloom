@@ -8,7 +8,7 @@ import { type RangeProblem, rangeProblem, teamStatsOf } from "../api/analytics.t
 import { one } from "../db.ts";
 import { type Tool, ToolError, tool } from "../mcp/rpc.ts";
 import { stagedOutput, stagedResult } from "../mcp.ts";
-import { zoneOf } from "../preview.ts";
+import { taskLevelBefore, zoneOf } from "../preview.ts";
 import type { ChatToolDeps } from "./tools.ts";
 
 /** The tool's words for the range errors of the team stats page. */
@@ -128,7 +128,7 @@ export function libraryTools(deps: ChatToolDeps): Tool[] {
           target: `tasks:${a.task_id}`,
           // Apply skips the change only when this task's priority or state changed
           // after it was staged (src/server/preview.ts).
-          before: { task: a.task_id, title: task.title, level: task.level },
+          before: taskLevelBefore({ id: a.task_id, ...task }),
           after: request,
           impact: dry.impact,
           // The title is quoted as JSON, so it cannot change the words around it.

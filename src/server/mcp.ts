@@ -27,11 +27,13 @@ import {
 } from "./mcp/rpc.ts";
 import { oauthUser, resourceMetadataUrl } from "./oauth.ts";
 import {
+  managedEventBefore,
   openChanges,
   openChangesPage,
   type Preview,
   plainTitle,
   SOURCES,
+  type StageArgs,
   userFormatsOf,
   when,
   zoneOf,
@@ -96,8 +98,6 @@ function reviewUrl(baseUrl: string, zone: string, t: number): string {
   const d = utcToLocal(zone, t).date;
   return new URL(`/?week=${addDays(d, 1 - weekdayOf(d))}`, baseUrl).toString();
 }
-
-type StageArgs = Omit<Parameters<Preview["stage"]>[1], "source" | "client">;
 
 /**
  * Stages a change in preview mode for the caller and gives a stage tool's
@@ -729,7 +729,7 @@ export function mcpTools(deps: Omit<McpDeps, "writeEnabled">): Tool[] {
         {
           kind: "request",
           target: `managed:${managed.id}`,
-          before: { start: managed.start_ms, end: managed.end_ms },
+          before: managedEventBefore(managed),
           after: {
             method: "POST",
             path: `/api/planner/events/${managed.id}/move`,

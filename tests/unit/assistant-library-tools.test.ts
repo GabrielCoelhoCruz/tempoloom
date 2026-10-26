@@ -8,7 +8,8 @@
 //    error do not reach the proposal.
 // 2. Applying a re-ranking skips its later changes as stale, because an
 //    earlier one touched every open task; or a task that really changed gets
-//    the new priority anyway, or a stale message names an automation.
+//    the new priority anyway, or a stale message names an automation; or a
+//    stale check of an unknown shape is skipped instead of failing the change.
 // 3. Team stats reach the model for a team below 3 members, for a range the
 //    team stats page refuses, or from another team; or they name people.
 // 4. The chat offer shows without a model, after the user chatted, with a
@@ -23,7 +24,15 @@ import { saveTurn } from "../../src/server/assistant/store.ts";
 import { chatTools } from "../../src/server/assistant/tools.ts";
 import { all, type Db, one, openDb, run } from "../../src/server/db.ts";
 import { callTool } from "../../src/server/mcp/rpc.ts";
-import { createPreview, decide, type PreviewDeps } from "../../src/server/preview.ts";
+import {
+  createPreview,
+  decide,
+  type PreviewDeps,
+  type RequestBefore,
+  type StageInput,
+  stage,
+  taskLevelBefore,
+} from "../../src/server/preview.ts";
 import type { SyncService } from "../../src/server/sync/service.ts";
 
 const T0 = Date.parse("2026-10-19T08:00:00Z");
@@ -125,7 +134,12 @@ describe("propose_task_priority", () => {
     expect(s?.kind).toBe("request");
     expect(s?.source).toBe("assistant_chat");
     expect(s?.target).toBe("tasks:t1");
-    expect(JSON.parse(s?.before ?? "")).toEqual({ task: "t1", title: "Report t1", level: 2 });
+    expect(JSON.parse(s?.before ?? "")).toEqual({
+      kind: "task_level",
+      task: "t1",
+      title: "Report t1",
+      level: 2,
+    });
     expect(JSON.parse(s?.after ?? "")).toEqual({
       method: "PATCH",
       path: "/api/tasks/t1",
@@ -224,11 +238,76 @@ describe("propose_task_priority", () => {
     const out = await preview.apply(user.id, ids);
     expect(out.applied).toEqual([]);
     expect(out.stale.map((x) => x.reason)).toEqual([
-      "The task “Report moved” got another priority after this change was staged",
-      "The task “Report done” was done after this change was staged",
-      "The task “Report gone” was deleted after this change was staged",
+      'The task "Report moved" got another priority after this change was staged',
+      'The task "Report done" was done after this change was staged',
+      'The task "Report gone" was deleted after this change was staged',
     ]);
     expect(levelOf(db, "moved")).toBe(3);
+  });
+
+  it("still checks a change staged before the kind tag, and fails one whose check it does not know", async () => {
+    const { db, user, preview } = setup();
+    addTask(db, user.id, "old");
+    addTask(db, user.id, "odd");
+    const replay = (id: string) => ({
+      method: "PATCH",
+      path: `/api/tasks/${id}`,
+      body: JSON.stringify({ level: 1 }),
+    });
+    // As stored before the tag: the same fields without `kind`.
+    const legacy = stage(
+      db,
+      user.id,
+      {
+        source: "assistant_chat",
+        kind: "request",
+        before: { task: "old", title: "Report old", level: 2 } as unknown as RequestBefore,
+        after: replay("old"),
+        impact: [],
+        summary: "old",
+      },
+      T0,
+    );
+    const odd = stage(
+      db,
+      user.id,
+      {
+        source: "assistant_chat",
+        kind: "request",
+        before: { taskId: "odd", level: 2 } as unknown as RequestBefore,
+        after: replay("odd"),
+        impact: [],
+        summary: "odd",
+      },
+      T0,
+    );
+    run(db, "UPDATE tasks SET level = 3 WHERE id = 'old'");
+    for (const c of [legacy, odd]) decide(db, user.id, c.id, "accepted", T0);
+    const out = await preview.apply(user.id, [legacy.id, odd.id]);
+    expect(out.applied).toEqual([]);
+    expect(out.stale.map((x) => x.summary)).toEqual(["old"]);
+    expect(out.failed.map((x) => x.summary)).toEqual(["odd"]);
+    // Neither was replayed.
+    expect([levelOf(db, "old"), levelOf(db, "odd")]).toEqual([3, 2]);
+  });
+
+  it("only takes a tagged stale check for a request (typecheck)", () => {
+    // @ts-expect-error: a request's stale check must be a RequestBefore (taskLevelBefore and others).
+    const input: StageInput = {
+      source: "assistant_chat",
+      kind: "request",
+      before: { task: "t1", title: "x", level: 2 },
+      after: {},
+      impact: [],
+      summary: "",
+    };
+    expect(input.kind).toBe("request");
+    expect(taskLevelBefore({ id: "t1", title: "x", level: 2 })).toEqual({
+      kind: "task_level",
+      task: "t1",
+      title: "x",
+      level: 2,
+    });
   });
 });
 

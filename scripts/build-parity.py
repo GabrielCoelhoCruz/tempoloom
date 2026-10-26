@@ -1752,7 +1752,7 @@ E2E_NOTES.update({
 })
 # --- end C1 ---
 
-# --- C2: library prompt entries and the chat offer (tests/e2e/assistant-C2.spec.ts) ---
+# --- C2: library prompt entries and the chat offer (tests/e2e/assistant-C2.spec.ts, assistant-C2-offer.spec.ts) ---
 T.update({
     "c2_open": "every library prompt entry opens assistant chat in the planner with its prompt in the input box, and nothing goes to the model before the user sends (automations-library rule 7; entries 5, 6, 12, 14-18, 20-22, 24, 31)",
     "c2_tasks": "task prompts reach the model with the planner dates and the open tasks; proposed work time, a break and a re-ranking that raises one task and lowers two wait in preview mode, and all apply together (library entries 5, 6, 22, 24; assistant-chat rules 8, 12)",
