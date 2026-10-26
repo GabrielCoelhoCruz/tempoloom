@@ -1780,7 +1780,8 @@ E2E_NOTES.update({
           "in the chat with the same message (plans rule 4). " + _FAKE),
     677: ("find_meeting_time (a chat tool) reads the busy events and meeting hours of colleagues in the user's team; "
           "other guests are outside the organization, so it does not read them (edge case 6). The MCP find_free_time keeps "
-          "the instance-wide read that assistant-mcp-server.md allows and is not a chat tool. With no slot it gives the "
+          "the instance-wide read that assistant-mcp-server.md records by design and is not a chat tool (assistant-chat.md "
+          "rule 5 decision). With no slot it gives the "
           "closest options, ranked by the fewest colleagues not available, and the next 7 days (edge case 2). find_people "
           "finds team members by name; with two matches its result tells the model to ask (edge case 1). The event with "
           "the colleague as attendee is staged; the invitation goes out at apply. That the model asks or says it cannot "
@@ -1793,7 +1794,8 @@ E2E_NOTES.update({
     687: ("propose_update_event takes a description (agenda, prep plan) built from get_meeting_context, alone or with a new "
           "time in one change. The chat card and the preview panel show the whole new description before approval. Apply "
           "sends only the fields that change, so an all-day event stays all-day, and mails the guests the new "
-          "description. " + _FAKE),
+          "description. A move of an all-day event is refused (date-value moves are not built), and so is a call "
+          "that changes nothing. " + _FAKE),
 })
 # --- end C5 ---
 

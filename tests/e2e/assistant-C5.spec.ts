@@ -413,7 +413,7 @@ test("an agenda and prep plan from the meeting context go into the event's descr
     ?.messages.flatMap((m) => m.tool_calls ?? [])
     .find((c) => c.function.name === "propose_update_event");
   expect(JSON.parse(call?.function.arguments ?? "{}").description).toBe(description);
-  const card = proposal(page, "Change “Weekly sync” with a new description");
+  const card = proposal(page, "New description for “Weekly sync”");
   await expect(card).toContainText("Waiting for your approval");
   // The whole new description is readable before approval, in the chat and in preview mode.
   expect(description.length).toBeGreaterThan(200);
@@ -444,9 +444,7 @@ test("an agenda and prep plan from the meeting context go into the event's descr
   await page.reload();
   await expect(previewPanel(page).getByTestId("staged-change")).toHaveCount(0);
   await openAssistant(page);
-  await expect(proposal(page, "Change “Weekly sync” with a new description")).toContainText(
-    "Applied",
-  );
+  await expect(proposal(page, "New description for “Weekly sync”")).toContainText("Applied");
 });
 
 test("an agenda on an all-day event keeps it all-day; a move and an agenda for one event are one change, and both apply (assistant-chat; agendas and prep plans)", async ({
@@ -483,6 +481,22 @@ test("an agenda on an all-day event keeps it all-day; a move and an agenda for o
     }),
     { content: "Staged." },
   ]);
+  llm.on(/move the offsite/i, [
+    listed(thu),
+    (req) => ({
+      tools: [
+        {
+          name: "propose_update_event",
+          arguments: {
+            event_id: idOf(req, "Offsite"),
+            start: iso(at(addDays(thu, 1), "09:00")),
+            end: iso(at(addDays(thu, 1), "17:00")),
+          },
+        },
+      ],
+    }),
+    { content: "I could not move it." },
+  ]);
   llm.on(/move planning/i, [
     listed(wed),
     (req) => ({
@@ -503,6 +517,12 @@ test("an agenda on an all-day event keeps it all-day; a move and an agenda for o
   await page.goto(`/?week=${W}`);
   await openAssistant(page);
   expect(await say(page, "Write an agenda for the offsite")).toBe(200);
+  await expect(proposal(page, "“Offsite”")).toContainText(`${thu} (all day)`);
+  // A timed move of the all-day event is refused by the app, so nothing more is staged.
+  expect(await say(page, "Move the offsite to Friday 09:00")).toBe(200);
+  const refused = toolResults(llm.requests.at(-1) as ChatRequest).at(-1)?.content ?? "";
+  expect(refused).toContain("Error: Tempoloom cannot move all-day events yet");
+  await expect(chatPanel(page).getByTestId("chat-proposal")).toHaveCount(1);
   expect(await say(page, "Move planning to 14:00 and add an agenda")).toBe(200);
   // One change for the move and the agenda of Planning, one for the offsite.
   await expect(chatPanel(page).getByTestId("chat-proposal")).toHaveCount(2);

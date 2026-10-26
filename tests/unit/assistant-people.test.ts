@@ -274,6 +274,48 @@ describe("find time and people", () => {
     expect(r.data.closest.at(-1)?.unavailable).toEqual(["a@example.com", "b@example.com"]);
     expect(r.data.wider_range[0]?.start).toBe("2026-10-21T09:00:00.000Z");
   });
+
+  it("closest ranks every free slot of the range, so a better slot on a later day wins", async () => {
+    const { db, team, call } = setup();
+    const a = ensureUser(db, "a@example.com", "A", T0, team);
+    const b = ensureUser(db, "b@example.com", "B", T0, team);
+    calendar(db, a, "ca");
+    calendar(db, b, "cb");
+    const tue9 = Date.parse("2026-10-20T09:00:00Z");
+    const thu15 = Date.parse("2026-10-22T15:00:00Z");
+    const fri17 = Date.parse("2026-10-23T17:00:00Z");
+    // B is busy all the time; A is free only on Thursday 15:00-16:00, past the first 20 slots.
+    event(db, "cb", "b1", tue9, fri17);
+    event(db, "ca", "a1", tue9, thu15);
+    event(db, "ca", "a2", thu15 + HOUR, fri17);
+    const r = (await call("find_meeting_time", {
+      duration_minutes: 60,
+      start: "2026-10-20T00:00:00Z",
+      end: "2026-10-24T00:00:00Z",
+      attendees: ["a@example.com", "b@example.com"],
+    })) as unknown as { data: { closest: { start: string; unavailable: string[] }[] } };
+    expect(r.data.closest[0]).toMatchObject({
+      start: new Date(thu15).toISOString(),
+      unavailable: ["b@example.com"],
+    });
+  });
+
+  it("names a deactivated person of the team as deactivated, and one of another team as unknown", async () => {
+    const { db, team, call } = setup();
+    const left = ensureUser(db, "left@example.com", "Left", T0, team);
+    profile(db, left.id, team, {});
+    // Deactivation takes a member out of the team; the directory profile keeps it.
+    run(db, "DELETE FROM team_members WHERE user_id = ?", left.id);
+    run(db, "UPDATE users SET deactivated_at = ? WHERE id = ?", T0, left.id);
+    const other = ensureUser(db, "other@elsewhere.example", "Other", T0);
+    run(db, "UPDATE users SET deactivated_at = ? WHERE id = ?", T0, other.id);
+    const r = (await call("find_meeting_time", {
+      duration_minutes: 30,
+      attendees: ["left@example.com", "other@elsewhere.example"],
+    })) as unknown as { data: { unknown_attendees: string[]; deactivated_attendees: string[] } };
+    expect(r.data.deactivated_attendees).toEqual(["left@example.com"]);
+    expect(r.data.unknown_attendees).toEqual(["other@elsewhere.example"]);
+  });
 });
 
 describe("agenda by propose_update_event", () => {
@@ -343,6 +385,50 @@ describe("agenda by propose_update_event", () => {
     run(db, "UPDATE staged_changes SET state = 'accepted' WHERE state = 'pending'");
     await preview.apply(user.id, [open[0]?.id ?? ""]);
     expect(writes).toEqual([{ start: T0 + 30 * HOUR, end: T0 + 31 * HOUR, description: "Agenda" }]);
+  });
+
+  it("refuses a move of an all-day event, a change that changes nothing and an empty description", async () => {
+    const { db, user, call } = setup();
+    calendar(db, user, "c1");
+    const day = Date.parse("2026-10-22T00:00:00Z");
+    event(db, "c1", "offsite", day, day + 24 * HOUR);
+    event(db, "c1", "sync", T0 + 26 * HOUR, T0 + 27 * HOUR);
+    run(db, "UPDATE events SET all_day = 1 WHERE event_id = 'offsite'");
+    const move = await call("propose_update_event", {
+      event_id: "ext:c1:offsite",
+      start: "2026-10-23T09:00:00Z",
+      end: "2026-10-23T10:00:00Z",
+    });
+    expect(move).toMatchObject({
+      isError: true,
+      text: expect.stringContaining("cannot move all-day events"),
+    });
+    const agenda = await call("propose_update_event", {
+      event_id: "ext:c1:offsite",
+      description: "Agenda",
+    });
+    expect((agenda as unknown as { data: { summary: string } }).data.summary).toBe(
+      "New description for “Sync” · Thu 2026-10-22 (all day)",
+    );
+    for (const args of [{ title: "Sync" }, { description: "Room 4" }, {}]) {
+      const same = await call("propose_update_event", { event_id: "ext:c1:sync", ...args });
+      expect(same).toMatchObject({
+        isError: true,
+        text: expect.stringContaining("Nothing changes"),
+      });
+    }
+    const empty = await call("propose_update_event", { event_id: "ext:c1:sync", description: " " });
+    expect(empty).toMatchObject({ isError: true });
+    const rename = await call("propose_update_event", { event_id: "ext:c1:sync", title: "Sync 2" });
+    expect((rename as unknown as { data: { summary: string } }).data.summary).toMatch(
+      /^Rename “Sync” to “Sync 2” · /,
+    );
+    // Only the agenda and the rename are staged (one change per event: the rename replaced nothing else).
+    const open = all<{ target: string }>(
+      db,
+      "SELECT target FROM staged_changes WHERE state = 'pending' ORDER BY target",
+    );
+    expect(open.map((o) => o.target)).toEqual(["ext:c1:offsite", "ext:c1:sync"]);
   });
 });
 

@@ -309,6 +309,18 @@ export function when(
   return `${head}–${b.date === a.date ? "" : `${dateText(b.date, f)} `}${timeText(b.minuteOfDay, f)}`;
 }
 
+/** An all-day event: its dates only, "Thu 2026-11-05 (all day)"; the end is exclusive. */
+export function allDayWhen(
+  zone: string,
+  start: number,
+  end: number,
+  f: Formats = DEFAULT_FORMATS,
+): string {
+  const a = utcToLocal(zone, start).date;
+  const last = utcToLocal(zone, end - 1).date;
+  return `${weekdayText(a)} ${dateText(a, f)}${last === a ? "" : `–${dateText(last, f)}`} (all day)`;
+}
+
 /** One time: "Tue 2026-10-27 15:30", in the formats `f`. */
 export const whenAt = (zone: string, t: number, f: Formats) => when(zone, t, undefined, f);
 
@@ -631,6 +643,7 @@ export function createPreview(deps: PreviewDeps) {
     event_id: string;
     summary: string;
     description: string;
+    all_day: number;
     start_ms: number;
     end_ms: number;
     etag: string | null;
@@ -645,7 +658,7 @@ export function createPreview(deps: PreviewDeps) {
     if (!ref) return undefined;
     return one<Cached>(
       db,
-      `SELECT e.calendar_id, e.event_id, e.summary, e.description, e.start_ms, e.end_ms, e.etag, e.attendees,
+      `SELECT e.calendar_id, e.event_id, e.summary, e.description, e.all_day, e.start_ms, e.end_ms, e.etag, e.attendees,
          c.account_id, c.provider_id
        FROM events e JOIN calendars c ON c.id = e.calendar_id JOIN accounts a ON a.id = c.account_id
        WHERE a.user_id = ? AND e.calendar_id = ? AND e.event_id = ?`,
@@ -845,13 +858,15 @@ export function createPreview(deps: PreviewDeps) {
       now(),
     );
     await notifyAttendees(userId, attendees, `Updated: ${title}`, [
-      ...(renamed ? [`“${cur.summary}” is now “${title}”.`] : []),
+      ...(renamed ? [`“${cur.summary}” is renamed “${title}”.`] : []),
       ...(moved
         ? [
             `${title} moved to ${when(zone, start, end)} (${zone}).`,
             `It was ${when(zone, cur.start_ms, cur.end_ms)}.`,
           ]
-        : [`When: ${when(zone, start, end)} (${zone})`]),
+        : [
+            `When: ${cur.all_day === 1 ? allDayWhen(zone, start, end) : `${when(zone, start, end)} (${zone})`}`,
+          ]),
       ...(described ? ["", "New description:", "", v.description as string] : []),
     ]);
   }

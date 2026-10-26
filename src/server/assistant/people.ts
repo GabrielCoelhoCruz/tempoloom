@@ -146,17 +146,26 @@ export function peopleTools(deps: { db: Db; now: () => number }): Tool[] {
       const asked = [...new Set((a.attendees ?? []).map((x) => x.toLowerCase()))].filter(
         (x) => x !== user.email,
       );
+      // Deactivated people of this team only (a deactivated member leaves team_members,
+      // the directory profile keeps the team); anyone else stays unknown.
       const deactivated = new Set(
         asked.length
           ? all<{ email: string }>(
               db,
-              `SELECT email FROM users WHERE deactivated_at IS NOT NULL
-               AND email IN (${asked.map(() => "?").join(",")})`,
+              `SELECT u.email FROM users u WHERE u.deactivated_at IS NOT NULL
+               AND u.email IN (${asked.map(() => "?").join(",")})
+               AND (u.id IN (SELECT user_id FROM team_members WHERE team_id = ?)
+                 OR u.id IN (SELECT user_id FROM directory_profiles WHERE team_id = ?))`,
               ...asked,
+              membership(db, user.id).team.id,
+              membership(db, user.id).team.id,
             ).map((r) => r.email)
           : [],
       );
-      const known = asked.filter((x) => team.has(x));
+      const known = asked.flatMap((e) => {
+        const id = team.get(e);
+        return id ? [[e, id] as const] : [];
+      });
       const out = {
         unknown_attendees: asked.filter((x) => !team.has(x) && !deactivated.has(x)),
         deactivated_attendees: asked.filter((x) => deactivated.has(x)),
@@ -168,20 +177,20 @@ export function peopleTools(deps: { db: Db; now: () => number }): Tool[] {
       });
       // One availability read per person and range.
       const together = (from: number, to: number) => {
-        const theirs = known.map(
-          (e) => [e, availability(team.get(e) as string, from, to)] as const,
-        );
-        let free = availability(user.id, from, to);
+        const mine = availability(user.id, from, to);
+        const theirs = known.map(([e, id]) => [e, availability(id, from, to)] as const);
+        let free = mine;
         for (const [, t] of theirs) free = free.intersect(t);
-        return { free, theirs };
+        return { mine, free, theirs };
       };
       const { from, to } = searchRange(a.start, a.end);
       if (to <= from) return { slots: [], ...out };
-      const { free, theirs } = together(from, to);
+      const { mine, free, theirs } = together(from, to);
       const slots = slotsOf(free, length);
       if (slots.length) return { slots: slots.map(iso), ...out };
+      // Every free slot of the user in the range is a candidate; the best OPTIONS stay.
       const closest = known.length
-        ? slotsOf(availability(user.id, from, to), length)
+        ? slotsOf(mine, length, Number.POSITIVE_INFINITY)
             .map((s) => ({
               ...s,
               unavailable: theirs.filter(([, t]) => !t.contains(s)).map(([e]) => e),

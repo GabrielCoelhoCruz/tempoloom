@@ -77,9 +77,9 @@ export const others = (attendees: string, self: string) =>
 export function readers(db: Db, now: () => number) {
   function listEvents(user: User, from: number, to: number) {
     const details = new Map(
-      all<CachedRow>(
+      all<CachedRow & { check_availability: number }>(
         db,
-        `SELECT e.*, c.writable FROM events e JOIN calendars c ON c.id = e.calendar_id
+        `SELECT e.*, c.writable, c.check_availability FROM events e JOIN calendars c ON c.id = e.calendar_id
          JOIN accounts a ON a.id = c.account_id WHERE a.user_id = ? AND e.end_ms > ? AND e.start_ms < ?`,
         user.id,
         from,
@@ -103,12 +103,16 @@ export function readers(db: Db, now: () => number) {
         video_link: VIDEO.exec(text)?.[0] ?? null,
       };
     });
-    // All-day events are not planner blocks, but a tool can still read and change
-    // them (an agenda for an offsite), so they are listed with kind "all_day".
+    // All-day events are not planner blocks, but a tool can still read them and
+    // change their title or description (an agenda for an offsite), so they are
+    // listed with kind "all_day". A move of one is refused (propose_update_event).
     const allDay = [...details.entries()]
       .filter(
         ([, d]) =>
-          d.all_day === 1 && (JSON.parse(d.private_props) as Record<string, string>).tl !== "1",
+          d.all_day === 1 &&
+          // As the planner: calendars the user does not check are not listed.
+          d.check_availability === 1 &&
+          (JSON.parse(d.private_props) as Record<string, string>).tl !== "1",
       )
       .map(([id, d]) => ({
         id,
