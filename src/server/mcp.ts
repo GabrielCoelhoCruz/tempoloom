@@ -97,9 +97,12 @@ function reviewUrl(baseUrl: string, zone: string, t: number): string {
   return new URL(`/?week=${addDays(d, 1 - weekdayOf(d))}`, baseUrl).toString();
 }
 
-export function mcpRoutes(deps: McpDeps): Hono {
+/**
+ * The tools of the MCP server. Assistant chat (src/server/assistant/tools.ts)
+ * uses the same tools, so both stage changes through one code path.
+ */
+export function mcpTools(deps: Omit<McpDeps, "writeEnabled">): Tool[] {
   const { db, preview, now } = deps;
-  const origin = new URL(deps.baseUrl).origin;
   const { listEvents, findFree, weekSummary, meetingContext } = readers(db, now);
 
   const tools: Tool[] = [
@@ -654,7 +657,7 @@ export function mcpRoutes(deps: McpDeps): Hono {
   ) {
     const s = preview.stage(caller.user.id, {
       ...input,
-      source: "mcp_client",
+      source: caller.source ?? "mcp_client",
       client: caller.client,
     });
     return {
@@ -770,7 +773,13 @@ export function mcpRoutes(deps: McpDeps): Hono {
     );
   }
 
-  const handle = rpcHandler(tools, deps.writeEnabled);
+  return tools;
+}
+
+export function mcpRoutes(deps: McpDeps): Hono {
+  const { db, now } = deps;
+  const origin = new URL(deps.baseUrl).origin;
+  const handle = rpcHandler(mcpTools(deps), deps.writeEnabled);
 
   /** A personal API key as the bearer token; the key's name labels the client. */
   function keyCaller(auth: string | undefined): Caller | undefined {

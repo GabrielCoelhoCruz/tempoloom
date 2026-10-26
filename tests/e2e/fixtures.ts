@@ -29,6 +29,7 @@ import { CalDavProvider, eventsFromObject, retryRead } from "../../src/server/pr
 import { GoogleProvider } from "../../src/server/providers/google.ts";
 import type { ProviderEvent } from "../../src/server/providers/types.ts";
 import { addDays, localToUtc, utcToLocal, weekdayOf } from "../../src/shared/time.ts";
+import { type FakeLlm, startFakeLlm } from "./fake-llm.ts";
 
 export const ZONE = "Europe/Berlin";
 export const PORT = Number(process.env.TEMPOLOOM_E2E_PORT ?? 8788);
@@ -36,6 +37,14 @@ export const BASE_URL = `http://localhost:${PORT}`;
 const ROOT = join(import.meta.dirname, "../..");
 export const EMAIL = "e2e@tempoloom.test";
 export const COLLEAGUE_EMAIL = "colleague@tempoloom.test";
+/**
+ * Assistant chat's model. Default: the fake OpenAI-compatible server
+ * (tests/e2e/fake-llm.ts). scripts/e2e-llm.sh sets TEMPOLOOM_E2E_LLM=real: the
+ * app gets the real endpoint from TEMPOLOOM_LLM_BASE_URL and TEMPOLOOM_LLM_API_KEY,
+ * and the fake's scripts are not used.
+ */
+export const REAL_LLM = process.env.TEMPOLOOM_E2E_LLM === "real";
+const LLM_FAKE_PORT = Number(process.env.TEMPOLOOM_LLM_FAKE_PORT ?? 8789);
 export const BACKEND: "caldav" | "google" =
   process.env.TEMPOLOOM_E2E_BACKEND === "google" ? "google" : "caldav";
 const SA_JSON = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
@@ -462,8 +471,11 @@ type TestFixtures = {
   /** people(3) is Radicale user e2e3 with email e2e3@tempoloom.test, unless `email` is given. */
   people: (n: 3 | 4 | 5 | 6, email?: string) => Promise<Person>;
   mail: Mailbox;
+  /** The fake model, with no scripts and no requests at the start of the test. */
+  llm: FakeLlm;
 };
 type WorkerFixtures = {
+  llmServer: FakeLlm;
   shiftedBrowser: undefined;
   radicale: RadicaleEnv | null;
   mailServer: { smtpUrl: string; apiUrl: string };
@@ -578,6 +590,21 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
     { scope: "worker" },
   ],
 
+  llmServer: [
+    async ({}, use) => {
+      const fake = await startFakeLlm(LLM_FAKE_PORT);
+      await use(fake);
+      await fake.close();
+    },
+    { scope: "worker" },
+  ],
+
+  llm: async ({ llmServer }, use) => {
+    llmServer.reset();
+    await use(llmServer);
+    llmServer.reset();
+  },
+
   mail: async ({ mailServer }, use) => {
     const api = (p: string, init?: RequestInit) => fetch(new URL(p, mailServer.apiUrl), init);
     await api("api/v1/messages", { method: "DELETE" });
@@ -647,6 +674,17 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
         : {}),
       SMTP_URL: mailServer.smtpUrl,
       MAIL_FROM: "Tempoloom <noreply@tempoloom.test>",
+      ...(REAL_LLM
+        ? Object.fromEntries(
+            ["TEMPOLOOM_LLM_BASE_URL", "TEMPOLOOM_LLM_API_KEY", "TEMPOLOOM_LLM_MODEL"].flatMap(
+              (k) => (process.env[k] ? [[k, process.env[k] as string]] : []),
+            ),
+          )
+        : {
+            TEMPOLOOM_LLM_BASE_URL: `http://127.0.0.1:${LLM_FAKE_PORT}/v1`,
+            TEMPOLOOM_LLM_API_KEY: "fake-llm-key",
+            TEMPOLOOM_LLM_MODEL: "fake-model",
+          }),
       ...(SA_JSON ? { GOOGLE_SERVICE_ACCOUNT_JSON: SA_JSON } : {}),
       ...(OAUTH
         ? { GOOGLE_CLIENT_ID: OAUTH.clientId, GOOGLE_CLIENT_SECRET: OAUTH.clientSecret }

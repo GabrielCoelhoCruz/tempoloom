@@ -10,6 +10,7 @@ export const LIMITS = [
   "max_mirrors",
   "max_booking_links",
   "max_automations_per_user",
+  "assistant_chat_quota",
 ] as const;
 export type LimitName = (typeof LIMITS)[number];
 
@@ -46,6 +47,8 @@ export function limitMessage(name: LimitName, n: number): string {
       return `This server allows at most ${plural(n, "booking link", "booking links")} per person.`;
     case "max_automations_per_user":
       return `This server allows at most ${plural(n, "automation", "automations")} (habits, focus time and buffers) per person.`;
+    case "assistant_chat_quota":
+      return `This server allows ${plural(n, "assistant chat message", "assistant chat messages")} per person per day.`;
   }
 }
 

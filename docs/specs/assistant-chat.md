@@ -54,6 +54,13 @@ All proposed changes go to preview mode (`assistant-preview-mode.md`).
 ### Access
 
 1. Assistant chat lives in a panel in the planner.
+
+   Tempoloom decision: the operator connects any OpenAI-compatible chat
+   completions endpoint with `TEMPOLOOM_LLM_BASE_URL`, `TEMPOLOOM_LLM_API_KEY`
+   (optional) and `TEMPOLOOM_LLM_MODEL`. Without a base URL the panel says the
+   assistant is not configured, and the server sends nothing. The chat uses the
+   read and propose tools of the MCP server (`assistant-mcp-server.md`); it has
+   no apply tool.
 2. When the team switch is off, the panel shows the disabled notice
    described in `teams-settings-templates.md` rule 14, and sends nothing.
 
@@ -137,6 +144,9 @@ All proposed changes go to preview mode (`assistant-preview-mode.md`).
 27. The reference limits chat usage per tier. Tempoloom: optional instance
     quota (`plans-feature-inventory.md`). When a user reaches it, the panel
     says so and when it resets (proposal).
+
+    Tempoloom decision: `assistant_chat_quota` counts the messages a person
+    sends per day in their home time zone; it resets at midnight there.
 
 ## Outputs
 

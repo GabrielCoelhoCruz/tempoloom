@@ -2,6 +2,7 @@
 // initialize, ping, tools/list and tools/call.
 import { z } from "zod";
 import type { User } from "../accounts.ts";
+import type { Source } from "../preview.ts";
 
 /** Protocol versions this server speaks, newest first. */
 export const PROTOCOLS = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
@@ -10,13 +11,18 @@ export interface Caller {
   user: User;
   /** The API key's name: the label of this connection in preview mode. */
   client: string;
+  /** Who stages the changes in preview mode; default mcp_client. */
+  source?: Source;
 }
 
 /** An error the caller can fix: its message is the tool result. */
 export class ToolError extends Error {}
 
-/** read: no change; stage: stages a change, no calendar write; apply: writes staged changes, deletes too. */
-export type Effect = "read" | "stage" | "apply";
+/**
+ * read: no change; stage: stages a change, no calendar write; apply: writes
+ * staged changes, deletes too; store: saves a chat memory (assistant chat only).
+ */
+export type Effect = "read" | "stage" | "apply" | "store";
 
 export interface Tool {
   name: string;
@@ -73,7 +79,46 @@ const FAILED: Record<Effect, string> = {
     "The tool failed on the server, and the change may have been staged. Call list_staged_changes to check before you try again.",
   apply:
     "The tool failed on the server, and some changes may have been applied. Call list_staged_changes to see which are still open, and list_events to check the calendar, before you try again.",
+  store:
+    "The tool failed on the server, and the memory may have been saved. Ask the user to check the memory list before you try again.",
 };
+
+export type CallResult =
+  | { isError: true; text: string }
+  | { isError: false; text: string; data: Record<string, unknown> };
+
+/**
+ * Runs one tool with raw arguments: the MCP server's tools/call and assistant
+ * chat both call tools through here. Bad arguments and a ToolError give an
+ * error text for the caller; another failure says what to check (FAILED).
+ */
+export async function callTool(t: Tool, caller: Caller, raw: unknown): Promise<CallResult> {
+  const args = t.input.safeParse(raw ?? {});
+  if (!args.success) {
+    const issues = args.error.issues.map((i) => `${i.path.join(".") || "arguments"}: ${i.message}`);
+    return { isError: true, text: issues.join("; ") };
+  }
+  // A server failure after a write tool ran may come after its change was
+  // staged or applied: say so, so the client checks before it tries again.
+  const failed = { isError: true, text: FAILED[t.effect] } as const;
+  try {
+    // The result must match the outputSchema that tools/list gave: parse
+    // drops other keys, and a wrong type is a server failure, not a result.
+    const out = t.output.safeParse(await t.run(caller, args.data as never));
+    if (!out.success) {
+      console.error(`Tool ${t.name} returned a result outside its outputSchema`, out.error);
+      return failed;
+    }
+    const data = out.data as Record<string, unknown>;
+    return { isError: false, text: JSON.stringify(data), data };
+  } catch (err) {
+    if (!(err instanceof ToolError)) {
+      console.error(`Tool ${t.name} failed`, err);
+      return failed;
+    }
+    return { isError: true, text: err.message };
+  }
+}
 
 /** Answers one JSON-RPC message with the given tools; null for a notification or a response. */
 export function rpcHandler(tools: Tool[], writeEnabled: boolean) {
@@ -132,40 +177,11 @@ export function rpcHandler(tools: Tool[], writeEnabled: boolean) {
             -32602,
             `${name} is not available: this server gives AI tools read-only access`,
           );
-        const args = t.input.safeParse(params.arguments ?? {});
-        if (!args.success) {
-          const issues = args.error.issues.map(
-            (i) => `${i.path.join(".") || "arguments"}: ${i.message}`,
-          );
-          return reply(m.id, {
-            content: [{ type: "text", text: issues.join("; ") }],
-            isError: true,
-          });
-        }
-        // A server failure after a write tool ran may come after its change was
-        // staged or applied: say so, so the client checks before it tries again.
-        const failed = () =>
-          reply(m.id, { content: [{ type: "text", text: FAILED[t.effect] }], isError: true });
-        try {
-          // The result must match the outputSchema that tools/list gave: parse
-          // drops other keys, and a wrong type is a server failure, not a result.
-          const out = t.output.safeParse(await t.run(caller, args.data as never));
-          if (!out.success) {
-            console.error(`MCP tool ${name} returned a result outside its outputSchema`, out.error);
-            return failed();
-          }
-          const data = out.data;
-          return reply(m.id, {
-            content: [{ type: "text", text: JSON.stringify(data) }],
-            structuredContent: data,
-          });
-        } catch (err) {
-          if (!(err instanceof ToolError)) {
-            console.error(`MCP tool ${name} failed`, err);
-            return failed();
-          }
-          return reply(m.id, { content: [{ type: "text", text: err.message }], isError: true });
-        }
+        const r = await callTool(t, caller, params.arguments);
+        return reply(m.id, {
+          content: [{ type: "text", text: r.text }],
+          ...(r.isError ? { isError: true } : { structuredContent: r.data }),
+        });
       }
       default:
         return fail(m.id, -32601, `Method not found: ${m.method}`);
