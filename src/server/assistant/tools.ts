@@ -17,6 +17,7 @@ import { jsonSchema, type Tool, ToolError, tool } from "../mcp/rpc.ts";
 import { type McpDeps, mcpTools } from "../mcp.ts";
 import { libraryTools } from "./library-tools.ts";
 import { peopleTools } from "./people.ts";
+import { reviewTools } from "./review-tools.ts";
 import { proposeMemoryWithin, type Ref } from "./store.ts";
 
 export type ChatToolDeps = Omit<McpDeps, "writeEnabled">;
@@ -100,12 +101,14 @@ const NOT_IN_CHAT = new Set(["find_free_time"]);
 
 /** Every tool of the chat. */
 export function chatTools(deps: ChatToolDeps): ChatTool[] {
+  const mcp = mcpTools(deps);
+  const update = mcp.find((t) => t.name === "propose_update_event");
+  if (!update) throw new Error("propose_update_event is missing from the MCP tools");
   return [
-    ...mcpTools(deps)
-      .filter((t) => t.effect !== "apply" && !NOT_IN_CHAT.has(t.name))
-      .map(asChatTool),
+    ...mcp.filter((t) => t.effect !== "apply" && !NOT_IN_CHAT.has(t.name)).map(asChatTool),
     ...peopleTools(deps).map(asChatTool),
     ...libraryTools(deps).map(asChatTool),
+    ...reviewTools({ ...deps, update }).map(asChatTool),
     memoryTool(deps.db, deps.now),
   ];
 }

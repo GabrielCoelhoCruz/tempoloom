@@ -53,7 +53,8 @@ at creation only for both.
 ### Creating
 
 1. The user can create an automation in three ways: from the library, from the top-bar "create" button, or by asking the assistant chat (E-0043).
-   Tempoloom decision: the create button is a menu: Habit and Flexible meeting open their own pages; Focus time and Buffer open the shared form. Assistant chat is not built.
+   Tempoloom decision: the create button is a menu: Habit and Flexible meeting open their own pages; Focus time and Buffer open the shared form. In assistant chat, the
+   model stages the same request as the form (`assistant-chat.md` rule 7).
 2. The library groups templates by type: habits, buffers, focus, flexible meetings and meeting quality (E-0043). A template that the user has already added shows an "added" badge (E-0043). The library catalog and its presets are in `automations-library.md`.
 3. The user may add the same template more than once. Proposed (several buffer automations are expected, E-0051).
 4. Saving a new automation, or saving changes to one, stages its effect in preview mode: the managed events that Tempoloom will add, move or remove in the scheduling window. The user applies or discards the staged changes as defined in `assistant-preview-mode.md`. Discarding all of them leaves the calendar unchanged (E-0043, E-0081, E-0077, E-0070, E-0051).

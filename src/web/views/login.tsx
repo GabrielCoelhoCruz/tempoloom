@@ -2,6 +2,7 @@
 // load it.
 import { useEffect, useState } from "preact/hooks";
 import { ApiError, api } from "../lib/api.ts";
+import { keepAssistantLink } from "../lib/assistant-link.ts";
 import { loadMe } from "../lib/state.ts";
 
 /** Sign-in errors that come back in ?login_error= (single sign-on, Google). */
@@ -111,6 +112,8 @@ export function Login() {
   const [methods, setMethods] = useState<{ google: boolean } | null>(null);
   useEffect(() => {
     void api<{ google: boolean }>("GET", "/auth/methods").then(setMethods);
+    // A digest link waits for the sign-in (Google and SSO come back to "/").
+    keepAssistantLink();
   }, []);
   return (
     <div class="login">

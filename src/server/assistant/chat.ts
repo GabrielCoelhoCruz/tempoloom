@@ -10,13 +10,23 @@
 // fails later saves the steps that ran, so the panel shows what they proposed.
 // A message id from the client makes a resend give the same answer.
 import { randomUUID } from "node:crypto";
+import { z } from "zod";
+import { reviewRequest } from "../../shared/assistant-review.ts";
 import type { User } from "../accounts.ts";
 import { all, type Db, one } from "../db.ts";
 import { instanceLimit, limitMessage } from "../limits.ts";
 import { type Llm, LlmError, type LlmMessage } from "../llm.ts";
 import { cached } from "../mcp/reads.ts";
-import { type Caller, callTool } from "../mcp/rpc.ts";
-import { type ChangeKind, newDescription, userFormatsOf, whenAt, zoneOf } from "../preview.ts";
+import { type Caller, callTool, type Tool } from "../mcp/rpc.ts";
+import {
+  type ChangeKind,
+  MERGED,
+  newDescription,
+  REPLACED,
+  userFormatsOf,
+  whenAt,
+  zoneOf,
+} from "../preview.ts";
 import { membership } from "../teams.ts";
 import { reportingOf } from "./people.ts";
 import { type PromptInput, systemPrompt } from "./prompt.ts";
@@ -96,6 +106,40 @@ export interface SendBody {
   clientId?: string | undefined;
 }
 
+/** How the turn runs: the daily review is unattended and has its own time limit. */
+interface TurnMode {
+  unattended?: boolean;
+  turnMs?: number;
+}
+
+/** The client label of the daily review's changes in preview mode. */
+export const DAILY_REVIEW_CLIENT = "daily review";
+
+/**
+ * The tools of the unattended daily review: reads, and fixes of single events
+ * (move, answer, video link). No automation, policy, delete, new event or
+ * memory: calendar text from other people reaches this turn. A list of
+ * argument names narrows a tool: propose_update_event only moves (no title,
+ * no description text), and propose_video_link adds only a video link.
+ */
+export const REVIEW_TOOLS: ReadonlyMap<string, readonly string[] | null> = new Map([
+  ["list_events", null],
+  ["find_meeting_time", null],
+  ["get_meeting_context", null],
+  ["review_schedule", null],
+  ["propose_update_event", ["event_id", "start", "end", "reason"]],
+  ["propose_rsvp", null],
+  ["propose_video_link", null],
+]);
+
+/** A tool as the model sees it, with only the arguments `keep` names. */
+function narrowed(t: Tool, keep: readonly string[] | null): Tool {
+  if (!keep) return t;
+  const shape = t.input.shape;
+  const fields = keep.filter((k) => k in shape).map((k) => [k, shape[k]]);
+  return { ...t, input: z.object(Object.fromEntries(fields)) };
+}
+
 /** A request still running this long after the turn's deadline was cut off (the server stopped). */
 const STALE_MARGIN_MS = 30_000;
 
@@ -170,7 +214,7 @@ export function createChat(deps: ChatDeps) {
     return { limit, used: usedOn(db, user.id, q.day), resetsAt: q.next };
   }
 
-  function promptInput(user: User, ctx: ChatContext): PromptInput {
+  function promptInput(user: User, ctx: ChatContext, unattended = false): PromptInput {
     const date = /^\d{4}-\d{2}-\d{2}$/;
     const shown =
       ctx.from && ctx.to && date.test(ctx.from) && date.test(ctx.to)
@@ -184,6 +228,7 @@ export function createChat(deps: ChatDeps) {
       selected: ctx.eventId ? selectedEvent(user.id, ctx.eventId) : undefined,
       memories: memories(db, user.id),
       reporting: reportingOf(db, user.id),
+      unattended,
     };
   }
 
@@ -251,8 +296,9 @@ export function createChat(deps: ChatDeps) {
     caller: Caller,
     name: string,
     raw: string,
+    allowed: ReadonlyMap<string, readonly string[] | null> | undefined,
   ): Promise<{ content: string; ref?: Ref | undefined }> {
-    const t = byName.get(name);
+    const t = allowed && !allowed.has(name) ? undefined : byName.get(name);
     if (!t) return { content: `Error: there is no tool ${name}.` };
     let args: unknown;
     try {
@@ -260,6 +306,15 @@ export function createChat(deps: ChatDeps) {
     } catch {
       return { content: "Error: the arguments are not valid JSON." };
     }
+    const keep = allowed?.get(name);
+    const extra =
+      keep && args && typeof args === "object"
+        ? Object.keys(args).filter((k) => !keep.includes(k))
+        : [];
+    if (extra.length > 0)
+      return {
+        content: `Error: here ${name} takes only ${keep?.join(", ")}; ${extra.join(", ")} cannot change. Nothing was staged.`,
+      };
     const r = await callTool(t.tool, caller, args, t.failed);
     if (r.isError) return { content: `Error: ${r.text}` };
     return { content: r.text, ref: t.ref?.(r.data) };
@@ -276,6 +331,7 @@ export function createChat(deps: ChatDeps) {
     text: string,
     ctx: ChatContext,
     signal?: AbortSignal,
+    mode: TurnMode = {},
   ): Promise<TurnResult> {
     if (!llm) throw new Error("not configured");
     if (conversationId && !ownsConversation(db, user.id, conversationId)) conversationId = null;
@@ -283,15 +339,23 @@ export function createChat(deps: ChatDeps) {
     const timer = setTimeout(
       () =>
         stop.abort(new LlmError("The turn took too long. Ask again in smaller parts.", "timeout")),
-      turnMs,
+      mode.turnMs ?? turnMs,
     );
     const left = () =>
       stop.abort(new LlmError("The connection closed before the answer was ready.", "stopped"));
     if (signal?.aborted) left();
     signal?.addEventListener("abort", left, { once: true });
-    const caller: Caller = { user, client: "", source: "assistant_chat" };
+    const caller: Caller = mode.unattended
+      ? { user, client: DAILY_REVIEW_CLIENT, source: "assistant_chat", unattended: true }
+      : { user, client: "", source: "assistant_chat" };
+    const allowed = mode.unattended ? REVIEW_TOOLS : undefined;
+    const offered = allowed
+      ? tools
+          .filter((t) => allowed.has(t.tool.name))
+          .map((t) => llmTool(narrowed(t.tool, allowed.get(t.tool.name) ?? null)))
+      : llmTools;
     const base: LlmMessage[] = [
-      { role: "system", content: systemPrompt(promptInput(user, ctx)) },
+      { role: "system", content: systemPrompt(promptInput(user, ctx, mode.unattended)) },
       ...history(conversationId),
     ];
     // Finished steps: an assistant message with all its tool results.
@@ -302,7 +366,7 @@ export function createChat(deps: ChatDeps) {
       for (let step = 0; step < MAX_STEPS; step++) {
         // The deadline and the client's leave are checked here, between steps.
         if (stop.signal.aborted) throw stop.signal.reason;
-        const reply = await llm.complete([...base, ...steps.map(forModel)], llmTools, stop.signal);
+        const reply = await llm.complete([...base, ...steps.map(forModel)], offered, stop.signal);
         if (!reply.tool_calls?.length) {
           steps.push(reply);
           answered = true;
@@ -317,7 +381,7 @@ export function createChat(deps: ChatDeps) {
           // Calls past the cap get an error result, so the history stays valid.
           const r =
             i < MAX_CALLS_PER_REPLY
-              ? await runTool(caller, call.function.name, call.function.arguments)
+              ? await runTool(caller, call.function.name, call.function.arguments, allowed)
               : { content: TOO_MANY_CALLS, ref: undefined };
           steps.push({ role: "tool", tool_call_id: call.id, content: r.content, ref: r.ref });
         }
@@ -418,9 +482,15 @@ export function createChat(deps: ChatDeps) {
       else if (m.role === "assistant" && m.content?.trim())
         out.push({ kind: "assistant", text: m.content });
       if (m.ref?.kind === "proposal") {
-        const c = one<{ summary: string; state: string; kind: ChangeKind; after: string }>(
+        const c = one<{
+          summary: string;
+          state: string;
+          result: string;
+          kind: ChangeKind;
+          after: string;
+        }>(
           db,
-          "SELECT summary, state, kind, after FROM staged_changes WHERE id = ? AND user_id = ?",
+          "SELECT summary, state, result, kind, after FROM staged_changes WHERE id = ? AND user_id = ?",
           m.ref.id,
           userId,
         );
@@ -428,7 +498,13 @@ export function createChat(deps: ChatDeps) {
           kind: "proposal",
           changeId: m.ref.id,
           summary: c?.summary ?? "A change that expired",
-          state: c?.state ?? "expired",
+          // The chat says when a later proposal replaced or merged this one.
+          state:
+            c?.state === "discarded" && c.result === REPLACED
+              ? "replaced"
+              : c?.state === "discarded" && c.result === MERGED
+                ? "merged"
+                : (c?.state ?? "expired"),
           description: c ? newDescription({ kind: c.kind, after: JSON.parse(c.after) }) : null,
         });
       } else if (m.ref?.kind === "memory") {
@@ -444,8 +520,40 @@ export function createChat(deps: ChatDeps) {
     return out;
   }
 
-  return { configured: llm !== null, refusal, quota, send, items, waitMs };
+  /**
+   * Rules 15, 16, 18: the review of the days from `from` to `toExclusive` in a
+   * new conversation, as the Recommendations action asks it; the fixes the
+   * model proposes wait in preview mode. Nobody watches it, so it offers only
+   * REVIEW_TOOLS, keeps preview mode as it is and leaves the user's own open
+   * changes alone. The system starts it, so it does not count toward the
+   * user's quota. `conversationId` is null when chat is off for the user or
+   * the model failed before it proposed anything; `complete` is false when
+   * the turn stopped early.
+   */
+  async function review(
+    user: User,
+    from: string,
+    toExclusive: string,
+    opts: { turnMs?: number } = {},
+  ): Promise<{ conversationId: string | null; complete: boolean }> {
+    const refused = refusal(user);
+    if (refused && refused.error !== "quota") return { conversationId: null, complete: false };
+    const r = await turn(
+      user,
+      null,
+      reviewRequest(from, toExclusive),
+      { from, to: toExclusive },
+      undefined,
+      { unattended: true, ...(opts.turnMs ? { turnMs: opts.turnMs } : {}) },
+    );
+    // The text names no URL and no key (src/server/llm.ts).
+    if (!r.ok) console.error(`Assistant review: ${r.error.message}`);
+    return { conversationId: r.conversationId, complete: r.ok };
+  }
+
+  return { configured: llm !== null, refusal, quota, send, items, review, waitMs };
 }
 
 export type Chat = ReturnType<typeof createChat>;
+export type Review = Chat["review"];
 export { LlmError };

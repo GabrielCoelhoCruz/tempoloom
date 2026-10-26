@@ -29,17 +29,18 @@ import {
 import { oauthUser, resourceMetadataUrl } from "./oauth.ts";
 import {
   allDayWhen,
-  managedEventBefore,
   openChanges,
   openChangesPage,
   type Preview,
   plainTitle,
   SOURCES,
   type StageArgs,
+  TargetBusy,
   userFormatsOf,
   when,
   zoneOf,
 } from "./preview.ts";
+import { managedEventBefore } from "./preview-kinds.ts";
 
 /** The sort key of a task without a due date: after every due date. */
 const NO_DUE = 9e15;
@@ -53,6 +54,16 @@ export const TASKS_PAGE = `SELECT id, title, level, total_minutes, due_at, statu
   WHERE user_id = ? AND status = ? AND COALESCE(due_at, ${NO_DUE}) >= ?
     AND (COALESCE(due_at, ${NO_DUE}), created_at, id) > (?, ?, ?)
   ORDER BY COALESCE(due_at, ${NO_DUE}), created_at, id LIMIT ?`;
+
+/** Staging refused because another open change of the target stays: a tool error the caller reads. */
+export function busyAsToolError<T>(f: () => T): T {
+  try {
+    return f();
+  } catch (err) {
+    if (err instanceof TargetBusy) throw new ToolError(err.message);
+    throw err;
+  }
+}
 
 export interface McpDeps {
   db: Db;
@@ -103,7 +114,9 @@ function reviewUrl(baseUrl: string, zone: string, t: number): string {
 
 /**
  * Stages a change in preview mode for the caller and gives a stage tool's
- * result (stagedOutput). Every stage tool of MCP and of assistant chat uses it.
+ * result (stagedOutput). The MCP stage tools and the chat's library tools use
+ * it; the chat's automation and policy tools stage through stageRequest
+ * (src/server/assistant/review-tools.ts), whose result adds the calendar impact.
  */
 export function stagedResult(
   deps: Pick<McpDeps, "db" | "preview" | "baseUrl">,
@@ -111,11 +124,14 @@ export function stagedResult(
   input: StageArgs,
   at: number,
 ) {
-  const s = deps.preview.stage(caller.user.id, {
-    ...input,
-    source: caller.source ?? "mcp_client",
-    client: caller.client,
-  });
+  const s = busyAsToolError(() =>
+    deps.preview.stage(caller.user.id, {
+      ...input,
+      source: caller.source ?? "mcp_client",
+      client: caller.client,
+      unattended: caller.unattended === true,
+    }),
+  );
   return {
     id: s.id,
     state: s.state,

@@ -81,6 +81,19 @@ const schema = z
      * it below the read timeout of a reverse proxy in front (often 60 s).
      */
     TEMPOLOOM_LLM_TURN_MS: z.coerce.number().int().min(1000).default(55_000),
+    /**
+     * The daily review of assistant chat (assistant-chat.md rules 15-18): "on"
+     * runs one model turn per user whose digest has issues, before the digest.
+     * Off by default: each turn costs model calls, so the operator opts in.
+     */
+    DAILY_REVIEW: z.enum(["on", "off"]).default("off"),
+    /**
+     * Review turns per UTC day for the whole instance, at most (counted in
+     * assistant_usage); the users over it get the plain digest, in rotation.
+     */
+    DAILY_REVIEW_MAX_USERS: z.coerce.number().int().min(1).max(1000).default(20),
+    /** Milliseconds one daily review turn may take. */
+    DAILY_REVIEW_TURN_MS: z.coerce.number().int().min(1000).default(45_000),
   })
   .refine((c) => !c.TEST_CLOCK_START || c.TEMPOLOOM_TEST_MODE, {
     path: ["TEST_CLOCK_START"],

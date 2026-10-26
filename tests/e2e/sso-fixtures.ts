@@ -22,7 +22,7 @@ export interface Idp {
    * Starts "Sign in with SSO" in a browser context of its own, signs in on the
    * identity provider's page, and waits for the app.
    */
-  signIn(user: IdpUser): Promise<Page>;
+  signIn(user: IdpUser, from?: string): Promise<Page>;
   /** The same, without waiting for the app: for refused sign-ins. */
   attemptSignIn(user: IdpUser): Promise<Page>;
 }
@@ -64,7 +64,7 @@ export const test = base.extend<{ idp: Idp }, { oidcServer: OidcEnv }>({
   idp: async ({ oidcServer, browser, app }, use) => {
     const contexts: BrowserContext[] = [];
     const email = (user: IdpUser) => `${user}@${oidcServer.domain}`;
-    const go = async (user: IdpUser, wait: boolean) => {
+    const go = async (user: IdpUser, wait: boolean, from = "/") => {
       const ctx = await browser.newContext({
         timezoneId: ZONE,
         locale: "en-GB",
@@ -72,7 +72,8 @@ export const test = base.extend<{ idp: Idp }, { oidcServer: OidcEnv }>({
       });
       contexts.push(ctx);
       const page = await ctx.newPage();
-      await page.goto("/");
+      // A signed-out visit to `from` shows the sign-in page there.
+      await page.goto(from);
       const form = page.getByTestId("sso-form");
       await form.getByLabel("Work email").fill(email(user));
       await form.getByRole("button", { name: "Sign in with SSO" }).click();
@@ -90,7 +91,7 @@ export const test = base.extend<{ idp: Idp }, { oidcServer: OidcEnv }>({
       clientId: oidcServer.clientId,
       clientSecret: oidcServer.clientSecret,
       email,
-      signIn: (user) => go(user, true),
+      signIn: (user, from) => go(user, true, from),
       attemptSignIn: (user) => go(user, false),
     });
     for (const c of contexts) await c.close();

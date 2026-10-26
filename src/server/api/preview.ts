@@ -42,7 +42,8 @@ export function previewRoutes(
         id: ch.id,
         source: ch.source,
         sourceLabel:
-          ch.source === "mcp_client" && ch.client
+          // An AI tool's key name, or "daily review" for the chat's unattended review.
+          (ch.source === "mcp_client" || ch.source === "assistant_chat") && ch.client
             ? `${SOURCES[ch.source]} (${ch.client})`
             : SOURCES[ch.source],
         summary: ch.summary,

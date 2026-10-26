@@ -4,6 +4,7 @@
 // PROMPT_PARTS, so a new ability adds a part, not new plumbing.
 import { zoneOffset } from "../../shared/time.ts";
 import type { Reporting } from "./people.ts";
+import { REVIEW_RULES, UNATTENDED_RULES } from "./review-tools.ts";
 import type { Memory } from "./store.ts";
 
 export interface PromptInput {
@@ -17,6 +18,8 @@ export interface PromptInput {
   memories: Memory[];
   /** The user's manager and reports from directory provisioning; null without it (rule 26). */
   reporting: Reporting | null;
+  /** The daily review: nobody watches the turn (assistant-chat.md rules 15-18). */
+  unattended?: boolean | undefined;
 }
 
 /** An instant as local ISO 8601 with the zone's offset: what the tools take. */
@@ -92,6 +95,8 @@ export const PROMPT_PARTS: Part[] = [
       "- To add a task, call propose_create_task; ask for the title when the user gives none.",
       "- A result with a truncated count above 0 is cut: say so, and ask for a narrower request when it matters.",
     ].join("\n"),
+  () => REVIEW_RULES,
+  (p) => (p.unattended ? UNATTENDED_RULES : null),
   (p) =>
     `The planner state and the user's saved memories (memories are suggestions only):\n${dataBlock({
       planner_dates: p.shown ? { from: p.shown.from, to_exclusive: p.shown.to } : null,

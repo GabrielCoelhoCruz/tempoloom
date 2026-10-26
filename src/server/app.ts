@@ -60,7 +60,7 @@ import { teamDefaultRoutes } from "./api/team-defaults.ts";
 import { travelRoutes } from "./api/travel.ts";
 import { webhookRoutes } from "./api/webhooks.ts";
 import { apiKeyUser } from "./api-keys.ts";
-import { createChat } from "./assistant/chat.ts";
+import { type Chat, createChat } from "./assistant/chat.ts";
 import { chatTools } from "./assistant/tools.ts";
 import type { Config } from "./config.ts";
 import type { SecretBox } from "./crypto.ts";
@@ -124,8 +124,11 @@ const MIME: Record<string, string> = {
   ".woff2": "font/woff2",
 };
 
-/** The sync service of a dry-run app: every call does nothing. */
-const DRY_SYNC = new Proxy({}, { get: () => () => undefined }) as SyncService;
+/**
+ * A sync service whose every call does nothing: for dry-run apps, and for the
+ * operator CLI's app, which only reads and stages (the server syncs).
+ */
+export const NO_SYNC = new Proxy({}, { get: () => () => undefined }) as SyncService;
 
 const caldavLogin = z.object({
   serverUrl: z.url({ protocol: /^https?$/ }),
@@ -147,6 +150,15 @@ function pendingAuthorization(target: string | undefined, origin: string): strin
 }
 
 export function createApp(deps: AppDeps): Hono<AppEnv> {
+  return createAppWithChat(deps).app;
+}
+
+/**
+ * The app and its assistant chat: the email worker's daily review
+ * (assistant-chat.md rules 15-18) uses the same chat, preview mode, dry run
+ * and live updates as the panel.
+ */
+export function createAppWithChat(deps: AppDeps): { app: Hono<AppEnv>; chat: Chat } {
   const { db, config, box, sync } = deps;
   const now = deps.now ?? Date.now;
   const secure = config.BASE_URL.startsWith("https://");
@@ -418,7 +430,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
           app: createApp({
             ...deps,
             db: dryDb,
-            sync: DRY_SYNC,
+            sync: NO_SYNC,
             // No static client: the dry app answers API calls only.
             config: { ...config, WEB_DIST: join(config.DATA_DIR, "no-web-client") },
           }),
@@ -626,5 +638,5 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
     }
   });
 
-  return app;
+  return { app, chat };
 }

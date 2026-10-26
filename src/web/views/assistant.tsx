@@ -4,7 +4,9 @@
 // replies here (rule 13). The bookmark opens the memory list (rule 23).
 import { signal } from "@preact/signals";
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
+import { reviewRequest } from "../../shared/assistant-review.ts";
 import { ApiError, api } from "../lib/api.ts";
+import { takeAssistantLink } from "../lib/assistant-link.ts";
 import { useLive } from "../lib/live.ts";
 import { chatDraft, plannerContext, sidePanel } from "../lib/planner-signals.ts";
 import { onLinkClick } from "../lib/router.ts";
@@ -103,12 +105,22 @@ const pick = (conversation: string) => {
   picks.value++;
 };
 
+/** Rule 18: a digest link opens the panel on its conversation, with its staged fixes, once. */
+export function openFromLink(): void {
+  const id = takeAssistantLink();
+  if (!id) return;
+  pick(id);
+  sidePanel.value = "assistant";
+}
+
 const STATE_WORDS: Record<string, string> = {
   pending: "Waiting for your approval",
   accepted: "Accepted, apply in preview mode",
   discarded: "Discarded",
   applied: "Applied",
   stale: "Skipped: the event changed",
+  replaced: "Replaced by a later proposal",
+  merged: "Merged into the next proposal",
   failed: "Failed",
   expired: "Expired",
 };
@@ -155,8 +167,9 @@ export function AssistantPanel() {
     input.current?.focus();
   }, [chatDraft.value]);
 
-  const send = async () => {
-    const text = draft.trim();
+  /** Sends the draft, or `fixed` (the Recommendations action) and keeps the draft. */
+  const send = async (fixed?: string) => {
+    const text = (fixed ?? draft).trim();
     if (!text || sending || !state) return;
     setSending(true);
     setError(null);
@@ -193,7 +206,7 @@ export function AssistantPanel() {
       const r = await postMessage(sent, state.waitMs, signal, () => setWaiting(true));
       if (signal.aborted) return;
       message.current = null;
-      setDraft("");
+      if (fixed === undefined) setDraft("");
       shown(r);
     } catch (err) {
       if (signal.aborted) return;
@@ -253,6 +266,22 @@ export function AssistantPanel() {
       <div class="assistant-head">
         <h2>Assistant</h2>
         <span class="spacer" />
+        {state && !blocked && (
+          <button
+            type="button"
+            // Rules 19, 20: the dates shown in the planner; none shown, no review.
+            disabled={sending || !plannerContext.value.from}
+            title="Review the dates shown in the planner and stage fixes"
+            onClick={() => {
+              // Rules 19, 20: the review covers the dates shown in the planner.
+              const ctx = plannerContext.value;
+              setShowMemories(false);
+              void send(reviewRequest(ctx.from, ctx.to));
+            }}
+          >
+            Recommendations
+          </button>
+        )}
         {state && !blocked && (
           <button
             type="button"

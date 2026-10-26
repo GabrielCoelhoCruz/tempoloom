@@ -13,6 +13,11 @@ export interface Caller {
   client: string;
   /** Who stages the changes in preview mode; default mcp_client. */
   source?: Source;
+  /**
+   * Nobody watches this call (the daily review of assistant chat): staging
+   * keeps preview mode as it is and leaves other open changes alone.
+   */
+  unattended?: boolean;
 }
 
 /** An error the caller can fix: its message is the tool result. */

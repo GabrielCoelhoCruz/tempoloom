@@ -8,7 +8,8 @@ import { type RangeProblem, rangeProblem, teamStatsOf } from "../api/analytics.t
 import { one } from "../db.ts";
 import { type Tool, ToolError, tool } from "../mcp/rpc.ts";
 import { stagedOutput, stagedResult } from "../mcp.ts";
-import { taskLevelBefore, zoneOf } from "../preview.ts";
+import { zoneOf } from "../preview.ts";
+import { taskLevelBefore } from "../preview-kinds.ts";
 import type { ChatToolDeps } from "./tools.ts";
 
 /** The tool's words for the range errors of the team stats page. */

@@ -1075,10 +1075,7 @@ G2 = "Needs an LLM provider and key from the owner (gate G2)"
 # Rows 6, 47, 582, 609, 612, 627, 680, 681: see the C3 block (assistant chat answers).
 # Rows 130, 569, 718, 723-749 (library prompts): see the C2 block.
 # Rows 661, 662, 677, 686, 687: see the C5 block (people and meetings by chat).
-for n in [316, 369, 678, 679, 684, 688]:
-    BLOCKED[n] = G2
-# Row 672: see the U73 block (it names the built digest by E2E titles).
-# Row 683: see the U73 block (it names the built digest by E2E titles).
+# Rows 301, 316, 369, 672, 678, 679, 683, 684, 688, 769: see the C4 block.
 
 # Rows that need a named outside account, vendor app or API.
 SLACK = "Needs a Slack app and a Slack test workspace"
@@ -1234,8 +1231,6 @@ BLOCKED[284] = ("Needs a Google account with a birthday event or an event that G
                 "E2E run (docs/e2e-google-run.md): only Google refuses a color change on one event, and a CalDAV server lets the owner "
                 "change every event. Built: painting skips an event that the calendar refuses (status 400, 401, 403, 404 or 410, or an auth "
                 "error) and goes on (src/server/planner/repaint.ts); no unit test sends a refused color write yet. Color rules have full UI E2E on CalDAV: " + quoted_titles("c_paint", "u5_repaint"))
-BLOCKED[301] = (G2 + " for the assistant chat. Built, with full UI E2E on CalDAV: create from the library and from the top-bar "
-                "create menu (" + quoted_titles("s1_added", "s1_list") + ")")
 BLOCKED[317] = ("Needs a Slack app and a Slack test workspace for the chat-app channel. Built: the daily digest by email at the time "
                 "the user sets, with full UI E2E on CalDAV: " + quoted_titles("s5_digest"))
 BLOCKED[345] = ("Needs Google Meet (a Google account and the Calendar conference API), a Zoom developer app with a Zoom test account, "
@@ -1265,10 +1260,6 @@ BLOCKED[513] = ("Needs the owner to complete Google's sign-in and consent page f
 BLOCKED[638] = ("Needs the owner to complete Google's sign-in and consent page for the test account during a new Google Calendar E2E run (docs/e2e-google-run.md), for an E2E of \u201cSign in with Google\u201d on the sign-in page, and a Microsoft 365 account "
                 "with a Microsoft app registration to build and test Microsoft sign-in. Built: Google sign-in follows the team's SSO "
                 "rules; SSO through an OIDC identity provider has full UI E2E: " + quoted_titles("sso_only"))
-BLOCKED[769] = (G2 + " for the chat. Built, with full UI E2E on CalDAV: preview mode (" + quoted_titles("s7_auto") + "), automations ("
-                + quoted_titles("s1_list") + "), suggested tasks (" + quoted_titles("s3_focus_tasks") + "), issues and recommendations ("
-                + quoted_titles("s5_checks", "s5_agenda") + "), insights (" + quoted_titles("u9_balance", "an_org") + ") and the MCP server ("
-                + quoted_titles("s7_mcp_read") + ")")
 BLOCKED[951] = ("Needs a Claude account (Claude Desktop or the Claude web app) to show the per-tool settings, which are a Claude "
                 "feature. Built: each tool has a name, a description, readOnlyHint and destructiveHint (unit tests tests/unit/mcp.test.ts); "
                 "full UI E2E on CalDAV lists the tools: " + quoted_titles("s7_mcp_read", "s7_readonly"))
@@ -1681,15 +1672,6 @@ E2E_NOTES[493] = ("Rule 47 asks Tempoloom only for the help text; the delay is t
                   "read-only there, so Tempoloom does not list it (accounts-connected-calendars.md rule 4): it gives no busy time "
                   "and cannot be mirrored. The help says this, names the delay, and says that a CalDAV server, iCloud too, connects "
                   "directly with read and write access")
-BLOCKED[672] = (G2 + " for the proposed fixes of the nightly review and the chat that opens with the fixes staged (assistant-chat.md "
-                "rules 16, 18). The \u201cagenda\u201d in the title has no rule in the specs (no evidence). Built, with full UI E2E "
-                "on CalDAV: the one daily digest by email of the open meeting-check issues (" + quoted_titles("s5_digest") + "), "
-                "over the days of the nightly review, the rest of the planning week and the first 2 workdays of the next week "
-                "(rule 15; " + quoted_titles("u73_digest") + ")")
-BLOCKED[683] = (G2 + " for the nightly review and its fixes by chat, and a Slack app and a Slack test workspace for the chat-app "
-                "channel. Built, with full UI E2E on CalDAV: the morning digest by email of the open meeting-check issues at the "
-                "digest time (" + quoted_titles("s5_digest") + "), over the days of the nightly review, the rest of the planning "
-                "week and the first 2 workdays of the next week (rule 15; " + quoted_titles("u73_digest") + ")")
 E2E[230] = ["buffer", "u73_video"]
 E2E_NOTES[230] = ("All meetings: recovery follows each meeting with another attendee. Video only: recovery follows a meeting with a "
                   "video link in its conference data, location or description, and not one without, which the all-meetings option "
@@ -1897,6 +1879,65 @@ E2E_NOTES.update({
           "that changes nothing. " + _FAKE),
 })
 # --- end C5 ---
+
+# --- C4: assistant chat for automations, team policies and the schedule review ---
+# (tests/e2e/assistant-C4.spec.ts, fake model as in the C1 block.)
+T.update({
+    "c4_automations": "automations by chat: a new habit, a focus goal change and a buffer turned off wait in preview mode with their calendar impact; a field the form refuses goes back to the model; nothing changes before apply (assistant-chat rule 7; automations-overview rules 1, 5)",
+    "c4_automations2": "more automations by chat: a new flexible meeting, a habit turned on, a meeting overload edit and two meeting check changes in one proposal; an automation or setting changed after staging is skipped as stale; a flexible meeting turned off removes its events after apply (assistant-chat rule 7; automations-overview rule 5; preview mode rule 12)",
+    "c4_policies": "team policies by chat: an admin's new policy and its change wait in preview mode and reach the team only after apply; a change made elsewhere after staging makes it stale; a member who is not an admin stages nothing (assistant-chat rule 7; teams-policies rule 1)",
+    "c4_review": "Recommendations reviews the dates shown in the planner: the chat lists the conflict, the unanswered invitation, the missing video links and the guest who declined with a staged fix each, two fixes of one meeting merge; a discarded fix is not written, the others are after apply; another week reviews that week (assistant-chat rules 6, 16, 19, 20, T2, T5; meeting checks rule 6)",
+    "c4_week": "moving a week of meetings by chat stages one move per meeting the user organizes; the calendar changes only after apply, and an invitation from someone else stays (meetings-flexible-rescheduling rule 24; assistant-chat rule 6)",
+    "c4_digest": "the daily review stages a fix for each open issue by assistant chat before the morning digest, outside the chat quota and with review tools only, and the digest link opens the chat with the fixes staged; preview mode stays off until the user turns it on; without DAILY_REVIEW or with chat off the digest has the plain link (assistant-chat rules 2, 15-18, 27; meeting checks rule 6)",
+    "c4_stale_move": "a staged move is skipped as stale when the user moved the meeting in the calendar meanwhile; a later video link for it is staged alone, and apply keeps the user's move and mails the guests no move (preview mode rule 12; assistant-chat rules 13, 16)",
+    "c4_video_allday": "a video link by chat on an all-day meeting with a guest who accepted keeps the dates, the all-day form and the guest's answer; a description changed after staging makes the link stale (assistant-chat rule 16; preview mode rule 12)",
+    "c4_digest_sso": "a digest link keeps its conversation through single sign-on: after the identity provider's page the planner opens the chat on that conversation (assistant-chat rule 18)",
+})
+E2E.update({
+    301: ["s1_added", "s1_list", "c4_automations", "c4_automations2"],
+    679: ["c4_automations", "c4_automations2"],
+    688: ["c4_policies"],
+    316: ["c4_review", "c4_video_allday", "s5_checks"],
+    684: ["c4_review"],
+    678: ["c4_review", "c4_week", "c4_stale_move"],
+    369: ["c4_week"],
+    672: ["c4_digest", "c4_digest_sso", "s5_digest", "u73_digest"],
+    769: ["c4_automations", "c4_review", "c1_events", "s7_auto", "s1_list", "s3_focus_tasks", "s5_checks", "s5_agenda",
+          "u9_balance", "an_org", "s7_mcp_read"],
+})
+E2E_NOTES.update({
+    301: ("Library and the top-bar create menu open the forms; in chat, propose_automation stages the same request as the form, "
+          "checked by a dry run (a refused field goes back to the model) and staged with its calendar impact. " + _FAKE),
+    679: ("By propose_automation, with E2E for each: create (habit, flexible meeting), edit (focus time, meeting overload, "
+          "meeting checks, two check changes merged into one proposal), turn off (buffer, flexible meeting, which removes its "
+          "events) and turn on (habit). The form's request is dry-run and staged in preview mode with the calendar impact; "
+          "apply runs it again and skips it as stale when the automation or the meeting check settings changed meanwhile. " + _FAKE),
+    688: ("propose_team_policy stages the policy form's request (create, edit, delete) for team admins only; list_team_policies "
+          "reads them. A member's call is refused and stages nothing. Apply skips a change when the policy changed after "
+          "staging (updated_at). Policies are a Tempoloom object (teams-policies.md open questions 1, 2). " + _FAKE),
+    316: ("The chat reads the meeting check issues of the dates shown with review_schedule (with each event id for a fix) "
+          "and the planner's recommendations; the Issues tab has them too. " + _FAKE),
+    684: ("A Recommendations button in the chat panel sends the review request for the dates shown in the planner; another "
+          "week shown gives that week's review. Each fix is staged in preview mode. " + _FAKE),
+    678: ("A conflict is fixed by moving the user's own meeting (propose_update_event); one staged fix can be discarded and "
+          "the others applied (T2). Rearranging a day uses the same moves. " + _FAKE),
+    369: ("The model lists the week and stages one propose_update_event per meeting the user organizes; the prompt tells it "
+          "so, and to offer an answer for invitations from others. All moves wait in preview mode. " + _FAKE),
+    672: ("Tempoloom decision: the review runs at the digest time, just before the one daily digest (assistant-chat rules 15-17 "
+          "propose 02:00), so the fixes see the newest calendar. The operator turns it on (DAILY_REVIEW=on; a cap of users "
+          "per run and a time limit per turn). It is one chat turn with the review request in a new conversation, outside "
+          "the chat quota, with read tools and single-event fixes only; it keeps preview mode as it is and leaves the "
+          "user's own staged changes. The digest links to /?assistant=<conversation>, which opens the chat with the staged "
+          "fixes, also after single sign-on. The \u201cagenda\u201d in the title has no rule in the specs; the digest lists "
+          "no-agenda issues when that check is on. " + _FAKE),
+    769: ("Each part of the current version has E2E on CalDAV: the chat (with the fake model), preview mode, automations "
+          "(also by chat), suggested tasks, issues and recommendations (also by chat), insights and the MCP server. " + _FAKE),
+})
+BLOCKED[683] = (SLACK + " for the chat-app digest channel (assistant-chat.md rule 17). Built, with full UI E2E on CalDAV: the "
+                "daily review by assistant chat and the morning digest by email that links to the staged fixes ("
+                + quoted_titles("c4_digest") + "), at the digest time (" + quoted_titles("s5_digest") + "), over the days of "
+                "the review (rule 15; " + quoted_titles("u73_digest") + ")")
+# --- end C4 ---
 
 # Google Calendar proof. docs/e2e-google-run.tsv records a full E2E run on Google
 # (a "# commit <sha>" line, then status, test id, title per line; docs/e2e-google-run.md

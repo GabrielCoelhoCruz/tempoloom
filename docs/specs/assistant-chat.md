@@ -87,6 +87,12 @@ All proposed changes go to preview mode (`assistant-preview-mode.md`).
 7. Create, edit or disable automations (focus time, habits, buffers,
    flexible meetings, meeting checks), with the same settings as the
    automation forms (`automations-library.md`, automation specs).
+
+   Tempoloom decision: the chat stages the request that the automation form,
+   or for team admins the team policy form (`teams-policies.md`), sends. A dry
+   run checks it first, so a field the form refuses goes back to the model,
+   and the staged change shows its calendar impact. Apply sends the request
+   again as the user.
 8. Suggest which tasks to work on today, and which existing events could
    become automations.
 9. Answer questions about the user's stats (`analytics-personal-stats.md`)
@@ -122,6 +128,29 @@ All proposed changes go to preview mode (`assistant-preview-mode.md`).
     is only one daily digest.
 18. Opening the digest opens assistant chat with the recommended fixes
     already staged for review.
+
+    Tempoloom decision: the review runs at the digest time, just before the
+    digest, so its fixes see the newest calendar; there is no separate 02:00
+    run. The operator turns it on with `DAILY_REVIEW=on` (default off: each
+    review costs model calls), with at most `DAILY_REVIEW_MAX_USERS` reviews
+    per day for the instance (counted with the chat usage; the users who
+    waited longest go first), 4 at a time, each within
+    `DAILY_REVIEW_TURN_MS`; the other emails of the run go out first. It is one chat turn with the
+    Recommendations request, in a new conversation, and does not count
+    toward `assistant_chat_quota`. It runs only when the digest has issues
+    to send and chat is on for the user. Nobody watches it, so it has only
+    the read tools and the fixes of single events (a move without a new
+    title or description, an answer, a video link),
+    it does not turn preview mode on (the digest says when preview mode is
+    off), and it leaves an event alone when the user already staged a change
+    for it. The digest links to the planner with `?assistant=<conversation>`,
+    which opens the panel on that conversation, also after a sign-in. A
+    missing video link is fixed only with one https link (one URL, no other
+    text) whose host is a known video service (zoom.us, meet.google.com,
+    teams.microsoft.com and others, the domain or a subdomain of it), or a
+    link from the user's saved memories or own booking links. A change the
+    user accepted is never replaced: a new change for the same target is
+    refused until the accepted one is applied or discarded.
 19. A "Recommendations" action in the chat panel runs the same review at
     any time.
 20. To review another week, the user moves the planner to that week and

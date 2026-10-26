@@ -7,12 +7,16 @@
 // occurrence.
 import type { ReportEntry } from "../scheduler/model.ts";
 import { addDays, type LocalDate, localToUtc, utcToLocal, weekdayOf } from "../shared/time.ts";
+import type { Chat, Review } from "./assistant/chat.ts";
+import { lastReviews, recordReview, reviewsOn, utcDay } from "./assistant/store.ts";
+import type { Config } from "./config.ts";
 import { all, type Db, one, run } from "./db.ts";
 import type { Mailer, Message } from "./mail.ts";
 import { openIssues } from "./meeting-checks.ts";
 import { getPrefs } from "./meeting-prefs.ts";
 import { adoptableSeries } from "./meeting-series.ts";
 import { attendeesOf } from "./planner/meetings.ts";
+import { previewMode } from "./preview.ts";
 import { getSettings } from "./settings.ts";
 import { claimWeeklyReport, weeklyReport, workHours } from "./weekly-report.ts";
 import { pruneWeeklyShares } from "./weekly-share.ts";
@@ -101,6 +105,108 @@ function due(db: Db, userId: string, kind: DailyKind, zone: string, hhmm: string
   return row !== undefined;
 }
 
+/** Added to a digest lease beyond the review phase: the time to build and send it. */
+export const DIGEST_LEASE_MARGIN_MS = 5 * 60_000;
+
+/**
+ * Leases a due digest to this run (assistant-chat.md rule 17: one digest a
+ * day). The email worker of the server and the operator CLI may run at the
+ * same time on one database, so the lease is one compare-and-set on
+ * daily_mail.next_at: it moves the next time to now + `leaseMs` only if it is
+ * still the due time this run read. The run that wins sends the digest and
+ * then sets the next day's time (scheduleDaily); the other run sees a time
+ * in the future and skips it. A run that stops before it sends leaves the
+ * lease, and the digest is due again when the lease ends: nothing is lost,
+ * and at most one run holds it at a time. No new column is needed.
+ */
+export function leaseDigest(
+  db: Db,
+  u: { id: string; time_zone: string },
+  hhmm: string,
+  now: number,
+  leaseMs: number,
+): boolean {
+  const row = one<{ next_at: number }>(
+    db,
+    "SELECT next_at FROM daily_mail WHERE user_id = ? AND kind = 'checks'",
+    u.id,
+  );
+  if (!row) {
+    scheduleDaily(db, u.id, "checks", u.time_zone, hhmm, now);
+    return false;
+  }
+  if (row.next_at > now) return false;
+  const { changes } = db
+    .prepare(
+      "UPDATE daily_mail SET next_at = ? WHERE user_id = ? AND kind = 'checks' AND next_at = ?",
+    )
+    .run(now + leaseMs, u.id, row.next_at);
+  return changes === 1;
+}
+
+/**
+ * The digests the daily review takes today: at most `budget`, users with the
+ * oldest last review first (never reviewed before them all), then by id, so
+ * the users over the cap differ from day to day.
+ */
+export function pickReviews<T extends { u: { id: string } }>(
+  digests: T[],
+  budget: number,
+  last: ReadonlyMap<string, string>,
+): T[] {
+  if (budget <= 0) return [];
+  return [...digests]
+    .sort(
+      (a, b) =>
+        (last.get(a.u.id) ?? "").localeCompare(last.get(b.u.id) ?? "") ||
+        a.u.id.localeCompare(b.u.id),
+    )
+    .slice(0, budget);
+}
+
+/** Daily reviews that run at the same time: bounds how long the digests of one run wait. */
+export const REVIEW_CONCURRENCY = 4;
+
+interface DigestUser {
+  id: string;
+  email: string;
+  name: string;
+  time_zone: string;
+}
+
+/** A digest that is due: its days and open issues. */
+interface Digest {
+  u: DigestUser;
+  from: string;
+  to: string;
+  lines: string[];
+  /** The user's digest time: the next one is claimed after this one goes out. */
+  digestTime: string;
+}
+
+/** What the daily review gave a digest. */
+interface Reviewed {
+  conversationId: string | null;
+  complete: boolean;
+}
+
+/** The daily review for the worker: the app's chat, when the operator turned it on and a model is connected. */
+export function dailyReview(
+  config: Pick<Config, "DAILY_REVIEW" | "DAILY_REVIEW_MAX_USERS" | "DAILY_REVIEW_TURN_MS">,
+  chat: Chat | undefined,
+): DailyMailDeps["review"] {
+  if (config.DAILY_REVIEW !== "on" || !chat?.configured) return undefined;
+  return {
+    run: chat.review,
+    eligible: (u) => {
+      const refused = chat.refusal(u);
+      return refused === null || refused.error === "quota";
+    },
+    maxUsers: config.DAILY_REVIEW_MAX_USERS,
+    turnMs: config.DAILY_REVIEW_TURN_MS,
+  };
+}
+
 export interface DailyMailDeps {
   db: Db;
   mailer: Mailer;
@@ -109,6 +215,21 @@ export interface DailyMailDeps {
   intervalMs: number;
   /** false: no weekly reports (the operator's WEEKLY_REPORTS=off). */
   weeklyReports?: boolean;
+  /**
+   * Assistant chat's review of the digest days (assistant-chat.md rules
+   * 15-18), when the operator turned it on (DAILY_REVIEW): at most `maxUsers`
+   * users reviewed per UTC day for the instance (one turn each, counted in
+   * assistant_usage), REVIEW_CONCURRENCY at a time, each within `turnMs`.
+   */
+  review?:
+    | {
+        run: Review;
+        /** Whether the review can run for a user (chat on for the team): only then it takes a slot. */
+        eligible: (u: DigestUser) => boolean;
+        maxUsers: number;
+        turnMs: number;
+      }
+    | undefined;
   log?: (msg: string, err?: unknown) => void;
 }
 
@@ -172,36 +293,119 @@ export class DailyMailWorker {
     await this.#guestUpdates();
     const { db } = this.#d;
     const now = this.#d.now();
-    for (const u of all<{ id: string; email: string; name: string; time_zone: string }>(
+    const digests: Digest[] = [];
+    for (const u of all<DigestUser>(
       db,
       `SELECT u.id, u.email, u.name, u.time_zone FROM users u
        WHERE u.deactivated_at IS NULL AND u.first_sign_in_at IS NOT NULL
          AND EXISTS (SELECT 1 FROM accounts a WHERE a.user_id = u.id AND a.status = 'ok')`,
     )) {
-      const prefs = getPrefs(db, u.id);
-      if (prefs.digest === "email" && due(db, u.id, "checks", u.time_zone, prefs.digestTime, now)) {
-        await this.#digest(u, now);
+      // One user's failure (bad stored data) is logged; the others' emails still go.
+      try {
+        reports += await this.#user(u, now, digests);
+      } catch (err) {
+        this.#log(`daily emails for ${u.email} failed`, err);
       }
-      if (
-        (prefs.atRiskDigest || prefs.newSeriesEmail) &&
-        due(db, u.id, "daily", u.time_zone, prefs.dailyTime, now)
-      ) {
-        if (prefs.atRiskDigest) await this.#atRisk(u, now);
-        if (prefs.newSeriesEmail) await this.#newSeries(u, now);
+    }
+    // The daily reviews run after the other emails of this run, bounded, then the digests go.
+    const reviewed = await this.#review(digests, now);
+    for (const [i, d] of digests.entries()) {
+      try {
+        await this.#sendDigest(d, reviewed[i]);
+      } catch (err) {
+        this.#log(`digest for ${d.u.email} failed`, err);
       }
-      if (this.#d.weeklyReports !== false && prefs.weeklyReport) {
-        const week = claimWeeklyReport(db, u.id, u.time_zone, now);
-        if (week && (await this.#mail(weeklyReport(db, u, week, this.#d.baseUrl, now)))) reports++;
-      }
+      // Sent (or failed for good): the lease becomes the next day's time.
+      scheduleDaily(db, d.u.id, "checks", d.u.time_zone, d.digestTime, now);
     }
     return reports;
   }
 
   /**
-   * Rule 6: open issues of the days that assistant-chat.md rule 15 reviews
-   * (`digestDays`); nothing when there are none.
+   * One user's emails of this run. A due digest is leased (see leaseDigest)
+   * and added to `digests`; it goes out after the daily reviews. Returns the
+   * weekly reports sent.
    */
-  async #digest(u: { id: string; email: string; time_zone: string }, now: number) {
+  async #user(u: DigestUser, now: number, digests: Digest[]): Promise<number> {
+    const { db } = this.#d;
+    let reports = 0;
+    const prefs = getPrefs(db, u.id);
+    if (prefs.digest === "email" && leaseDigest(db, u, prefs.digestTime, now, this.#leaseMs())) {
+      try {
+        const d = this.#digestOf(u, now);
+        if (d) digests.push({ ...d, digestTime: prefs.digestTime });
+        else scheduleDaily(db, u.id, "checks", u.time_zone, prefs.digestTime, now);
+      } catch (err) {
+        // Claimed for today, so the same failure does not repeat each run.
+        scheduleDaily(db, u.id, "checks", u.time_zone, prefs.digestTime, now);
+        this.#log(`digest for ${u.email} failed`, err);
+      }
+    }
+    if (
+      (prefs.atRiskDigest || prefs.newSeriesEmail) &&
+      due(db, u.id, "daily", u.time_zone, prefs.dailyTime, now)
+    ) {
+      if (prefs.atRiskDigest) await this.#atRisk(u, now);
+      if (prefs.newSeriesEmail) await this.#newSeries(u, now);
+    }
+    if (this.#d.weeklyReports !== false && prefs.weeklyReport) {
+      const week = claimWeeklyReport(db, u.id, u.time_zone, now);
+      if (week && (await this.#mail(weeklyReport(db, u, week, this.#d.baseUrl, now)))) reports++;
+    }
+    return reports;
+  }
+
+  /** How long a leased digest stays with this run: the whole review phase and a margin. */
+  #leaseMs(): number {
+    const r = this.#d.review;
+    const reviews = r ? Math.ceil(r.maxUsers / REVIEW_CONCURRENCY) * r.turnMs : 0;
+    return reviews + DIGEST_LEASE_MARGIN_MS;
+  }
+
+  /**
+   * Rules 15, 16: the daily review of the digests that today's instance cap
+   * (`maxUsers` review turns per UTC day) still allows, in rotation
+   * (pickReviews), at most REVIEW_CONCURRENCY at a time. Each turn is counted
+   * in assistant_usage before it runs. A failed or skipped review gives the
+   * plain digest.
+   */
+  async #review(digests: Digest[], now: number): Promise<(Reviewed | undefined)[]> {
+    const review = this.#d.review;
+    const out: (Reviewed | undefined)[] = digests.map(() => undefined);
+    if (!review || digests.length === 0) return out;
+    const { db } = this.#d;
+    const day = utcDay(now);
+    // Only users the review can run for take a slot of the day (chat on, model connected).
+    const eligible = digests.filter((d) => review.eligible(d.u));
+    const todo = pickReviews(eligible, review.maxUsers - reviewsOn(db, day), lastReviews(db));
+    let next = 0;
+    const worker = async () => {
+      while (next < todo.length) {
+        const d = todo[next++] as Digest;
+        recordReview(db, d.u.id, day);
+        try {
+          out[digests.indexOf(d)] = await review.run(d.u, d.from, addDays(d.to, 1), {
+            turnMs: review.turnMs,
+          });
+        } catch (err) {
+          this.#log(`assistant review for ${d.u.email} failed`, err);
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(REVIEW_CONCURRENCY, todo.length) }, worker));
+    // The operator sees the turns in the log too.
+    const skipped = eligible.length - todo.length;
+    console.log(
+      `daily review: ${todo.length} turn${todo.length === 1 ? "" : "s"}, ${reviewsOn(db, day)} of ${review.maxUsers} today${skipped ? `, ${skipped} digests without review (DAILY_REVIEW_MAX_USERS)` : ""}`,
+    );
+    return out;
+  }
+
+  /**
+   * Rule 6: open issues of the days that assistant-chat.md rule 15 reviews
+   * (`digestDays`); none when there are none.
+   */
+  #digestOf(u: DigestUser, now: number): Omit<Digest, "digestTime"> | null {
     const { db } = this.#d;
     const weekly = workHours(db, u.id);
     const { from, to } = digestDays(
@@ -211,17 +415,36 @@ export class DailyMailWorker {
       [1, 2, 3, 4, 5, 6, 7].filter((d) => (weekly?.[String(d)] ?? []).length > 0),
     );
     const issues = openIssues(db, u.id, now, localToUtc(u.time_zone, addDays(to, 1), 0));
-    if (issues.length === 0) return;
+    if (issues.length === 0) return null;
     const lines = issues.map((i) => `- ${when(u.time_zone, i.start)} ${i.title}: ${i.message}`);
+    return { u, from, to, lines };
+  }
+
+  /** The digest; with a review, rule 18: the link opens the chat with the staged fixes. */
+  async #sendDigest({ u, from, to, lines }: Digest, reviewed: Reviewed | undefined) {
+    const id = reviewed?.conversationId;
+    const planner = new URL("/", this.#d.baseUrl).toString();
+    const open = id
+      ? [
+          reviewed.complete
+            ? "Assistant chat staged fixes for these issues. Nothing changes until you apply them."
+            : "Assistant chat stopped before it finished the review: it staged fixes for some of these issues at most. Nothing changes until you apply them.",
+          // The review keeps preview mode as it is (it does not turn it on by itself).
+          ...(previewMode(this.#d.db, u.id).on
+            ? []
+            : ["Preview mode is off: turn it on in the planner to review and apply the fixes."]),
+          `Review the fixes: ${new URL(`/?assistant=${id}`, this.#d.baseUrl).toString()}`,
+        ]
+      : [`Open the planner to fix or ignore them: ${planner}`];
     await this.#send(
       u.email,
-      `Meeting issues: ${issues.length} to look at`,
+      `Meeting issues: ${lines.length} to look at`,
       [
         `Tempoloom found these problems with your meetings from ${from} to ${to} (the rest of this week and the first 2 workdays of next week):`,
         "",
         ...lines,
         "",
-        `Open the planner to fix or ignore them: ${new URL("/", this.#d.baseUrl).toString()}`,
+        ...open,
       ].join("\n"),
     );
   }
