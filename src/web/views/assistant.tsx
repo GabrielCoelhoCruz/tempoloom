@@ -41,6 +41,10 @@ const newId = () =>
     b.toString(16).padStart(2, "0"),
   ).join("");
 
+/** How often and how long the panel asks again while the first send of a message runs. */
+const POLL_MS = 2_000;
+const WAIT_MS = 120_000;
+
 /** The open conversation, kept while the panel is closed; "new" starts one. */
 const current = signal<string | null>(null);
 
@@ -62,8 +66,14 @@ export function AssistantPanel() {
   const [showMemories, setShowMemories] = useState(false);
   const input = useRef<HTMLTextAreaElement>(null);
   const seq = useRef(0);
-  // The id of the draft's message: a resend after a lost answer gives the same turn.
-  const clientId = useRef(newId());
+  // The id of the message being sent, bound to its text and conversation: a
+  // resend of the same message after a lost answer gives the same turn.
+  const message = useRef<{ id: string; text: string; conversationId: string | null }>({
+    id: newId(),
+    text: "",
+    conversationId: null,
+  });
+  const [waiting, setWaiting] = useState(false);
 
   const load = useCallback(async () => {
     const n = ++seq.current;
@@ -93,30 +103,50 @@ export function AssistantPanel() {
     if (!text || sending || !state) return;
     setSending(true);
     setError(null);
+    setWaiting(false);
     const ctx = plannerContext.value;
+    // The id answers only this message: another text or conversation gets a new one.
+    const bound = message.current;
+    if (bound.text !== text || bound.conversationId !== state.conversationId)
+      message.current = { id: newId(), text, conversationId: state.conversationId };
+    const { id } = message.current;
     const shown = (r: { conversationId?: string; items?: Item[] }) => {
       if (!r.conversationId || !r.items) return;
       current.value = r.conversationId;
       seq.current++;
       setState({ ...state, conversationId: r.conversationId, items: r.items });
     };
-    try {
-      const r = await api<{ conversationId: string; items: Item[] }>(
-        "POST",
-        "/api/assistant/messages",
-        {
-          conversationId: state.conversationId,
-          clientId: clientId.current,
-          text,
-          context: {
-            ...(ctx.from ? { from: ctx.from, to: ctx.to } : {}),
-            ...(ctx.eventId ? { eventId: ctx.eventId } : {}),
-          },
+    const post = () =>
+      api<{ conversationId: string; items: Item[] }>("POST", "/api/assistant/messages", {
+        conversationId: state.conversationId,
+        clientId: id,
+        text,
+        context: {
+          ...(ctx.from ? { from: ctx.from, to: ctx.to } : {}),
+          ...(ctx.eventId ? { eventId: ctx.eventId } : {}),
         },
-      );
-      clientId.current = newId();
-      setDraft("");
-      shown(r);
+      });
+    const started = Date.now();
+    try {
+      for (;;) {
+        try {
+          const r = await post();
+          message.current = { id: newId(), text: "", conversationId: null };
+          setDraft("");
+          shown(r);
+          break;
+        } catch (err) {
+          // The first send of this message still runs on the server (its answer was
+          // lost): wait with the same id, so no second turn starts.
+          const busy =
+            err instanceof ApiError &&
+            err.status === 409 &&
+            (err.body as { error?: string } | undefined)?.error === "in_progress";
+          if (!busy || Date.now() - started > WAIT_MS) throw err;
+          setWaiting(true);
+          await new Promise((r) => setTimeout(r, POLL_MS));
+        }
+      }
     } catch (err) {
       // Edge case 5: show the error and keep the draft.
       const body =
@@ -125,14 +155,17 @@ export function AssistantPanel() {
               | { error?: string; message?: string; conversationId?: string; items?: Item[] }
               | undefined)
           : undefined;
-      // The server answered this message: the next send is a new message. Without
-      // an answer (network, proxy) the same id makes the resend safe.
-      if (body?.error) clientId.current = newId();
+      // The server answered this message (failed, refused, id used): the next send
+      // is a new message. Without an answer (network, proxy) or while it still
+      // runs, the same id makes the resend safe.
+      if (body?.error && body.error !== "in_progress")
+        message.current = { id: newId(), text: "", conversationId: null };
       // Steps that ran before the failure may have proposed changes: show them.
       if (body) shown(body);
       setError(body?.message ?? (err instanceof Error ? err.message : String(err)));
     } finally {
       setSending(false);
+      setWaiting(false);
       // The preview panel reads the staged changes again.
       dispatchEvent(new Event("tl-staged"));
       void load();
@@ -313,7 +346,11 @@ export function AssistantPanel() {
                 </div>
               );
             })}
-            {sending && <p class="status">Thinking…</p>}
+            {sending && (
+              <p class="status" data-testid="assistant-thinking">
+                {waiting ? "Still answering your earlier send of this message…" : "Thinking…"}
+              </p>
+            )}
           </div>
           {refusal?.error === "quota" && (
             <p class="error" role="alert" data-testid="assistant-limit">

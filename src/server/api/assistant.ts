@@ -14,6 +14,8 @@ import {
 import type { Db } from "../db.ts";
 import { jsonBody, notFound } from "../http.ts";
 
+const REFUSED = { not_configured: 503, chat_disabled: 403, quota: 429 } as const;
+
 export function assistantRoutes(db: Db, chat: Chat): Hono<AppEnv> {
   const r = new Hono<AppEnv>();
 
@@ -56,11 +58,40 @@ export function assistantRoutes(db: Db, chat: Chat): Hono<AppEnv> {
     );
     // The request's signal stops the turn when the client leaves.
     const r = await chat.send(c.get("user"), body, c.req.raw.signal);
-    return c.json(r.body, r.status as 200);
+    switch (r.kind) {
+      case "ok":
+        return c.json({ conversationId: r.conversationId, items: r.items });
+      case "refused":
+        return c.json(r.refusal, REFUSED[r.refusal.error]);
+      case "in_progress":
+        return c.json(
+          { error: "in_progress", message: "This message is still being answered. Wait a moment." },
+          409,
+        );
+      case "mismatch":
+        return c.json(
+          {
+            error: "client_id_reused",
+            message: "This message id was used for another message. Send it again.",
+          },
+          422,
+        );
+      case "failed":
+        return c.json(
+          {
+            error: "llm_failed",
+            message: r.message,
+            ...(r.conversationId ? { conversationId: r.conversationId, items: r.items } : {}),
+          },
+          502,
+        );
+    }
   });
 
   /** The user approves a memory the assistant proposed (rule 22). */
   r.post("/assistant/memories/:id/save", (c) => {
+    const refused = chat.refusal(c.get("user"));
+    if (refused && refused.error !== "quota") return c.json(refused, REFUSED[refused.error]);
     if (!saveMemory(db, c.get("user").id, c.req.param("id"))) notFound("memory");
     return c.json({ ok: true });
   });

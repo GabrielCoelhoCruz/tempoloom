@@ -1,7 +1,7 @@
 // Storage of assistant chat (docs/specs/assistant-chat.md): conversations and
 // their messages (rule 11), chat memories (rules 22-25), resent messages and
 // the use per user and day (rule 27). Migration 51 has the tables.
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { all, type Db, one, run, tx } from "../db.ts";
 import type { LlmMessage, ToolCall } from "../llm.ts";
 
@@ -133,16 +133,28 @@ export type RequestRow = {
   message: string;
 };
 
+/** The hash a client message id is bound to: the conversation and the text. */
+export const fingerprintOf = (conversationId: string | null, text: string) =>
+  createHash("sha256")
+    .update(`${conversationId ?? ""}\u0000${text}`)
+    .digest("hex");
+
+export const STUCK = "The earlier attempt of this message did not finish. Send it again.";
+
 /**
  * Starts the request of a client message id, or gives the stored one when the
- * id was sent before (a resend). Requests of more than one day are pruned.
+ * same message was sent before (a resend); "mismatch" when the id was used for
+ * another message. A request still running after `staleMs` (the server stopped
+ * during the turn) counts as failed. Requests of more than one day are pruned.
  */
 export function startRequest(
   db: Db,
   userId: string,
   clientId: string,
+  fingerprint: string,
   now: number,
-): RequestRow | null {
+  staleMs: number,
+): RequestRow | "mismatch" | null {
   return tx(db, () => {
     run(
       db,
@@ -150,18 +162,31 @@ export function startRequest(
       userId,
       now - DAY,
     );
-    const known = one<RequestRow>(
+    run(
       db,
-      "SELECT state, conversation_id, message FROM assistant_requests WHERE user_id = ? AND client_id = ?",
+      `UPDATE assistant_requests SET state = 'failed', message = ?
+       WHERE user_id = ? AND state = 'running' AND created_at < ?`,
+      STUCK,
+      userId,
+      now - staleMs,
+    );
+    const known = one<RequestRow & { fingerprint: string }>(
+      db,
+      "SELECT state, conversation_id, message, fingerprint FROM assistant_requests WHERE user_id = ? AND client_id = ?",
       userId,
       clientId,
     );
-    if (known) return known;
+    if (known) {
+      if (known.fingerprint !== fingerprint) return "mismatch";
+      const { fingerprint: _, ...row } = known;
+      return row;
+    }
     run(
       db,
-      "INSERT INTO assistant_requests (user_id, client_id, state, created_at) VALUES (?, ?, 'running', ?)",
+      "INSERT INTO assistant_requests (user_id, client_id, fingerprint, state, created_at) VALUES (?, ?, ?, 'running', ?)",
       userId,
       clientId,
+      fingerprint,
       now,
     );
     return null;

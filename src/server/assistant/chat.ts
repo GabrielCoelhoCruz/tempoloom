@@ -21,6 +21,7 @@ import { membership } from "../teams.ts";
 import { type PromptInput, systemPrompt } from "./prompt.ts";
 import {
   endRequest,
+  fingerprintOf,
   forModel,
   memories,
   memoryById,
@@ -43,9 +44,11 @@ export const MAX_STEPS = 8;
 export const MAX_HISTORY_CHARS = 48_000;
 /** Characters of tool results kept in the history; older results are replaced by a short note. */
 export const MAX_TOOL_CHARS = 16_000;
+/** Characters of one text of the latest turn, when that turn alone is over the budget. */
+export const MAX_TEXT_CHARS = 4_000;
 export const OMITTED = "[Result omitted to save space. Call the tool again if you need it.]";
-/** Milliseconds a whole turn may take, by default. */
-export const TURN_MS = 120_000;
+/** Milliseconds a whole turn may take, by default: below the 60 s read timeout of common proxies. */
+export const TURN_MS = 55_000;
 
 export type ChatRefusal =
   | { error: "not_configured"; message: string }
@@ -81,7 +84,15 @@ export interface SendBody {
   clientId?: string | undefined;
 }
 
-const STATUS = { not_configured: 503, chat_disabled: 403, quota: 429 } as const;
+/** A request still running this long after the turn's deadline was cut off (the server stopped). */
+const STALE_MARGIN_MS = 30_000;
+
+export type SendResult =
+  | { kind: "ok"; conversationId: string; items: ChatItem[] }
+  | { kind: "refused"; refusal: ChatRefusal }
+  | { kind: "in_progress" }
+  | { kind: "mismatch" }
+  | { kind: "failed"; message: string; conversationId: string | null; items: ChatItem[] };
 const size = (m: LlmMessage) =>
   (m.content?.length ?? 0) +
   (m.role === "assistant" ? JSON.stringify(m.tool_calls ?? []).length : 0);
@@ -148,7 +159,6 @@ export function createChat(deps: ChatDeps) {
         ? { from: ctx.from, to: ctx.to }
         : undefined;
     return {
-      name: user.name,
       email: user.email,
       zone: zoneOf(db, user.id),
       now: now(),
@@ -174,7 +184,9 @@ export function createChat(deps: ChatDeps) {
   /**
    * The stored context, newest first within MAX_HISTORY_CHARS: tool results
    * past MAX_TOOL_CHARS become OMITTED (the call and result pair stays), and
-   * the context starts at a user message.
+   * the context starts at a user message. The latest stored turn always stays:
+   * when it alone is over the budget, its tool results become OMITTED and its
+   * texts are cut.
    */
   function history(conversationId: string | null): LlmMessage[] {
     if (!conversationId) return [];
@@ -193,7 +205,15 @@ export function createChat(deps: ChatDeps) {
       out.unshift(m);
     }
     while (out.length && out[0]?.role !== "user") out.shift();
-    return out;
+    if (out.length) return out;
+    const last = stored.map((m) => m.role).lastIndexOf("user");
+    if (last < 0) return [];
+    const cut = (t: string) => (t.length > MAX_TEXT_CHARS ? `${t.slice(0, MAX_TEXT_CHARS)}…` : t);
+    return stored.slice(last).map((m): LlmMessage => {
+      if (m.role === "tool") return { ...m, content: OMITTED };
+      if (m.role === "user" || m.role === "system") return { ...m, content: cut(m.content) };
+      return { ...m, content: m.content === null ? null : cut(m.content) };
+    });
   }
 
   async function runTool(
@@ -231,16 +251,11 @@ export function createChat(deps: ChatDeps) {
     const stop = new AbortController();
     const timer = setTimeout(
       () =>
-        stop.abort(
-          new LlmError(
-            "The assistant did not finish in time. Ask again in smaller parts.",
-            "timeout",
-          ),
-        ),
+        stop.abort(new LlmError("The turn took too long. Ask again in smaller parts.", "timeout")),
       turnMs,
     );
     const left = () =>
-      stop.abort(new LlmError("The request was stopped because the page closed it.", "stopped"));
+      stop.abort(new LlmError("The connection closed before the answer was ready.", "stopped"));
     if (signal?.aborted) left();
     signal?.addEventListener("abort", left, { once: true });
     const caller: Caller = { user, client: "", source: "assistant_chat" };
@@ -248,26 +263,29 @@ export function createChat(deps: ChatDeps) {
       { role: "system", content: systemPrompt(promptInput(user, ctx)) },
       ...history(conversationId),
     ];
-    // Finished steps only: an assistant message with all its tool results.
+    // Finished steps: an assistant message with all its tool results.
     const steps: StoredMessage[] = [{ role: "user", content: text }];
     let toolsRan = false;
     try {
       let answered = false;
       for (let step = 0; step < MAX_STEPS; step++) {
+        // The deadline and the client's leave are checked here, between steps.
+        if (stop.signal.aborted) throw stop.signal.reason;
         const reply = await llm.complete([...base, ...steps.map(forModel)], llmTools, stop.signal);
         if (!reply.tool_calls?.length) {
           steps.push(reply);
           answered = true;
           break;
         }
-        const results: StoredMessage[] = [];
-        for (const call of reply.tool_calls) {
-          if (stop.signal.aborted) throw stop.signal.reason;
-          const r = await runTool(caller, call.function.name, call.function.arguments);
-          results.push({ role: "tool", tool_call_id: call.id, content: r.content, ref: r.ref });
-        }
-        steps.push(reply, ...results);
+        // The tools of one reply all run (they are local and short), and the
+        // step is kept before the next check of the deadline: a stop comes only
+        // between steps, so every change a step proposed is saved with its link.
+        steps.push(reply);
         toolsRan = true;
+        for (const call of reply.tool_calls) {
+          const r = await runTool(caller, call.function.name, call.function.arguments);
+          steps.push({ role: "tool", tool_call_id: call.id, content: r.content, ref: r.ref });
+        }
       }
       if (!answered)
         steps.push({
@@ -290,60 +308,66 @@ export function createChat(deps: ChatDeps) {
     }
   }
 
-  /** POST /api/assistant/messages: checks, the idempotent request, the quota, the turn. */
-  async function send(
-    user: User,
-    body: SendBody,
-    signal?: AbortSignal,
-  ): Promise<{ status: number; body: object }> {
-    const answer = (cid: string | null) =>
-      cid ? { conversationId: cid, items: items(user.id, cid) } : {};
+  /** A message: the checks, the idempotent request, the quota, then the turn. The route maps it to HTTP. */
+  async function send(user: User, body: SendBody, signal?: AbortSignal): Promise<SendResult> {
+    const shown = (cid: string | null) => (cid ? items(user.id, cid) : []);
     const refused = refusal(user);
-    if (refused && refused.error !== "quota")
-      return { status: STATUS[refused.error], body: refused };
+    if (refused && refused.error !== "quota") return { kind: "refused", refusal: refused };
+    const conversationId = body.conversationId ?? null;
     const clientId = body.clientId ?? randomUUID();
-    const known = startRequest(db, user.id, clientId, now());
-    if (known?.state === "running")
+    const known = startRequest(
+      db,
+      user.id,
+      clientId,
+      fingerprintOf(conversationId, body.text),
+      now(),
+      turnMs + STALE_MARGIN_MS,
+    );
+    if (known === "mismatch") return { kind: "mismatch" };
+    if (known?.state === "running") return { kind: "in_progress" };
+    if (known?.state === "done" && known.conversation_id)
       return {
-        status: 409,
-        body: {
-          error: "in_progress",
-          message: "This message is still being answered. Wait a moment.",
-        },
+        kind: "ok",
+        conversationId: known.conversation_id,
+        items: shown(known.conversation_id),
       };
-    if (known?.state === "done") return { status: 200, body: answer(known.conversation_id) };
-    if (known?.state === "failed")
+    if (known)
       return {
-        status: 502,
-        body: { error: "llm_failed", message: known.message, ...answer(known.conversation_id) },
+        kind: "failed",
+        message: known.message,
+        conversationId: known.conversation_id,
+        items: shown(known.conversation_id),
       };
     // Counted before the model call, in one statement with the check (rule 27).
     const limit = instanceLimit(db, "assistant_chat_quota");
     if (!reserveUse(db, user.id, quotaDay().day, limit)) {
       endRequest(db, user.id, clientId, null);
-      return { status: 429, body: quotaRefusal(user, limit ?? 0) };
+      return { kind: "refused", refusal: quotaRefusal(user, limit ?? 0) };
     }
     let r: Awaited<ReturnType<typeof turn>>;
     try {
-      r = await turn(user, body.conversationId ?? null, body.text, body.context ?? {}, signal);
+      r = await turn(user, conversationId, body.text, body.context ?? {}, signal);
     } catch (err) {
       endRequest(db, user.id, clientId, null);
       throw err;
     }
-    if (!r.error) {
+    if (!r.error && r.conversationId) {
       endRequest(db, user.id, clientId, { state: "done", conversationId: r.conversationId });
-      return { status: 200, body: answer(r.conversationId) };
+      return { kind: "ok", conversationId: r.conversationId, items: shown(r.conversationId) };
     }
+    const message = r.error?.message ?? "The assistant gave no answer.";
     // The text names no URL and no key (src/server/llm.ts).
-    console.error(`Assistant chat: ${r.error.message}`);
+    console.error(`Assistant chat: ${message}`);
     endRequest(db, user.id, clientId, {
       state: "failed",
       conversationId: r.conversationId,
-      message: r.error.message,
+      message,
     });
     return {
-      status: 502,
-      body: { error: "llm_failed", message: r.error.message, ...answer(r.conversationId) },
+      kind: "failed",
+      message,
+      conversationId: r.conversationId,
+      items: shown(r.conversationId),
     };
   }
 
@@ -380,7 +404,7 @@ export function createChat(deps: ChatDeps) {
     return out;
   }
 
-  return { configured: llm !== null, refusal, quota, send, turn, items };
+  return { configured: llm !== null, refusal, quota, send, items };
 }
 
 export type Chat = ReturnType<typeof createChat>;

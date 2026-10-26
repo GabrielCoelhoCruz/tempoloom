@@ -1440,6 +1440,8 @@ export const MIGRATIONS: readonly string[] = [
   CREATE TABLE assistant_requests (
     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     client_id TEXT NOT NULL,
+    -- A hash of the conversation and the text: the id answers only the same message.
+    fingerprint TEXT NOT NULL,
     state TEXT NOT NULL CHECK (state IN ('running', 'done', 'failed')),
     conversation_id TEXT,
     message TEXT NOT NULL DEFAULT '',

@@ -172,6 +172,63 @@ test("the assistant panel in the planner reads the calendar through tools and ke
   expect(log).not.toContain(llm.url);
 });
 
+test("a send whose answer was lost waits for the first turn with the same message id; an edited draft is a new message (assistant-chat edge case 5)", async ({
+  page,
+  signIn,
+  llm,
+}) => {
+  llm.on(/slow question/i, [{ content: "Here is the slow answer.", delayMs: 4000 }]);
+  llm.on(/edited question/i, [{ content: "Edited answer." }]);
+  await signIn();
+  await page.goto(`/?week=${W}`);
+  await openAssistant(page);
+  const sent: { clientId: string; text: string; status: number }[] = [];
+  page.on("response", (r) => {
+    if (r.url().endsWith("/api/assistant/messages") && r.request().method() === "POST")
+      sent.push({ ...r.request().postDataJSON(), status: r.status() });
+  });
+  // The first answer is lost on the way back: the server gets the message and runs the turn.
+  let lose = true;
+  await page.route("**/api/assistant/messages", async (route) => {
+    if (!lose) return route.continue();
+    lose = false;
+    void route.fetch().catch(() => {});
+    await route.abort("connectionreset");
+  });
+  const box = chatPanel(page).getByLabel("Message to the assistant");
+  await box.fill("Slow question");
+  await chatPanel(page).getByRole("button", { name: "Send" }).click();
+  await expect(chatPanel(page).getByTestId("assistant-error")).toBeVisible();
+  await expect(box).toHaveValue("Slow question");
+  await expect.poll(() => llm.requests.length).toBe(1);
+
+  // Send again while the first turn runs: 409, the panel waits with the same id.
+  await chatPanel(page).getByRole("button", { name: "Send" }).click();
+  await expect(chatPanel(page).getByTestId("assistant-thinking")).toHaveText(
+    "Still answering your earlier send of this message…",
+  );
+  await expect(chatPanel(page).getByTestId("chat-assistant")).toHaveText([
+    "Here is the slow answer.",
+  ]);
+  await expect(box).toHaveValue("");
+  expect(llm.requests).toHaveLength(1);
+  expect(sent.map((x) => x.status)).toContain(409);
+  expect(sent.at(-1)?.status).toBe(200);
+  expect(new Set(sent.map((x) => x.clientId)).size).toBe(1);
+
+  // Another text is another message: a new id and a new turn.
+  expect(await say(page, "Edited question")).toBe(200);
+  await expect(chatPanel(page).getByTestId("chat-assistant").last()).toHaveText("Edited answer.");
+  expect(sent.at(-1)?.clientId).not.toBe(sent[0]?.clientId);
+  expect(llm.requests).toHaveLength(2);
+  await page.reload();
+  await openAssistant(page);
+  await expect(chatPanel(page).getByTestId("chat-user")).toHaveText([
+    "Slow question",
+    "Edited question",
+  ]);
+});
+
 test("events made, moved, resized and deleted by chat wait in preview mode; nothing is written before approval, the accepted ones after apply (assistant-chat rules 4, 12-14; preview mode rules 1, 6-8)", async ({
   page,
   cal,

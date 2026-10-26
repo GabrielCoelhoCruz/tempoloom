@@ -17,6 +17,7 @@
 // 10. A key reaches the server log on a failed turn.
 import { Hono } from "hono";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 import { ensureUser, type User } from "../../src/server/accounts.ts";
 import { assistantRoutes } from "../../src/server/api/assistant.ts";
 import type { AppEnv } from "../../src/server/app.ts";
@@ -25,13 +26,28 @@ import {
   createChat,
   MAX_HISTORY_CHARS,
   MAX_STEPS,
+  MAX_TEXT_CHARS,
   OMITTED,
 } from "../../src/server/assistant/chat.ts";
-import { memories, messagesOf, saveTurn } from "../../src/server/assistant/store.ts";
-import { chatTools } from "../../src/server/assistant/tools.ts";
+import {
+  MAX_MEMORY_CHARS,
+  MAX_PROMPT_MEMORIES,
+  promptMemories,
+} from "../../src/server/assistant/prompt.ts";
+import {
+  fingerprintOf,
+  memories,
+  messagesOf,
+  proposeMemory,
+  STUCK,
+  saveMemory,
+  saveTurn,
+} from "../../src/server/assistant/store.ts";
+import { type ChatTool, chatTools } from "../../src/server/assistant/tools.ts";
 import { all, type Db, one, openDb, run } from "../../src/server/db.ts";
 import { setInstanceLimit } from "../../src/server/limits.ts";
 import { type Llm, LlmError, type LlmMessage } from "../../src/server/llm.ts";
+import { tool } from "../../src/server/mcp/rpc.ts";
 import { createPreview, type PreviewDeps } from "../../src/server/preview.ts";
 
 const KEY = "sk-secret-key-123";
@@ -43,7 +59,10 @@ afterEach(() => vi.restoreAllMocks());
 type Reply = LlmMessage & { role: "assistant" };
 type Script = (messages: LlmMessage[], n: number, signal?: AbortSignal) => Reply | Promise<Reply>;
 
-function setup(script: Script, opts: { turnMs?: number; now?: () => number } = {}) {
+function setup(
+  script: Script,
+  opts: { turnMs?: number; now?: () => number; extra?: ChatTool[] } = {},
+) {
   const db = openDb(":memory:");
   const now = opts.now ?? (() => T0);
   const user = ensureUser(db, "owner@example.com", "Owner", T0) as User;
@@ -72,14 +91,40 @@ function setup(script: Script, opts: { turnMs?: number; now?: () => number } = {
       return script(messages, sent.length, signal);
     },
   };
-  const tools = chatTools({ db, preview, baseUrl: "http://localhost:3000", now });
+  const tools = [
+    ...chatTools({ db, preview, baseUrl: "http://localhost:3000", now }),
+    ...(opts.extra ?? []),
+  ];
   const chat = createChat({ db, llm, tools, now, turnMs: opts.turnMs ?? 10_000 });
+  // Through the route, as the panel sends: the route owns the HTTP status.
+  const app = new Hono<AppEnv>();
+  app.use("*", async (c, next) => {
+    c.set("user", user);
+    await next();
+  });
+  app.route("/api", assistantRoutes(db, chat));
+  const post = async (path: string, body?: unknown, signal?: AbortSignal) => {
+    const res = await app.request(
+      new Request(`http://x/api${path}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+        ...(signal ? { signal } : {}),
+      }),
+    );
+    return {
+      status: res.status,
+      body: (await res.json()) as {
+        conversationId?: string;
+        items?: ChatItem[];
+        error?: string;
+        message?: string;
+      },
+    };
+  };
   const send = (text: string, extra: Record<string, unknown> = {}, signal?: AbortSignal) =>
-    chat.send(user, { text, ...extra }, signal) as Promise<{
-      status: number;
-      body: { conversationId?: string; items?: ChatItem[]; error?: string; message?: string };
-    }>;
-  return { db, user, chat, sent, writes, send };
+    post("/assistant/messages", { text, ...extra }, signal);
+  return { db, user, chat, sent, writes, send, post };
 }
 
 const call = (name: string, args: unknown, id = `c-${name}`): Reply => ({
@@ -388,35 +433,18 @@ describe("assistant chat turn limits", () => {
     const started = Date.now();
     const r = await send("slow");
     expect(r.status).toBe(502);
-    expect(r.body.message).toBe(
-      "The assistant did not finish in time. Ask again in smaller parts.",
-    );
+    expect(r.body.message).toBe("The turn took too long. Ask again in smaller parts.");
     expect(Date.now() - started).toBeLessThan(1000);
     expect(n).toBe(3);
   });
 
   it("stops the turn when the client leaves, through the route's request signal", async () => {
-    const { db, user, chat, sent } = setup(hang);
-    const app = new Hono<AppEnv>();
-    app.use("*", async (c, next) => {
-      c.set("user", user);
-      await next();
-    });
-    app.route("/api", assistantRoutes(db, chat));
+    const { sent, send } = setup(hang);
     const leave = new AbortController();
     setTimeout(() => leave.abort(), 30);
-    const res = await app.request(
-      new Request("http://x/api/assistant/messages", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ text: "hello" }),
-        signal: leave.signal,
-      }),
-    );
-    expect(res.status).toBe(502);
-    expect(((await res.json()) as { message: string }).message).toBe(
-      "The request was stopped because the page closed it.",
-    );
+    const r = await send("hello", {}, leave.signal);
+    expect(r.status).toBe(502);
+    expect(r.body.message).toBe("The connection closed before the answer was ready.");
     expect(sent).toHaveLength(1);
   });
 
@@ -482,6 +510,111 @@ describe("assistant chat turn limits", () => {
   });
 });
 
+describe("assistant chat stops and resends", () => {
+  /** A read tool that takes 150 ms, so a turn's deadline passes while it runs. */
+  const slow: ChatTool = {
+    tool: tool({
+      name: "slow_read",
+      title: "Slow read",
+      description: "Reads slowly.",
+      effect: "read",
+      input: z.object({}),
+      output: z.object({ ok: z.boolean() }),
+      run: async () => {
+        await new Promise((r) => setTimeout(r, 150));
+        return { ok: true };
+      },
+    }),
+  };
+
+  it("a deadline that passes between two tool calls of the first reply keeps the change the first call staged, and the panel shows it", async () => {
+    const { db, send } = setup(
+      (_m, n, signal) =>
+        n === 1
+          ? {
+              role: "assistant",
+              content: null,
+              tool_calls: [
+                {
+                  id: "a",
+                  type: "function",
+                  function: { name: "propose_create_event", arguments: JSON.stringify(CREATE) },
+                },
+                { id: "b", type: "function", function: { name: "slow_read", arguments: "{}" } },
+              ],
+            }
+          : new Promise((_, reject) =>
+              signal?.addEventListener("abort", () => reject(signal.reason)),
+            ),
+      { turnMs: 100, extra: [slow] },
+    );
+    const r = await send("Book deep work");
+    expect(r.status).toBe(502);
+    expect(r.body.message).toBe("The turn took too long. Ask again in smaller parts.");
+    const [change] = staged(db);
+    expect(r.body.items).toContainEqual(
+      expect.objectContaining({ kind: "proposal", changeId: change?.id, state: "pending" }),
+    );
+    // A valid history: both calls have their results.
+    expect(messagesOf(db, r.body.conversationId as string).map((m) => m.role)).toEqual([
+      "user",
+      "assistant",
+      "tool",
+      "tool",
+      "assistant",
+    ]);
+  });
+
+  it("refuses a client id that comes back with another text or conversation (422), without the old answer and without a turn", async () => {
+    const { sent, send } = setup(() => text("first answer"));
+    const a = await send("Book deep work", { clientId: "message-0002" });
+    expect(a.status).toBe(200);
+    const edited = await send("Book deep work on Friday", { clientId: "message-0002" });
+    expect(edited.status).toBe(422);
+    expect(edited.body).toEqual({
+      error: "client_id_reused",
+      message: "This message id was used for another message. Send it again.",
+    });
+    const moved = await send("Book deep work", {
+      clientId: "message-0002",
+      conversationId: a.body.conversationId,
+    });
+    expect(moved.status).toBe(422);
+    expect(sent).toHaveLength(1);
+  });
+
+  it("a request left running by a stopped server counts as failed after the deadline", async () => {
+    let t = T0;
+    const { db, user, sent, send } = setup(() => text("hi"), { turnMs: 1000, now: () => t });
+    run(
+      db,
+      "INSERT INTO assistant_requests (user_id, client_id, fingerprint, state, created_at) VALUES (?, 'message-0003', ?, 'running', ?)",
+      user.id,
+      fingerprintOf(null, "hello"),
+      T0,
+    );
+    expect((await send("hello", { clientId: "message-0003" })).status).toBe(409);
+    t = T0 + 1000 + 30_001;
+    const r = await send("hello", { clientId: "message-0003" });
+    expect(r.status).toBe(502);
+    expect(r.body.message).toBe(STUCK);
+    expect(sent).toHaveLength(0);
+  });
+
+  it("refuses to save a memory when chat is off for the team", async () => {
+    const { db, user, post } = setup(() => text("ok"));
+    const m = proposeMemory(db, user.id, "Keep Fridays free", [], T0);
+    run(
+      db,
+      "UPDATE teams SET assistant_chat_enabled = 0 WHERE id = (SELECT team_id FROM team_members WHERE user_id = ?)",
+      user.id,
+    );
+    const r = await post(`/assistant/memories/${m.id}/save`);
+    expect(r.status).toBe(403);
+    expect(memories(db, user.id)).toEqual([]);
+  });
+});
+
 describe("assistant chat history", () => {
   it("sends the stored conversation as context on the next turn", async () => {
     const { sent, send } = setup((_m, n) => text(`answer ${n}`));
@@ -536,5 +669,58 @@ describe("assistant chat history", () => {
     for (const [i, m] of history.entries())
       if (m.role === "tool") expect(history[i - 1]?.role).toBe("assistant");
     expect(history.at(-1)).toEqual({ role: "assistant", content: "answer 11" });
+  });
+
+  it("keeps the latest stored turn when it alone is over the budget, with its tool results omitted", async () => {
+    const { db, user, sent, send } = setup(() => text("ok"));
+    const cid = saveTurn(
+      db,
+      user.id,
+      null,
+      [
+        { role: "user", content: "old question" },
+        { role: "assistant", content: "old answer" },
+        { role: "user", content: "big question" },
+        {
+          role: "assistant",
+          content: null,
+          tool_calls: [
+            { id: "t1", type: "function", function: { name: "list_events", arguments: "{}" } },
+          ],
+        },
+        { role: "tool", tool_call_id: "t1", content: "y".repeat(10_000) },
+        { role: "assistant", content: "z".repeat(MAX_HISTORY_CHARS + 10) },
+      ],
+      T0,
+    );
+    await send("next", { conversationId: cid });
+    const history = (sent[0]?.messages ?? []).slice(1, -1);
+    expect(history.map((m) => m.role)).toEqual(["user", "assistant", "tool", "assistant"]);
+    expect(history[0]?.content).toBe("big question");
+    expect(history[2]?.content).toBe(OMITTED);
+    expect(history[3]?.content?.length).toBeLessThanOrEqual(MAX_TEXT_CHARS + 1);
+    expect(sent[0]?.messages.at(-1)).toEqual({ role: "user", content: "next" });
+  });
+
+  it("puts only the newest memories within the caps into the prompt", async () => {
+    const { db, user, sent, send } = setup(() => text("ok"));
+    for (let i = 0; i < MAX_PROMPT_MEMORIES + 5; i++) {
+      const m = proposeMemory(db, user.id, `memory ${String(i).padStart(3, "0")}`, [], T0 + i);
+      saveMemory(db, user.id, m.id);
+    }
+    await send("hi");
+    const system = String(sent[0]?.messages[0]?.content);
+    expect(system).not.toContain('"memory 004"');
+    expect(system).toContain('"memory 005"');
+    expect(system).toContain(`"memory ${String(MAX_PROMPT_MEMORIES + 4).padStart(3, "0")}"`);
+    const long = setup(() => text("ok"));
+    for (let i = 0; i < 30; i++) {
+      const m = proposeMemory(long.db, long.user.id, `${i}:${"m".repeat(490)}`, [], T0 + i);
+      saveMemory(long.db, long.user.id, m.id);
+    }
+    await long.send("hi");
+    const kept = promptMemories(memories(long.db, long.user.id));
+    expect(kept.join("").length).toBeLessThanOrEqual(MAX_MEMORY_CHARS);
+    expect(kept.at(-1)).toMatch(/^29:/);
   });
 });

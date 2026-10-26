@@ -20,10 +20,14 @@ export interface ChatRequest {
   authorization: string | null;
 }
 
-export type Step =
+export type Step = (
   | { content: string }
   | { tools: { name: string; arguments: Record<string, unknown> }[]; content?: string }
-  | { status: number };
+  | { status: number }
+) & {
+  /** Milliseconds before the answer, as a slow model. */
+  delayMs?: number;
+};
 
 type Script = { match: RegExp; steps: (Step | ((req: ChatRequest) => Step))[] };
 
@@ -91,27 +95,31 @@ export async function startFakeLlm(port: number): Promise<FakeLlm> {
       } catch (err) {
         step = { content: `fake-llm: step failed: ${err instanceof Error ? err.message : err}` };
       }
-      if ("status" in step) return send(step.status, { error: { message: "scripted failure" } });
-      const message =
-        "tools" in step
-          ? {
-              role: "assistant",
-              content: step.content ?? null,
-              tool_calls: step.tools.map((t) => ({
-                id: `call_${++n}`,
-                type: "function",
-                function: { name: t.name, arguments: JSON.stringify(t.arguments) },
-              })),
-            }
-          : { role: "assistant", content: step.content };
-      send(200, {
-        id: `chatcmpl-${n}`,
-        object: "chat.completion",
-        model: chat.model,
-        choices: [
-          { index: 0, message, finish_reason: "tool_calls" in message ? "tool_calls" : "stop" },
-        ],
-      });
+      const answer = () => {
+        if ("status" in step) return send(step.status, { error: { message: "scripted failure" } });
+        const message =
+          "tools" in step
+            ? {
+                role: "assistant",
+                content: step.content ?? null,
+                tool_calls: step.tools.map((t) => ({
+                  id: `call_${++n}`,
+                  type: "function",
+                  function: { name: t.name, arguments: JSON.stringify(t.arguments) },
+                })),
+              }
+            : { role: "assistant", content: step.content };
+        send(200, {
+          id: `chatcmpl-${n}`,
+          object: "chat.completion",
+          model: chat.model,
+          choices: [
+            { index: 0, message, finish_reason: "tool_calls" in message ? "tool_calls" : "stop" },
+          ],
+        });
+      };
+      if (step.delayMs) setTimeout(answer, step.delayMs);
+      else answer();
     });
   });
   await new Promise<void>((resolve, reject) => {

@@ -1710,13 +1710,14 @@ T.update({
     "c1_memories": "chat memories: remember proposes one, the user saves it, the list keeps it after reload, the model gets it in its data, delete removes it (assistant-chat rules 22, 23, 25)",
     "c1_suggest": "a memory only shapes suggestions: when the model acts on it, the change waits in preview mode and the calendar does not change (assistant-chat rule 24)",
     "c1_inject": "an invitation whose title tells the assistant to remember something stores no memory without the user's approval (assistant-chat rules 22, 24)",
+    "c1_resend": "a send whose answer was lost waits for the first turn with the same message id; an edited draft is a new message (assistant-chat edge case 5)",
     "c1_quota": "the usage limit stops chat with the limit and its reset time; without a limit chat goes on (assistant-chat rule 27; plans-feature-inventory rule 2)",
     "c1_switch": "the team switch turns chat off for members with a notice and the admin list; on again, chat replies (teams-settings-templates rules 13-14, T4; assistant-chat rule 2)",
     "c1_unset": "without a configured model the panel says the assistant is not configured and sends nothing (assistant-chat rule 1)",
 })
 E2E.update({
     568: ["c1_switch"],
-    674: ["c1_panel", "c1_unset"],
+    674: ["c1_panel", "c1_resend", "c1_unset"],
     675: ["c1_events"],
     676: ["c1_rsvp"],
     682: ["c1_events", "c1_rsvp", "c1_suggest", "c1_inject", "s7_auto", "s7_manual", "u34_flow"],
@@ -1732,8 +1733,9 @@ E2E_NOTES.update({
           "dates shown and the selected event (the chat message context) in a fenced data block, reads with the MCP read "
           "tools, and keeps the conversation context per conversation within a size budget; a reload shows the conversation. "
           "A model failure shows the error and keeps the draft (edge case 5); changes that steps before the failure staged "
-          "show in the panel. A turn has one deadline and stops when the page leaves; a resent message (same client id) "
-          "gives the same answer (unit tests). " + _FAKE),
+          "show in the panel. A turn has one deadline and stops only between steps, so every proposal of a step is kept "
+          "(unit tests). A resend after a lost answer uses the same message id and waits for the first turn; the id is "
+          "bound to the text and the conversation, so another message gets a new id. " + _FAKE),
     675: ("Create, move, resize (a new end) and delete use the MCP propose tools, so they stage in preview mode with the source "
           "Assistant chat; accept, discard and reply are in the chat and in preview mode. " + _FAKE),
     676: "Accept, decline or maybe by propose_rsvp; the organizer gets the answer at apply. " + _FAKE,
@@ -1742,8 +1744,8 @@ E2E_NOTES.update({
           "Each test reads Radicale before and after apply. A staged change has Reply in chat (preview mode rule 6). " + _FAKE),
     685: ("Remember proposes a memory (save_memory); the user saves or discards it in the chat, so calendar text cannot store "
           "one. It keeps the names the model gives and the emails in the text; the bookmark opens the list, with Delete. The "
-          "model gets saved memories in a fenced data block as suggestions only; a change a memory leads to is only staged "
-          "(rule 24). Roles (manager, reports) are not resolved: the model asks for a name or email (rule 26, no reporting "
+          "model gets saved memories in a fenced data block as suggestions only. Rule 24 holds through preview mode (a change "
+          "a memory leads to is only staged) and a prompt rule; the E2E fails when the prompt rule is removed. Roles (manager, reports) are not resolved: the model asks for a name or email (rule 26, no reporting "
           "tree in the prompt). " + _FAKE),
     689: ("The operator sets assistant_chat_quota (node src/server/cli.ts limit), messages per person per UTC day, counted "
           "before the model call in one statement with the check (a failed turn counts; parallel messages and a time zone "

@@ -76,8 +76,11 @@ const schema = z
     TEMPOLOOM_LLM_MODEL: z.string().min(1).default("claude-sonnet-5-5"),
     /** Milliseconds one model call may take. */
     TEMPOLOOM_LLM_TIMEOUT_MS: z.coerce.number().int().min(1000).default(60_000),
-    /** Milliseconds one chat turn (all its model calls and tools) may take. */
-    TEMPOLOOM_LLM_TURN_MS: z.coerce.number().int().min(1000).default(120_000),
+    /**
+     * Milliseconds one chat turn (all its model calls and tools) may take. Keep
+     * it below the read timeout of a reverse proxy in front (often 60 s).
+     */
+    TEMPOLOOM_LLM_TURN_MS: z.coerce.number().int().min(1000).default(55_000),
   })
   .refine((c) => !c.TEST_CLOCK_START || c.TEMPOLOOM_TEST_MODE, {
     path: ["TEST_CLOCK_START"],
