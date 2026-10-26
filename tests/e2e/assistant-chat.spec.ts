@@ -172,20 +172,35 @@ test("the assistant panel in the planner reads the calendar through tools and ke
   expect(log).not.toContain(llm.url);
 });
 
+/** The bodies of the message POSTs the page sends, in order, also the ones whose answer is lost. */
+function messagePosts(page: Page) {
+  const posts: { clientId: string; text: string; conversationId: string | null }[] = [];
+  page.on("request", (r) => {
+    if (r.url().endsWith("/api/assistant/messages") && r.method() === "POST")
+      posts.push(r.postDataJSON());
+  });
+  return posts;
+}
+
 test("a send whose answer was lost waits for the first turn with the same message id; an edited draft is a new message (assistant-chat edge case 5)", async ({
   page,
   signIn,
   llm,
 }) => {
-  llm.on(/slow question/i, [{ content: "Here is the slow answer.", delayMs: 4000 }]);
+  // The model answers the first send only when the test lets it.
+  let release = () => {};
+  const gate = new Promise<void>((r) => {
+    release = r;
+  });
+  llm.on(/slow question/i, [{ content: "Here is the slow answer.", until: gate }]);
   llm.on(/edited question/i, [{ content: "Edited answer." }]);
   await signIn();
   await page.goto(`/?week=${W}`);
   await openAssistant(page);
-  const sent: { clientId: string; text: string; status: number }[] = [];
+  const posts = messagePosts(page);
+  const statuses: number[] = [];
   page.on("response", (r) => {
-    if (r.url().endsWith("/api/assistant/messages") && r.request().method() === "POST")
-      sent.push({ ...r.request().postDataJSON(), status: r.status() });
+    if (r.url().endsWith("/api/assistant/messages")) statuses.push(r.status());
   });
   // The first answer is lost on the way back: the server gets the message and runs the turn.
   let lose = true;
@@ -202,24 +217,26 @@ test("a send whose answer was lost waits for the first turn with the same messag
   await expect(box).toHaveValue("Slow question");
   await expect.poll(() => llm.requests.length).toBe(1);
 
-  // Send again while the first turn runs: 409, the panel waits with the same id.
+  // Send again while the first turn is held: 409, and the panel waits with the same id.
   await chatPanel(page).getByRole("button", { name: "Send" }).click();
   await expect(chatPanel(page).getByTestId("assistant-thinking")).toHaveText(
     "Still answering your earlier send of this message…",
   );
+  expect(statuses).toContain(409);
+  release();
   await expect(chatPanel(page).getByTestId("chat-assistant")).toHaveText([
     "Here is the slow answer.",
   ]);
   await expect(box).toHaveValue("");
   expect(llm.requests).toHaveLength(1);
-  expect(sent.map((x) => x.status)).toContain(409);
-  expect(sent.at(-1)?.status).toBe(200);
-  expect(new Set(sent.map((x) => x.clientId)).size).toBe(1);
+  expect(posts.length).toBeGreaterThanOrEqual(2);
+  expect(posts[1]?.clientId).toBe(posts[0]?.clientId);
+  expect(new Set(posts.map((x) => x.clientId)).size).toBe(1);
 
   // Another text is another message: a new id and a new turn.
   expect(await say(page, "Edited question")).toBe(200);
   await expect(chatPanel(page).getByTestId("chat-assistant").last()).toHaveText("Edited answer.");
-  expect(sent.at(-1)?.clientId).not.toBe(sent[0]?.clientId);
+  expect(posts.at(-1)?.clientId).not.toBe(posts[0]?.clientId);
   expect(llm.requests).toHaveLength(2);
   await page.reload();
   await openAssistant(page);
@@ -227,6 +244,47 @@ test("a send whose answer was lost waits for the first turn with the same messag
     "Slow question",
     "Edited question",
   ]);
+});
+
+test("in the first conversation, a send whose answer was lost after the turn finished is resent with the same id and conversation after the panel shows the new conversation (assistant-chat edge case 5)", async ({
+  page,
+  signIn,
+  llm,
+}) => {
+  llm.on(/first question/i, [{ content: "First answer." }]);
+  await signIn();
+  await page.goto(`/?week=${W}`);
+  await openAssistant(page);
+  await expect(chatPanel(page).getByTestId("chat-user")).toHaveCount(0);
+  const posts = messagePosts(page);
+  // The server finishes the turn (the conversation exists), then the answer is lost.
+  let lose = true;
+  await page.route("**/api/assistant/messages", async (route) => {
+    if (!lose) return route.continue();
+    lose = false;
+    const done = await route.fetch();
+    expect(done.status()).toBe(200);
+    await route.abort("connectionreset");
+  });
+  const box = chatPanel(page).getByLabel("Message to the assistant");
+  await box.fill("First question");
+  await chatPanel(page).getByRole("button", { name: "Send" }).click();
+  await expect(chatPanel(page).getByTestId("assistant-error")).toBeVisible();
+  // The panel read its data again and shows the conversation the lost send made.
+  await expect(chatPanel(page).getByTestId("chat-assistant")).toHaveText(["First answer."]);
+  await expect(box).toHaveValue("First question");
+
+  // The resend is the same message: the same id and the same (first) conversation, no new turn.
+  expect(await say(page, "First question")).toBe(200);
+  await expect(box).toHaveValue("");
+  expect(posts).toHaveLength(2);
+  expect(posts[1]).toEqual(posts[0]);
+  expect(posts[1]?.conversationId).toBeNull();
+  expect(llm.requests).toHaveLength(1);
+  await page.reload();
+  await openAssistant(page);
+  await expect(chatPanel(page).getByTestId("chat-user")).toHaveText(["First question"]);
+  await expect(chatPanel(page).getByTestId("chat-assistant")).toHaveText(["First answer."]);
 });
 
 test("events made, moved, resized and deleted by chat wait in preview mode; nothing is written before approval, the accepted ones after apply (assistant-chat rules 4, 12-14; preview mode rules 1, 6-8)", async ({

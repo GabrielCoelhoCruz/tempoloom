@@ -127,16 +127,27 @@ export function saveTurn(
 
 // ---------------------------------------------------------------- resent messages
 
-export type RequestRow = {
-  state: "running" | "done" | "failed";
+/** A request seen before. A done request always has its conversation (a CHECK in migration 51). */
+export type KnownRequest =
+  | { state: "running" }
+  | { state: "done"; conversationId: string }
+  | { state: "failed"; conversationId: string | null; message: string };
+
+interface RequestRow {
+  state: KnownRequest["state"];
   conversation_id: string | null;
   message: string;
-};
+  fingerprint: string;
+}
 
-/** The hash a client message id is bound to: the conversation and the text. */
-export const fingerprintOf = (conversationId: string | null, text: string) =>
+/** The hash a client message id is bound to: the conversation, the selected event and the text. */
+export const fingerprintOf = (
+  conversationId: string | null,
+  eventId: string | null,
+  text: string,
+) =>
   createHash("sha256")
-    .update(`${conversationId ?? ""}\u0000${text}`)
+    .update(JSON.stringify([conversationId, eventId, text]))
     .digest("hex");
 
 export const STUCK = "The earlier attempt of this message did not finish. Send it again.";
@@ -154,7 +165,7 @@ export function startRequest(
   fingerprint: string,
   now: number,
   staleMs: number,
-): RequestRow | "mismatch" | null {
+): KnownRequest | "mismatch" | null {
   return tx(db, () => {
     run(
       db,
@@ -170,7 +181,7 @@ export function startRequest(
       userId,
       now - staleMs,
     );
-    const known = one<RequestRow & { fingerprint: string }>(
+    const known = one<RequestRow>(
       db,
       "SELECT state, conversation_id, message, fingerprint FROM assistant_requests WHERE user_id = ? AND client_id = ?",
       userId,
@@ -178,8 +189,10 @@ export function startRequest(
     );
     if (known) {
       if (known.fingerprint !== fingerprint) return "mismatch";
-      const { fingerprint: _, ...row } = known;
-      return row;
+      if (known.state === "running") return { state: "running" };
+      if (known.state === "done")
+        return { state: "done", conversationId: known.conversation_id as string };
+      return { state: "failed", conversationId: known.conversation_id, message: known.message };
     }
     run(
       db,

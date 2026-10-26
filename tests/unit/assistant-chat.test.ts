@@ -24,10 +24,13 @@ import type { AppEnv } from "../../src/server/app.ts";
 import {
   type ChatItem,
   createChat,
+  MAX_CALLS_PER_REPLY,
   MAX_HISTORY_CHARS,
   MAX_STEPS,
   MAX_TEXT_CHARS,
   OMITTED,
+  OMITTED_ARGUMENTS,
+  TOO_MANY_CALLS,
 } from "../../src/server/assistant/chat.ts";
 import {
   MAX_MEMORY_CHARS,
@@ -583,6 +586,51 @@ describe("assistant chat stops and resends", () => {
     expect(sent).toHaveLength(1);
   });
 
+  it("binds the client id to the selected event too: another event with the same text gets 422", async () => {
+    const { sent, send } = setup(() => text("ok"));
+    const a = await send("Delete this event", {
+      clientId: "message-0004",
+      context: { eventId: "ext:c1:e1" },
+    });
+    expect(a.status).toBe(200);
+    const other = await send("Delete this event", {
+      clientId: "message-0004",
+      context: { eventId: "ext:c1:e2" },
+    });
+    expect(other.status).toBe(422);
+    const same = await send("Delete this event", {
+      clientId: "message-0004",
+      context: { eventId: "ext:c1:e1" },
+    });
+    expect(same).toEqual(a);
+    expect(sent).toHaveLength(1);
+  });
+
+  it("runs at most MAX_CALLS_PER_REPLY tool calls of one reply; the others get an error result", async () => {
+    const { db, sent, send } = setup((_m, n) =>
+      n === 1
+        ? {
+            role: "assistant",
+            content: null,
+            tool_calls: Array.from({ length: MAX_CALLS_PER_REPLY + 5 }, (_, i) => ({
+              id: `c${i}`,
+              type: "function" as const,
+              function: {
+                name: "propose_create_event",
+                arguments: JSON.stringify({ ...CREATE, title: `Block ${i}` }),
+              },
+            })),
+          }
+        : text("Staged."),
+    );
+    const r = await send("Book many blocks");
+    expect(r.status).toBe(200);
+    expect(staged(db)).toHaveLength(MAX_CALLS_PER_REPLY);
+    const results = sent[1]?.messages.filter((m) => m.role === "tool").map((m) => m.content) ?? [];
+    expect(results).toHaveLength(MAX_CALLS_PER_REPLY + 5);
+    expect(results.slice(MAX_CALLS_PER_REPLY)).toEqual(Array(5).fill(TOO_MANY_CALLS));
+  });
+
   it("a request left running by a stopped server counts as failed after the deadline", async () => {
     let t = T0;
     const { db, user, sent, send } = setup(() => text("hi"), { turnMs: 1000, now: () => t });
@@ -590,7 +638,7 @@ describe("assistant chat stops and resends", () => {
       db,
       "INSERT INTO assistant_requests (user_id, client_id, fingerprint, state, created_at) VALUES (?, 'message-0003', ?, 'running', ?)",
       user.id,
-      fingerprintOf(null, "hello"),
+      fingerprintOf(null, null, "hello"),
       T0,
     );
     expect((await send("hello", { clientId: "message-0003" })).status).toBe(409);
@@ -685,7 +733,14 @@ describe("assistant chat history", () => {
           role: "assistant",
           content: null,
           tool_calls: [
-            { id: "t1", type: "function", function: { name: "list_events", arguments: "{}" } },
+            {
+              id: "t1",
+              type: "function",
+              function: {
+                name: "list_events",
+                arguments: JSON.stringify({ note: "a".repeat(MAX_HISTORY_CHARS) }),
+              },
+            },
           ],
         },
         { role: "tool", tool_call_id: "t1", content: "y".repeat(10_000) },
@@ -698,6 +753,9 @@ describe("assistant chat history", () => {
     expect(history.map((m) => m.role)).toEqual(["user", "assistant", "tool", "assistant"]);
     expect(history[0]?.content).toBe("big question");
     expect(history[2]?.content).toBe(OMITTED);
+    expect(history[1]?.role === "assistant" && history[1].tool_calls?.[0]?.function.arguments).toBe(
+      OMITTED_ARGUMENTS,
+    );
     expect(history[3]?.content?.length).toBeLessThanOrEqual(MAX_TEXT_CHARS + 1);
     expect(sent[0]?.messages.at(-1)).toEqual({ role: "user", content: "next" });
   });

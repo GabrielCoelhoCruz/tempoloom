@@ -1711,13 +1711,14 @@ T.update({
     "c1_suggest": "a memory only shapes suggestions: when the model acts on it, the change waits in preview mode and the calendar does not change (assistant-chat rule 24)",
     "c1_inject": "an invitation whose title tells the assistant to remember something stores no memory without the user's approval (assistant-chat rules 22, 24)",
     "c1_resend": "a send whose answer was lost waits for the first turn with the same message id; an edited draft is a new message (assistant-chat edge case 5)",
+    "c1_resend_first": "in the first conversation, a send whose answer was lost after the turn finished is resent with the same id and conversation after the panel shows the new conversation (assistant-chat edge case 5)",
     "c1_quota": "the usage limit stops chat with the limit and its reset time; without a limit chat goes on (assistant-chat rule 27; plans-feature-inventory rule 2)",
     "c1_switch": "the team switch turns chat off for members with a notice and the admin list; on again, chat replies (teams-settings-templates rules 13-14, T4; assistant-chat rule 2)",
     "c1_unset": "without a configured model the panel says the assistant is not configured and sends nothing (assistant-chat rule 1)",
 })
 E2E.update({
     568: ["c1_switch"],
-    674: ["c1_panel", "c1_resend", "c1_unset"],
+    674: ["c1_panel", "c1_resend", "c1_resend_first", "c1_unset"],
     675: ["c1_events"],
     676: ["c1_rsvp"],
     682: ["c1_events", "c1_rsvp", "c1_suggest", "c1_inject", "s7_auto", "s7_manual", "u34_flow"],

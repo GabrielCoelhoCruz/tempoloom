@@ -44,8 +44,12 @@ export const MAX_STEPS = 8;
 export const MAX_HISTORY_CHARS = 48_000;
 /** Characters of tool results kept in the history; older results are replaced by a short note. */
 export const MAX_TOOL_CHARS = 16_000;
+/** Tool calls of one reply that run, at most; the others get TOO_MANY_CALLS. */
+export const MAX_CALLS_PER_REPLY = 20;
+export const TOO_MANY_CALLS = `Error: not run. At most ${MAX_CALLS_PER_REPLY} tool calls of one reply run; ask again for the rest.`;
 /** Characters of one text of the latest turn, when that turn alone is over the budget. */
 export const MAX_TEXT_CHARS = 4_000;
+export const OMITTED_ARGUMENTS = JSON.stringify({ omitted: "arguments too long to keep" });
 export const OMITTED = "[Result omitted to save space. Call the tool again if you need it.]";
 /** Milliseconds a whole turn may take, by default: below the 60 s read timeout of common proxies. */
 export const TURN_MS = 55_000;
@@ -87,6 +91,10 @@ export interface SendBody {
 /** A request still running this long after the turn's deadline was cut off (the server stopped). */
 const STALE_MARGIN_MS = 30_000;
 
+type TurnResult =
+  | { ok: true; conversationId: string }
+  | { ok: false; conversationId: string | null; error: LlmError };
+
 export type SendResult =
   | { kind: "ok"; conversationId: string; items: ChatItem[] }
   | { kind: "refused"; refusal: ChatRefusal }
@@ -100,6 +108,8 @@ const size = (m: LlmMessage) =>
 export function createChat(deps: ChatDeps) {
   const { db, llm, tools, now } = deps;
   const turnMs = deps.turnMs ?? TURN_MS;
+  /** How long a client should wait for a running message before the server calls it stuck. */
+  const waitMs = turnMs + STALE_MARGIN_MS;
   const byName = new Map(tools.map((t) => [t.tool.name, t]));
   const llmTools = tools.map((t) => llmTool(t.tool));
 
@@ -212,7 +222,19 @@ export function createChat(deps: ChatDeps) {
     return stored.slice(last).map((m): LlmMessage => {
       if (m.role === "tool") return { ...m, content: OMITTED };
       if (m.role === "user" || m.role === "system") return { ...m, content: cut(m.content) };
-      return { ...m, content: m.content === null ? null : cut(m.content) };
+      return {
+        ...m,
+        content: m.content === null ? null : cut(m.content),
+        ...(m.tool_calls
+          ? {
+              tool_calls: m.tool_calls.map((c) =>
+                c.function.arguments.length > MAX_TEXT_CHARS
+                  ? { ...c, function: { ...c.function, arguments: OMITTED_ARGUMENTS } }
+                  : c,
+              ),
+            }
+          : {}),
+      };
     });
   }
 
@@ -245,7 +267,7 @@ export function createChat(deps: ChatDeps) {
     text: string,
     ctx: ChatContext,
     signal?: AbortSignal,
-  ): Promise<{ conversationId: string | null; error: LlmError | null }> {
+  ): Promise<TurnResult> {
     if (!llm) throw new Error("not configured");
     if (conversationId && !ownsConversation(db, user.id, conversationId)) conversationId = null;
     const stop = new AbortController();
@@ -282,8 +304,12 @@ export function createChat(deps: ChatDeps) {
         // between steps, so every change a step proposed is saved with its link.
         steps.push(reply);
         toolsRan = true;
-        for (const call of reply.tool_calls) {
-          const r = await runTool(caller, call.function.name, call.function.arguments);
+        for (const [i, call] of reply.tool_calls.entries()) {
+          // Calls past the cap get an error result, so the history stays valid.
+          const r =
+            i < MAX_CALLS_PER_REPLY
+              ? await runTool(caller, call.function.name, call.function.arguments)
+              : { content: TOO_MANY_CALLS, ref: undefined };
           steps.push({ role: "tool", tool_call_id: call.id, content: r.content, ref: r.ref });
         }
       }
@@ -292,16 +318,20 @@ export function createChat(deps: ChatDeps) {
           role: "assistant",
           content: "I stopped: this request needed too many steps. Please ask in smaller parts.",
         });
-      return { conversationId: saveTurn(db, user.id, conversationId, steps, now()), error: null };
+      return { ok: true, conversationId: saveTurn(db, user.id, conversationId, steps, now()) };
     } catch (err) {
       if (!(err instanceof LlmError)) throw err;
-      if (!toolsRan) return { conversationId: null, error: err };
+      if (!toolsRan) return { ok: false, conversationId: null, error: err };
       // Steps that ran may have proposed changes: save them, so the panel shows them.
       steps.push({
         role: "assistant",
         content: `I stopped: ${err.message} What I proposed above waits for your approval.`,
       });
-      return { conversationId: saveTurn(db, user.id, conversationId, steps, now()), error: err };
+      return {
+        ok: false,
+        conversationId: saveTurn(db, user.id, conversationId, steps, now()),
+        error: err,
+      };
     } finally {
       clearTimeout(timer);
       signal?.removeEventListener("abort", left);
@@ -319,24 +349,24 @@ export function createChat(deps: ChatDeps) {
       db,
       user.id,
       clientId,
-      fingerprintOf(conversationId, body.text),
+      fingerprintOf(conversationId, body.context?.eventId ?? null, body.text),
       now(),
-      turnMs + STALE_MARGIN_MS,
+      waitMs,
     );
     if (known === "mismatch") return { kind: "mismatch" };
     if (known?.state === "running") return { kind: "in_progress" };
-    if (known?.state === "done" && known.conversation_id)
+    if (known?.state === "done")
       return {
         kind: "ok",
-        conversationId: known.conversation_id,
-        items: shown(known.conversation_id),
+        conversationId: known.conversationId,
+        items: shown(known.conversationId),
       };
     if (known)
       return {
         kind: "failed",
         message: known.message,
-        conversationId: known.conversation_id,
-        items: shown(known.conversation_id),
+        conversationId: known.conversationId,
+        items: shown(known.conversationId),
       };
     // Counted before the model call, in one statement with the check (rule 27).
     const limit = instanceLimit(db, "assistant_chat_quota");
@@ -344,18 +374,18 @@ export function createChat(deps: ChatDeps) {
       endRequest(db, user.id, clientId, null);
       return { kind: "refused", refusal: quotaRefusal(user, limit ?? 0) };
     }
-    let r: Awaited<ReturnType<typeof turn>>;
+    let r: TurnResult;
     try {
       r = await turn(user, conversationId, body.text, body.context ?? {}, signal);
     } catch (err) {
       endRequest(db, user.id, clientId, null);
       throw err;
     }
-    if (!r.error && r.conversationId) {
+    if (r.ok) {
       endRequest(db, user.id, clientId, { state: "done", conversationId: r.conversationId });
       return { kind: "ok", conversationId: r.conversationId, items: shown(r.conversationId) };
     }
-    const message = r.error?.message ?? "The assistant gave no answer.";
+    const { message } = r.error;
     // The text names no URL and no key (src/server/llm.ts).
     console.error(`Assistant chat: ${message}`);
     endRequest(db, user.id, clientId, {
@@ -404,7 +434,7 @@ export function createChat(deps: ChatDeps) {
     return out;
   }
 
-  return { configured: llm !== null, refusal, quota, send, items };
+  return { configured: llm !== null, refusal, quota, send, items, waitMs };
 }
 
 export type Chat = ReturnType<typeof createChat>;

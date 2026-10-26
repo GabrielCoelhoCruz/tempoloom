@@ -33,6 +33,49 @@ interface State {
   conversationId: string | null;
   items: Item[];
   memories: Memory[];
+  /** How long to wait for a running message: the server's turn deadline and its margin. */
+  waitMs: number;
+}
+
+interface Answer {
+  conversationId: string;
+  items: Item[];
+}
+
+interface MessageBody {
+  conversationId: string | null;
+  clientId: string;
+  text: string;
+  context: { from?: string; to?: string; eventId?: string };
+}
+
+/**
+ * Posts a message. While the first send of the same message still runs on the
+ * server (409 in_progress: its answer was lost), asks again with the same id
+ * every POLL_MS, at most `waitMs`, so no second turn starts. `signal` stops
+ * the wait (the panel closed).
+ */
+async function postMessage(
+  body: MessageBody,
+  waitMs: number,
+  signal: AbortSignal,
+  onWaiting: () => void,
+): Promise<Answer> {
+  const started = Date.now();
+  for (;;) {
+    try {
+      return await api<Answer>("POST", "/api/assistant/messages", body);
+    } catch (err) {
+      const busy =
+        err instanceof ApiError &&
+        err.status === 409 &&
+        (err.body as { error?: string } | undefined)?.error === "in_progress";
+      if (!busy || signal.aborted || Date.now() - started > waitMs) throw err;
+      onWaiting();
+      await new Promise((r) => setTimeout(r, POLL_MS));
+      if (signal.aborted) throw err;
+    }
+  }
 }
 
 /** A random message id; getRandomValues also works on plain HTTP, randomUUID does not. */
@@ -41,12 +84,17 @@ const newId = () =>
     b.toString(16).padStart(2, "0"),
   ).join("");
 
-/** How often and how long the panel asks again while the first send of a message runs. */
+/** How often the panel asks again while the first send of a message runs. */
 const POLL_MS = 2_000;
-const WAIT_MS = 120_000;
 
 /** The open conversation, kept while the panel is closed; "new" starts one. */
 const current = signal<string | null>(null);
+/** Counts the user's picks of a conversation (New chat, the list): a pick makes the next message new. */
+const picks = signal(0);
+const pick = (conversation: string) => {
+  current.value = conversation;
+  picks.value++;
+};
 
 const STATE_WORDS: Record<string, string> = {
   pending: "Waiting for your approval",
@@ -66,14 +114,16 @@ export function AssistantPanel() {
   const [showMemories, setShowMemories] = useState(false);
   const input = useRef<HTMLTextAreaElement>(null);
   const seq = useRef(0);
-  // The id of the message being sent, bound to its text and conversation: a
-  // resend of the same message after a lost answer gives the same turn.
-  const message = useRef<{ id: string; text: string; conversationId: string | null }>({
-    id: newId(),
-    text: "",
-    conversationId: null,
-  });
+  // The message being sent: its id, its text, its selected event, and the
+  // conversation it went to. A resend after a lost answer sends the same body,
+  // also when a reload of the panel showed the conversation the first send made.
+  // Only another text, another event or the user's pick of a conversation makes
+  // a new message.
+  const message = useRef<(MessageBody & { pick: number }) | null>(null);
   const [waiting, setWaiting] = useState(false);
+  // Stops a wait for a running message when the panel closes.
+  const alive = useRef(new AbortController());
+  useEffect(() => () => alive.current.abort(), []);
 
   const load = useCallback(async () => {
     const n = ++seq.current;
@@ -105,51 +155,43 @@ export function AssistantPanel() {
     setError(null);
     setWaiting(false);
     const ctx = plannerContext.value;
-    // The id answers only this message: another text or conversation gets a new one.
+    const context = {
+      ...(ctx.from ? { from: ctx.from, to: ctx.to } : {}),
+      ...(ctx.eventId ? { eventId: ctx.eventId } : {}),
+    };
     const bound = message.current;
-    if (bound.text !== text || bound.conversationId !== state.conversationId)
-      message.current = { id: newId(), text, conversationId: state.conversationId };
-    const { id } = message.current;
+    const body =
+      bound &&
+      bound.text === text &&
+      bound.context.eventId === context.eventId &&
+      bound.pick === picks.value
+        ? bound
+        : {
+            conversationId: state.conversationId,
+            clientId: newId(),
+            text,
+            context,
+            pick: picks.value,
+          };
+    message.current = body;
+    const { pick: _, ...sent } = body;
     const shown = (r: { conversationId?: string; items?: Item[] }) => {
       if (!r.conversationId || !r.items) return;
       current.value = r.conversationId;
       seq.current++;
       setState({ ...state, conversationId: r.conversationId, items: r.items });
     };
-    const post = () =>
-      api<{ conversationId: string; items: Item[] }>("POST", "/api/assistant/messages", {
-        conversationId: state.conversationId,
-        clientId: id,
-        text,
-        context: {
-          ...(ctx.from ? { from: ctx.from, to: ctx.to } : {}),
-          ...(ctx.eventId ? { eventId: ctx.eventId } : {}),
-        },
-      });
-    const started = Date.now();
+    const signal = alive.current.signal;
     try {
-      for (;;) {
-        try {
-          const r = await post();
-          message.current = { id: newId(), text: "", conversationId: null };
-          setDraft("");
-          shown(r);
-          break;
-        } catch (err) {
-          // The first send of this message still runs on the server (its answer was
-          // lost): wait with the same id, so no second turn starts.
-          const busy =
-            err instanceof ApiError &&
-            err.status === 409 &&
-            (err.body as { error?: string } | undefined)?.error === "in_progress";
-          if (!busy || Date.now() - started > WAIT_MS) throw err;
-          setWaiting(true);
-          await new Promise((r) => setTimeout(r, POLL_MS));
-        }
-      }
+      const r = await postMessage(sent, state.waitMs, signal, () => setWaiting(true));
+      if (signal.aborted) return;
+      message.current = null;
+      setDraft("");
+      shown(r);
     } catch (err) {
+      if (signal.aborted) return;
       // Edge case 5: show the error and keep the draft.
-      const body =
+      const answer =
         err instanceof ApiError
           ? (err.body as
               | { error?: string; message?: string; conversationId?: string; items?: Item[] }
@@ -157,18 +199,19 @@ export function AssistantPanel() {
           : undefined;
       // The server answered this message (failed, refused, id used): the next send
       // is a new message. Without an answer (network, proxy) or while it still
-      // runs, the same id makes the resend safe.
-      if (body?.error && body.error !== "in_progress")
-        message.current = { id: newId(), text: "", conversationId: null };
+      // runs, the same message makes the resend safe.
+      if (answer?.error && answer.error !== "in_progress") message.current = null;
       // Steps that ran before the failure may have proposed changes: show them.
-      if (body) shown(body);
-      setError(body?.message ?? (err instanceof Error ? err.message : String(err)));
+      if (answer) shown(answer);
+      setError(answer?.message ?? (err instanceof Error ? err.message : String(err)));
     } finally {
-      setSending(false);
-      setWaiting(false);
-      // The preview panel reads the staged changes again.
-      dispatchEvent(new Event("tl-staged"));
-      void load();
+      if (!signal.aborted) {
+        setSending(false);
+        setWaiting(false);
+        // The preview panel reads the staged changes again.
+        dispatchEvent(new Event("tl-staged"));
+        void load();
+      }
     }
   };
 
@@ -206,7 +249,7 @@ export function AssistantPanel() {
           <button
             type="button"
             onClick={() => {
-              current.value = "new";
+              pick("new");
               setShowMemories(false);
               void load();
             }}
@@ -263,7 +306,7 @@ export function AssistantPanel() {
               <select
                 value={state.conversationId ?? ""}
                 onChange={(e) => {
-                  current.value = e.currentTarget.value || "new";
+                  pick(e.currentTarget.value || "new");
                   void load();
                 }}
               >

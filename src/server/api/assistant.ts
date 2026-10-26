@@ -37,6 +37,8 @@ export function assistantRoutes(db: Db, chat: Chat): Hono<AppEnv> {
       items: current ? chat.items(user.id, current) : [],
       memories: memories(db, user.id),
       quota: chat.quota(user),
+      // The panel waits this long for a running message (a resend after a lost answer).
+      waitMs: chat.waitMs,
     });
   });
 

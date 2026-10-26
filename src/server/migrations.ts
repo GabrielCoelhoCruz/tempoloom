@@ -1446,7 +1446,8 @@ export const MIGRATIONS: readonly string[] = [
     conversation_id TEXT,
     message TEXT NOT NULL DEFAULT '',
     created_at INTEGER NOT NULL,
-    PRIMARY KEY (user_id, client_id)
+    PRIMARY KEY (user_id, client_id),
+    CHECK (state <> 'done' OR conversation_id IS NOT NULL)
   ) STRICT;
 
   CREATE TABLE assistant_usage (

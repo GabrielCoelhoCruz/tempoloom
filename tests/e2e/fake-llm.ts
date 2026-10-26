@@ -27,6 +27,8 @@ export type Step = (
 ) & {
   /** Milliseconds before the answer, as a slow model. */
   delayMs?: number;
+  /** The answer waits until this promise settles: the test decides when the model answers. */
+  until?: Promise<unknown>;
 };
 
 type Script = { match: RegExp; steps: (Step | ((req: ChatRequest) => Step))[] };
@@ -118,7 +120,8 @@ export async function startFakeLlm(port: number): Promise<FakeLlm> {
           ],
         });
       };
-      if (step.delayMs) setTimeout(answer, step.delayMs);
+      if (step.until) void step.until.finally(answer);
+      else if (step.delayMs) setTimeout(answer, step.delayMs);
       else answer();
     });
   });
