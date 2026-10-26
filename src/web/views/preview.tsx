@@ -12,6 +12,7 @@ interface Change {
   source: string;
   sourceLabel: string;
   summary: string;
+  description: string | null;
   reason: string;
   state: "pending" | "accepted";
   impact: string;
@@ -143,6 +144,15 @@ export function PreviewPanel({ onApplied }: { onApplied: () => void }) {
                   <span class="badge">{c.state === "accepted" ? "Accepted" : "Pending"}</span>{" "}
                   <strong>{c.summary}</strong>
                 </div>
+                {c.description !== null && (
+                  <pre
+                    class="new-description"
+                    title="New description"
+                    data-testid="staged-description"
+                  >
+                    {c.description}
+                  </pre>
+                )}
                 <div class="meta">
                   {c.sourceLabel} · {c.impact}
                   {c.reason ? ` · “${c.reason}”` : ""}

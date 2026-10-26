@@ -145,7 +145,7 @@ test("task prompts reach the model with the planner dates and the open tasks; pr
     {
       tools: [
         {
-          name: "find_free_time",
+          name: "find_meeting_time",
           arguments: {
             duration_minutes: 15,
             start: iso(at(W, "12:00")),
@@ -155,7 +155,7 @@ test("task prompts reach the model with the planner dates and the open tasks; pr
       ],
     },
     (req) => {
-      breakSlot = toolJson<Slots>(req, "find_free_time").slots[0];
+      breakSlot = toolJson<Slots>(req, "find_meeting_time").slots[0];
       if (!breakSlot) throw new Error("no free slot");
       return {
         tools: [
@@ -218,7 +218,7 @@ test("task prompts reach the model with the planner dates and the open tasks; pr
   }
   const rerank = turnOf(llm, prompt("Task re-ranking"));
   expect(toolNames(rerank)).toEqual(
-    expect.arrayContaining(["list_tasks", "find_free_time", "propose_task_priority"]),
+    expect.arrayContaining(["list_tasks", "find_meeting_time", "propose_task_priority"]),
   );
   const listed = llm.requests.find((r) => r.messages.some((m) => m.role === "tool"));
   expect(
@@ -313,7 +313,7 @@ test("meeting prompts reach the model as the user edited them, with the dates in
   const findSlot = (attendees: string[], from = addDays(W, 2)) => ({
     tools: [
       {
-        name: "find_free_time",
+        name: "find_meeting_time",
         arguments: {
           duration_minutes: 30,
           attendees,
@@ -325,7 +325,7 @@ test("meeting prompts reach the model as the user edited them, with the dates in
   });
   const slots: Record<string, { start: string; end: string }> = {};
   const meetAt = (title: string, attendees: string[]) => (req: ChatRequest) => {
-    const r = toolJson<Slots>(req, "find_free_time");
+    const r = toolJson<Slots>(req, "find_meeting_time");
     const s = r.slots[0];
     if (!s) throw new Error("no free slot");
     slots[title] = s;

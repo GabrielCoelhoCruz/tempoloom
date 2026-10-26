@@ -8,6 +8,7 @@ import { jsonBody, notFound } from "../http.ts";
 import {
   decide,
   impactWords,
+  newDescription,
   openChanges,
   type Preview,
   previewMode,
@@ -45,6 +46,7 @@ export function previewRoutes(
             ? `${SOURCES[ch.source]} (${ch.client})`
             : SOURCES[ch.source],
         summary: ch.summary,
+        description: newDescription(ch),
         reason: ch.reason,
         state: ch.state,
         impact: impactWords(ch.impact),

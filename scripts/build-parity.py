@@ -1073,8 +1073,9 @@ E2E_NOTES.update({
 G2 = "Needs an LLM provider and key from the owner (gate G2)"
 # Rows 568, 674, 675, 676, 682, 685, 689: see the C1 block (assistant chat foundation).
 # Rows 130, 569, 718, 723-749 (library prompts): see the C2 block.
-for n in [6, 47, 316, 369, 582, 609, 612, 627, 661, 662, 677, 678, 679, 680, 681,
-          684, 686, 687, 688]:
+# Rows 661, 662, 677, 686, 687: see the C5 block (people and meetings by chat).
+for n in [6, 47, 316, 369, 582, 609, 612, 627, 678, 679, 680, 681,
+          684, 688]:
     BLOCKED[n] = G2
 # Row 672: see the U73 block (it names the built digest by E2E titles).
 # Row 683: see the U73 block (it names the built digest by E2E titles).
@@ -1743,8 +1744,8 @@ E2E_NOTES.update({
     685: ("Remember proposes a memory (save_memory); the user saves or discards it in the chat, so calendar text cannot store "
           "one. It keeps the names the model gives and the emails in the text; the bookmark opens the list, with Delete. The "
           "model gets saved memories in a fenced data block as suggestions only. Rule 24 holds through preview mode (a change "
-          "a memory leads to is only staged) and a prompt rule; the E2E fails when the prompt rule is removed. Roles (manager, reports) are not resolved: the model asks for a name or email (rule 26, no reporting "
-          "tree in the prompt). " + _FAKE),
+          "a memory leads to is only staged) and a prompt rule; the E2E fails when the prompt rule is removed. Roles (manager, reports) resolve through the directory's reporting tree when "
+          "directory provisioning gives it, else the model asks for a name or email (rule 26; row 686). " + _FAKE),
     689: ("The operator sets assistant_chat_quota (node src/server/cli.ts limit), messages per person per UTC day, counted "
           "before the model call in one statement with the check (a failed turn counts; parallel messages and a time zone "
           "change cannot pass it, unit tests). The panel names the limit and when it resets, and the server sends nothing "
@@ -1792,7 +1793,7 @@ E2E_NOTES.update({
     724: "The model reads the open tasks, due first (list_tasks), and answers. " + _PROMPT,
     730: "The user adds the customer to the prompt; the model stages the three meetings with the customer as guest. " + _PROMPT,
     732: "The model reads the user's stats (get_stats) of the last 4 weeks. " + _PROMPT,
-    733: ("The user replaces the placeholder with the colleagues; the model finds free time with them (find_free_time) and "
+    733: ("The user replaces the placeholder with the colleagues; the model finds free time with them (find_meeting_time) and "
          "stages the meeting with them as guests. " + _PROMPT),
     734: "The model reads the user's stats (get_stats), with the meeting time outside work hours. " + _PROMPT,
     735: ("The model reads team stats (get_team_stats, a chat tool): the same means as the team stats page, no values below "
@@ -1803,13 +1804,56 @@ E2E_NOTES.update({
           "on a planned task). " + _PROMPT),
     739: ("Tempoloom decision: the entry is a Recommendations request for the dates in view; the model gets the dates the "
           "planner shows (the user moves to another week first) and stages a fix for a conflict there. " + _PROMPT),
-    740: "The model finds free time (find_free_time) and stages a short break. " + _PROMPT,
+    740: "The model finds free time (find_meeting_time) and stages a short break. " + _PROMPT,
     742: ("The model reads the open tasks and stages one new priority per task (propose_task_priority, a chat tool that "
           "replays the task edit at apply). All changes of one re-ranking apply together; apply skips a change only when "
           "that task's priority or state changed after it was staged (unit tests). " + _PROMPT),
     749: "The model reads the meetings of the next 7 days (list_events) and suggests prep tasks due before each. " + _PROMPT,
 })
 # --- end C2 ---
+
+# --- C5: people and meetings by chat (tests/e2e/assistant-C5.spec.ts) ---
+T.update({
+    "c5_find": "find time with a colleague uses their busy events and meeting hours, reads nobody outside the team, and invites only after approval (assistant-chat rule 5; edge case 6; T3)",
+    "c5_none": "when no slot fits, the model gets the closest options and a wider range and stages nothing (assistant-chat edge case 2)",
+    "c5_roles": "two colleagues with the same name make the assistant ask instead of staging; a role in a memory resolves through the directory's reporting tree, and without one the assistant asks (assistant-chat rules 25, 26; edge case 1)",
+    "c5_agenda": "an agenda and prep plan from the meeting context go into the event's description only after approval (assistant-chat; agendas and prep plans)",
+    "c5_agenda_allday": "an agenda on an all-day event keeps it all-day; a move and an agenda for one event are one change, and both apply (assistant-chat; agendas and prep plans)",
+    "c5_memory_limit": "the chat memory limit refuses a new memory by chat and a Save past the limit, with the limit in the message; without a limit both work (plans-feature-inventory rules 2, 4; assistant-chat rule 22)",
+})
+E2E.update({
+    661: ["c1_quota"],
+    662: ["c5_memory_limit"],
+    677: ["c5_find", "c5_none", "c5_roles"],
+    686: ["c5_roles", "c1_memories"],
+    687: ["c5_agenda", "c5_agenda_allday"],
+})
+E2E_NOTES.update({
+    661: ("No tiers: the per-tier usage level is the operator's assistant_chat_quota (messages per person per UTC day), "
+          "off by default (plans-feature-inventory rule 2). " + _FAKE),
+    662: ("No tiers: the free-tier memory limit is the operator's max_chat_memories (saved memories per person), off by "
+          "default. save_memory refuses with the limit message, and Save of a proposed memory past the limit is refused "
+          "in the chat with the same message (plans rule 4). " + _FAKE),
+    677: ("find_meeting_time (a chat tool) reads the busy events and meeting hours of colleagues in the user's team; "
+          "other guests are outside the organization, so it does not read them (edge case 6). The MCP find_free_time keeps "
+          "the instance-wide read that assistant-mcp-server.md records by design and is not a chat tool (assistant-chat.md "
+          "rule 5 decision). With no slot it gives the "
+          "closest options, ranked by the fewest colleagues not available, and the next 7 days (edge case 2). find_people "
+          "finds team members by name; with two matches its result tells the model to ask (edge case 1). The event with "
+          "the colleague as attendee is staged; the invitation goes out at apply. That the model asks or says it cannot "
+          "read a calendar rests on the prompt and the tool results; only the @llm-real find-time test runs a real model. "
+          + _FAKE),
+    686: ("The reporting line (manager and reports, at most 50 with a total) comes from the SCIM manager attribute, by the "
+          "rule that analytics uses, among active members of the team, and goes to the model as data; a memory by role "
+          "holds the person's name and email. Without directory data the prompt has no reporting line and tells the model "
+          "to ask for a name or email; that the model asks rests on the prompt. " + _FAKE),
+    687: ("propose_update_event takes a description (agenda, prep plan) built from get_meeting_context, alone or with a new "
+          "time in one change. The chat card and the preview panel show the whole new description before approval. Apply "
+          "sends only the fields that change, so an all-day event stays all-day, and mails the guests the new "
+          "description. A move of an all-day event is refused (date-value moves are not built), and so is a call "
+          "that changes nothing. " + _FAKE),
+})
+# --- end C5 ---
 
 # Google Calendar proof. docs/e2e-google-run.tsv records a full E2E run on Google
 # (a "# commit <sha>" line, then status, test id, title per line; docs/e2e-google-run.md
