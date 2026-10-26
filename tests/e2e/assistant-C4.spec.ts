@@ -37,6 +37,7 @@ import {
   test,
 } from "./fixtures.ts";
 import { titled, W } from "./helpers.ts";
+import { putEvent } from "./ics.ts";
 import { putMeeting, rawEvent } from "./meeting-helpers.ts";
 import { openPolicies, policyRow } from "./policy-helpers.ts";
 import { iso, previewPanel, reviewAndApply, stagedRow } from "./preview-helpers.ts";
@@ -247,7 +248,9 @@ test("automations by chat: a new habit, a focus goal change and a buffer turned 
   // Lunch events are created; other planned events may move aside (the full plan difference).
   const lunches = impact.filter((i) => i.op === "create" && i.title.includes("Lunch"));
   expect(lunches.length).toBeGreaterThan(0);
-  for (const l of lunches) expect(local(Date.parse(l.start)).slice(11)).toBe("12:00");
+  // Near the ideal 12:00: the scheduler may move a habit a little to fit (habits rule).
+  const nearNoon = (t: number) => local(t).slice(11) >= "12:00" && local(t).slice(11) < "13:00";
+  for (const l of lunches) expect(nearNoon(Date.parse(l.start))).toBe(true);
   await expect(chatPanel(page).getByTestId("chat-assistant").last()).toHaveText(
     `I staged the Lunch habit. It adds ${impact.length} events and waits for your approval.`,
   );
@@ -286,7 +289,7 @@ test("automations by chat: a new habit, a focus goal change and a buffer turned 
     () => weekEvents(cal),
     (evs) => expect(titled(evs, "Lunch").length).toBeGreaterThan(0),
   );
-  for (const e of titled(after, "Lunch")) expect(local(e.start).slice(11)).toBe("12:00");
+  for (const e of titled(after, "Lunch")) expect(nearNoon(e.start)).toBe(true);
 
   await page.reload();
   await expect(previewPanel(page).getByTestId("staged-change")).toHaveCount(0);
@@ -741,13 +744,13 @@ test("Recommendations reviews the dates shown in the planner: the chat lists the
     .filter({ hasText: /^Move “Design sync”/ });
   await expect(designMove).toContainText("Merged into the next proposal");
   const cards = [
-    "Add a video link to “Design sync”",
+    "New description for “Design sync”",
     "Accept “Board prep”",
-    "Add a video link to “Retro”",
+    "New description for “Retro”",
     "Move “Pricing review”",
   ];
   for (const s of cards) await expect(proposal(page, s)).toContainText("Waiting for your approval");
-  await expect(proposal(page, "Add a video link to “Design sync”")).toContainText(
+  await expect(proposal(page, "New description for “Design sync”")).toContainText(
     "; Move “Design sync” to",
   );
 
@@ -798,6 +801,102 @@ test("Recommendations reviews the dates shown in the planner: the chat lists the
   const later = turnsOf(llm.requests, REVIEW).at(-1);
   expect(systemOf(later)).toContain(`"from": "${next}"`);
   expect(await rawEvent(c, ids.next)).not.toContain(LINK);
+});
+
+test("a video link by chat on an all-day meeting with a guest who accepted keeps the dates, the all-day form and the guest's answer; a description changed after staging makes the link stale (assistant-chat rule 16; preview mode rule 12)", async ({
+  page,
+  cal,
+  signIn,
+  llm,
+}) => {
+  const c = cal.calendarId;
+  const ymd = (d: string) => d.replace(/-/g, "");
+  const offsite = await putEvent(c, [
+    `DTSTART;VALUE=DATE:${ymd(thu)}`,
+    `DTEND;VALUE=DATE:${ymd(fri)}`,
+    "SUMMARY:Offsite",
+    "DESCRIPTION:Bring laptops",
+    "TRANSP:OPAQUE",
+    `ORGANIZER:mailto:${EMAIL}`,
+    `ATTENDEE;PARTSTAT=ACCEPTED:mailto:${EMAIL}`,
+    "ATTENDEE;PARTSTAT=ACCEPTED:mailto:dana@example.com",
+  ]);
+  const retro = {
+    title: "Retro",
+    start: at(tue, "14:00"),
+    end: at(tue, "14:30"),
+    organizer: EMAIL,
+    attendees: [{ email: "dana@example.com", answer: "ACCEPTED" as const }],
+  };
+  const retroId = await putMeeting(c, retro);
+  await signIn();
+  await openPlanner(page);
+  await expect(page.locator(".ev", { hasText: "Retro" })).toBeVisible();
+
+  interface Listed {
+    events: { id: string; title: string }[];
+  }
+  const linkFor = (title: string) => (req: ChatRequest) => ({
+    tools: [
+      {
+        name: "propose_video_link",
+        arguments: {
+          event_id: toolJson<Listed>(req, "list_events").events.find((e) => e.title === title)?.id,
+          link: LINK,
+        },
+      },
+    ],
+  });
+  const week = {
+    tools: [
+      {
+        name: "list_events",
+        arguments: { start: iso(at(W, "00:00")), end: iso(at(addDays(W, 7), "00:00")) },
+      },
+    ],
+  };
+  llm.on(/link to the offsite/i, [week, linkFor("Offsite"), { content: "Staged." }]);
+  llm.on(/link to the retro/i, [week, linkFor("Retro"), { content: "Staged." }]);
+
+  /** The lines that must not change: dates (with their all-day form) and the guests' answers. */
+  const kept = async (id: string) =>
+    (await rawEvent(c, id))
+      .split(/\r?\n/)
+      .filter((l) => /^(DTSTART|DTEND|ATTENDEE)/.test(l))
+      .sort();
+  const offsiteBefore = await kept(offsite);
+  expect(offsiteBefore.join("\n")).toContain(`DTSTART;VALUE=DATE:${ymd(thu)}`);
+
+  await openAssistant(page);
+  await say(page, "Add our video link to the offsite");
+  await say(page, "Add our video link to the retro");
+  for (const s of ["New description for “Offsite”", "New description for “Retro”"])
+    await expect(proposal(page, s)).toContainText("Waiting for your approval");
+  expect(await rawEvent(c, offsite)).not.toContain(LINK);
+
+  // The retro's description changes on the calendar after staging.
+  await putMeeting(c, { ...retro, description: "Agenda: what went well" }, retroId);
+  await chatPanel(page).getByRole("button", { name: "Close" }).click();
+  await reviewAndApply(page);
+  await expect(page.getByTestId("apply-summary")).toContainText("Applied 1");
+  await expect(page.getByTestId("apply-summary")).toContainText("Skipped as stale 1");
+
+  // The offsite has the link, and its all-day dates and the guest's answer are as they were.
+  await eventually(
+    () => rawEvent(c, offsite),
+    (raw) => expect(raw).toContain(LINK),
+  );
+  expect(await rawEvent(c, offsite)).toContain("Bring laptops");
+  expect(await kept(offsite)).toEqual(offsiteBefore);
+  const [ev] = named(await weekEvents(cal), "Offsite");
+  expect(ev?.allDay).toBe(true);
+  expect(local(ev?.start ?? 0).slice(0, 10)).toBe(thu);
+  // The newer retro description stays; the stale link was not written.
+  const raw = await rawEvent(c, retroId);
+  expect(raw).toContain("Agenda: what went well");
+  expect(raw).not.toContain(LINK);
+  await page.reload();
+  await expect(previewPanel(page).getByTestId("staged-change")).toHaveCount(0);
 });
 
 test("moving a week of meetings by chat stages one move per meeting the user organizes; the calendar changes only after apply, and an invitation from someone else stays (meetings-flexible-rescheduling rule 24; assistant-chat rule 6)", async ({
@@ -989,7 +1088,7 @@ test("the daily review stages a fix for each open issue by assistant chat before
   expect(systemOf(ask)).toContain(`"to_exclusive": "${addDays(W, 9)}"`);
   expect(systemOf(ask)).toContain("This turn is the daily review");
   expect(toolNames(ask).sort()).toEqual([
-    "find_free_time",
+    "find_meeting_time",
     "get_meeting_context",
     "list_events",
     "propose_rsvp",
@@ -1028,7 +1127,7 @@ test("the daily review stages a fix for each open issue by assistant chat before
         "SELECT summary FROM staged_changes WHERE state = 'pending' ORDER BY created_at, rowid",
       )
       .map((r) => r.summary.split(" · ")[0]),
-  ).toEqual(["Accept “Board prep”", "Add a video link to “Retro”"]);
+  ).toEqual(["Accept “Board prep”", "New description for “Retro”"]);
 
   // Nothing reached the calendar.
   const answer = async () => named(await weekEvents(cal), "Board prep")[0]?.selfResponse;
@@ -1038,7 +1137,7 @@ test("the daily review stages a fix for each open issue by assistant chat before
   // Rule 18: the link opens the planner with the chat and its staged fixes.
   await page.goto(link);
   await expect(chatPanel(page)).toBeVisible();
-  for (const s of ["Accept “Board prep”", "Add a video link to “Retro”"])
+  for (const s of ["Accept “Board prep”", "New description for “Retro”"])
     await expect(proposal(page, s)).toContainText("Waiting for your approval");
   await expect(chatPanel(page).getByTestId("chat-assistant")).toHaveText([
     "Issues: Retro (video_link); Board prep (rsvp_reminder); Friday sync (video_link). Fixes for Retro and Board prep wait.",
@@ -1046,7 +1145,7 @@ test("the daily review stages a fix for each open issue by assistant chat before
   // Preview mode is off: the panel says the changes wait; the user turns it on and applies.
   await expect(previewPanel(page)).toContainText("2 staged changes are pending");
   await previewPanel(page).getByLabel("Preview mode").check();
-  await expect(stagedRow(page, "Add a video link to “Retro”")).toContainText(
+  await expect(stagedRow(page, "New description for “Retro”")).toContainText(
     "Assistant chat (daily review)",
   );
   await page.reload();

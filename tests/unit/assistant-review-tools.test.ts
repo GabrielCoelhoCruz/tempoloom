@@ -21,6 +21,7 @@ import { all, type Db, one, openDb, run } from "../../src/server/db.ts";
 import { setInstanceLimit } from "../../src/server/limits.ts";
 import type { Llm, LlmMessage } from "../../src/server/llm.ts";
 import { type Caller, callTool, type Tool } from "../../src/server/mcp/rpc.ts";
+import { mcpTools } from "../../src/server/mcp.ts";
 import { createPreview, type PreviewDeps, previewMode } from "../../src/server/preview.ts";
 
 const T0 = Date.parse("2026-10-19T08:00:00Z");
@@ -37,7 +38,10 @@ function setup() {
     app: () => new Hono(),
     dry: () => null,
   } as unknown as PreviewDeps);
-  const tools = new Map(reviewTools({ db, preview, now }).map((t) => [t.name, t]));
+  const update = mcpTools({ db, preview, baseUrl: "http://x", now }).find(
+    (t) => t.name === "propose_update_event",
+  ) as Tool;
+  const tools = new Map(reviewTools({ db, preview, now, update }).map((t) => [t.name, t]));
   const admin = ensureUser(db, "admin@example.com", "Admin", T0) as User;
   const teamId =
     all<{ team_id: string }>(db, "SELECT team_id FROM team_members WHERE user_id = ?", admin.id)[0]
@@ -195,7 +199,25 @@ describe("fixes for one target", () => {
       end: T0 + 31 * HOUR,
       description: "https://zoom.us/j/1",
     });
-    expect(one1?.summary).toMatch(/^Add a video link to “Retro”.*; Move “Retro”/);
+    // The merged change keeps the description's stale check (apply compares it).
+    expect(
+      JSON.parse(
+        all<{ before: string }>(db, "SELECT before FROM staged_changes WHERE state = 'pending'")[0]
+          ?.before ?? "{}",
+      ),
+    ).toMatchObject({ description: "" });
+    // A meeting with a link already gets no second one.
+    run(db, "UPDATE events SET description = 'https://zoom.us/j/7'");
+    expect(
+      (
+        await callTool(tools.get("propose_video_link") as Tool, caller, {
+          event_id: id,
+          link: "https://zoom.us/j/1",
+        })
+      ).text,
+    ).toMatch(/has a video link already/);
+    run(db, "UPDATE events SET description = ''");
+    expect(one1?.summary).toMatch(/^New description for “Retro”.*; Move “Retro”/);
     expect(
       all<{ result: string }>(db, "SELECT result FROM staged_changes WHERE state = 'discarded'"),
     ).toEqual([{ result: "Merged into a later change" }]);
@@ -347,7 +369,7 @@ describe("the daily review (6)", () => {
     run(db, "UPDATE staged_changes SET state = 'discarded'");
     await chat.review(user, "2026-10-19", "2026-10-26");
     expect(open(db).map((c) => [c.summary.split(" · ")[0], c.client])).toEqual([
-      ["Add a video link to “Retro”", "daily review"],
+      ["New description for “Retro”", "daily review"],
     ]);
     expect(previewMode(db, user.id).on).toBe(false);
   });

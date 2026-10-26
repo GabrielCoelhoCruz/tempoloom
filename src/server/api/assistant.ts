@@ -13,6 +13,7 @@ import {
 } from "../assistant/store.ts";
 import type { Db } from "../db.ts";
 import { jsonBody, notFound } from "../http.ts";
+import { instanceLimit, limitMessage } from "../limits.ts";
 
 const REFUSED = { not_configured: 503, chat_disabled: 403, quota: 429 } as const;
 
@@ -94,7 +95,15 @@ export function assistantRoutes(db: Db, chat: Chat): Hono<AppEnv> {
   r.post("/assistant/memories/:id/save", (c) => {
     const refused = chat.refusal(c.get("user"));
     if (refused && refused.error !== "quota") return c.json(refused, REFUSED[refused.error]);
-    if (!saveMemory(db, c.get("user").id, c.req.param("id"))) notFound("memory");
+    const user = c.get("user");
+    // Plans rule 4: a proposed memory that would pass the limit stays proposed.
+    const limit = instanceLimit(db, "max_chat_memories");
+    const saved = saveMemory(db, user.id, c.req.param("id"), limit);
+    if (saved === "missing") notFound("memory");
+    if (saved === "limit") {
+      const message = limitMessage("max_chat_memories", limit ?? 0);
+      return c.json({ error: "limit_reached", limit: "max_chat_memories", message }, 409);
+    }
     return c.json({ ok: true });
   });
 

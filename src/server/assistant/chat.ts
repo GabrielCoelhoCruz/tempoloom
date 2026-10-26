@@ -17,8 +17,17 @@ import { instanceLimit, limitMessage } from "../limits.ts";
 import { type Llm, LlmError, type LlmMessage } from "../llm.ts";
 import { cached } from "../mcp/reads.ts";
 import { type Caller, callTool } from "../mcp/rpc.ts";
-import { MERGED, REPLACED, userFormatsOf, whenAt, zoneOf } from "../preview.ts";
+import {
+  type ChangeKind,
+  MERGED,
+  newDescription,
+  REPLACED,
+  userFormatsOf,
+  whenAt,
+  zoneOf,
+} from "../preview.ts";
 import { membership } from "../teams.ts";
+import { reportingOf } from "./people.ts";
 import { type PromptInput, systemPrompt } from "./prompt.ts";
 import {
   endRequest,
@@ -70,7 +79,14 @@ export interface ChatContext {
 export type ChatItem =
   | { kind: "user"; text: string }
   | { kind: "assistant"; text: string }
-  | { kind: "proposal"; changeId: string; summary: string; state: string }
+  | {
+      kind: "proposal";
+      changeId: string;
+      summary: string;
+      state: string;
+      /** The full new description of an event, shown before approval. */
+      description: string | null;
+    }
   | { kind: "memory"; memoryId: string; text: string; state: "pending" | "saved" | "removed" };
 
 export interface ChatDeps {
@@ -105,7 +121,7 @@ export const DAILY_REVIEW_CLIENT = "daily review";
  */
 export const REVIEW_TOOLS: ReadonlySet<string> = new Set([
   "list_events",
-  "find_free_time",
+  "find_meeting_time",
   "get_meeting_context",
   "review_schedule",
   "propose_update_event",
@@ -200,6 +216,7 @@ export function createChat(deps: ChatDeps) {
       shown,
       selected: ctx.eventId ? selectedEvent(user.id, ctx.eventId) : undefined,
       memories: memories(db, user.id),
+      reporting: reportingOf(db, user.id),
       unattended,
     };
   }
@@ -441,9 +458,15 @@ export function createChat(deps: ChatDeps) {
       else if (m.role === "assistant" && m.content?.trim())
         out.push({ kind: "assistant", text: m.content });
       if (m.ref?.kind === "proposal") {
-        const c = one<{ summary: string; state: string; result: string }>(
+        const c = one<{
+          summary: string;
+          state: string;
+          result: string;
+          kind: ChangeKind;
+          after: string;
+        }>(
           db,
-          "SELECT summary, state, result FROM staged_changes WHERE id = ? AND user_id = ?",
+          "SELECT summary, state, result, kind, after FROM staged_changes WHERE id = ? AND user_id = ?",
           m.ref.id,
           userId,
         );
@@ -458,6 +481,7 @@ export function createChat(deps: ChatDeps) {
               : c?.state === "discarded" && c.result === MERGED
                 ? "merged"
                 : (c?.state ?? "expired"),
+          description: c ? newDescription({ kind: c.kind, after: JSON.parse(c.after) }) : null,
         });
       } else if (m.ref?.kind === "memory") {
         const mem = memoryById(db, userId, m.ref.id);

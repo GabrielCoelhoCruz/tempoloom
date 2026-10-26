@@ -49,28 +49,43 @@ export function displayNameOf(resource: ScimResource): string {
   );
 }
 
+/** A provisioned person, as the manager attribute can name them. */
+export interface ProfileKeys {
+  user_id: string;
+  external_id: string | null;
+  email: string;
+}
+
+/**
+ * The one rule for the manager attribute (admin-sso-provisioning.md rule 8):
+ * it names the manager by SCIM id (the user id), external id or email. Returns
+ * a lookup of the given people by those keys.
+ */
+export function managerLookup<P extends ProfileKeys>(
+  people: P[],
+): (manager: string) => P | undefined {
+  const byKey = new Map<string, P>();
+  for (const p of people) {
+    byKey.set(p.user_id, p);
+    byKey.set(p.email, p);
+    if (p.external_id) byKey.set(p.external_id, p);
+  }
+  return (manager) => byKey.get(manager);
+}
+
 /** Attributes of every provisioned member of a team, manager resolved to a name. */
 export function directoryAttributes(db: Db, teamId: string): Map<string, Attributes> {
-  const rows = all<{ user_id: string; attributes: string; external_id: string | null }>(
+  const rows = all<ProfileKeys & { attributes: string; name: string }>(
     db,
-    "SELECT user_id, attributes, external_id FROM directory_profiles WHERE team_id = ?",
+    `SELECT d.user_id, d.external_id, d.attributes, u.name, u.email FROM directory_profiles d
+     JOIN users u ON u.id = d.user_id WHERE d.team_id = ?`,
     teamId,
   );
-  const names = new Map<string, string>();
-  for (const r of all<{ id: string; name: string; email: string; external_id: string | null }>(
-    db,
-    `SELECT u.id, u.name, u.email, d.external_id FROM directory_profiles d JOIN users u ON u.id = d.user_id
-     WHERE d.team_id = ?`,
-    teamId,
-  )) {
-    names.set(r.id, r.name);
-    names.set(r.email, r.name);
-    if (r.external_id) names.set(r.external_id, r.name);
-  }
+  const manager = managerLookup(rows);
   return new Map(
     rows.map((r) => {
       const a = JSON.parse(r.attributes) as Attributes;
-      if (a.manager) a.manager = names.get(a.manager) ?? a.manager;
+      if (a.manager) a.manager = manager(a.manager)?.name ?? a.manager;
       return [r.user_id, a];
     }),
   );

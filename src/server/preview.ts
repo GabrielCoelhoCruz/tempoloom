@@ -23,6 +23,7 @@ import type { Mailer } from "./mail.ts";
 import { ToolError } from "./mcp/rpc.ts";
 import { stripMarker } from "./planner/markers.ts";
 import { planningSnapshot, writeCalendar } from "./planner/replan.ts";
+import type { ExternalChange } from "./providers/types.ts";
 import { getSettings } from "./settings.ts";
 import { cacheEvent } from "./sync/pull.ts";
 import type { SyncService } from "./sync/service.ts";
@@ -117,6 +118,17 @@ const fromRow = (r: Row): StagedChange => ({
   result: r.result,
   createdAt: r.created_at,
 });
+
+/**
+ * The full new description of a staged event change, or null: the user reads
+ * all of it before approval, because apply writes it to a shared event and
+ * mails it to the guests.
+ */
+export function newDescription(ch: Pick<StagedChange, "kind" | "after">): string | null {
+  if (ch.kind !== "event_update" && ch.kind !== "event_create") return null;
+  const d = (ch.after as { description?: unknown } | null)?.description;
+  return typeof d === "string" && d !== "" ? d : null;
+}
 
 // ---------------------------------------------------------------- mode
 
@@ -230,6 +242,7 @@ export function stage(db: Db, userId: string, input: StageInput, now: number): S
     let after = input.after;
     let summary = input.summary;
     let impact = input.impact;
+    let before = input.before ?? null;
     if (input.target) {
       const open = all<Row>(
         db,
@@ -244,6 +257,8 @@ export function stage(db: Db, userId: string, input: StageInput, now: number): S
       const merged = open.find((o) => o.kind === "event_update" && input.kind === "event_update");
       if (merged) {
         after = { ...(JSON.parse(merged.after) as object), ...(input.after as object) };
+        // Both stale checks stay: a description in either `before` is checked at apply.
+        before = { ...(JSON.parse(merged.before) as object), ...(input.before as object) };
         summary = `${input.summary}; ${merged.summary}`;
         if (impact.length === 0) impact = JSON.parse(merged.impact) as ImpactItem[];
       }
@@ -269,7 +284,7 @@ export function stage(db: Db, userId: string, input: StageInput, now: number): S
       input.client ?? "",
       input.kind,
       input.target ?? null,
-      JSON.stringify(input.before ?? null),
+      JSON.stringify(before),
       JSON.stringify(after),
       JSON.stringify(impact),
       summary,
@@ -335,6 +350,18 @@ export function when(
   if (end === undefined) return head;
   const b = utcToLocal(zone, end);
   return `${head}–${b.date === a.date ? "" : `${dateText(b.date, f)} `}${timeText(b.minuteOfDay, f)}`;
+}
+
+/** An all-day event: its dates only, "Thu 2026-11-05 (all day)"; the end is exclusive. */
+export function allDayWhen(
+  zone: string,
+  start: number,
+  end: number,
+  f: Formats = DEFAULT_FORMATS,
+): string {
+  const a = utcToLocal(zone, start).date;
+  const last = utcToLocal(zone, end - 1).date;
+  return `${weekdayText(a)} ${dateText(a, f)}${last === a ? "" : `–${dateText(last, f)}`} (all day)`;
 }
 
 /** One time: "Tue 2026-10-27 15:30", in the formats `f`. */
@@ -731,6 +758,8 @@ export function createPreview(deps: PreviewDeps) {
     calendar_id: string;
     event_id: string;
     summary: string;
+    description: string;
+    all_day: number;
     start_ms: number;
     end_ms: number;
     etag: string | null;
@@ -745,7 +774,7 @@ export function createPreview(deps: PreviewDeps) {
     if (!ref) return undefined;
     return one<Cached>(
       db,
-      `SELECT e.calendar_id, e.event_id, e.summary, e.start_ms, e.end_ms, e.etag, e.attendees,
+      `SELECT e.calendar_id, e.event_id, e.summary, e.description, e.all_day, e.start_ms, e.end_ms, e.etag, e.attendees,
          c.account_id, c.provider_id
        FROM events e JOIN calendars c ON c.id = e.calendar_id JOIN accounts a ON a.id = c.account_id
        WHERE a.user_id = ? AND e.calendar_id = ? AND e.event_id = ?`,
@@ -846,10 +875,20 @@ export function createPreview(deps: PreviewDeps) {
     }
 
     // An external event: it must still be as it was at staging time (rule 12).
-    const before = ch.before as { title: string; start: number; end: number };
+    const before = ch.before as {
+      title: string;
+      start: number;
+      end: number;
+      description?: string;
+    };
     const cur = cachedEvent(userId, ch.target ?? "");
     if (!cur) throw new Stale("The event was deleted after this change was staged");
-    if (cur.start_ms !== before.start || cur.end_ms !== before.end || cur.summary !== before.title)
+    if (
+      cur.start_ms !== before.start ||
+      cur.end_ms !== before.end ||
+      cur.summary !== before.title ||
+      (before.description !== undefined && cur.description !== before.description)
+    )
       throw new Stale("The event changed after it was staged");
     const attendees = JSON.parse(cur.attendees) as string[];
     if (ch.kind === "event_rsvp") {
@@ -907,21 +946,24 @@ export function createPreview(deps: PreviewDeps) {
       ]);
       return;
     }
-    // A description comes from the chat's video link fix (assistant-chat.md rule 16).
-    const v = ch.after as { title?: string; start: number; end: number; description?: string };
-    const title = v.title ?? cur.summary;
+    // A new time, title or description. Only the fields that differ go to the
+    // calendar: an unchanged start and end are not sent, so an all-day event
+    // stays all-day and a provider does not ask the guests again.
+    const v = ch.after as { title?: string; start?: number; end?: number; description?: string };
+    const start = v.start ?? cur.start_ms;
+    const end = v.end ?? cur.end_ms;
+    const moved = start !== cur.start_ms || end !== cur.end_ms;
+    const renamed = v.title !== undefined && v.title !== cur.summary;
+    const described = v.description !== undefined && v.description !== cur.description;
+    const title = renamed ? (v.title as string) : cur.summary;
+    const change: ExternalChange = {
+      ...(moved ? { start, end } : {}),
+      ...(renamed ? { summary: title } : {}),
+      ...(described ? { description: v.description } : {}),
+    };
+    if (!moved && !renamed && !described) return;
     const ev = await deps.sync.exclusive(userId, (pool) =>
-      pool.get(cur.account_id).editExternal(
-        cur.provider_id,
-        cur.event_id,
-        {
-          start: v.start,
-          end: v.end,
-          ...(v.title ? { summary: v.title } : {}),
-          ...(v.description !== undefined ? { description: v.description } : {}),
-        },
-        cur.etag,
-      ),
+      pool.get(cur.account_id).editExternal(cur.provider_id, cur.event_id, change, cur.etag),
     );
     cacheEvent(db, cur.calendar_id, ev);
     logChange(
@@ -934,26 +976,23 @@ export function createPreview(deps: PreviewDeps) {
         item: `preview:${ch.id}`,
         reason: "applied from preview mode",
         title,
-        start: v.start,
-        end: v.end,
+        start,
+        end,
       },
       now(),
     );
-    const moved = v.start !== cur.start_ms || v.end !== cur.end_ms;
-    await notifyAttendees(
-      userId,
-      attendees,
-      `Updated: ${title}`,
-      moved
+    await notifyAttendees(userId, attendees, `Updated: ${title}`, [
+      ...(renamed ? [`“${cur.summary}” is renamed “${title}”.`] : []),
+      ...(moved
         ? [
-            `${title} moved to ${when(zone, v.start, v.end)} (${zone}).`,
+            `${title} moved to ${when(zone, start, end)} (${zone}).`,
             `It was ${when(zone, cur.start_ms, cur.end_ms)}.`,
           ]
         : [
-            `${title} on ${when(zone, v.start, v.end)} (${zone}) changed.`,
-            ...(v.description !== undefined ? ["", v.description] : []),
-          ],
-    );
+            `When: ${cur.all_day === 1 ? allDayWhen(zone, start, end) : `${when(zone, start, end)} (${zone})`}`,
+          ]),
+      ...(described ? ["", "New description:", "", v.description as string] : []),
+    ]);
   }
 
   /**
