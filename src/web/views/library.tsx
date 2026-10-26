@@ -98,14 +98,20 @@ export function Library() {
   }, []);
   useEffect(() => void load(), [load]);
 
-  // A prompt entry makes no automation, so it never shows "Added".
-  const added = (e: LibraryEntry) =>
-    e.kind !== "chat_prompt" &&
-    (e.kind === "meeting_check" || e.kind === "no_meeting_day"
-      ? slugs.includes(e.slug)
-      : BY_TEMPLATE.has(e.kind)
-        ? known.templates.includes(e.slug)
-        : known.names.some((n) => n.toLowerCase() === e.name.toLowerCase()));
+  const added = (e: LibraryEntry) => {
+    switch (e.kind) {
+      // A prompt entry makes no automation, so it never shows "Added".
+      case "chat_prompt":
+        return false;
+      case "meeting_check":
+      case "no_meeting_day":
+        return slugs.includes(e.slug);
+      default:
+        return BY_TEMPLATE.has(e.kind)
+          ? known.templates.includes(e.slug)
+          : known.names.some((n) => n.toLowerCase() === e.name.toLowerCase());
+    }
+  };
 
   /** "Add" saves a buffer or focus entry as it is; "Use" opens its form first. */
   const addNow = async (e: LibraryEntry) => {

@@ -49,7 +49,7 @@ export function PlannerHints() {
 }
 
 /** The first question the offer puts in the chat's input box. */
-export const FIRST_QUESTION = "What is on my calendar this week?";
+const FIRST_QUESTION = "What is on my calendar this week?";
 
 /**
  * Rule 15: offers assistant chat. While the team switch is off, the offer (shown

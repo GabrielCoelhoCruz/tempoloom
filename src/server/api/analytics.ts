@@ -22,22 +22,41 @@ import { jsonBody } from "../http.ts";
 import { membership } from "../teams.ts";
 
 /** Personal stats rule 10: the earliest start is 12 weeks before today. */
-export const HISTORY_DAYS = 84;
-export const MAX_SPAN_DAYS = 120;
+const HISTORY_DAYS = 84;
+const MAX_SPAN_DAYS = 120;
 
 const range = z.object({ from: z.iso.date(), to: z.iso.date() });
 
 export type Range = { from: LocalDate; to: LocalDate };
 
+export type RangeProblem = "invalid_range" | "range_too_long" | "range_too_early";
+
+/**
+ * What is wrong with a stats range, or null: the end is before the start, it
+ * is longer than MAX_SPAN_DAYS, or it starts more than HISTORY_DAYS before today.
+ * The stats pages and assistant chat's get_team_stats check ranges with it.
+ */
+export function rangeProblem(
+  from: LocalDate,
+  to: LocalDate,
+  today: LocalDate,
+): RangeProblem | null {
+  if (to < from) return "invalid_range";
+  if (diffDays(from, to) > MAX_SPAN_DAYS) return "range_too_long";
+  if (from < addDays(today, -HISTORY_DAYS)) return "range_too_early";
+  return null;
+}
+
 /** Parses and checks a range in the user's zone; returns an error response or the range. */
 function parseRange(c: Context<AppEnv>, now: number): Range | Response {
   const q = range.safeParse(c.req.query());
-  if (!q.success || q.data.to < q.data.from) return c.json({ error: "invalid_range" }, 400);
-  if (diffDays(q.data.from, q.data.to) > MAX_SPAN_DAYS)
-    return c.json({ error: "range_too_long" }, 400);
-  const today = utcToLocal(c.get("user").time_zone, now).date;
-  if (q.data.from < addDays(today, -HISTORY_DAYS)) return c.json({ error: "range_too_early" }, 400);
-  return q.data;
+  if (!q.success) return c.json({ error: "invalid_range" }, 400);
+  const problem = rangeProblem(
+    q.data.from,
+    q.data.to,
+    utcToLocal(c.get("user").time_zone, now).date,
+  );
+  return problem ? c.json({ error: problem }, 400) : q.data;
 }
 
 const LEVEL_LABEL = (groupBy: string) =>

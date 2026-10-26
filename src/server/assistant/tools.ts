@@ -73,7 +73,7 @@ function memoryTool(db: Db, now: () => number): ChatTool {
 /** Every tool of the chat. */
 export function chatTools(deps: ChatToolDeps): ChatTool[] {
   return [
-    ...mcpTools(deps)
+    ...[...mcpTools(deps), ...libraryTools(deps)]
       .filter((t) => t.effect !== "apply")
       .map(
         (t): ChatTool =>
@@ -88,7 +88,6 @@ export function chatTools(deps: ChatToolDeps): ChatTool[] {
             : { tool: t },
       ),
     memoryTool(deps.db, deps.now),
-    ...libraryTools(deps),
   ];
 }
 

@@ -1755,8 +1755,8 @@ E2E_NOTES.update({
 # --- C2: library prompt entries and the chat offer (tests/e2e/assistant-C2.spec.ts) ---
 T.update({
     "c2_open": "every library prompt entry opens assistant chat in the planner with its prompt in the input box, and nothing goes to the model before the user sends (automations-library rule 7; entries 5, 6, 12, 14-18, 20-22, 24, 31)",
-    "c2_tasks": "task prompts reach the model with the planner dates and the open tasks; proposed work time, a break and a new priority wait in preview mode until applied (library entries 5, 6, 22, 24; assistant-chat rules 8, 12)",
-    "c2_meetings": "meeting prompts reach the model as the user edited them, with the dates in view; onboarding meetings, a cross-team meeting, an urgent review and a conflict fix wait in preview mode until applied (library entries 12, 15, 18, 21; assistant-chat rules 5, 6, 12)",
+    "c2_tasks": "task prompts reach the model with the planner dates and the open tasks; proposed work time, a break and a re-ranking that raises one task and lowers two wait in preview mode, and all apply together (library entries 5, 6, 22, 24; assistant-chat rules 8, 12)",
+    "c2_meetings": "meeting prompts reach the model as the user edited them, with the dates in view; onboarding meetings, a cross-team meeting, an urgent review that moves a lower-priority task, and a conflict fix wait in preview mode until applied (library entries 12, 15, 18, 21; assistant-chat rules 5, 6, 12)",
     "c2_stats": "rhythm and burnout prompts reach the model with the user's stats of the last 4 weeks, read from the calendar (library entries 14, 16; assistant-chat rule 9)",
     "c2_team": "the team health prompt reads team stats as the team stats page shows them: no values below 3 members, then means over the members and no names (library entry 17; team stats rules 1, edge case 1)",
     "c2_day": "adaptive workday and prep task prompts read today's planned items and the next 7 days of meetings; a move of a planned item waits in preview mode until applied (library entries 20, 31; assistant-chat rules 6, 8, 12)",
@@ -1797,15 +1797,16 @@ E2E_NOTES.update({
     734: "The model reads the user's stats (get_stats), with the meeting time outside work hours. " + _PROMPT,
     735: ("The model reads team stats (get_team_stats, a chat tool): the same means as the team stats page, no values below "
           "3 members with a calendar, and no names. " + _PROMPT),
-    736: ("The user names the people; the model finds the earliest free time with them and stages the review. Moving the "
-          "user's lower-priority items is a move of a planned item, as in entry 20. " + _PROMPT),
+    736: ("The user names the people; the model finds the earliest free time with them, stages the review there, and "
+          "stages a move of the user's P4 task out of the way (propose_update_event on a planned task). " + _PROMPT),
     738: ("The user types the new hours; the model reads today's planned items and stages a move of one (propose_update_event "
           "on a planned task). " + _PROMPT),
     739: ("Tempoloom decision: the entry is a Recommendations request for the dates in view; the model gets the dates the "
           "planner shows (the user moves to another week first) and stages a fix for a conflict there. " + _PROMPT),
     740: "The model finds free time (find_free_time) and stages a short break. " + _PROMPT,
-    742: ("The model reads the open tasks and stages a new priority (propose_task_priority, a chat tool that replays the "
-          "task edit at apply; apply skips it when the task changed after it was staged). " + _PROMPT),
+    742: ("The model reads the open tasks and stages one new priority per task (propose_task_priority, a chat tool that "
+          "replays the task edit at apply). All changes of one re-ranking apply together; apply skips a change only when "
+          "that task's priority or state changed after it was staged (unit tests). " + _PROMPT),
     749: "The model reads the meetings of the next 7 days (list_events) and suggests prep tasks due before each. " + _PROMPT,
 })
 # --- end C2 ---

@@ -64,7 +64,7 @@ const datetime = z.iso.datetime({ offset: true });
 
 const instant = z.string().describe("ISO 8601 UTC");
 const date = z.string().describe("YYYY-MM-DD");
-const stagedOutput = z.object({
+export const stagedOutput = z.object({
   id: z.string(),
   state: z.string(),
   summary: z.string(),
@@ -92,9 +92,36 @@ const RSVP_WORDS = {
 } as const;
 
 /** Monday of the week of an instant, for the planner link. */
-export function reviewUrl(baseUrl: string, zone: string, t: number): string {
+function reviewUrl(baseUrl: string, zone: string, t: number): string {
   const d = utcToLocal(zone, t).date;
   return new URL(`/?week=${addDays(d, 1 - weekdayOf(d))}`, baseUrl).toString();
+}
+
+type StageArgs = Omit<Parameters<Preview["stage"]>[1], "source" | "client">;
+
+/**
+ * Stages a change in preview mode for the caller and gives a stage tool's
+ * result (stagedOutput). Every stage tool of MCP and of assistant chat uses it.
+ */
+export function stagedResult(
+  deps: Pick<McpDeps, "db" | "preview" | "baseUrl">,
+  caller: Caller,
+  input: StageArgs,
+  at: number,
+) {
+  const s = deps.preview.stage(caller.user.id, {
+    ...input,
+    source: caller.source ?? "mcp_client",
+    client: caller.client,
+  });
+  return {
+    id: s.id,
+    state: s.state,
+    summary: s.summary,
+    review_url: reviewUrl(deps.baseUrl, zoneOf(deps.db, caller.user.id), at),
+    message:
+      "The change is staged in Tempoloom's preview mode. Nothing is written until the user applies it.",
+  };
 }
 
 /**
@@ -650,24 +677,8 @@ export function mcpTools(deps: Omit<McpDeps, "writeEnabled">): Tool[] {
     }),
   ];
 
-  function staged(
-    caller: Caller,
-    input: Omit<Parameters<Preview["stage"]>[1], "source" | "client">,
-    at: number,
-  ) {
-    const s = preview.stage(caller.user.id, {
-      ...input,
-      source: caller.source ?? "mcp_client",
-      client: caller.client,
-    });
-    return {
-      id: s.id,
-      state: s.state,
-      summary: s.summary,
-      review_url: reviewUrl(deps.baseUrl, zoneOf(db, caller.user.id), at),
-      message:
-        "The change is staged in Tempoloom's preview mode. Nothing is written until the user applies it.",
-    };
+  function staged(caller: Caller, input: StageArgs, at: number) {
+    return stagedResult(deps, caller, input, at);
   }
 
   /** An event of the user's that Tempoloom may change for them (edge case 2). */

@@ -647,9 +647,24 @@ export function createPreview(deps: PreviewDeps) {
     if (ch.kind === "request") {
       const before = ch.before as
         | { table: string; id: string; rulesChangedAt: number }
+        | { task: string; title: string; level: number }
         | { start: number; end: number }
         | null;
-      if (before && "table" in before) {
+      if (before && "task" in before) {
+        // A new priority is stale only when that task changed in a way it is about:
+        // other priority changes of the same re-ranking touch every open task.
+        const cur = one<{ level: number; status: string }>(
+          db,
+          "SELECT level, status FROM tasks WHERE id = ? AND user_id = ?",
+          before.task,
+          userId,
+        );
+        const task = `The task “${before.title}”`;
+        if (!cur) throw new Stale(`${task} was deleted after this change was staged`);
+        if (cur.status !== "open") throw new Stale(`${task} was done after this change was staged`);
+        if (cur.level !== before.level)
+          throw new Stale(`${task} got another priority after this change was staged`);
+      } else if (before && "table" in before) {
         const cur = one<{ rules_changed_at: number }>(
           db,
           `SELECT rules_changed_at FROM ${before.table} WHERE id = ? AND user_id = ?`,

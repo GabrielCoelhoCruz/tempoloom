@@ -21,7 +21,7 @@ import type { Page } from "@playwright/test";
 import { addDays, diffDays, utcToLocal, weekdayOf } from "../../src/shared/time.ts";
 import { directory, lastWeek, meet, synced } from "./analytics-helpers.ts";
 import { chatPanel, openAssistant, proposal } from "./assistant-helpers.ts";
-import { type ChatRequest, type FakeLlm, toolJson, toolResults } from "./fake-llm.ts";
+import { type ChatRequest, type FakeLlm, lastUser, toolJson, toolResults } from "./fake-llm.ts";
 import {
   at,
   BACKEND,
@@ -136,6 +136,20 @@ const weekOf = (cal: CalendarDriver, monday: string) =>
 const named = <T extends { summary: string }>(evs: T[], title: string) =>
   evs.filter((e) => e.summary === title);
 
+/** The proposals of the re-ranking, in the order the model staged them. */
+const RANKS = [
+  'New priority P3 to P4 for task "Budget review"',
+  'New priority P2 to P1 for task "Quarterly report"',
+  'New priority P2 to P3 for task "Expense notes"',
+];
+/** The priorities on the tasks page of Budget review, Expense notes and Quarterly report. */
+async function expectLevels(page: Page, want: string[]) {
+  for (const [i, t] of ["Budget review", "Expense notes", "Quarterly report"].entries())
+    await expect(page.locator(`[data-task-title="${t}"]`).getByTestId("task-level"), t).toHaveText(
+      want[i] ?? "",
+    );
+}
+
 interface Tasks {
   tasks: { id: string; title: string; priority: number; due: string | null }[];
 }
@@ -174,7 +188,7 @@ test("every library prompt entry opens assistant chat in the planner with its pr
   expect(llm.requests).toHaveLength(0);
 });
 
-test("task prompts reach the model with the planner dates and the open tasks; proposed work time, a break and a new priority wait in preview mode until applied (library entries 5, 6, 22, 24; assistant-chat rules 8, 12)", async ({
+test("task prompts reach the model with the planner dates and the open tasks; proposed work time, a break and a re-ranking that raises one task and lowers two wait in preview mode, and all apply together (library entries 5, 6, 22, 24; assistant-chat rules 8, 12)", async ({
   page,
   cal,
   signIn,
@@ -188,6 +202,12 @@ test("task prompts reach the model with the planner dates and the open tasks; pr
     minutes: 60,
     due: `${addDays(W, 2)}T17:00`,
     level: 3,
+  });
+  await addTask(page, {
+    title: "Expense notes",
+    minutes: 30,
+    due: `${addDays(W, 3)}T17:00`,
+    level: 2,
   });
   const listTasks = { tools: [{ name: "list_tasks", arguments: {} }] };
   const task = (req: ChatRequest, title: string) => {
@@ -253,19 +273,21 @@ test("task prompts reach the model with the planner dates and the open tasks; pr
   ]);
   llm.on(matches(prompt("Task re-ranking")), [
     listTasks,
+    // A lower priority first: applying it touches every open task of the user,
+    // and the two changes after it must still apply.
     (req) => ({
-      tools: [
-        {
-          name: "propose_task_priority",
-          arguments: {
-            task_id: task(req, "Quarterly report").id,
-            priority: 1,
-            reason: "It has the most work left.",
-          },
-        },
-      ],
+      tools: (
+        [
+          ["Budget review", 4, "It is small."],
+          ["Quarterly report", 1, "It has the most work left."],
+          ["Expense notes", 3, "It can wait."],
+        ] as const
+      ).map(([title, priority, reason]) => ({
+        name: "propose_task_priority",
+        arguments: { task_id: task(req, title).id, priority, reason },
+      })),
     }),
-    { content: "I staged a new priority. It waits for your approval." },
+    { content: "I staged new priorities. They wait for your approval." },
   ]);
 
   for (const name of [
@@ -281,14 +303,12 @@ test("task prompts reach the model with the planner dates and the open tasks; pr
     "Waiting for your approval",
   );
   await expect(proposal(page, "Short break")).toContainText("Waiting for your approval");
-  await expect(proposal(page, "Priority of task “Quarterly report”: P2 to P1")).toContainText(
-    "Waiting for your approval",
-  );
+  for (const s of RANKS) await expect(proposal(page, s)).toContainText("Waiting for your approval");
   await expect(chatPanel(page).getByTestId("chat-assistant")).toContainText([
     "I staged work time before the due date.",
     "Start Budget review: it is due first.",
     "I staged a short break.",
-    "I staged a new priority.",
+    "I staged new priorities.",
   ]);
 
   // What the app sent: the prompt, the planner dates shown, the tools, and the real tasks.
@@ -308,6 +328,7 @@ test("task prompts reach the model with the planner dates and the open tasks; pr
     toolJson<Tasks>(listed as ChatRequest, "list_tasks").tasks.map((t) => [t.title, t.priority]),
   ).toEqual([
     ["Budget review", 3],
+    ["Expense notes", 2],
     ["Quarterly report", 2],
   ]);
 
@@ -317,24 +338,21 @@ test("task prompts reach the model with the planner dates and the open tasks; pr
   expect(named(before, "Work time: Quarterly report")).toHaveLength(0);
   expect(named(before, "Short break")).toHaveLength(0);
   await page.getByRole("link", { name: "Tasks" }).click();
-  const report = page.locator('[data-task-title="Quarterly report"]');
-  await expect(report.getByTestId("task-level")).toHaveText("P2 high");
+  await expectLevels(page, ["P3 medium", "P2 high", "P2 high"]);
 
-  // After reload, the chat still shows the three proposals; the user accepts and applies.
+  // After reload, the chat still shows the five proposals; the user accepts and applies.
   await page.goto("/");
-  await expect(previewPanel(page).getByTestId("staged-change")).toHaveCount(3);
+  await expect(previewPanel(page).getByTestId("staged-change")).toHaveCount(5);
   await openAssistant(page);
-  for (const s of [
-    "Work time: Quarterly report",
-    "Short break",
-    "Priority of task “Quarterly report”",
-  ]) {
+  for (const s of ["Work time: Quarterly report", "Short break", ...RANKS]) {
     await proposal(page, s).getByRole("button", { name: "Accept" }).click();
     await expect(proposal(page, s)).toContainText("Accepted");
   }
   await chatPanel(page).getByRole("button", { name: "Close" }).click();
   await reviewAndApply(page);
-  await expect(page.getByTestId("apply-summary")).toContainText("Applied 3");
+  await expect(page.getByTestId("apply-summary")).toContainText(
+    "Applied 5 · Skipped as stale 0 · Failed 0",
+  );
   const after = await eventually(
     () => weekOf(cal, W),
     (evs) => expect(named(evs, "Short break")).toHaveLength(1),
@@ -348,12 +366,10 @@ test("task prompts reach the model with the planner dates and the open tasks; pr
   ]);
   await page.getByRole("link", { name: "Tasks" }).click();
   await page.reload();
-  await expect(
-    page.locator('[data-task-title="Quarterly report"]').getByTestId("task-level"),
-  ).toHaveText("P1 critical");
+  await expectLevels(page, ["P4 low", "P3 medium", "P1 critical"]);
 });
 
-test("meeting prompts reach the model as the user edited them, with the dates in view; onboarding meetings, a cross-team meeting, an urgent review and a conflict fix wait in preview mode until applied (library entries 12, 15, 18, 21; assistant-chat rules 5, 6, 12)", async ({
+test("meeting prompts reach the model as the user edited them, with the dates in view; onboarding meetings, a cross-team meeting, an urgent review that moves a lower-priority task, and a conflict fix wait in preview mode until applied (library entries 12, 15, 18, 21; assistant-chat rules 5, 6, 12)", async ({
   page,
   cal,
   signIn,
@@ -369,6 +385,22 @@ test("meeting prompts reach the model as the user edited them, with the dates in
   });
   await cal.addEvent({ title: "Team sync", start: at(tue, "10:30"), end: at(tue, "11:30") });
   await signIn();
+  // A P4 task that Tempoloom plans on Thursday: the urgent review may move it (entry 18).
+  const thu = addDays(W, 3);
+  await addTask(page, {
+    title: "Inbox cleanup",
+    minutes: 60,
+    split: false,
+    level: 4,
+    startAfter: `${thu}T00:00`,
+    due: `${addDays(W, 4)}T17:00`,
+  });
+  const planned = await eventually(
+    () => weekOf(cal, W),
+    (evs) => expect(titled(evs, "Inbox cleanup")).toHaveLength(1),
+  );
+  const inboxAt = local((titled(planned, "Inbox cleanup")[0] as { start: number }).start);
+  expect(inboxAt.startsWith(thu)).toBe(true);
 
   const customer = "ana@client.example";
   const colleagues = ["li@partner.example", "bo@partner.example"];
@@ -381,14 +413,14 @@ test("meeting prompts reach the model as the user edited them, with the dates in
     "these people.",
     `these people: ${colleagues[0]}.`,
   );
-  const findSlot = (attendees: string[]) => ({
+  const findSlot = (attendees: string[], from = addDays(W, 2)) => ({
     tools: [
       {
         name: "find_free_time",
         arguments: {
           duration_minutes: 30,
           attendees,
-          start: iso(at(addDays(W, 2), "00:00")),
+          start: iso(at(from, "00:00")),
           end: iso(at(addDays(W, 5), "00:00")),
         },
       },
@@ -434,10 +466,39 @@ test("meeting prompts reach the model as the user edited them, with the dates in
     meetAt("Cross-team meeting", colleagues),
     { content: "I staged the meeting. It waits for your approval." },
   ]);
+  // Entry 18: the earliest slot from Thursday, and the user's P4 task there moves away.
   llm.on(matches(urgent), [
-    findSlot([colleagues[0] as string]),
-    meetAt("Urgent review", [colleagues[0] as string]),
-    { content: "I staged the review. It waits for your approval." },
+    findSlot([colleagues[0] as string], thu),
+    {
+      tools: [
+        {
+          name: "list_events",
+          arguments: { start: iso(at(thu, "00:00")), end: iso(at(addDays(thu, 1), "00:00")) },
+        },
+      ],
+    },
+    (req) => {
+      const inbox = toolJson<Listed>(req, "list_events").events.find((e) =>
+        e.title.includes("Inbox cleanup"),
+      );
+      if (!inbox) throw new Error("no Inbox cleanup in list_events");
+      const made = meetAt("Urgent review", [colleagues[0] as string])(req);
+      return {
+        ...made,
+        tools: [
+          {
+            name: "propose_update_event",
+            arguments: {
+              event_id: inbox.id,
+              start: iso(at(thu, "15:00")),
+              reason: "It is P4 and in the way.",
+            },
+          },
+          ...made.tools,
+        ],
+      };
+    },
+    { content: "I staged the review and moved Inbox cleanup. They wait for your approval." },
   ]);
   // Entry 21: the model reads the dates the app said are in view.
   llm.on(matches(prompt("Conflict fixes")), [
@@ -499,7 +560,10 @@ test("meeting prompts reach the model as the user edited them, with the dates in
   const conflict = turnOf(llm, prompt("Conflict fixes"));
   expect(plannerDates(conflict)).toEqual({ from: W, to: addDays(W, 7) });
   expect(plannerDates(turnOf(llm, crossTeam)).from).toBe(shownMonday());
-  const read = llm.requests.find((r) => toolResults(r).some((t) => t.name === "list_events"));
+  // The conflict turn read the week in view from the calendar.
+  const read = llm.requests.find(
+    (r) => lastUser(r) === prompt("Conflict fixes") && toolResults(r).length > 0,
+  );
   expect(
     toolJson<Listed>(read as ChatRequest, "list_events")
       .events.map((e) => e.title)
@@ -510,28 +574,32 @@ test("meeting prompts reach the model as the user edited them, with the dates in
     `Their calendars are not on this server: ${colleagues.join(", ")}.`,
     "I staged the meeting.",
     `Their calendars are not on this server: ${colleagues[0]}.`,
-    "I staged the review.",
+    "I staged the review and moved Inbox cleanup.",
     "Team sync overlaps Vendor call; I staged a move.",
   ]);
-  await expect(chatPanel(page).getByTestId("chat-proposal")).toHaveCount(6);
+  await expect(chatPanel(page).getByTestId("chat-proposal")).toHaveCount(7);
+  await expect(proposal(page, "Move “Inbox cleanup”")).toContainText("Waiting for your approval");
 
   // Rule 12: nothing reached the calendar.
   await planNow(page);
   const before = await weekOf(cal, W);
   expect(before.filter((e) => /Onboarding|Cross-team|Urgent/.test(e.summary))).toEqual([]);
   expect(named(before, "Team sync").map((e) => local(e.start))).toEqual([`${tue} 10:30`]);
+  expect(titled(before, "Inbox cleanup").map((e) => local(e.start))).toEqual([inboxAt]);
 
   await page.reload();
-  await expect(previewPanel(page).getByTestId("staged-change")).toHaveCount(6);
+  await expect(previewPanel(page).getByTestId("staged-change")).toHaveCount(7);
   await openAssistant(page);
   const cards = chatPanel(page).getByTestId("chat-proposal");
-  for (let i = 0; i < 6; i++) {
+  for (let i = 0; i < 7; i++) {
     await cards.nth(i).getByRole("button", { name: "Accept" }).click();
     await expect(cards.nth(i)).toContainText("Accepted");
   }
   await chatPanel(page).getByRole("button", { name: "Close" }).click();
   await reviewAndApply(page);
-  await expect(page.getByTestId("apply-summary")).toContainText("Applied 6");
+  await expect(page.getByTestId("apply-summary")).toContainText(
+    "Applied 7 · Skipped as stale 0 · Failed 0",
+  );
 
   const after = await eventually(
     () => cal.events(at(W, "00:00"), at(addDays(W, 40), "00:00")),
@@ -539,6 +607,9 @@ test("meeting prompts reach the model as the user edited them, with the dates in
   );
   expect(named(after, "Team sync").map((e) => [local(e.start), local(e.end)])).toEqual([
     [`${tue} 12:00`, `${tue} 13:00`],
+  ]);
+  expect(titled(after, "Inbox cleanup").map((e) => [local(e.start), local(e.end)])).toEqual([
+    [`${thu} 15:00`, `${thu} 16:00`],
   ]);
   expect(
     ["Onboarding kickoff", "Onboarding check-in", "Onboarding review"].map((t) =>
@@ -775,7 +846,9 @@ test("adaptive workday and prep task prompts read today's planned items and the 
   await expect(proposal(page, "Write spec")).toContainText("Accepted");
   await chatPanel(page).getByRole("button", { name: "Close" }).click();
   await reviewAndApply(page);
-  await expect(page.getByTestId("apply-summary")).toContainText("Applied 1");
+  await expect(page.getByTestId("apply-summary")).toContainText(
+    "Applied 1 · Skipped as stale 0 · Failed 0",
+  );
   await eventually(
     () => weekOf(cal, W),
     (evs) =>
@@ -872,7 +945,7 @@ test("while the team switch is off, the offer lets an admin turn assistant chat 
   ]);
 });
 
-test("the Task re-ranking entry with a real model stages new priorities in preview mode; the tasks change only after apply @llm-real", async ({
+test("the Task re-ranking entry with a real model stages new priorities in preview mode; the tasks change only after apply, and every staged priority applies @llm-real", async ({
   page,
   cal,
   signIn,
@@ -906,8 +979,26 @@ test("the Task re-ranking entry with a real model stages new priorities in previ
   expect((await answer).status()).toBe(200);
   const cards = chatPanel(page)
     .getByTestId("chat-proposal")
-    .filter({ hasText: "Priority of task" });
-  await expect(cards.first()).toContainText("Waiting for your approval");
+    .filter({ hasText: "New priority" })
+    .filter({ hasText: "Waiting for your approval" });
+  await expect(cards.first()).toBeVisible();
+  // The priority each task gets when every staged change applies.
+  const want = new Map([
+    ["Tax filing", "P4 low"],
+    ["Team offsite ideas", "P1 critical"],
+  ]);
+  const NAMES: Record<string, string> = {
+    1: "P1 critical",
+    2: "P2 high",
+    3: "P3 medium",
+    4: "P4 low",
+  };
+  const staged = await cards.locator("strong").allTextContents();
+  for (const text of staged) {
+    const m = /New priority P\d to P(\d) for task "(.+)"$/.exec(text);
+    if (!m) throw new Error(`unexpected proposal: ${text}`);
+    want.set(m[2] as string, NAMES[m[1] as string] as string);
+  }
 
   // Nothing changed before approval.
   const levels = async () => {
@@ -921,9 +1012,13 @@ test("the Task re-ranking entry with a real model stages new priorities in previ
   expect(await levels()).toEqual(["P4 low", "P1 critical"]);
 
   await page.goto("/");
-  await expect(previewPanel(page).getByTestId("staged-change").first()).toBeVisible();
+  await expect(previewPanel(page).getByTestId("staged-change")).toHaveCount(staged.length);
   await reviewAndApply(page);
-  await expect(page.getByTestId("apply-summary")).toContainText(/Applied [1-9]/);
+  // Every staged priority applies: none is skipped as stale.
+  await expect(page.getByTestId("apply-summary")).toContainText(
+    `Applied ${staged.length} · Skipped as stale 0 · Failed 0`,
+  );
   await page.reload();
+  expect(await levels()).toEqual([want.get("Tax filing"), want.get("Team offsite ideas")]);
   expect(await levels()).not.toEqual(["P4 low", "P1 critical"]);
 });
