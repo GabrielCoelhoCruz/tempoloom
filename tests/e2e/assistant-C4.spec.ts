@@ -1228,7 +1228,9 @@ test("the daily review stages a fix for each open issue by assistant chat before
   ]);
   const offeredUpdate = ask?.tools?.find((t) => t.function.name === "propose_update_event");
   expect(
-    Object.keys((offeredUpdate?.function.parameters as { properties: object }).properties).sort(),
+    Object.keys(
+      (offeredUpdate?.function.parameters as { properties?: object } | undefined)?.properties ?? {},
+    ).sort(),
   ).toEqual(["end", "event_id", "reason", "start"]);
   // The review did not count toward the quota; it counts as one review turn of the day.
   expect(usage()).toBe(1);
