@@ -204,12 +204,67 @@ export function openChangesPage(
   ).map((r) => ({ ...fromRow(r), state: r.state, seq: r.seq }));
 }
 
-export interface StageInput {
+/**
+ * What apply checks before it replays a staged request (its stale check),
+ * tagged by `kind`. Build it with the constructors below; apply switches on
+ * `kind`, and a shape it does not know fails the change instead of skipping
+ * the check.
+ */
+export type RequestBefore =
+  /** An automation edit: stale when the automation's rules changed. */
+  | { kind: "automation"; table: string; id: string; rulesChangedAt: number }
+  /** A new task priority: stale only when that task's priority or state changed. */
+  | { kind: "task_level"; task: string; title: string; level: number }
+  /** A move of a planned event: stale when the event moved or is gone. */
+  | { kind: "managed_event"; id: string; start: number; end: number }
+  /** A shared setting (team policy, meeting checks): stale when its version changed. */
+  | { kind: "version"; version: Version };
+
+export const versionBefore = (version: Version): RequestBefore => ({ kind: "version", version });
+
+export const automationBefore = (
+  table: string,
+  id: string,
+  rulesChangedAt: number,
+): RequestBefore => ({ kind: "automation", table, id, rulesChangedAt });
+export const taskLevelBefore = (t: {
+  id: string;
+  title: string;
+  level: number;
+}): RequestBefore => ({
+  kind: "task_level",
+  task: t.id,
+  title: t.title,
+  level: t.level,
+});
+export const managedEventBefore = (e: {
+  id: string;
+  start_ms: number;
+  end_ms: number;
+}): RequestBefore => ({ kind: "managed_event", id: e.id, start: e.start_ms, end: e.end_ms });
+
+/**
+ * The stale check of a stored request. Rows staged before `kind` existed have
+ * the same fields without it. Any other shape is an error: apply fails the
+ * change, it never replays it unchecked.
+ */
+function requestBefore(raw: unknown, target: string | null): RequestBefore | null {
+  if (raw === null || raw === undefined) return null;
+  const b = raw as Record<string, unknown>;
+  if (typeof b.kind === "string") return b as RequestBefore;
+  if (typeof b.version === "object" && b.version !== null)
+    return { ...(b as object), kind: "version" } as RequestBefore;
+  if (typeof b.table === "string") return { ...(b as object), kind: "automation" } as RequestBefore;
+  if (typeof b.task === "string") return { ...(b as object), kind: "task_level" } as RequestBefore;
+  if (typeof b.start === "number" && target?.startsWith("managed:"))
+    return { ...(b as object), kind: "managed_event", id: target.slice(8) } as RequestBefore;
+  throw new Error("This change has a stale check Tempoloom does not know; it was not applied");
+}
+
+interface StageBase {
   source: Source;
   client?: string;
-  kind: ChangeKind;
   target?: string | null;
-  before?: unknown;
   after: unknown;
   impact: ImpactItem[];
   summary: string;
@@ -223,6 +278,19 @@ export interface StageInput {
   /** The caller merged the open change of the target into this one. */
   merges?: boolean;
 }
+
+export type StageInput = StageBase &
+  (
+    | { kind: "request"; before?: RequestBefore | null }
+    | { kind: Exclude<ChangeKind, "request">; before?: unknown }
+  );
+
+/** A StageInput without the caller's fields, for each kind. */
+export type StageArgs = StageInput extends infer T
+  ? T extends StageInput
+    ? Omit<T, "source" | "client">
+    : never
+  : never;
 
 /**
  * The summary of a merged change: the new part first, then the older parts of
@@ -624,7 +692,7 @@ export function createPreview(deps: PreviewDeps) {
           source: "manual",
           kind: "request",
           target: `managed:${row.id}`,
-          before: { start: row.start_ms, end: row.end_ms },
+          before: managedEventBefore(row),
           after: request,
           impact: [
             {
@@ -675,7 +743,8 @@ export function createPreview(deps: PreviewDeps) {
         source: "automation_edit",
         kind: "request",
         target: id ? `${plural}:${id}` : null,
-        before: current ? { table, id, rulesChangedAt: current.rules_changed_at } : null,
+        before:
+          current && id ? automationBefore(table, id, Number(current.rules_changed_at)) : null,
         after: request,
         impact: dry.impact,
         summary: `${id ? "Edit" : "New"} ${noun} “${title}”${switched}`,
@@ -747,38 +816,66 @@ export function createPreview(deps: PreviewDeps) {
   async function applyOne(userId: string, ch: StagedChange): Promise<void> {
     const zone = zoneOf(db, userId);
     if (ch.kind === "request") {
-      const before = ch.before as
-        | { table: string; id: string; rulesChangedAt: number }
-        | { start: number; end: number }
-        | { version: Version }
-        | null;
-      if (before && "version" in before) {
-        const { of, id, value } = before.version;
-        const cur = versionOf(db, of, id, userId);
-        if (cur === undefined)
-          throw new Stale(`The ${VERSION_NOUNS[of]} was deleted after this change was staged`);
-        if (cur !== value)
-          throw new Stale(`The ${VERSION_NOUNS[of]} changed after this change was staged`);
-      } else if (before && "table" in before) {
-        const cur = one<{ rules_changed_at: number }>(
-          db,
-          `SELECT rules_changed_at FROM ${before.table} WHERE id = ? AND user_id = ?`,
-          before.id,
-          userId,
-        );
-        if (!cur) throw new Stale("The automation was deleted after this change was staged");
-        if (cur.rules_changed_at !== before.rulesChangedAt)
-          throw new Stale("The automation changed after this change was staged");
-      } else if (before && ch.target?.startsWith("managed:")) {
-        const cur = one<{ start_ms: number; end_ms: number }>(
-          db,
-          "SELECT start_ms, end_ms FROM managed_events WHERE id = ? AND user_id = ?",
-          ch.target.slice(8),
-          userId,
-        );
-        if (!cur) throw new Stale("The event was removed after this change was staged");
-        if (cur.start_ms !== before.start || cur.end_ms !== before.end)
-          throw new Stale("The event changed after it was staged");
+      const before = requestBefore(ch.before, ch.target);
+      switch (before?.kind) {
+        case undefined:
+          break;
+        case "task_level": {
+          // A new priority is stale only when that task changed in a way it is about:
+          // other priority changes of the same re-ranking touch every open task.
+          const cur = one<{ level: number; status: string }>(
+            db,
+            "SELECT level, status FROM tasks WHERE id = ? AND user_id = ?",
+            before.task,
+            userId,
+          );
+          // Quoted as in the change's summary (src/server/assistant/library-tools.ts).
+          const task = `The task ${JSON.stringify(before.title)}`;
+          if (!cur) throw new Stale(`${task} was deleted after this change was staged`);
+          if (cur.status !== "open")
+            throw new Stale(`${task} was done after this change was staged`);
+          if (cur.level !== before.level)
+            throw new Stale(`${task} got another priority after this change was staged`);
+          break;
+        }
+        case "version": {
+          // A shared setting (team policy, meeting checks): stale when it changed.
+          const { of, id, value } = before.version;
+          const cur = versionOf(db, of, id, userId);
+          if (cur === undefined)
+            throw new Stale(`The ${VERSION_NOUNS[of]} was deleted after this change was staged`);
+          if (cur !== value)
+            throw new Stale(`The ${VERSION_NOUNS[of]} changed after this change was staged`);
+          break;
+        }
+        case "automation": {
+          const cur = one<{ rules_changed_at: number }>(
+            db,
+            `SELECT rules_changed_at FROM ${before.table} WHERE id = ? AND user_id = ?`,
+            before.id,
+            userId,
+          );
+          if (!cur) throw new Stale("The automation was deleted after this change was staged");
+          if (cur.rules_changed_at !== before.rulesChangedAt)
+            throw new Stale("The automation changed after this change was staged");
+          break;
+        }
+        case "managed_event": {
+          const cur = one<{ start_ms: number; end_ms: number }>(
+            db,
+            "SELECT start_ms, end_ms FROM managed_events WHERE id = ? AND user_id = ?",
+            before.id,
+            userId,
+          );
+          if (!cur) throw new Stale("The event was removed after this change was staged");
+          if (cur.start_ms !== before.start || cur.end_ms !== before.end)
+            throw new Stale("The event changed after it was staged");
+          break;
+        }
+        default: {
+          const unknown: never = before;
+          throw new Error(`Unknown stale check ${JSON.stringify(unknown)}; not applied`);
+        }
       }
       const res = await call(deps.app(), db, userId, ch.after as ReplayedRequest);
       if (res.status >= 400) {

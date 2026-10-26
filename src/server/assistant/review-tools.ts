@@ -17,7 +17,14 @@ import { type Caller, callTool, type Tool, ToolError, tool } from "../mcp/rpc.ts
 import { busyAsToolError } from "../mcp.ts";
 import { openIssues } from "../meeting-checks.ts";
 import { POLICY_TYPES, type PolicyRow, parsePolicy } from "../policies/model.ts";
-import { type Preview, type ReplayedRequest, zoneOf } from "../preview.ts";
+import {
+  automationBefore,
+  type Preview,
+  type ReplayedRequest,
+  type RequestBefore,
+  versionBefore,
+  zoneOf,
+} from "../preview.ts";
 import { AUTOMATION_KINDS, versionOf } from "../preview-kinds.ts";
 import { membership } from "../teams.ts";
 
@@ -95,7 +102,7 @@ export function reviewTools(deps: ReviewToolDeps): Tool[] {
     request: ReplayedRequest,
     s: {
       target: string | null;
-      before: unknown;
+      before: RequestBefore | null;
       summary: string;
       reason: string;
       /** The open change of the target is part of this one. */
@@ -217,13 +224,11 @@ export function reviewTools(deps: ReviewToolDeps): Tool[] {
           { method: "PATCH", path: "/api/meeting-prefs", body: JSON.stringify(merged) },
           {
             target: "meeting-prefs",
-            before: {
-              version: {
-                of: "meeting_prefs",
-                id: "",
-                value: versionOf(db, "meeting_prefs", "", caller.user.id) ?? null,
-              },
-            },
+            before: versionBefore({
+              of: "meeting_prefs",
+              id: "",
+              value: versionOf(db, "meeting_prefs", "", caller.user.id) ?? null,
+            }),
             summary: `Edit meeting checks${changed ? ` (${changed})` : ""}`,
             reason,
             merges: open !== undefined,
@@ -250,7 +255,7 @@ export function reviewTools(deps: ReviewToolDeps): Tool[] {
       if (!cur) throw new ToolError(`You have no ${kind.noun} ${a.id}; call list_automations`);
       const target = `${kind.plural}:${a.id}`;
       // Apply skips the change when the automation changed after staging.
-      const before = { table: kind.table, id: a.id, rulesChangedAt: cur.rules_changed_at };
+      const before = automationBefore(kind.table, a.id, cur.rules_changed_at);
       if (a.action === "edit") {
         if (Object.keys(settings).length === 0) throw new ToolError("Give the settings to change");
         return stageRequest(
@@ -386,7 +391,7 @@ export function reviewTools(deps: ReviewToolDeps): Tool[] {
       );
       if (!cur) throw new ToolError(`Your team has no policy ${a.id}; call list_team_policies`);
       // Apply skips the change when someone changed the policy after staging.
-      const before = { version: { of: "team_policy", id: a.id, value: cur.updated_at } };
+      const before = versionBefore({ of: "team_policy", id: a.id, value: cur.updated_at });
       if (a.action === "delete")
         return stageRequest(
           caller,

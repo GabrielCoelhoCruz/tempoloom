@@ -1,16 +1,21 @@
 // Onboarding hints in the planner, shown until the user dismisses them. The
 // advice to turn off other scheduling tools first (platform-current-version.md rule 17),
-// and the offer of a first mirroring policy (sync-calendar-mirroring.md rule 11).
+// the offer of a first mirroring policy (sync-calendar-mirroring.md rule 11), and
+// the offer of assistant chat after sign-up (teams-settings-templates.md rule 15).
 import { useEffect, useId, useState } from "preact/hooks";
 import { api } from "../lib/api.ts";
 import { calendarList, displayName, failure, loadCalendars } from "../lib/calendars.tsx";
-import { plannerReload } from "../lib/planner-signals.ts";
+import { chatDraft, plannerReload, sidePanel } from "../lib/planner-signals.ts";
 import { onLinkClick } from "../lib/router.ts";
 
 export function PlannerHints() {
   const [hints, setHints] = useState<string[] | null>(null);
+  const [chatOff, setChatOff] = useState(false);
   useEffect(() => {
-    void api<{ hints: string[] }>("GET", "/api/hints").then((h) => setHints(h.hints));
+    void api<{ hints: string[]; chatOff?: boolean }>("GET", "/api/hints").then((h) => {
+      setHints(h.hints);
+      setChatOff(h.chatOff ?? false);
+    });
   }, []);
   const dismiss = (hint: string) => {
     setHints((list) => (list ?? []).filter((h) => h !== hint));
@@ -30,6 +35,9 @@ export function PlannerHints() {
           </button>
         </p>
       )}
+      {hints?.includes("assistant-chat") && (
+        <ChatOffer off={chatOff} onDone={() => dismiss("assistant-chat")} />
+      )}
       {hints?.includes("first-mirror") && (
         <FirstMirror
           onDone={() => setHints((l) => (l ?? []).filter((h) => h !== "first-mirror"))}
@@ -37,6 +45,43 @@ export function PlannerHints() {
         />
       )}
     </div>
+  );
+}
+
+/** The first question the offer puts in the chat's input box. */
+const FIRST_QUESTION = "What is on my calendar this week?";
+
+/**
+ * Rule 15: offers assistant chat. While the team switch is off, the offer (shown
+ * to admins only) turns chat on for the whole team first (rule 13).
+ */
+function ChatOffer({ off, onDone }: { off: boolean; onDone: () => void }) {
+  const [error, setError] = useState<string | null>(null);
+  const open = async () => {
+    setError(null);
+    try {
+      if (off) await api("PATCH", "/api/team", { assistantChat: true });
+    } catch (err) {
+      setError(failure(err));
+      return;
+    }
+    chatDraft.value = FIRST_QUESTION;
+    sidePanel.value = "assistant";
+    onDone();
+  };
+  return (
+    <p class="hint" role="note" data-testid="hint-assistant-chat">
+      {off
+        ? "Assistant chat is off for your team. Turn it on to ask about your calendar and ask for changes in plain language. Every change waits for your approval in preview mode."
+        : "Ask the assistant about your calendar, or ask for a change in plain language. Every change waits for your approval in preview mode."}{" "}
+      <button type="button" onClick={() => void open()}>
+        {off ? "Turn on assistant chat" : "Try the assistant"}
+      </button>{" "}
+      <button type="button" onClick={onDone}>
+        Not now
+      </button>
+      {error && <span class="error"> {error}</span>}
+    </p>
   );
 }
 

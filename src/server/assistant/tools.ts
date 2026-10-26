@@ -15,6 +15,7 @@ import { instanceLimit, limitMessage } from "../limits.ts";
 import type { LlmTool } from "../llm.ts";
 import { jsonSchema, type Tool, ToolError, tool } from "../mcp/rpc.ts";
 import { type McpDeps, mcpTools } from "../mcp.ts";
+import { libraryTools } from "./library-tools.ts";
 import { peopleTools } from "./people.ts";
 import { reviewTools } from "./review-tools.ts";
 import { proposeMemoryWithin, type Ref } from "./store.ts";
@@ -106,6 +107,7 @@ export function chatTools(deps: ChatToolDeps): ChatTool[] {
   return [
     ...mcp.filter((t) => t.effect !== "apply" && !NOT_IN_CHAT.has(t.name)).map(asChatTool),
     ...peopleTools(deps).map(asChatTool),
+    ...libraryTools(deps).map(asChatTool),
     ...reviewTools({ ...deps, update }).map(asChatTool),
     memoryTool(deps.db, deps.now),
   ];

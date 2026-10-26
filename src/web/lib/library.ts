@@ -109,18 +109,17 @@ export type LibraryEntry = {
   | { kind: "calendar_mirroring"; preset: { visibility: "busy_only"; pairs: "both" | "mesh" } }
   | { kind: "meeting_check"; preset: MeetingCheckPreset }
   | { kind: "no_meeting_day"; preset: { weekday: number } }
-  /** Kinds Tempoloom does not have yet; the reason says what is missing. */
-  | { kind: "unavailable"; reason: string }
+  /** Rule 7: opens assistant chat with this text in the input box; the user edits it, then sends. */
+  | { kind: "chat_prompt"; preset: { prompt: string } }
 );
 
-const NEEDS_ASSISTANT = "Needs the assistant chat, which Tempoloom does not have yet.";
-const prompt = (slug: string, name: string, summary: string): LibraryEntry => ({
+const prompt = (slug: string, name: string, summary: string, text: string): LibraryEntry => ({
   slug,
   name,
   group: "prompts",
   summary,
-  kind: "unavailable",
-  reason: NEEDS_ASSISTANT,
+  kind: "chat_prompt",
+  preset: { prompt: text },
 });
 
 export const LIBRARY: LibraryEntry[] = [
@@ -170,8 +169,18 @@ export const LIBRARY: LibraryEntry[] = [
     kind: "meeting_check",
     preset: { checks: ["agenda"] },
   },
-  prompt("back-plan", "Back-plan work from due dates", "Propose work time before each due date."),
-  prompt("what-now", "What to do now", "Which task to start now, and why."),
+  prompt(
+    "back-plan",
+    "Back-plan work from due dates",
+    "Propose work time before each due date.",
+    "Look at my open tasks with due dates and propose work time before each due date.",
+  ),
+  prompt(
+    "what-now",
+    "What to do now",
+    "Which task to start now, and why.",
+    "Which task should I start now, and why?",
+  ),
   {
     slug: "executive-focus",
     name: "Executive weekly focus",
@@ -228,6 +237,7 @@ export const LIBRARY: LibraryEntry[] = [
     "customer-onboarding",
     "Customer onboarding meeting plan",
     "Plan a kickoff, a check-in after 1 week and a review after 30 days.",
+    "Plan onboarding meetings with this customer: a 60 min kickoff, a 30 min check-in after 1 week and a 30 min review after 30 days.",
   ),
   {
     slug: "prep-customer-meetings",
@@ -242,11 +252,36 @@ export const LIBRARY: LibraryEntry[] = [
       filter: { categories: ["external_meeting"] },
     },
   },
-  prompt("work-rhythm", "Work rhythm review", "When do you do deep work, and when do you meet?"),
-  prompt("cross-team", "Cross-team meeting time", "Find the best time this week for colleagues."),
-  prompt("burnout", "Burnout risk review", "Check the last 4 weeks for burnout signs."),
-  prompt("team-health", "Team meeting health review", "Summarize the team's meeting load."),
-  prompt("urgent-review", "Urgent review meeting", "Find the earliest slot for an urgent review."),
+  prompt(
+    "work-rhythm",
+    "Work rhythm review",
+    "When do you do deep work, and when do you meet?",
+    "Over the last 4 weeks, when do I do deep work and when do I meet? Suggest a better weekly rhythm.",
+  ),
+  prompt(
+    "cross-team",
+    "Cross-team meeting time",
+    "Find the best time this week for colleagues.",
+    "Find the best time this week for a meeting with these colleagues: …",
+  ),
+  prompt(
+    "burnout",
+    "Burnout risk review",
+    "Check the last 4 weeks for burnout signs.",
+    "Check my last 4 weeks for burnout signs: meetings outside work hours, few breaks, little time off, little focus time.",
+  ),
+  prompt(
+    "team-health",
+    "Team meeting health review",
+    "Summarize the team's meeting load.",
+    "Summarize my team's meeting load and one-on-one time from team stats.",
+  ),
+  prompt(
+    "urgent-review",
+    "Urgent review meeting",
+    "Find the earliest slot for an urgent review.",
+    "Find the earliest slot this week for an urgent review with these people. You may move my lower-priority items.",
+  ),
   {
     slug: "break-long-meetings",
     name: "Break after long meetings",
@@ -260,9 +295,24 @@ export const LIBRARY: LibraryEntry[] = [
       filter: { participants: { op: ">=", value: 2 }, length: { op: ">=", minutes: 60 } },
     },
   },
-  prompt("adaptive-workday", "Adaptive workday", "Rearrange today's flexible items for new hours."),
-  prompt("conflict-fixes", "Conflict fixes", "Fix the conflicts in the dates in view."),
-  prompt("plan-my-day", "Plan my day", "Place your top tasks and add short breaks."),
+  prompt(
+    "adaptive-workday",
+    "Adaptive workday",
+    "Rearrange today's flexible items for new hours.",
+    "My day changed: I now work from … to …. Rearrange my flexible items for today.",
+  ),
+  prompt(
+    "conflict-fixes",
+    "Conflict fixes",
+    "Fix the conflicts in the dates in view.",
+    "Recommendations: check the dates shown in the planner for conflicts and other meeting problems, and propose a fix for each.",
+  ),
+  prompt(
+    "plan-my-day",
+    "Plan my day",
+    "Place your top tasks and add short breaks.",
+    "Plan my day: place my top tasks in free focus time and add short breaks.",
+  ),
   {
     slug: "peak-energy-focus",
     name: "Peak-energy focus",
@@ -272,7 +322,12 @@ export const LIBRARY: LibraryEntry[] = [
     kind: "focus_time",
     preset: { weeklyGoalMinutes: 600, preferredWindow: { from: "09:00", to: "12:00" } },
   },
-  prompt("task-reranking", "Task re-ranking", "Re-rank open tasks by due date and work left."),
+  prompt(
+    "task-reranking",
+    "Task re-ranking",
+    "Re-rank open tasks by due date and work left.",
+    "Re-rank my open tasks by due date and remaining work, and propose new priorities.",
+  ),
   {
     slug: "deep-work",
     name: "Deep work protection",
@@ -343,7 +398,12 @@ export const LIBRARY: LibraryEntry[] = [
       filter: { categories: ["external_meeting"] },
     },
   },
-  prompt("prep-tasks", "Prep task suggestions", "Suggest prep tasks before next week's meetings."),
+  prompt(
+    "prep-tasks",
+    "Prep task suggestions",
+    "Suggest prep tasks before next week's meetings.",
+    "For my meetings in the next 7 days, suggest prep tasks due before each meeting.",
+  ),
   {
     slug: "client-meetings",
     name: "Recurring client meetings",

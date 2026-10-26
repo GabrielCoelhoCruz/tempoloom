@@ -82,7 +82,7 @@ test("a habit entry fills the habit form; saving places it and shows Added; a se
   await expect(entry(page, "Lunch")).not.toContainText("Added");
 });
 
-test("buffer and focus entries add their automation as set; prompts offer no action (rule 4, entries 3, 21, 25)", async ({
+test("buffer and focus entries add their automation as set; prompts offer only the chat (rule 4, entries 3, 21, 25)", async ({
   page,
   cal,
   signIn,
@@ -128,8 +128,7 @@ test("buffer and focus entries add their automation as set; prompts offer no act
 
   await page.getByRole("tab", { name: "Prompts" }).click();
   const plan = entry(page, "Plan my day");
-  await expect(plan).toContainText("Needs the assistant chat");
-  await expect(plan.getByRole("button")).toHaveCount(0);
+  await expect(plan.getByRole("button")).toHaveText(["Open in chat"]);
   await page.reload();
   await expect(entry(page, "Prep before interviews")).toContainText("Added");
   await expect(entry(page, "Deep work protection")).toContainText("Added");

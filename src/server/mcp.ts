@@ -28,11 +28,13 @@ import {
 import { oauthUser, resourceMetadataUrl } from "./oauth.ts";
 import {
   allDayWhen,
+  managedEventBefore,
   openChanges,
   openChangesPage,
   type Preview,
   plainTitle,
   SOURCES,
+  type StageArgs,
   TargetBusy,
   userFormatsOf,
   when,
@@ -76,7 +78,7 @@ const datetime = z.iso.datetime({ offset: true });
 
 const instant = z.string().describe("ISO 8601 UTC");
 const date = z.string().describe("YYYY-MM-DD");
-const stagedOutput = z.object({
+export const stagedOutput = z.object({
   id: z.string(),
   state: z.string(),
   summary: z.string(),
@@ -107,6 +109,34 @@ const RSVP_WORDS = {
 function reviewUrl(baseUrl: string, zone: string, t: number): string {
   const d = utcToLocal(zone, t).date;
   return new URL(`/?week=${addDays(d, 1 - weekdayOf(d))}`, baseUrl).toString();
+}
+
+/**
+ * Stages a change in preview mode for the caller and gives a stage tool's
+ * result (stagedOutput). Every stage tool of MCP and of assistant chat uses it.
+ */
+export function stagedResult(
+  deps: Pick<McpDeps, "db" | "preview" | "baseUrl">,
+  caller: Caller,
+  input: StageArgs,
+  at: number,
+) {
+  const s = busyAsToolError(() =>
+    deps.preview.stage(caller.user.id, {
+      ...input,
+      source: caller.source ?? "mcp_client",
+      client: caller.client,
+      unattended: caller.unattended === true,
+    }),
+  );
+  return {
+    id: s.id,
+    state: s.state,
+    summary: s.summary,
+    review_url: reviewUrl(deps.baseUrl, zoneOf(deps.db, caller.user.id), at),
+    message:
+      "The change is staged in Tempoloom's preview mode. Nothing is written until the user applies it.",
+  };
 }
 
 /**
@@ -668,27 +698,8 @@ export function mcpTools(deps: Omit<McpDeps, "writeEnabled">): Tool[] {
     }),
   ];
 
-  function staged(
-    caller: Caller,
-    input: Omit<Parameters<Preview["stage"]>[1], "source" | "client">,
-    at: number,
-  ) {
-    const s = busyAsToolError(() =>
-      preview.stage(caller.user.id, {
-        ...input,
-        source: caller.source ?? "mcp_client",
-        client: caller.client,
-        unattended: caller.unattended === true,
-      }),
-    );
-    return {
-      id: s.id,
-      state: s.state,
-      summary: s.summary,
-      review_url: reviewUrl(deps.baseUrl, zoneOf(db, caller.user.id), at),
-      message:
-        "The change is staged in Tempoloom's preview mode. Nothing is written until the user applies it.",
-    };
+  function staged(caller: Caller, input: StageArgs, at: number) {
+    return stagedResult(deps, caller, input, at);
   }
 
   /** An event of the user's that Tempoloom may change for them (edge case 2). */
@@ -742,7 +753,7 @@ export function mcpTools(deps: Omit<McpDeps, "writeEnabled">): Tool[] {
         {
           kind: "request",
           target: `managed:${managed.id}`,
-          before: { start: managed.start_ms, end: managed.end_ms },
+          before: managedEventBefore(managed),
           after: {
             method: "POST",
             path: `/api/planner/events/${managed.id}/move`,
