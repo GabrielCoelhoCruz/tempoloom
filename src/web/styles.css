@@ -963,3 +963,57 @@ fieldset {
   font-weight: 600;
   font-size: 1.5rem;
 }
+
+/* Assistant chat panel (assistant-chat.md rule 1) */
+.drawer.assistant {
+  width: 400px;
+}
+.assistant-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.assistant-head .spacer {
+  flex: 1;
+}
+.assistant-log {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.assistant .msg {
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  white-space: pre-wrap;
+  max-width: 90%;
+}
+.assistant .msg.user {
+  align-self: flex-end;
+  background: color-mix(in srgb, var(--accent) 16%, var(--panel));
+}
+.assistant .msg.bot {
+  align-self: flex-start;
+  border: 1px solid var(--line);
+}
+.assistant .msg.note {
+  align-self: flex-start;
+  font-size: 13px;
+  opacity: 0.8;
+}
+.assistant .proposal {
+  border: 2px dashed var(--accent);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  display: grid;
+  gap: 6px;
+}
+.assistant-form {
+  display: grid;
+  gap: 8px;
+}
+.assistant-form textarea {
+  width: 100%;
+  resize: vertical;
+}

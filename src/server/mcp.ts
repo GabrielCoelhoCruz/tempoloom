@@ -97,9 +97,12 @@ function reviewUrl(baseUrl: string, zone: string, t: number): string {
   return new URL(`/?week=${addDays(d, 1 - weekdayOf(d))}`, baseUrl).toString();
 }
 
-export function mcpRoutes(deps: McpDeps): Hono {
+/**
+ * The tools of the MCP server. Assistant chat (src/server/assistant/tools.ts)
+ * uses the same tools, so both stage changes through one code path.
+ */
+export function mcpTools(deps: Omit<McpDeps, "writeEnabled">): Tool[] {
   const { db, preview, now } = deps;
-  const origin = new URL(deps.baseUrl).origin;
   const { listEvents, findFree, weekSummary, meetingContext } = readers(db, now);
 
   const tools: Tool[] = [
@@ -385,7 +388,7 @@ export function mcpRoutes(deps: McpDeps): Hono {
       name: "propose_create_event",
       title: "Propose a new event",
       description:
-        "Stages a new event in Tempoloom's preview mode. Nothing is written and no guest is invited until the user applies the change in Tempoloom, or confirms it and you call apply_staged_changes.",
+        "Stages a new event in Tempoloom's preview mode. Nothing is written and no guest is invited until the user approves and applies the change in Tempoloom.",
       effect: "stage",
       input: z.object({
         title: z.string().trim().min(1).max(255),
@@ -429,7 +432,7 @@ export function mcpRoutes(deps: McpDeps): Hono {
       name: "propose_update_event",
       title: "Propose a change to an event",
       description:
-        "Stages a new time or title for an event the user organizes (an id from list_events). For events that Tempoloom plans, only the start can change. Nothing changes until the user applies it.",
+        "Stages a new time or title for an event the user organizes (an id from list_events). For events that Tempoloom plans, only the start can change. Nothing changes until the user approves and applies it.",
       effect: "stage",
       input: z.object({
         event_id: z.string().min(1),
@@ -445,7 +448,7 @@ export function mcpRoutes(deps: McpDeps): Hono {
       name: "propose_delete_event",
       title: "Propose to delete an event",
       description:
-        "Stages the deletion of an event the user organizes. Guests hear about it only when the user applies the change.",
+        "Stages the deletion of an event the user organizes. Guests hear about it only when the user approves and applies the change.",
       effect: "stage",
       input: z.object({ event_id: z.string().min(1), reason: z.string().max(1000).optional() }),
       output: stagedOutput,
@@ -480,7 +483,7 @@ export function mcpRoutes(deps: McpDeps): Hono {
       name: "propose_rsvp",
       title: "Propose an answer to an invitation",
       description:
-        "Stages the user's answer (accepted, declined or tentative) to an invitation from someone else (an id from list_events). The organizer sees the answer only when the user applies it.",
+        "Stages the user's answer (accepted, declined or tentative) to an invitation from someone else (an id from list_events). The organizer sees the answer only when the user approves and applies it.",
       effect: "stage",
       input: z.object({
         event_id: z.string().min(1),
@@ -517,7 +520,7 @@ export function mcpRoutes(deps: McpDeps): Hono {
       name: "propose_focus_time",
       title: "Propose a focus time block",
       description:
-        "Stages a busy focus time event of the given length in the first free time of the user's hours between start and end, for example two hours of deep work before noon. It counts as focus time in the stats. Nothing is written until the user applies it.",
+        "Stages a busy focus time event of the given length in the first free time of the user's hours between start and end, for example two hours of deep work before noon. It counts as focus time in the stats. Nothing is written until the user approves and applies it.",
       effect: "stage",
       input: z.object({
         duration_minutes: z.number().int().min(15).max(480),
@@ -564,7 +567,7 @@ export function mcpRoutes(deps: McpDeps): Hono {
       name: "propose_log_task_time",
       title: "Propose a work session on a task",
       description:
-        "Stages a past work session on a task (an id from list_tasks): a locked task event from start for the given minutes on the task's calendar. Nothing is written until the user applies it.",
+        "Stages a past work session on a task (an id from list_tasks): a locked task event from start for the given minutes on the task's calendar. Nothing is written until the user approves and applies it.",
       effect: "stage",
       input: z.object({
         task_id: z.string().min(1),
@@ -654,7 +657,7 @@ export function mcpRoutes(deps: McpDeps): Hono {
   ) {
     const s = preview.stage(caller.user.id, {
       ...input,
-      source: "mcp_client",
+      source: caller.source ?? "mcp_client",
       client: caller.client,
     });
     return {
@@ -770,7 +773,13 @@ export function mcpRoutes(deps: McpDeps): Hono {
     );
   }
 
-  const handle = rpcHandler(tools, deps.writeEnabled);
+  return tools;
+}
+
+export function mcpRoutes(deps: McpDeps): Hono {
+  const { db, now } = deps;
+  const origin = new URL(deps.baseUrl).origin;
+  const handle = rpcHandler(mcpTools(deps), deps.writeEnabled);
 
   /** A personal API key as the bearer token; the key's name labels the client. */
   function keyCaller(auth: string | undefined): Caller | undefined {

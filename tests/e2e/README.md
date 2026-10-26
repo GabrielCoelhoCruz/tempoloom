@@ -34,6 +34,11 @@ at the end:
 
 - Mailpit (`scripts/mail-server.sh`): receives the mail the server sends, for
   example team invitations; tests read it through Mailpit's HTTP API.
+- A fake OpenAI-compatible model (`tests/e2e/fake-llm.ts`, in the test
+  process, on `TEMPOLOOM_LLM_FAKE_PORT`, default 8789): it answers assistant
+  chat with scripted replies and keeps each request, so tests check what the
+  app sent. `scripts/e2e-llm.sh` runs the tests tagged `@llm-real` against a
+  real endpoint instead (base URL and key from 1Password, `tests/e2e/llm.env.tpl`).
 - Dex (`scripts/oidc-server.sh`): an OpenID Connect identity provider for the
   single sign-on tests, with a test user whose password is new on each run.
   It needs `mkpasswd` (package `whois`) or `htpasswd` (package
@@ -43,7 +48,7 @@ Ports and container names come from environment variables, so several runs
 can share a host: `TEMPOLOOM_E2E_PORT`, `TEMPOLOOM_CALDAV_PORT`,
 `TEMPOLOOM_CALDAV_CONTAINER`, `TEMPOLOOM_E2E_STATE`, `TEMPOLOOM_MAIL_CONTAINER`,
 `TEMPOLOOM_MAIL_SMTP_PORT`, `TEMPOLOOM_MAIL_HTTP_PORT`, `TEMPOLOOM_OIDC_PORT`,
-`TEMPOLOOM_OIDC_CONTAINER`.
+`TEMPOLOOM_OIDC_CONTAINER`, `TEMPOLOOM_LLM_FAKE_PORT`.
 
 ## Run on CalDAV
 

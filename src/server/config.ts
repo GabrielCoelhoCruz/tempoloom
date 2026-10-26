@@ -66,6 +66,21 @@ const schema = z
     SUPPORT_URL: z.url({ protocol: /^https?$/ }).optional(),
     /** Days a one-off booking link works after it is made (booking-links-sharing.md rule 14). */
     ONEOFF_LINK_DAYS: z.coerce.number().int().min(0).max(365).default(30),
+    /**
+     * Assistant chat (assistant-chat.md): an OpenAI-compatible endpoint, for
+     * example https://host/v1. Not set: the chat panel says the assistant is
+     * not configured. The key is sent as a bearer token when set.
+     */
+    TEMPOLOOM_LLM_BASE_URL: z.url({ protocol: /^https?$/ }).optional(),
+    TEMPOLOOM_LLM_API_KEY: z.string().min(1).optional(),
+    TEMPOLOOM_LLM_MODEL: z.string().min(1).default("claude-sonnet-5-5"),
+    /** Milliseconds one model call may take. */
+    TEMPOLOOM_LLM_TIMEOUT_MS: z.coerce.number().int().min(1000).default(60_000),
+    /**
+     * Milliseconds one chat turn (all its model calls and tools) may take. Keep
+     * it below the read timeout of a reverse proxy in front (often 60 s).
+     */
+    TEMPOLOOM_LLM_TURN_MS: z.coerce.number().int().min(1000).default(55_000),
   })
   .refine((c) => !c.TEST_CLOCK_START || c.TEMPOLOOM_TEST_MODE, {
     path: ["TEST_CLOCK_START"],

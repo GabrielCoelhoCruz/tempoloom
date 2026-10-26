@@ -17,6 +17,8 @@ export interface Team {
   invite_permission: "admins" | "all_members";
   seat_limit: number | null;
   settings: string;
+  /** Assistant chat for the whole team (teams-settings-templates.md rule 13). */
+  assistant_chat_enabled: number;
   created_at: number;
 }
 

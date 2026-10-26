@@ -21,6 +21,7 @@ import {
   blockPreview,
   conflictIds,
   extraZone,
+  plannerContext,
   plannerReload,
   sidePanel,
   viewAs,
@@ -72,6 +73,7 @@ const PreviewPanel = lazyComponent<{ onApplied: () => void }>(() =>
   import("./preview.tsx").then((m) => m.PreviewPanel),
 );
 // PLN-3, PLN-6, PLN-20: the gear menu, "view as" and the calendars panel.
+const AssistantPanel = lazyComponent(() => import("./assistant.tsx").then((m) => m.AssistantPanel));
 const PlannerOptions = lazyComponent(() =>
   import("./planner-options.tsx").then((m) => m.PlannerOptions),
 );
@@ -174,6 +176,14 @@ export function Planner() {
   // The loaded range: from the first to the end of the last day shown.
   const fromDay = days[0] ?? weekStart;
   const toDay = addDays(days.at(-1) ?? weekStart, 1);
+  const selectedId = selected?.id;
+  useEffect(() => {
+    plannerContext.value = {
+      from: fromDay,
+      to: toDay,
+      ...(selectedId ? { eventId: selectedId } : {}),
+    };
+  }, [fromDay, toDay, selectedId]);
 
   // Answers can arrive out of order (another week, a live update): only the
   // newest load may draw.
@@ -351,7 +361,17 @@ export function Planner() {
         >
           Plan now
         </button>
+        <button
+          type="button"
+          aria-expanded={sidePanel.value === "assistant"}
+          onClick={() => {
+            sidePanel.value = sidePanel.value === "assistant" ? null : "assistant";
+          }}
+        >
+          Assistant
+        </button>
       </div>
+      {sidePanel.value === "assistant" && <AssistantPanel />}
       {logAt !== null && (
         <LogWork
           key={`${logAt.start}:${logAt.minutes}`}
@@ -587,6 +607,9 @@ export function Planner() {
               close={() => setSelected(null)}
             />
           )}
+          <button type="button" onClick={() => (sidePanel.value = "assistant")}>
+            Ask the assistant
+          </button>
           <button
             type="button"
             onClick={() => {

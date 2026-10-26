@@ -21,6 +21,7 @@ import {
 } from "./accounts.ts";
 import { accountRoutes } from "./api/account.ts";
 import { analyticsRoutes } from "./api/analytics.ts";
+import { assistantRoutes } from "./api/assistant.ts";
 import { automationRoutes } from "./api/automations.ts";
 import { bookingRoutes, publicBookingRoutes } from "./api/booking.ts";
 import { bookingShareRoutes } from "./api/booking-share.ts";
@@ -59,6 +60,8 @@ import { teamDefaultRoutes } from "./api/team-defaults.ts";
 import { travelRoutes } from "./api/travel.ts";
 import { webhookRoutes } from "./api/webhooks.ts";
 import { apiKeyUser } from "./api-keys.ts";
+import { createChat } from "./assistant/chat.ts";
+import { chatTools } from "./assistant/tools.ts";
 import type { Config } from "./config.ts";
 import type { SecretBox } from "./crypto.ts";
 import { all, type Db, one, openDb, run } from "./db.ts";
@@ -74,6 +77,7 @@ import {
 import { dropCoveredGrant } from "./grant.ts";
 import { jsonBody } from "./http.ts";
 import { createLiveHub } from "./live.ts";
+import { createLlm, type Llm } from "./llm.ts";
 import type { Mailer } from "./mail.ts";
 import { mcpRoutes } from "./mcp.ts";
 import { oauthConsentRoutes, oauthRoutes } from "./oauth.ts";
@@ -96,6 +100,8 @@ export interface AppDeps {
   webhooks: WebhookWorker;
   mailer: Mailer;
   now?: () => number;
+  /** Assistant chat's model; default: the endpoint in the config, if any. */
+  llm?: Llm | null;
 }
 
 /**
@@ -509,6 +515,30 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
       preview,
       { baseUrl: config.BASE_URL, mcpWriteEnabled: config.MCP_WRITE_ENABLED },
       now,
+    ),
+  );
+  const llm =
+    deps.llm !== undefined
+      ? deps.llm
+      : config.TEMPOLOOM_LLM_BASE_URL
+        ? createLlm({
+            baseUrl: config.TEMPOLOOM_LLM_BASE_URL,
+            apiKey: config.TEMPOLOOM_LLM_API_KEY,
+            model: config.TEMPOLOOM_LLM_MODEL,
+            timeoutMs: config.TEMPOLOOM_LLM_TIMEOUT_MS,
+          })
+        : null;
+  app.route(
+    "/api",
+    assistantRoutes(
+      db,
+      createChat({
+        db,
+        llm,
+        tools: chatTools({ db, preview, baseUrl: config.BASE_URL, now }),
+        now,
+        turnMs: config.TEMPOLOOM_LLM_TURN_MS,
+      }),
     ),
   );
   app.route("/api", helpRoutes(db, config.SUPPORT_URL, now, sync));

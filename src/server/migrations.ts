@@ -1395,4 +1395,68 @@ export const MIGRATIONS: readonly string[] = [
   `
   ALTER TABLE meetings ADD COLUMN auto_lock TEXT CHECK (auto_lock IN ('off', 'day', 'week'));
   `,
+  // 51: assistant chat (assistant-chat.md). Conversations and their messages
+  // (rule 11: the context of each conversation; a reload shows it). A message
+  // that staged a change or proposed a memory links to it (ref_kind, ref_id).
+  // Chat memories (rules 22-25) wait for the user's approval (state pending).
+  // assistant_requests makes a resent message idempotent (client_id). The use
+  // per user and UTC day for the instance quota (rule 27), and the team switch
+  // (teams-settings-templates.md rules 13-14; open question 4: on by default).
+  `
+  CREATE TABLE assistant_conversations (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    title TEXT NOT NULL DEFAULT '',
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  ) STRICT;
+  CREATE INDEX assistant_conversations_user ON assistant_conversations (user_id, updated_at);
+
+  -- One row per message in the format of the chat completions API: role
+  -- user, assistant (content and tool_calls JSON) or tool (tool_call_id).
+  CREATE TABLE assistant_messages (
+    conversation_id TEXT NOT NULL REFERENCES assistant_conversations(id) ON DELETE CASCADE,
+    seq INTEGER NOT NULL,
+    role TEXT NOT NULL CHECK (role IN ('user', 'assistant', 'tool')),
+    content TEXT,
+    tool_calls TEXT,
+    tool_call_id TEXT,
+    ref_kind TEXT CHECK (ref_kind IN ('proposal', 'memory')),
+    ref_id TEXT,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (conversation_id, seq)
+  ) STRICT;
+
+  CREATE TABLE assistant_memories (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    text TEXT NOT NULL,
+    people TEXT NOT NULL DEFAULT '[]',
+    state TEXT NOT NULL DEFAULT 'pending' CHECK (state IN ('pending', 'saved')),
+    created_at INTEGER NOT NULL
+  ) STRICT;
+  CREATE INDEX assistant_memories_user ON assistant_memories (user_id, created_at);
+
+  CREATE TABLE assistant_requests (
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    client_id TEXT NOT NULL,
+    -- A hash of the conversation and the text: the id answers only the same message.
+    fingerprint TEXT NOT NULL,
+    state TEXT NOT NULL CHECK (state IN ('running', 'done', 'failed')),
+    conversation_id TEXT,
+    message TEXT NOT NULL DEFAULT '',
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (user_id, client_id),
+    CHECK (state <> 'done' OR conversation_id IS NOT NULL)
+  ) STRICT;
+
+  CREATE TABLE assistant_usage (
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    day TEXT NOT NULL,
+    count INTEGER NOT NULL,
+    PRIMARY KEY (user_id, day)
+  ) STRICT;
+
+  ALTER TABLE teams ADD COLUMN assistant_chat_enabled INTEGER NOT NULL DEFAULT 1;
+  `,
 ];
