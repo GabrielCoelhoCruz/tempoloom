@@ -86,7 +86,8 @@ export function HoursField({
       </label>
       <span class="hours-info">
         <button type="button" aria-expanded={preview} onClick={() => setPreview(!preview)}>
-          ⓘ<span class="sr-only"> Preview hours</span>
+          <span class="info-icon" aria-hidden="true" />
+          <span class="sr-only">Preview hours</span>
         </button>
         {preview && (
           <span class="popover" data-testid="hours-preview">

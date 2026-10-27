@@ -174,6 +174,26 @@ label > textarea {
   color: var(--muted);
   font-size: 12px;
 }
+.task-row {
+  grid-template-columns: auto 1fr auto;
+}
+/* Icons painted in the text color through a mask: they need no emoji or symbol font. */
+.lock-icon,
+.info-icon {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  vertical-align: -0.125em;
+  background-color: currentColor;
+  mask: var(--icon) center / contain no-repeat;
+}
+.lock-icon,
+.ev-locked::after {
+  --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill-rule='evenodd' d='M4 7V5a4 4 0 0 1 8 0v2h1v8H3V7zm2 0h4V5a2 2 0 0 0-4 0z'/%3E%3C/svg%3E");
+}
+.info-icon {
+  --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill-rule='evenodd' d='M8 0a8 8 0 1 0 0 16A8 8 0 0 0 8 0zm0 1.5a6.5 6.5 0 1 1 0 13 6.5 6.5 0 0 1 0-13zM7 7h2v5H7zm0-3h2v2H7z'/%3E%3C/svg%3E");
+}
 .badge {
   font-size: 11px;
   padding: 1px 6px;
@@ -308,12 +328,20 @@ label > textarea {
     rgb(255 255 255 / 0.18) 6px 12px
   );
 }
+.ev-locked {
+  padding-right: 16px;
+}
 .ev-locked::after {
-  content: "🔒";
+  content: "";
+  /* biome-ignore lint/suspicious/noDuplicateProperties: the line above is the fallback for browsers without alt text */
+  content: "" / "Locked";
   position: absolute;
   right: 4px;
-  top: 2px;
-  font-size: 10px;
+  top: 4px;
+  width: 10px;
+  height: 10px;
+  background-color: currentColor;
+  mask: var(--icon) center / contain no-repeat;
 }
 .ev-pick {
   background: var(--line);
@@ -337,6 +365,18 @@ label > textarea {
   display: block;
   opacity: 0.85;
   font-size: 11px;
+}
+/* A box too short for two lines: the time follows the title on one line. */
+.ev-short {
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.ev-short .ev-title,
+.ev-short .ev-time {
+  display: inline;
+}
+.ev-short .ev-time {
+  margin-left: 4px;
 }
 
 .drawer {

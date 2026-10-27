@@ -90,7 +90,11 @@ export function IssuesPanel() {
                 <div>
                   <div>
                     <span class="badge">
-                      {i.checkId === "company" ? "🔒 " : ""}
+                      {i.checkId === "company" && (
+                        <>
+                          <span class="lock-icon" role="img" aria-label="Locked" />{" "}
+                        </>
+                      )}
                       {CHECK_LABELS[i.checkId]}
                     </span>{" "}
                     {i.title} · {dateTimeText(z, i.start)}
