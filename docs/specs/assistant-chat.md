@@ -102,6 +102,12 @@ All proposed changes go to preview mode (`assistant-preview-mode.md`).
 11. The user can give more detail, ask a second question, and ask for a
     different approach. The assistant keeps the conversation context.
 
+    Tempoloom decision: the user can delete the open conversation, after a
+    confirm. Its messages and the memories it proposed that wait for approval
+    go. The changes it staged stay in preview mode and still apply ("Reply in
+    chat" then goes to the open or a new conversation), saved memories stay,
+    and the day's use (rule 27) does not go down.
+
 ### Approval
 
 12. The assistant never writes to a calendar, an automation or a task

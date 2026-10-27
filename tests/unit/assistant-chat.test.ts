@@ -15,7 +15,12 @@
 // 8. A long conversation grows past any size, so the provider refuses it forever.
 // 9. A chat tool description tells the model it can apply changes.
 // 10. A key reaches the server log on a failed turn.
-// 11. A proposed memory waits forever: it can be saved weeks later, and the
+// 11. A deleted conversation keeps its messages, its proposed memories or its
+//     message ids; or the delete takes the staged changes, saved memories or
+//     the day's use with it; or another user can delete it.
+// 12. A turn that ends after its conversation was deleted fails and loses
+//     what it proposed.
+// 13. A proposed memory waits forever: it can be saved weeks later, and the
 //     table keeps every one the user never answered.
 import { Hono } from "hono";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -811,6 +816,85 @@ const memoryRows = (db: Db) =>
   );
 const memoryIds = (items: ChatItem[] | undefined) =>
   (items ?? []).flatMap((i) => (i.kind === "memory" ? [i.memoryId] : []));
+
+describe("assistant chat conversation delete", () => {
+  it("removes the messages, the memories it proposed and its message ids; staged changes, saved memories and the day's use stay", async () => {
+    const { db, user, chat, send, post, request } = setup((m) => {
+      const last = String(m.findLast((x) => x.role === "user")?.content);
+      const step = m.length - m.findLastIndex((x) => x.role === "user") - 1;
+      if (step > 0) return text("Done.");
+      if (last.startsWith("Book")) return call("propose_create_event", CREATE);
+      return remember(last.replace("Remember ", ""));
+    });
+    const first = await send("Book deep work", { clientId: "message-0001" });
+    const cid = first.body.conversationId as string;
+    const saved = await send("Remember Fridays free", { conversationId: cid });
+    const pending = await send("Remember Mornings for focus", { conversationId: cid });
+    expect((await post(`/assistant/memories/${memoryIds(saved.body.items)[0]}/save`)).status).toBe(
+      200,
+    );
+    expect(memoryIds(pending.body.items)).toHaveLength(2);
+    const other = await send("Book deep work", { clientId: "message-0002" });
+    expect(other.body.conversationId).not.toBe(cid);
+    const before = usage(db);
+    expect(before).toEqual([{ day: "2026-10-19", count: 4 }]);
+
+    expect((await request("DELETE", `/assistant/conversations/${cid}`)).status).toBe(200);
+    expect(messagesOf(db, cid)).toEqual([]);
+    expect(chat.items(user.id, cid)).toEqual([]);
+    const panel = await request("GET", `/assistant?conversation=${cid}`);
+    expect(panel.body.conversations?.map((c) => c.id)).toEqual([other.body.conversationId]);
+    expect(panel.body.conversationId).toBe(other.body.conversationId);
+    // The proposed memory of the deleted conversation is gone; the saved one stays.
+    expect(memoryRows(db)).toEqual([{ text: "Fridays free", state: "saved" }]);
+    // Its staged change stays pending in preview mode; the day's use does not go down.
+    expect(staged(db).map((c) => c.state)).toEqual(["pending", "pending"]);
+    expect(usage(db)).toEqual(before);
+    // Its message ids went with it; those of the other conversation stay.
+    expect(
+      all<{ client_id: string }>(db, "SELECT client_id FROM assistant_requests ORDER BY client_id"),
+    ).toEqual([{ client_id: "message-0002" }]);
+    expect((await request("DELETE", `/assistant/conversations/${cid}`)).status).toBe(404);
+  });
+
+  it("another user's conversation answers 404 and stays", async () => {
+    const { db, user, send, request, actAs } = setup(() => text("ok"));
+    const cid = (await send("hello")).body.conversationId as string;
+    const other = ensureUser(db, "other@example.com", "Other", T0) as User;
+    actAs(other);
+    expect((await request("DELETE", `/assistant/conversations/${cid}`)).status).toBe(404);
+    expect((await request("DELETE", "/assistant/conversations/nope")).status).toBe(404);
+    actAs(user);
+    expect(messagesOf(db, cid).map((m) => m.content)).toEqual(["hello", "ok"]);
+  });
+
+  it("a turn that ends after its conversation was deleted is saved in a new conversation", async () => {
+    let answer: (r: Reply) => void = () => {};
+    const { db, send, request } = setup((_m, n) =>
+      n === 1
+        ? text("first")
+        : n === 2
+          ? call("propose_create_event", CREATE)
+          : new Promise<Reply>((r) => {
+              answer = r;
+            }),
+    );
+    const cid = (await send("hello")).body.conversationId as string;
+    const running = send("Book deep work", { conversationId: cid });
+    await vi.waitFor(() => expect(staged(db)).toHaveLength(1));
+    expect((await request("DELETE", `/assistant/conversations/${cid}`)).status).toBe(200);
+    answer(text("Staged."));
+    const r = await running;
+    expect(r.status).toBe(200);
+    expect(r.body.conversationId).not.toBe(cid);
+    expect(r.body.items).toEqual([
+      { kind: "user", text: "Book deep work" },
+      expect.objectContaining({ kind: "proposal", state: "pending" }),
+      { kind: "assistant", text: "Staged." },
+    ]);
+    expect(messagesOf(db, cid)).toEqual([]);
+  });
+});
 
 describe("assistant chat proposed memory expiry", () => {
   it("a proposed memory expires 7 days after the proposal: the chat no longer offers it and a save answers 404; just before, it saves", async () => {

@@ -74,8 +74,8 @@ export function forModel(m: StoredMessage): LlmMessage {
 }
 
 /**
- * Saves one turn: a new conversation when id is null, then the messages after
- * the stored ones. Returns the conversation id.
+ * Saves one turn: a new conversation when id is null (or the conversation was
+ * deleted), then the messages after the stored ones. Returns the conversation id.
  */
 export function saveTurn(
   db: Db,
@@ -84,9 +84,11 @@ export function saveTurn(
   messages: StoredMessage[],
   now: number,
 ): string {
-  const cid = id ?? randomUUID();
-  tx(db, () => {
-    if (id === null) {
+  return tx(db, () => {
+    // The user deleted the conversation while the turn ran: the turn starts a new one.
+    const known = id !== null && ownsConversation(db, userId, id);
+    const cid = known ? id : randomUUID();
+    if (!known) {
       const first = messages.find((m) => m.role === "user")?.content ?? "";
       const title = first.length > 60 ? `${first.slice(0, 59)}…` : first;
       run(
@@ -121,9 +123,30 @@ export function saveTurn(
         now,
       );
     }
+    return cid;
   });
-  return cid;
 }
+
+/**
+ * Deletes a conversation of the user: its messages, its message ids, and the
+ * memories it proposed that wait for approval. The changes it staged stay in
+ * preview mode, saved memories stay, and the day's use does not go down.
+ */
+export const deleteConversation = (db: Db, userId: string, id: string): boolean =>
+  tx(db, () => {
+    if (!ownsConversation(db, userId, id)) return false;
+    run(
+      db,
+      `DELETE FROM assistant_memories WHERE user_id = ? AND state = 'pending' AND id IN
+         (SELECT ref_id FROM assistant_messages WHERE conversation_id = ? AND ref_kind = 'memory')`,
+      userId,
+      id,
+    );
+    run(db, "DELETE FROM assistant_requests WHERE user_id = ? AND conversation_id = ?", userId, id);
+    // Its messages go by ON DELETE CASCADE (migration 51).
+    run(db, "DELETE FROM assistant_conversations WHERE id = ?", id);
+    return true;
+  });
 
 // ---------------------------------------------------------------- resent messages
 

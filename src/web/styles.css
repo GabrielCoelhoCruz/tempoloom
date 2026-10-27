@@ -1018,6 +1018,16 @@ fieldset {
   border-radius: 3px;
   padding: 0 3px;
 }
+.assistant-convo {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.assistant-convo label {
+  margin-right: auto;
+}
 .assistant .msg.note {
   align-self: flex-start;
   font-size: 13px;

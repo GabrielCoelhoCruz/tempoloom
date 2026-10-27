@@ -1,7 +1,8 @@
 // Assistant chat panel in the planner (docs/specs/assistant-chat.md). Requests
 // in plain language; every change the assistant proposes waits in preview mode
 // (assistant-preview-mode.md), where the user accepts it, discards it, or
-// replies here (rule 13). The bookmark opens the memory list (rule 23).
+// replies here (rule 13). The bookmark opens the memory list (rule 23). The
+// user can delete the open conversation; what it staged stays in preview mode.
 import { signal } from "@preact/signals";
 import type { ComponentChildren } from "preact";
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
@@ -173,6 +174,8 @@ export function AssistantPanel() {
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showMemories, setShowMemories] = useState(false);
+  /** The conversation whose delete waits for the user's confirm. */
+  const [deleting, setDeleting] = useState<string | null>(null);
   const input = useRef<HTMLTextAreaElement>(null);
   const seq = useRef(0);
   // The message being sent: its id, its text, its selected event, and the
@@ -299,6 +302,19 @@ export function AssistantPanel() {
     dispatchEvent(new Event("tl-staged"));
   };
 
+  /** Deletes the open conversation; the panel then starts a new chat. */
+  const deleteChat = async (id: string) => {
+    setDeleting(null);
+    setError(null);
+    try {
+      await api("DELETE", `/api/assistant/conversations/${encodeURIComponent(id)}`);
+      pick("new");
+    } catch (err) {
+      setError(messageOf(err));
+    }
+    void load();
+  };
+
   const close = () => (sidePanel.value = null);
   const refusal = state?.refusal;
   const blocked = refusal && refusal.error !== "quota";
@@ -379,24 +395,52 @@ export function AssistantPanel() {
         </div>
       ) : (
         <>
-          {state.conversations.length > 1 && (
-            <label class="inline">
-              Conversation
-              <select
-                value={state.conversationId ?? ""}
-                onChange={(e) => {
-                  pick(e.currentTarget.value || "new");
-                  void load();
-                }}
-              >
-                {state.conversationId === null && <option value="">New chat</option>}
-                {state.conversations.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.title || "Untitled"}
-                  </option>
-                ))}
-              </select>
-            </label>
+          {(state.conversations.length > 1 || state.conversationId !== null) && (
+            <div class="assistant-convo">
+              {state.conversations.length > 1 && (
+                <label class="inline">
+                  Conversation
+                  <select
+                    value={state.conversationId ?? ""}
+                    onChange={(e) => {
+                      pick(e.currentTarget.value || "new");
+                      void load();
+                    }}
+                  >
+                    {state.conversationId === null && <option value="">New chat</option>}
+                    {state.conversations.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.title || "Untitled"}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+              {state.conversationId !== null && (
+                <button
+                  type="button"
+                  class="danger"
+                  disabled={sending}
+                  onClick={() => setDeleting(state.conversationId)}
+                >
+                  Delete chat
+                </button>
+              )}
+            </div>
+          )}
+          {deleting !== null && deleting === state.conversationId && (
+            <div class="confirm" role="alertdialog" aria-label="Delete this chat">
+              <span>
+                Delete this chat and its messages? Changes it staged stay in preview mode, and saved
+                memories stay.
+              </span>
+              <button type="button" class="danger" onClick={() => void deleteChat(deleting)}>
+                Yes, delete
+              </button>
+              <button type="button" onClick={() => setDeleting(null)}>
+                Cancel
+              </button>
+            </div>
           )}
           <div class="assistant-log" data-testid="assistant-log">
             {state.items.length === 0 && (

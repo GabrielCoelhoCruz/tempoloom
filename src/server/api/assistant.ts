@@ -1,11 +1,12 @@
 // Assistant chat routes (docs/specs/assistant-chat.md): the panel state, one
-// message, conversations and the memory list.
+// message, conversations (and their delete) and the memory list.
 import { Hono } from "hono";
 import { z } from "zod";
 import type { AppEnv } from "../app.ts";
 import type { Chat } from "../assistant/chat.ts";
 import {
   conversations,
+  deleteConversation,
   deleteMemory,
   memories,
   ownsConversation,
@@ -89,6 +90,15 @@ export function assistantRoutes(db: Db, chat: Chat, now: () => number): Hono<App
           502,
         );
     }
+  });
+
+  /**
+   * The user deletes a conversation: its messages hold calendar data. What it
+   * staged stays in preview mode (src/server/assistant/store.ts).
+   */
+  r.delete("/assistant/conversations/:id", (c) => {
+    if (!deleteConversation(db, c.get("user").id, c.req.param("id"))) notFound("conversation");
+    return c.json({ ok: true });
   });
 
   /** The user approves a memory the assistant proposed (rule 22). */
