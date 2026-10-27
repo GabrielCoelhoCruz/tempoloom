@@ -3,10 +3,12 @@
 // (assistant-preview-mode.md), where the user accepts it, discards it, or
 // replies here (rule 13). The bookmark opens the memory list (rule 23).
 import { signal } from "@preact/signals";
+import type { ComponentChildren } from "preact";
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import { reviewRequest } from "../../shared/assistant-review.ts";
 import { ApiError, api } from "../lib/api.ts";
 import { takeAssistantLink } from "../lib/assistant-link.ts";
+import { chatBlocks, type Inline, type Line } from "../lib/chat-text.ts";
 import { useLive } from "../lib/live.ts";
 import { chatDraft, plannerContext, sidePanel } from "../lib/planner-signals.ts";
 import { onLinkClick } from "../lib/router.ts";
@@ -124,6 +126,46 @@ const STATE_WORDS: Record<string, string> = {
   failed: "Failed",
   expired: "Expired",
 };
+
+const nodes = (parts: Inline[]): ComponentChildren[] =>
+  parts.map((p) =>
+    typeof p === "string" ? (
+      p
+    ) : p.t === "code" ? (
+      <code>{p.text}</code>
+    ) : p.t === "strong" ? (
+      <strong>{nodes(p.children)}</strong>
+    ) : (
+      <em>{nodes(p.children)}</em>
+    ),
+  );
+const lines = (ls: Line[]) =>
+  ls.flatMap((l, j) => (j === 0 ? nodes(l) : [<br key={`br${j}`} />, ...nodes(l)]));
+
+/** An assistant reply as elements: the safe markdown of lib/chat-text.ts. */
+function Reply({ text }: { text: string }) {
+  return (
+    <>
+      {chatBlocks(text).map((b, i) =>
+        b.t === "p" ? (
+          <p key={i}>{lines(b.lines)}</p>
+        ) : b.t === "ul" ? (
+          <ul key={i}>
+            {b.items.map((it, j) => (
+              <li key={j}>{lines(it)}</li>
+            ))}
+          </ul>
+        ) : (
+          <ol key={i} start={b.start}>
+            {b.items.map((it, j) => (
+              <li key={j}>{lines(it)}</li>
+            ))}
+          </ol>
+        ),
+      )}
+    </>
+  );
+}
 
 export function AssistantPanel() {
   const [state, setState] = useState<State | null>(null);
@@ -373,7 +415,7 @@ export function AssistantPanel() {
               if (item.kind === "assistant")
                 return (
                   <div key={i} class="msg bot" data-testid="chat-assistant">
-                    {item.text}
+                    <Reply text={item.text} />
                   </div>
                 );
               if (item.kind === "memory")
