@@ -7,7 +7,6 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { TAG_FOCUS } from "../scheduler/blocking.ts";
-import { addDays, utcToLocal, weekdayOf } from "../shared/time.ts";
 import { hashToken, type User } from "./accounts.ts";
 import { AUTOMATION_TYPES, listAutomationsPage, listKeySchema } from "./api/automations.ts";
 import { CATEGORIES, computeStats } from "./api/stats.ts";
@@ -26,6 +25,7 @@ import {
   ToolError,
   tool,
 } from "./mcp/rpc.ts";
+import { stagedOutput, stagedResult } from "./mcp/staged.ts";
 import { oauthUser, resourceMetadataUrl } from "./oauth.ts";
 import {
   allDayWhen,
@@ -35,7 +35,6 @@ import {
   plainTitle,
   SOURCES,
   type StageArgs,
-  TargetBusy,
   userFormatsOf,
   when,
   zoneOf,
@@ -55,16 +54,6 @@ export const TASKS_PAGE = `SELECT id, title, level, total_minutes, due_at, statu
     AND (COALESCE(due_at, ${NO_DUE}), created_at, id) > (?, ?, ?)
   ORDER BY COALESCE(due_at, ${NO_DUE}), created_at, id LIMIT ?`;
 
-/** Staging refused because another open change of the target stays: a tool error the caller reads. */
-export function busyAsToolError<T>(f: () => T): T {
-  try {
-    return f();
-  } catch (err) {
-    if (err instanceof TargetBusy) throw new ToolError(err.message);
-    throw err;
-  }
-}
-
 export interface McpDeps {
   db: Db;
   preview: Preview;
@@ -79,13 +68,6 @@ const datetime = z.iso.datetime({ offset: true });
 
 const instant = z.string().describe("ISO 8601 UTC");
 const date = z.string().describe("YYYY-MM-DD");
-export const stagedOutput = z.object({
-  id: z.string(),
-  state: z.string(),
-  summary: z.string(),
-  review_url: z.string(),
-  message: z.string(),
-});
 const hourFields = {
   meeting_hours: z.number(),
   focus_hours: z.number(),
@@ -105,42 +87,6 @@ const RSVP_WORDS = {
   declined: "Decline",
   tentative: "Answer maybe to",
 } as const;
-
-/** Monday of the week of an instant, for the planner link. */
-function reviewUrl(baseUrl: string, zone: string, t: number): string {
-  const d = utcToLocal(zone, t).date;
-  return new URL(`/?week=${addDays(d, 1 - weekdayOf(d))}`, baseUrl).toString();
-}
-
-/**
- * Stages a change in preview mode for the caller and gives a stage tool's
- * result (stagedOutput). The MCP stage tools and the chat's library tools use
- * it; the chat's automation and policy tools stage through stageRequest
- * (src/server/assistant/review-tools.ts), whose result adds the calendar impact.
- */
-export function stagedResult(
-  deps: Pick<McpDeps, "db" | "preview" | "baseUrl">,
-  caller: Caller,
-  input: StageArgs,
-  at: number,
-) {
-  const s = busyAsToolError(() =>
-    deps.preview.stage(caller.user.id, {
-      ...input,
-      source: caller.source ?? "mcp_client",
-      client: caller.client,
-      unattended: caller.unattended === true,
-    }),
-  );
-  return {
-    id: s.id,
-    state: s.state,
-    summary: s.summary,
-    review_url: reviewUrl(deps.baseUrl, zoneOf(deps.db, caller.user.id), at),
-    message:
-      "The change is staged in Tempoloom's preview mode. Nothing is written until the user applies it.",
-  };
-}
 
 /**
  * The tools of the MCP server. Assistant chat (src/server/assistant/tools.ts)

@@ -12,13 +12,13 @@ import { addDays, diffDays, utcToLocal } from "../../shared/time.ts";
 import { COLUMNS, orgReport, rangeProblem } from "../analytics/org.ts";
 import { taskInput } from "../api/items.ts";
 import { all, type Db, one } from "../db.ts";
-import { stagedOutput, stagedResult } from "../mcp.ts";
 import { ownSeries } from "../meeting-series.ts";
 import { type TaskLite, tasksPanel } from "../planner/now.ts";
 import { type Preview, userFormatsOf, whenAt, zoneOf } from "../preview.ts";
 import { membership } from "../teams.ts";
 import { isoOf, toMs } from "./reads.ts";
 import { type Tool, ToolError, tool } from "./rpc.ts";
+import { stagedOutput, stagedResult } from "./staged.ts";
 
 /** Rows of one list in a result, at most. */
 export const MAX_ROWS = 50;

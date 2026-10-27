@@ -102,6 +102,12 @@ All proposed changes go to preview mode (`assistant-preview-mode.md`).
 11. The user can give more detail, ask a second question, and ask for a
     different approach. The assistant keeps the conversation context.
 
+    Tempoloom decision: the user can delete the open conversation, after a
+    confirm. Its messages and the memories it proposed that wait for approval
+    go. The changes it staged stay in preview mode and still apply ("Reply in
+    chat" then goes to the open or a new conversation), saved memories stay,
+    and the day's use (rule 27) does not go down.
+
 ### Approval
 
 12. The assistant never writes to a calendar, an automation or a task
@@ -110,6 +116,11 @@ All proposed changes go to preview mode (`assistant-preview-mode.md`).
     change, or reply in chat to request a different change.
 14. Apply, final review and attendee notification follow
     `assistant-preview-mode.md`.
+
+    Tempoloom decision: `MCP_WRITE_ENABLED=false` (`plans-feature-inventory.md`
+    rule 5) applies to MCP clients only. Assistant chat still proposes
+    changes, and every chat change still waits in preview mode for the user's
+    approval.
 
 ### Daily review and digest
 
@@ -170,6 +181,12 @@ All proposed changes go to preview mode (`assistant-preview-mode.md`).
     user saves or discards it there. Only saved memories reach the model. So
     text in the calendar (an invitation from someone else) cannot store a
     memory without the user.
+
+    Tempoloom decision: a proposed memory that the user does not save or
+    discard expires 7 days after the proposal. It leaves the chat, and a save
+    after that answers as for a missing memory. Proposed memories do not count
+    toward `max_chat_memories` and are not in the memory list. Saved memories
+    do not expire.
 23. A bookmark icon in the chat panel opens the memory list. The user can
     read and delete each memory.
 24. Memories shape suggestions only. A memory never triggers an action on

@@ -1,11 +1,12 @@
 // Assistant chat routes (docs/specs/assistant-chat.md): the panel state, one
-// message, conversations and the memory list.
+// message, conversations (and their delete) and the memory list.
 import { Hono } from "hono";
 import { z } from "zod";
 import type { AppEnv } from "../app.ts";
 import type { Chat } from "../assistant/chat.ts";
 import {
   conversations,
+  deleteConversation,
   deleteMemory,
   memories,
   ownsConversation,
@@ -17,7 +18,7 @@ import { instanceLimit, limitMessage } from "../limits.ts";
 
 const REFUSED = { not_configured: 503, chat_disabled: 403, quota: 429 } as const;
 
-export function assistantRoutes(db: Db, chat: Chat): Hono<AppEnv> {
+export function assistantRoutes(db: Db, chat: Chat, now: () => number): Hono<AppEnv> {
   const r = new Hono<AppEnv>();
 
   /** The panel: whether chat works, a conversation, the memories and the quota. */
@@ -91,6 +92,15 @@ export function assistantRoutes(db: Db, chat: Chat): Hono<AppEnv> {
     }
   });
 
+  /**
+   * The user deletes a conversation: its messages hold calendar data. What it
+   * staged stays in preview mode (src/server/assistant/store.ts).
+   */
+  r.delete("/assistant/conversations/:id", (c) => {
+    if (!deleteConversation(db, c.get("user").id, c.req.param("id"))) notFound("conversation");
+    return c.json({ ok: true });
+  });
+
   /** The user approves a memory the assistant proposed (rule 22). */
   r.post("/assistant/memories/:id/save", (c) => {
     const refused = chat.refusal(c.get("user"));
@@ -98,7 +108,7 @@ export function assistantRoutes(db: Db, chat: Chat): Hono<AppEnv> {
     const user = c.get("user");
     // Plans rule 4: a proposed memory that would pass the limit stays proposed.
     const limit = instanceLimit(db, "max_chat_memories");
-    const saved = saveMemory(db, user.id, c.req.param("id"), limit);
+    const saved = saveMemory(db, user.id, c.req.param("id"), now(), limit);
     if (saved === "missing") notFound("memory");
     if (saved === "limit") {
       const message = limitMessage("max_chat_memories", limit ?? 0);

@@ -7,7 +7,7 @@ import { utcToLocal } from "../../shared/time.ts";
 import { type RangeProblem, rangeProblem, teamStatsOf } from "../api/analytics.ts";
 import { one } from "../db.ts";
 import { type Tool, ToolError, tool } from "../mcp/rpc.ts";
-import { stagedOutput, stagedResult } from "../mcp.ts";
+import { stagedOutput, stagedResult } from "../mcp/staged.ts";
 import { zoneOf } from "../preview.ts";
 import { taskLevelBefore } from "../preview-kinds.ts";
 import type { ChatToolDeps } from "./tools.ts";
