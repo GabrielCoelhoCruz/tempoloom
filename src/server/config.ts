@@ -60,7 +60,10 @@ const schema = z
       )
       .pipe(z.array(z.union([z.ipv4(), z.ipv6()])))
       .transform(trustedSet),
-    /** false: AI tools (MCP clients) may read but not stage changes (plans-feature-inventory.md). */
+    /**
+     * false: AI tools (MCP clients) may read but not stage changes (plans-feature-inventory.md).
+     * The in-app assistant chat is not an MCP client: it still proposes changes (assistant-chat.md).
+     */
     MCP_WRITE_ENABLED: z.stringbool().default(true),
     /** Where users ask for help, shown on the help page (support-troubleshooting.md rule 4). */
     SUPPORT_URL: z.url({ protocol: /^https?$/ }).optional(),

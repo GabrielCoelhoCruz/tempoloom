@@ -111,6 +111,11 @@ All proposed changes go to preview mode (`assistant-preview-mode.md`).
 14. Apply, final review and attendee notification follow
     `assistant-preview-mode.md`.
 
+    Tempoloom decision: `MCP_WRITE_ENABLED=false` (`plans-feature-inventory.md`
+    rule 5) applies to MCP clients only. Assistant chat still proposes
+    changes, and every chat change still waits in preview mode for the user's
+    approval.
+
 ### Daily review and digest
 
 15. Each night (proposed: 02:00 in the user's home time zone) the system
