@@ -217,7 +217,7 @@ test("delete a conversation: it leaves the list, the API and the model's history
     .click();
   expect((await second).status()).toBe(200);
   await expect(chatPanel(page).getByTestId("chat-user")).toHaveCount(0);
-  const picker = chatPanel(page).getByLabel("Conversation", { exact: true });
+  const picker = chatPanel(page).getByLabel("Conversation");
   await expect(picker.locator("option")).toHaveText([
     "New chat",
     kept.conversations[0]?.title ?? "",

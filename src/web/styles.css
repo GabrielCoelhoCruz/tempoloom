@@ -1026,7 +1026,11 @@ fieldset {
   gap: 8px;
 }
 .assistant-convo label {
-  margin-right: auto;
+  flex: 1;
+  min-width: 0;
+}
+.assistant-convo select {
+  min-width: 0;
 }
 .assistant .msg.note {
   align-self: flex-start;
