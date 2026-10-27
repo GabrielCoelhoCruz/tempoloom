@@ -85,18 +85,7 @@ export async function editRaw(
   edit: (lines: string[]) => string[],
 ): Promise<void> {
   if (id.includes("#")) return editInstance(calendarUrl, { id }, edit);
-  const url = id.split("#")[0] ?? id;
-  const auth = { authorization: credentials(calendarUrl) };
-  const res = await fetch(url, { headers: auth });
-  if (!res.ok) throw new Error(`GET ${url} failed: ${res.status}`);
-  const etag = res.headers.get("etag");
-  const lines = edit((await res.text()).replace(/\r?\n[ \t]/g, "").split(/\r?\n/));
-  const put = await fetch(url, {
-    method: "PUT",
-    headers: { ...auth, "content-type": "text/calendar", ...(etag ? { "if-match": etag } : {}) },
-    body: lines.join("\r\n"),
-  });
-  if (!put.ok) throw new Error(`PUT ${url} failed: ${put.status}`);
+  await editObject(calendarUrl, id, (ics) => edit(ics.split("\n")).join("\n"));
 }
 
 /**
@@ -109,41 +98,20 @@ export async function answerAs(
   email: string,
   answer: Answer,
 ): Promise<void> {
-  // One instance of a series: the answer goes in its override.
-  if (id.includes("#"))
-    return editInstance(calendarUrl, { id }, (lines) =>
-      lines.map((l) => {
-        if (!/^ATTENDEE[;:]/i.test(l) || !l.toLowerCase().endsWith(`mailto:${email.toLowerCase()}`))
-          return l;
-        const [head, ...rest] = l.split(/:(?=mailto:)/i);
-        const params = (head ?? "").split(";").filter((p) => !/^PARTSTAT=/i.test(p));
-        return `${[...params, `PARTSTAT=${answer}`].join(";")}:${rest.join(":")}`;
-      }),
-    );
-  const url = id.split("#")[0] ?? id;
-  const res = await fetch(url, { headers: { authorization: credentials(calendarUrl) } });
-  if (!res.ok) throw new Error(`GET ${url} failed: ${res.status}`);
-  const etag = res.headers.get("etag");
-  const text = (await res.text()).replace(/\r?\n[ \t]/g, "");
-  const lines = text.split(/\r?\n/).map((l) => {
+  const answered = (l: string) => {
     if (!/^ATTENDEE[;:]/i.test(l) || !l.toLowerCase().endsWith(`mailto:${email.toLowerCase()}`))
       return l;
     const [head, ...rest] = l.split(/:(?=mailto:)/i);
     const params = (head ?? "").split(";").filter((p) => !/^PARTSTAT=/i.test(p));
     return `${[...params, `PARTSTAT=${answer}`].join(";")}:${rest.join(":")}`;
+  };
+  // One instance of a series: the answer goes in its override.
+  if (id.includes("#")) return editInstance(calendarUrl, { id }, (lines) => lines.map(answered));
+  await editObject(calendarUrl, id, (ics) => {
+    const lines = ics.split("\n").map(answered).join("\n");
+    if (lines === ics) throw new Error(`${email} is not a guest of ${id}`);
+    return lines;
   });
-  if (lines.join("\n") === text.split(/\r?\n/).join("\n"))
-    throw new Error(`${email} is not a guest of ${url}`);
-  const put = await fetch(url, {
-    method: "PUT",
-    headers: {
-      authorization: credentials(calendarUrl),
-      "content-type": "text/calendar",
-      ...(etag ? { "if-match": etag } : {}),
-    },
-    body: lines.join("\r\n"),
-  });
-  if (!put.ok) throw new Error(`PUT ${url} failed: ${put.status}`);
 }
 
 /** A local "HH:MM" in the test zone at least 20 seconds ahead: the next daily email time. */
@@ -266,20 +234,30 @@ const icsUtc = (t: number) =>
     .replace(/[-:]/g, "")
     .replace(/\.\d{3}/, "");
 
-/** Reads, changes and stores the series object of an instance id. */
+/**
+ * Reads, changes and stores the object of an event id (a series and its
+ * overrides are one object), as another calendar app does: the write has the
+ * ETag of the read (If-Match). When a Tempoloom run writes the object between
+ * the read and the write, the server answers 412 and the edit starts again
+ * from a new read.
+ */
 async function editObject(calendarUrl: string, id: string, edit: (ics: string) => string) {
   const url = id.split("#")[0] ?? id;
   const auth = { authorization: credentials(calendarUrl) };
-  const res = await fetch(url, { headers: auth });
-  if (!res.ok) throw new Error(`GET ${url} failed: ${res.status}`);
-  const etag = res.headers.get("etag");
-  const ics = (await res.text()).replace(/\r?\n[ \t]/g, "").replace(/\r\n/g, "\n");
-  const put = await fetch(url, {
-    method: "PUT",
-    headers: { ...auth, "content-type": "text/calendar", ...(etag ? { "if-match": etag } : {}) },
-    body: edit(ics).replace(/\n/g, "\r\n"),
-  });
-  if (!put.ok) throw new Error(`PUT ${url} failed: ${put.status}`);
+  for (let reads = 1; ; reads++) {
+    const res = await fetch(url, { headers: auth });
+    if (!res.ok) throw new Error(`GET ${url} failed: ${res.status}`);
+    const etag = res.headers.get("etag");
+    const ics = (await res.text()).replace(/\r?\n[ \t]/g, "").replace(/\r\n/g, "\n");
+    const put = await fetch(url, {
+      method: "PUT",
+      headers: { ...auth, "content-type": "text/calendar", ...(etag ? { "if-match": etag } : {}) },
+      body: edit(ics).replace(/\n/g, "\r\n"),
+    });
+    if (put.status === 412 && reads < 5) continue;
+    if (!put.ok) throw new Error(`PUT ${url} failed: ${put.status}`);
+    return;
+  }
 }
 
 /** "This event": edits the instance's override, made from the master when it has none. */
