@@ -15,6 +15,8 @@
 // 8. A long conversation grows past any size, so the provider refuses it forever.
 // 9. A chat tool description tells the model it can apply changes.
 // 10. A key reaches the server log on a failed turn.
+// 11. A proposed memory waits forever: it can be saved weeks later, and the
+//     table keeps every one the user never answered.
 import { Hono } from "hono";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
@@ -101,15 +103,17 @@ function setup(
   const chat = createChat({ db, llm, tools, now, turnMs: opts.turnMs ?? 10_000 });
   // Through the route, as the panel sends: the route owns the HTTP status.
   const app = new Hono<AppEnv>();
+  // The user the routes serve; actAs changes it.
+  let actor = user;
   app.use("*", async (c, next) => {
-    c.set("user", user);
+    c.set("user", actor);
     await next();
   });
-  app.route("/api", assistantRoutes(db, chat));
-  const post = async (path: string, body?: unknown, signal?: AbortSignal) => {
+  app.route("/api", assistantRoutes(db, chat, now));
+  const request = async (method: string, path: string, body?: unknown, signal?: AbortSignal) => {
     const res = await app.request(
       new Request(`http://x/api${path}`, {
-        method: "POST",
+        method,
         headers: { "content-type": "application/json" },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
         ...(signal ? { signal } : {}),
@@ -118,16 +122,22 @@ function setup(
     return {
       status: res.status,
       body: (await res.json()) as {
-        conversationId?: string;
+        conversationId?: string | null;
+        conversations?: { id: string }[];
         items?: ChatItem[];
         error?: string;
         message?: string;
       },
     };
   };
+  const post = (path: string, body?: unknown, signal?: AbortSignal) =>
+    request("POST", path, body, signal);
   const send = (text: string, extra: Record<string, unknown> = {}, signal?: AbortSignal) =>
     post("/assistant/messages", { text, ...extra }, signal);
-  return { db, user, chat, sent, writes, send, post };
+  const actAs = (u: User) => {
+    actor = u;
+  };
+  return { db, user, chat, sent, writes, send, post, request, actAs };
 }
 
 const call = (name: string, args: unknown, id = `c-${name}`): Reply => ({
@@ -764,7 +774,7 @@ describe("assistant chat history", () => {
     const { db, user, sent, send } = setup(() => text("ok"));
     for (let i = 0; i < MAX_PROMPT_MEMORIES + 5; i++) {
       const m = proposeMemory(db, user.id, `memory ${String(i).padStart(3, "0")}`, [], T0 + i);
-      saveMemory(db, user.id, m.id);
+      saveMemory(db, user.id, m.id, T0);
     }
     await send("hi");
     const system = String(sent[0]?.messages[0]?.content);
@@ -774,11 +784,88 @@ describe("assistant chat history", () => {
     const long = setup(() => text("ok"));
     for (let i = 0; i < 30; i++) {
       const m = proposeMemory(long.db, long.user.id, `${i}:${"m".repeat(490)}`, [], T0 + i);
-      saveMemory(long.db, long.user.id, m.id);
+      saveMemory(long.db, long.user.id, m.id, T0);
     }
     await long.send("hi");
     const kept = promptMemories(memories(long.db, long.user.id));
     expect(kept.join("").length).toBeLessThanOrEqual(MAX_MEMORY_CHARS);
     expect(kept.at(-1)).toMatch(/^29:/);
+  });
+});
+
+const DAYS = 86_400_000;
+/** A reply that proposes the memories `texts` in one step. */
+const remember = (...texts: string[]): Reply => ({
+  role: "assistant",
+  content: null,
+  tool_calls: texts.map((t, i) => ({
+    id: `m-${i}`,
+    type: "function",
+    function: { name: "save_memory", arguments: JSON.stringify({ text: t }) },
+  })),
+});
+const memoryRows = (db: Db) =>
+  all<{ text: string; state: string }>(
+    db,
+    "SELECT text, state FROM assistant_memories ORDER BY text",
+  );
+const memoryIds = (items: ChatItem[] | undefined) =>
+  (items ?? []).flatMap((i) => (i.kind === "memory" ? [i.memoryId] : []));
+
+describe("assistant chat proposed memory expiry", () => {
+  it("a proposed memory expires 7 days after the proposal: the chat no longer offers it and a save answers 404; just before, it saves", async () => {
+    let t = T0;
+    const { db, user, chat, send, post } = setup(
+      (_m, n) => (n === 1 ? remember("Fridays free", "Mornings for focus") : text("ok")),
+      { now: () => t },
+    );
+    const r = await send("Remember two things");
+    const [a, b] = memoryIds(r.body.items);
+    const cid = r.body.conversationId as string;
+    t = T0 + 7 * DAYS - 1;
+    expect((await post(`/assistant/memories/${a}/save`)).status).toBe(200);
+    t = T0 + 7 * DAYS;
+    expect(
+      chat.items(user.id, cid).flatMap((i) => (i.kind === "memory" ? [[i.text, i.state]] : [])),
+    ).toEqual([
+      ["Fridays free", "saved"],
+      ["", "removed"],
+    ]);
+    expect((await post(`/assistant/memories/${b}/save`)).status).toBe(404);
+    expect(memoryRows(db)).toEqual([{ text: "Fridays free", state: "saved" }]);
+  });
+
+  it("at the memory limit, a save of an expired proposal answers 404, not the limit", async () => {
+    let t = T0;
+    const { db, send, post } = setup(
+      (_m, n) => (n === 1 ? remember("Fridays free", "Mornings for focus") : text("ok")),
+      { now: () => t },
+    );
+    setInstanceLimit(db, "max_chat_memories", 1);
+    const [a, b] = memoryIds((await send("Remember two things")).body.items);
+    expect((await post(`/assistant/memories/${a}/save`)).status).toBe(200);
+    t = T0 + 7 * DAYS;
+    expect((await post(`/assistant/memories/${b}/save`)).status).toBe(404);
+  });
+
+  it("a new proposal removes the expired proposals; saved memories never expire", async () => {
+    let t = T0;
+    const { db, user, send, post } = setup(
+      (m) => {
+        const last = String(m.findLast((x) => x.role === "user")?.content);
+        return m.at(-1)?.role === "tool" ? text("ok") : remember(last.replace("Remember ", ""));
+      },
+      { now: () => t },
+    );
+    const keep = memoryIds((await send("Remember Fridays free")).body.items)[0];
+    expect((await post(`/assistant/memories/${keep}/save`)).status).toBe(200);
+    await send("Remember Mornings for focus");
+    t = T0 + 30 * DAYS;
+    expect((await send("Remember Lunch at noon")).status).toBe(200);
+    expect(memoryRows(db)).toEqual([
+      { text: "Fridays free", state: "saved" },
+      { text: "Lunch at noon", state: "pending" },
+    ]);
+    expect(memories(db, user.id).map((m) => m.text)).toEqual(["Fridays free"]);
   });
 });

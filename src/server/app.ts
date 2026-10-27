@@ -547,7 +547,7 @@ export function createAppWithChat(deps: AppDeps): { app: Hono<AppEnv>; chat: Cha
     now,
     turnMs: config.TEMPOLOOM_LLM_TURN_MS,
   });
-  app.route("/api", assistantRoutes(db, chat));
+  app.route("/api", assistantRoutes(db, chat, now));
   app.route("/api", helpRoutes(db, config.SUPPORT_URL, now, sync, chat));
   app.route("/api", oauthConsentRoutes(db, config.BASE_URL, now));
   app.route("/api", insightRoutes(db, now));

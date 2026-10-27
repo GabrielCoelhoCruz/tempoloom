@@ -175,6 +175,12 @@ All proposed changes go to preview mode (`assistant-preview-mode.md`).
     user saves or discards it there. Only saved memories reach the model. So
     text in the calendar (an invitation from someone else) cannot store a
     memory without the user.
+
+    Tempoloom decision: a proposed memory that the user does not save or
+    discard expires 7 days after the proposal. It leaves the chat, and a save
+    after that answers as for a missing memory. Proposed memories do not count
+    toward `max_chat_memories` and are not in the memory list. Saved memories
+    do not expire.
 23. A bookmark icon in the chat panel opens the memory list. The user can
     read and delete each memory.
 24. Memories shape suggestions only. A memory never triggers an action on

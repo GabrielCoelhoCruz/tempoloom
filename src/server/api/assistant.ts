@@ -17,7 +17,7 @@ import { instanceLimit, limitMessage } from "../limits.ts";
 
 const REFUSED = { not_configured: 503, chat_disabled: 403, quota: 429 } as const;
 
-export function assistantRoutes(db: Db, chat: Chat): Hono<AppEnv> {
+export function assistantRoutes(db: Db, chat: Chat, now: () => number): Hono<AppEnv> {
   const r = new Hono<AppEnv>();
 
   /** The panel: whether chat works, a conversation, the memories and the quota. */
@@ -98,7 +98,7 @@ export function assistantRoutes(db: Db, chat: Chat): Hono<AppEnv> {
     const user = c.get("user");
     // Plans rule 4: a proposed memory that would pass the limit stays proposed.
     const limit = instanceLimit(db, "max_chat_memories");
-    const saved = saveMemory(db, user.id, c.req.param("id"), limit);
+    const saved = saveMemory(db, user.id, c.req.param("id"), now(), limit);
     if (saved === "missing") notFound("memory");
     if (saved === "limit") {
       const message = limitMessage("max_chat_memories", limit ?? 0);

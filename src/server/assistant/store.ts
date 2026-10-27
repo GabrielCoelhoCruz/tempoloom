@@ -293,6 +293,18 @@ export const memoryById = (db: Db, userId: string, id: string): Memory | undefin
   return m && memoryOf(m);
 };
 
+/** Days a proposed memory waits for the user's save or discard (rule 22 decision). */
+export const PENDING_MEMORY_DAYS = 7;
+
+/** Removes the user's proposed memories that expired. */
+export const expireMemories = (db: Db, userId: string, now: number): void =>
+  run(
+    db,
+    "DELETE FROM assistant_memories WHERE user_id = ? AND state = 'pending' AND created_at <= ?",
+    userId,
+    now - PENDING_MEMORY_DAYS * DAY,
+  );
+
 const savedCount = (db: Db, userId: string) =>
   one<{ n: number }>(
     db,
@@ -302,15 +314,18 @@ const savedCount = (db: Db, userId: string) =>
 
 /**
  * The user approves a proposed memory. With a limit of saved memories (plans
- * rule 4), the count and the save are one transaction.
+ * rule 4), the count and the save are one transaction. An expired proposal is
+ * missing.
  */
 export const saveMemory = (
   db: Db,
   userId: string,
   id: string,
+  now: number,
   limit: number | null = null,
 ): "saved" | "missing" | "limit" =>
   tx(db, () => {
+    expireMemories(db, userId, now);
     if (limit !== null && savedCount(db, userId) >= limit) {
       const pending = one(
         db,
@@ -329,7 +344,10 @@ export const saveMemory = (
       : "missing";
   });
 
-/** Proposes a memory unless the user has `limit` saved ones; the check and the insert are one transaction. */
+/**
+ * Proposes a memory unless the user has `limit` saved ones; the check and the
+ * insert are one transaction. Expired proposals go first.
+ */
 export const proposeMemoryWithin = (
   db: Db,
   userId: string,
@@ -338,11 +356,12 @@ export const proposeMemoryWithin = (
   now: number,
   limit: number | null,
 ): Memory | null =>
-  tx(db, () =>
-    limit !== null && savedCount(db, userId) >= limit
+  tx(db, () => {
+    expireMemories(db, userId, now);
+    return limit !== null && savedCount(db, userId) >= limit
       ? null
-      : proposeMemory(db, userId, text, people, now),
-  );
+      : proposeMemory(db, userId, text, people, now);
+  });
 
 /** Deletes a saved memory, or discards a proposed one. */
 export const deleteMemory = (db: Db, userId: string, id: string): boolean =>
