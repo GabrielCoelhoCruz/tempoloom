@@ -10,6 +10,7 @@
 // - a habit's own hours are ignored                                   -> Radicale 07:00 Tue/Thu
 // - another item can pick a habit's own hours                         -> task menu, hours page
 // - the preview shows stale ranges, or no way to the hours page       -> preview text, link
+// - the preview button is a glyph that needs a symbol font           -> button text, icon mask
 // - the first-run review never shows, or shows again after it is done -> banner, reload, restart
 // - a change made in the review does not move events                  -> Radicale 10:00
 import type { Page } from "@playwright/test";
@@ -165,6 +166,23 @@ test("the hours menu of an item editor previews the chosen hours and links to th
   await page.getByTestId("hours-preview").getByRole("link", { name: "Edit hours" }).click();
   await expect(page.getByTestId("settings-page")).toBeVisible();
   await expect(page.getByTestId("hours-work")).toBeInViewport();
+});
+
+test("the hours preview button shows a drawn info icon, not a glyph that needs a symbol font", async ({
+  page,
+  signIn,
+}) => {
+  await signIn();
+  await page.getByRole("link", { name: "Tasks" }).click();
+  const form = page.getByTestId("task-form");
+  const info = form.getByRole("button", { name: "Preview hours" });
+  // The "ⓘ" glyph shows as an empty box on a system without a symbol font.
+  await expect(info).toHaveText("Preview hours");
+  const icon = info.locator(".info-icon");
+  await expect(icon).toBeVisible();
+  await expect(icon).toHaveCSS("mask-image", /^url\("data:image\/svg\+xml/);
+  await info.click();
+  await expect(form.getByTestId("hours-preview")).toContainText("Mon 09:00–17:00");
 });
 
 test("a new user is asked once to review work, meeting and personal hours, and a change there moves events (HRS-15)", async ({

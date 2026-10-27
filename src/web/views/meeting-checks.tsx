@@ -144,7 +144,13 @@ export function MeetingChecks() {
                     }).then(load)
                   }
                 />
-                <span title="Set by your team admin">🔒</span> {c.name}
+                <span
+                  class="lock-icon"
+                  role="img"
+                  aria-label="Locked"
+                  title="Set by your team admin"
+                />{" "}
+                {c.name}
               </label>
               <span class="meta">{describe(c.conditions)}</span>
               {data.admin && (

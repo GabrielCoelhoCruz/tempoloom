@@ -22,6 +22,7 @@
 // - start delay and due-in are not relative to the creation time          -> stored dates
 // - a drag makes a task of the wrong length, at the wrong time, unlocked  -> Radicale event and lock marker
 // - a click makes nothing, or the next plan moves the new chunk           -> Radicale after a plan run
+// - a task row puts the select box in the wide column, the buttons below -> part boxes in the row
 import type { Page } from "@playwright/test";
 import { addDays, addLocalDays, utcToLocal, weekdayOf } from "../../src/shared/time.ts";
 import { eventProp, rawEvent } from "./automation-list-helpers.ts";
@@ -661,4 +662,43 @@ test("a drag on the planner makes a locked task of that length there; a click ma
     expect(titled(after, t).map((e) => [e.id, e.start, e.end])).toEqual(
       titled(evs, t).map((e) => [e.id, e.start, e.end]),
     );
+});
+
+test("a task row has the select box at its left, the title and details in the middle and the buttons at its right", async ({
+  page,
+  signIn,
+}) => {
+  await signIn();
+  await addTask(page, { title: "AT-Row", minutes: 60, due: "" });
+  const r = row(page, "AT-Row");
+  await expect(r.getByTestId("task-state")).toHaveText("scheduled");
+  await expect
+    .poll(() =>
+      r.evaluate((li) => {
+        const rect = (el: Element | null | undefined) => {
+          if (!el) throw new Error("missing part of the task row");
+          return el.getBoundingClientRect();
+        };
+        const row = rect(li);
+        const check = rect(li.querySelector(':scope > input[type="checkbox"]'));
+        const body = rect(li.querySelector(":scope > div:not(.actions)"));
+        const actions = rect(li.querySelector(":scope > .actions"));
+        return {
+          checkNarrow: check.width < 30,
+          checkAtLeft: check.left - row.left < 30,
+          bodyNextToCheck: body.left >= check.right && body.left - check.right < 30,
+          actionsRightOfBody: actions.left >= body.right,
+          actionsAtRight: row.right - actions.right < 30,
+          actionsBesideBody: actions.top < body.bottom,
+        };
+      }),
+    )
+    .toEqual({
+      checkNarrow: true,
+      checkAtLeft: true,
+      bodyNextToCheck: true,
+      actionsRightOfBody: true,
+      actionsAtRight: true,
+      actionsBesideBody: true,
+    });
 });
