@@ -316,6 +316,11 @@ export function AssistantPanel() {
   };
 
   const close = () => (sidePanel.value = null);
+  // The picker: two saved chats or more, or a new chat beside a saved one.
+  const picker =
+    state !== null &&
+    (state.conversations.length > 1 ||
+      (state.conversationId === null && state.conversations.length >= 1));
   const refusal = state?.refusal;
   const blocked = refusal && refusal.error !== "quota";
 
@@ -395,9 +400,9 @@ export function AssistantPanel() {
         </div>
       ) : (
         <>
-          {(state.conversations.length > 1 || state.conversationId !== null) && (
+          {(picker || state.conversationId !== null) && (
             <div class="assistant-convo">
-              {state.conversations.length > 1 && (
+              {picker && (
                 <label class="inline">
                   Conversation
                   <select

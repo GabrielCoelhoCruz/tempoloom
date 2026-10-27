@@ -10,7 +10,8 @@
 // - another user can delete a conversation;
 // - the delete takes the changes it staged, the saved memories or the day's
 //   use with it, or keeps the memories it proposed and its message ids;
-// - "Reply in chat" on a change of a deleted conversation fails.
+// - "Reply in chat" on a change of a deleted conversation fails;
+// - after the delete of one of two chats, the other one cannot be opened again.
 import { addDays } from "../../src/shared/time.ts";
 import { chatPanel, openAssistant, proposal, say } from "./assistant-helpers.ts";
 import { at, BASE_URL, eventually, expect, local, test } from "./fixtures.ts";
@@ -102,6 +103,7 @@ test("delete a conversation: it leaves the list, the API and the model's history
     { content: "Save it to keep it." },
   ]);
   llm.on(/^about/i, [{ content: "Tell me the new time." }]);
+  llm.on(/^anything else/i, [{ content: "Nothing else today." }]);
 
   await signIn();
   await page.goto(`/?week=${W}`);
@@ -121,7 +123,11 @@ test("delete a conversation: it leaves the list, the API and the model's history
     `Remember: ${pending}`,
   );
 
-  type Panel = { conversationId: string | null; conversations: { id: string }[]; items: unknown[] };
+  type Panel = {
+    conversationId: string | null;
+    conversations: { id: string; title: string }[];
+    items: unknown[];
+  };
   const panelOf = async (query = "") =>
     (await (await page.request.get(`/api/assistant${query}`)).json()) as Panel;
   const cid = (await panelOf()).conversationId as string;
@@ -191,8 +197,36 @@ test("delete a conversation: it leaves the list, the API and the model's history
   expect(sent?.messages.map((m) => m.role)).toEqual(["system", "user"]);
   expect(JSON.stringify(sent?.messages)).not.toContain("Book deep work");
   expect(JSON.stringify(sent?.messages)).not.toContain(pending);
-  expect((await panelOf()).conversations).toHaveLength(1);
-  expect((await panelOf()).conversationId).not.toBe(cid);
+  const kept = await panelOf();
+  expect(kept.conversations).toHaveLength(1);
+  expect(kept.conversationId).not.toBe(cid);
+
+  // A second chat, then its delete: the picker offers the chat that is left,
+  // and picking it shows its messages again.
+  await chatPanel(page).getByRole("button", { name: "New chat" }).click();
+  expect(await say(page, "Anything else today?")).toBe(200);
+  await expect(chatPanel(page).getByTestId("chat-assistant")).toHaveText(["Nothing else today."]);
+  expect((await panelOf()).conversations).toHaveLength(2);
+  await chatPanel(page).getByRole("button", { name: "Delete chat" }).click();
+  const second = page.waitForResponse(
+    (r) => r.url().includes("/api/assistant/conversations/") && r.request().method() === "DELETE",
+  );
+  await chatPanel(page)
+    .getByRole("alertdialog", { name: "Delete this chat" })
+    .getByRole("button", { name: "Yes, delete" })
+    .click();
+  expect((await second).status()).toBe(200);
+  await expect(chatPanel(page).getByTestId("chat-user")).toHaveCount(0);
+  const picker = chatPanel(page).getByLabel("Conversation", { exact: true });
+  await expect(picker.locator("option")).toHaveText([
+    "New chat",
+    kept.conversations[0]?.title ?? "",
+  ]);
+  await picker.selectOption(kept.conversationId as string);
+  await expect(chatPanel(page).getByTestId("chat-user")).toHaveText([
+    `${draft}make it 14:00 to 16:00`,
+  ]);
+  await expect(chatPanel(page).getByTestId("chat-assistant")).toHaveText(["Tell me the new time."]);
 
   // The staged change still applies.
   await chatPanel(page).getByRole("button", { name: "Close" }).click();
