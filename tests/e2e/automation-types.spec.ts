@@ -26,9 +26,10 @@
 //   tab or keeps it on in the meeting checks page; on does not bring the issue
 //   back; a check that is off by default cannot be turned on; the state is lost
 //   on reload (built-in check test).
-// - A company check is missing from the list or shows no lock; a member can
-//   change or remove it; the admin's off or remove in the list does not reach
-//   the members (company check test).
+// - A company check is missing from the list or shows no lock, or a lock
+//   glyph that needs an emoji font; a member can change or remove it; the
+//   admin's off or remove in the list does not reach the members (company
+//   check test).
 
 import type { Page } from "@playwright/test";
 import { addDays, utcToLocal } from "../../src/shared/time.ts";
@@ -42,7 +43,7 @@ import {
   save,
 } from "./automation-list-helpers.ts";
 import { at, BACKEND, blockUntil, EMAIL, expect, test, ZONE } from "./fixtures.ts";
-import { addHabit, titled, W } from "./helpers.ts";
+import { addHabit, expectLockIcon, titled, W } from "./helpers.ts";
 import { issue, openChecks, openIssues, putMeeting } from "./meeting-helpers.ts";
 import { teamOfTwo } from "./team-helpers.ts";
 
@@ -338,14 +339,14 @@ test("a company check shows locked in the Meeting quality section: the admin tur
   await expect.poll(() => names(quality(page))).toEqual([...CHECKS, name]);
   const admin = automation(page, name);
   await expect(admin).toContainText("Company check");
-  await expect(admin).toContainText("🔒");
+  await expectLockIcon(admin);
   await expect(admin.getByRole("button", { name: "Turn off" })).toBeVisible();
   await expect(admin.getByRole("button", { name: "Remove" })).toBeVisible();
 
   await openAutomations(member);
   await expect.poll(() => names(quality(member))).toEqual([...CHECKS, name]);
   const locked = automation(member, name);
-  await expect(locked).toContainText("🔒");
+  await expectLockIcon(locked);
   await expect(locked.getByRole("button")).toHaveCount(0);
   await expect(locked.getByRole("link")).toHaveCount(0);
 
