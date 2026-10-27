@@ -598,7 +598,7 @@ export function Tasks() {
 
   const row = (t: Task, queued: boolean) => (
     <li
-      class="row"
+      class="row task-row"
       key={t.id}
       data-testid="task-row"
       data-task-title={t.title}

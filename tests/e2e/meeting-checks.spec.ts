@@ -25,6 +25,7 @@
 //   week start                                                      -> digest window
 // - a member can change a company check, the issue reaches a guest who
 //   does not organize the meeting, or a member cannot ignore it      -> company checks
+// - the company lock is a glyph that needs an emoji font            -> company checks
 // - an agenda draft is written before the user applies it, or not at all;
 //   the no-agenda issue stays after the apply                       -> agenda drafts
 // - the recommendations miss a skipped habit, an unmet focus goal or a day
@@ -43,7 +44,7 @@ import {
   test,
   ZONE,
 } from "./fixtures.ts";
-import { addHabit, W } from "./helpers.ts";
+import { addHabit, expectLockIcon, W } from "./helpers.ts";
 import { allDayBusy, invitation } from "./ics.ts";
 import {
   dailyMail,
@@ -432,6 +433,7 @@ test("a company check from a team admin flags only the meeting's organizer, show
   const flag = issue(member, "company", "All hands prep");
   await expect(flag).toContainText("Agenda for big meetings", LONG);
   await expect(flag).toContainText("Company check");
+  await expectLockIcon(flag);
   await expect(issue(member, "company", "Small sync")).toHaveCount(0);
 
   // The admin is only a guest: an answer is due, but no company issue.
@@ -442,7 +444,7 @@ test("a company check from a team admin flags only the meeting's organizer, show
   // Members see the check locked and cannot change it.
   await openChecks(member);
   const locked = member.locator('[data-company-check="Agenda for big meetings"]');
-  await expect(locked).toContainText("🔒");
+  await expectLockIcon(locked);
   await expect(locked.getByRole("checkbox")).toBeDisabled();
   await expect(locked.getByRole("button")).toHaveCount(0);
   await expect(member.getByTestId("company-check-form")).toHaveCount(0);
@@ -454,7 +456,7 @@ test("a company check from a team admin flags only the meeting's organizer, show
   await member.getByRole("tab", { name: /^Issues/ }).click();
   await expect(member.getByTestId("checks-issues")).toContainText("No open issues", LONG);
   await openChecks(member);
-  await expect(locked).toContainText("🔒");
+  await expectLockIcon(locked);
 });
 
 test("library entry 'Agenda drafts' stages a draft that is written only when applied, and the recommendations list shows a skipped habit, an unmet focus goal and a day with too many meetings (library entry 4; platform rule 5)", async ({

@@ -10,6 +10,8 @@
 //   panel with titles in them                                        -> drawer, now line, conflicts
 // - a hidden calendar still shows, stops blocking, or is disconnected -> boxes, Radicale, settings
 // - two panels show at once                                          -> panel visibility
+// - a short event cuts its time line, or a long one loses its 2nd line -> time box inside the event box
+// - the lock mark is a glyph that needs an emoji font                 -> mask on the lock mark
 import type { Page } from "@playwright/test";
 import { addDays } from "../../src/shared/time.ts";
 import { calendarRow, openSettings } from "./calendar-helpers.ts";
@@ -294,4 +296,66 @@ test("the details panel has one mode at a time: tasks, priorities or event detai
   await bar.getByRole("button", { name: "Priorities" }).click();
   await expect(priorities).toContainText("AT-Modes");
   await expect(details).toHaveCount(0);
+});
+
+/** The box of each part of an event in the planner, and the lock mark's style. */
+const eventParts = (page: Page, text: string) =>
+  box(page, text).evaluate((ev) => {
+    const rect = (el: Element | null) => {
+      const r = el?.getBoundingClientRect();
+      return r ? { top: r.top, bottom: r.bottom, left: r.left, right: r.right } : null;
+    };
+    const lock = getComputedStyle(ev, "::after");
+    return {
+      ev: rect(ev),
+      title: rect(ev.querySelector(".ev-title")),
+      time: rect(ev.querySelector(".ev-time")),
+      lock: { content: lock.content, mask: lock.maskImage, width: lock.width },
+    };
+  });
+
+test("a 30-minute event shows its time on the title line inside its box, a longer one under the title, and the lock mark needs no font", async ({
+  page,
+  cal,
+  signIn,
+}) => {
+  await cal.addEvent({ title: "AT-Short", start: at(day(1), "09:30"), end: at(day(1), "10:00") });
+  await cal.addEvent({ title: "AT-Long", start: at(day(1), "11:00"), end: at(day(1), "12:00") });
+  await signIn();
+  await openWeek(page);
+  await expect(box(page, "AT-Short")).toHaveClass(/ev-locked/);
+
+  // The short box has no room for a second line: the time is on the title
+  // line, fully inside the box.
+  await expect
+    .poll(async () => {
+      const p = await eventParts(page, "AT-Short");
+      if (!p.ev || !p.title || !p.time) return p;
+      return {
+        sameLine: p.time.top < p.title.bottom,
+        inside:
+          p.time.top >= p.ev.top && p.time.bottom <= p.ev.bottom && p.time.right <= p.ev.right,
+      };
+    })
+    .toEqual({ sameLine: true, inside: true });
+  await expect(box(page, "AT-Short").locator(".ev-time")).toHaveText("09:30–10:00");
+
+  // A one-hour box keeps the time on its own line under the title.
+  await expect
+    .poll(async () => {
+      const p = await eventParts(page, "AT-Long");
+      if (!p.ev || !p.title || !p.time) return p;
+      return {
+        below: p.time.top >= p.title.bottom - 1,
+        inside: p.time.top >= p.ev.top && p.time.bottom <= p.ev.bottom,
+      };
+    })
+    .toEqual({ below: true, inside: true });
+
+  // The lock mark of a locked event is a drawn shape (a mask), not a text glyph
+  // that shows as an empty box without an emoji font.
+  const { lock } = await eventParts(page, "AT-Short");
+  expect(lock.content).not.toContain("🔒");
+  expect(lock.mask).toMatch(/^url\("data:image\/svg\+xml/);
+  expect(Number.parseFloat(lock.width)).toBeGreaterThan(0);
 });

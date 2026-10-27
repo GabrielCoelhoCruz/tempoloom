@@ -1,5 +1,5 @@
 // Shared steps for E2E scenarios: they drive the real UI like a user would.
-import type { Browser, Page } from "@playwright/test";
+import type { Browser, Locator, Page } from "@playwright/test";
 import type { ProviderEvent } from "../../src/server/providers/types.ts";
 import { addDays } from "../../src/shared/time.ts";
 import {
@@ -185,6 +185,14 @@ export async function weekInPlace(page: Page): Promise<void> {
 export async function openEvent(page: Page, text: string): Promise<void> {
   await page.locator(".ev", { hasText: text }).first().click();
   await expect(page.getByTestId("event-drawer")).toBeVisible();
+}
+
+/** A company check's lock: a drawn icon (a mask), not a glyph that needs an emoji font. */
+export async function expectLockIcon(scope: Locator): Promise<void> {
+  const lock = scope.getByRole("img", { name: "Locked" });
+  await expect(lock).toBeVisible();
+  await expect(lock).toHaveCSS("mask-image", /^url\("data:image\/svg\+xml/);
+  await expect(scope).not.toContainText("🔒");
 }
 
 // Booking links.

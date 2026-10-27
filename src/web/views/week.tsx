@@ -50,6 +50,8 @@ const BUSY_DAY = {
 const city = (z: string) => (z.split("/").at(-1) ?? z).replace(/_/g, " ");
 
 const HOUR_PX = 48;
+/** The height an event box needs for its title line and its time line (styles.css .ev). */
+const TWO_LINES_PX = 35;
 const SNAP_MIN = 15;
 const DAY_PX = 24 * HOUR_PX;
 
@@ -361,7 +363,7 @@ export function WeekView({
               return (
                 <div
                   key={`${b.ev.id}:${b.day}`}
-                  class={`ev ev-${b.ev.kind}${b.ev.busy ? "" : " ev-free"}${b.ev.locked ? " ev-locked" : ""}${d ? " ev-drag" : ""}${b.ev.staged ? ` ev-staged-${b.ev.staged}` : ""}${flagged?.has(b.ev.id) ? " ev-conflict" : ""}`}
+                  class={`ev ev-${b.ev.kind}${b.ev.busy ? "" : " ev-free"}${b.ev.locked ? " ev-locked" : ""}${b.height < TWO_LINES_PX ? " ev-short" : ""}${d ? " ev-drag" : ""}${b.ev.staged ? ` ev-staged-${b.ev.staged}` : ""}${flagged?.has(b.ev.id) ? " ev-conflict" : ""}`}
                   data-event-id={b.ev.id}
                   data-start={b.ev.start}
                   title={b.ev.title}

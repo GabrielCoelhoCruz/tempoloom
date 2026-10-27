@@ -213,7 +213,13 @@ export function Automations() {
           <div class="meta">
             {company ? (
               <>
-                <span title="Set by your team admin">🔒</span> Company check
+                <span
+                  class="lock-icon"
+                  role="img"
+                  aria-label="Locked"
+                  title="Set by your team admin"
+                />{" "}
+                Company check
               </>
             ) : (
               (info?.label ?? a.type)
