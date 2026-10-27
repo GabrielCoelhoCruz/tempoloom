@@ -1042,6 +1042,36 @@ fieldset {
   align-self: flex-start;
   border: 1px solid var(--line);
 }
+/* An assistant reply (src/web/lib/chat-text.ts): paragraphs and lists. */
+.assistant .msg.bot > :is(p, ul, ol) {
+  margin: 0;
+}
+.assistant .msg.bot > :is(p, ul, ol) + :is(p, ul, ol) {
+  margin-top: 6px;
+}
+.assistant .msg.bot :is(ul, ol) {
+  padding-left: 20px;
+}
+.assistant .msg.bot code {
+  font-size: 0.9em;
+  background: var(--line);
+  border-radius: 3px;
+  padding: 0 3px;
+}
+.assistant-convo {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.assistant-convo label {
+  flex: 1;
+  min-width: 0;
+}
+.assistant-convo select {
+  min-width: 0;
+}
 .assistant .msg.note {
   align-self: flex-start;
   font-size: 13px;

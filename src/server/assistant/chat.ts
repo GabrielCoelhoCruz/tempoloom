@@ -32,6 +32,7 @@ import { reportingOf } from "./people.ts";
 import { type PromptInput, systemPrompt } from "./prompt.ts";
 import {
   endRequest,
+  expireMemories,
   fingerprintOf,
   forModel,
   memories,
@@ -474,8 +475,12 @@ export function createChat(deps: ChatDeps) {
     };
   }
 
-  /** The items the panel shows for a conversation, with each proposal's current state. */
+  /**
+   * The items the panel shows for a conversation, with each proposal's current
+   * state. An expired memory proposal shows as removed.
+   */
   function items(userId: string, conversationId: string): ChatItem[] {
+    expireMemories(db, userId, now());
     const out: ChatItem[] = [];
     for (const m of messagesOf(db, conversationId)) {
       if (m.role === "user") out.push({ kind: "user", text: m.content });

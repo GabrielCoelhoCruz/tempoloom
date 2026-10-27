@@ -450,10 +450,10 @@ describe("memory limit", () => {
     const { db, user } = setup();
     const a = proposeMemory(db, user.id, "A", [], T0);
     const b = proposeMemory(db, user.id, "B", [], T0);
-    expect(saveMemory(db, user.id, a.id, 1)).toBe("saved");
-    expect(saveMemory(db, user.id, b.id, 1)).toBe("limit");
-    expect(saveMemory(db, user.id, "nope", 1)).toBe("missing");
+    expect(saveMemory(db, user.id, a.id, T0, 1)).toBe("saved");
+    expect(saveMemory(db, user.id, b.id, T0, 1)).toBe("limit");
+    expect(saveMemory(db, user.id, "nope", T0, 1)).toBe("missing");
     expect(memories(db, user.id).map((m) => m.text)).toEqual(["A"]);
-    expect(saveMemory(db, user.id, b.id, null)).toBe("saved");
+    expect(saveMemory(db, user.id, b.id, T0, null)).toBe("saved");
   });
 });
