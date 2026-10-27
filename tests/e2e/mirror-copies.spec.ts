@@ -209,23 +209,24 @@ test("the owner's answer and role decide a copy's free/busy; the no-reply settin
   await expect(page.getByLabel("Copies of events you have not answered")).toHaveValue("busy");
 
   // With a label only, the free event gets no copy; the answered ones keep theirs.
+  // A label copy has no details (rule 26). The run deletes the free event's copy
+  // before it rewrites the others, so wait for the rewrite too.
   await editPolicy(page, `${from} → ${to}`, (f) =>
     f.getByLabel("Copies show").selectOption({ label: "A label only" }),
   );
   const labelled = await eventually(
     () => week(cal),
     (l) =>
-      expect(copies(l).map((e) => local(e.start))).toEqual([
-        `${W} 09:00`,
-        `${W} 10:00`,
-        `${W} 11:00`,
-        `${W} 13:00`,
-        `${W} 16:00`,
+      expect(copies(l).map((e) => [local(e.start), e.summary, e.location ?? ""])).toEqual([
+        [`${W} 09:00`, "🏠 Personal commitment", ""],
+        [`${W} 10:00`, "🏠 Personal commitment", ""],
+        [`${W} 11:00`, "🏠 Personal commitment", ""],
+        [`${W} 13:00`, "🏠 Personal commitment", ""],
+        [`${W} 16:00`, "🏠 Personal commitment", ""],
       ]),
   );
-  // A label copy has no details and is public (rule 26).
+  // A label copy is public (rule 26).
   const label = copies(labelled)[0];
-  expect(label?.location ?? "").toBe("");
   const labelRaw = await rawEvent(radicale, label?.id ?? "");
   expect(labelRaw).toContain("CLASS:PUBLIC");
   expect(labelRaw).not.toContain("Room 7");
