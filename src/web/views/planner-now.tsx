@@ -185,15 +185,37 @@ function TasksPanel({ onClose }: { onClose: () => void }) {
   );
 }
 
-/** The events that a "+N" button folds (ui-refresh.md LAY-43): time first; a choice opens one. */
+/**
+ * The events that a "+N" button folds (ui-refresh.md LAY-43): time first; a
+ * choice opens one. Escape and a press outside close the list (CMP-43).
+ */
 export function MoreList(p: {
   events: WeekEvent[];
   zone: string;
   style: Record<string, string>;
+  instant: boolean;
   onPick: (id: string) => void;
+  onClose: () => void;
 }) {
+  const { onClose } = p;
+  useLayoutEffect(() => {
+    const close = (e: Event) => {
+      if (
+        e instanceof KeyboardEvent
+          ? e.key === "Escape"
+          : !(e.target as Element).closest(".more-list, .ev-more")
+      )
+        onClose();
+    };
+    addEventListener("keydown", close);
+    addEventListener("pointerdown", close);
+    return () => {
+      removeEventListener("keydown", close);
+      removeEventListener("pointerdown", close);
+    };
+  }, [onClose]);
   return (
-    <div class="popover more-list" style={p.style}>
+    <div class="popover more-list" style={p.style} data-instant={p.instant || undefined}>
       {p.events.map((ev) => (
         <button type="button" key={ev.id} title={ev.title} onClick={() => p.onPick(ev.id)}>
           <span>

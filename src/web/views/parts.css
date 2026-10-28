@@ -41,11 +41,63 @@
   vertical-align: bottom;
   font-weight: var(--weight-medium);
 }
+.ev-staged {
+  --c: var(--accent);
+  --c-ink: var(--accent-text);
+}
+.ev-meta::before {
+  content: "\a0·\a0";
+}
+.ev-short .ev-meta {
+  display: none;
+}
+[dir="rtl"] .ev {
+  box-shadow: inset -3px 0 0 var(--c);
+}
 [dir="rtl"] .i-prev::before {
   transform: scaleX(-1);
 }
 [dir="rtl"] .i-next::before {
   transform: none;
+}
+/* Card states after a press, a selection, a drag or a staged change (CMP-87, CMP-88). */
+.ev-past,
+.ev-staged-from,
+.ev-staged-deleted {
+  background: color-mix(in srgb, var(--c) 6%, var(--bg-surface));
+  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--c) 45%, var(--bg-surface));
+}
+:is(.ev-past, .ev-staged-from, .ev-staged-deleted) .ev-title {
+  color: var(--text-secondary);
+}
+.ev-pressed {
+  box-shadow:
+    inset 3px 0 0 var(--c),
+    var(--shadow-2);
+}
+.ev-selected {
+  box-shadow:
+    inset 3px 0 0 var(--c),
+    0 0 0 2px var(--c-ink),
+    var(--shadow-2);
+  z-index: var(--z-event-raised);
+  touch-action: none;
+}
+.ev-drag {
+  box-shadow:
+    inset 3px 0 0 var(--c),
+    var(--shadow-3);
+  z-index: var(--z-drag);
+  cursor: grabbing;
+}
+/* Dashed means "not on your calendar yet". */
+.ev-staged-new {
+  outline: 1.5px dashed var(--c-ink);
+  outline-offset: -1.5px;
+  z-index: var(--z-event-raised);
+}
+.ev-staged-deleted .ev-title {
+  text-decoration: line-through;
 }
 /* LAY-14 (with the parts that load later): from 1440 px the toolbar keeps one row: the preview sentence, then the title
    (to 9ch) give up their room. An error takes its own row (LAY-15). */
@@ -68,6 +120,14 @@
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+/* CMP-87: a buffer is a flat sunken strip with small text. */
+.ev-buffer {
+  background: var(--bg-sunken);
+  box-shadow: inset 2px 0 0 var(--c);
+  color: var(--text-secondary);
+  font-size: var(--text-11);
+  line-height: 12px;
 }
 /* The notices stack (LAY-21) and the parts of the right column (CMP-121). */
 .side-scroll > *,
@@ -189,6 +249,29 @@
 .i-gear {
   --i: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill-rule='evenodd' d='M7 1h2l.4 1.8 1.2.5 1.6-1 1.4 1.4-1 1.6.5 1.2L15 7v2l-1.8.4-.5 1.2 1 1.6-1.4 1.4-1.6-1-1.2.5L9 15H7l-.4-1.8-1.2-.5-1.6 1-1.4-1.4 1-1.6-.5-1.2L1 9V7l1.8-.4.5-1.2-1-1.6 1.4-1.4 1.6 1 1.2-.5zm1 4.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5z'/%3E%3C/svg%3E");
 }
+/* CMP-85: the kind icon of a card (a drawn mask; it adds no text). */
+.ev:is(.ev-task, .ev-habit, .ev-focus, .ev-meeting, .ev-external)::before {
+  content: "";
+}
+.ev-task::before {
+  --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill-rule='evenodd' d='M2 2h12v12H2zm1.5 1.5v9h9v-9zm1.7 4.3 1 -1 1.5 1.5 3-3 1 1-4 4z'/%3E%3C/svg%3E");
+}
+.ev-habit::before {
+  --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M8 2a6 6 0 0 1 5.2 3H11v1.5h4.5V2H14v1.6A7.5 7.5 0 0 0 .5 8H2a6 6 0 0 1 6-6zm6 6a6 6 0 0 1-11.2 3H5V9.5H.5V14H2v-1.6A7.5 7.5 0 0 0 15.5 8z'/%3E%3C/svg%3E");
+}
+.ev-focus::before {
+  --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill-rule='evenodd' d='M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm0 1.5a5.5 5.5 0 1 1 0 11 5.5 5.5 0 0 1 0-11zM8 5a3 3 0 1 0 0 6 3 3 0 0 0 0-6zm0 1.5a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3z'/%3E%3C/svg%3E");
+}
+.ev-meeting::before {
+  --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M5.5 2a3 3 0 1 1 0 6 3 3 0 0 1 0-6zm5.5 1a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5zM0 14c0-3 2.5-5 5.5-5s5.5 2 5.5 5zm12 0c0-1.7-.6-3.2-1.6-4.3C13.6 9.4 16 11.2 16 14z'/%3E%3C/svg%3E");
+}
+.ev-external::before {
+  --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill-rule='evenodd' d='M4 1h1.5v1h5V1H12v1h2v13H2V2h2zm-.5 5v7.5h9V6z'/%3E%3C/svg%3E");
+}
+/* CMP-86, CMP-87, CMP-89: no kind icon on a locked, overlapped or tiny card. */
+.ev:is(.ev-locked, .ev-overlap, .ev-tiny)::before {
+  content: none;
+}
 .popover h3 {
   margin: 4px 0 0;
 }
@@ -202,10 +285,10 @@
   border-radius: var(--radius-md);
   background: var(--bg-selected);
 }
+/* CMP-87: a block preview is dashed (not on the calendar yet). */
 .ev-preview {
-  box-shadow: none;
-  border: 2px dashed var(--cat-task);
-  cursor: grab;
+  outline: 1.5px dashed var(--cat-task-ink);
+  outline-offset: -1.5px;
 }
 .ev-conflict {
   outline: 2px solid var(--danger);

@@ -917,11 +917,12 @@ span.inline {
   --c: var(--cat-task);
   --c-ink: var(--cat-task-ink);
   position: absolute;
-  border-radius: 4px;
-  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  padding: 3px;
+  padding-inline: 8px 18px;
   overflow: hidden;
-  font-size: 12px;
-  line-height: 1.25;
+  font-size: var(--text-12);
+  line-height: var(--lh-12);
   color: var(--text-primary);
   background: color-mix(in srgb, var(--c) var(--tint), var(--bg-surface));
   box-shadow: inset 3px 0 0 var(--c);
@@ -929,15 +930,13 @@ span.inline {
   user-select: none;
   /* MOB-8: a finger on a card scrolls the week; only the selected card can be dragged. */
   touch-action: pan-y;
-  z-index: 1;
-}
-.ev-selected {
-  touch-action: none;
+  z-index: var(--z-event);
 }
 .ev-task,
 .ev-habit,
 .ev-focus,
-.ev-meeting {
+.ev-meeting,
+.ev-preview {
   cursor: grab;
 }
 .ev-habit {
@@ -973,19 +972,20 @@ span.inline {
     inset 3px 0 0 var(--c),
     inset 0 0 0 1px color-mix(in srgb, var(--c) 35%, transparent);
 }
-.ev-locked {
-  padding-right: 16px;
-}
+/* CMP-86: the lock sits where the kind icon is and hides it. */
 .ev-locked::after {
   content: "";
   /* biome-ignore lint/suspicious/noDuplicateProperties: the line above is the fallback for browsers without alt text */
   content: "" / "Locked";
+}
+.ev::before,
+.ev-locked::after {
   position: absolute;
-  right: 4px;
   top: 4px;
-  width: 10px;
-  height: 10px;
-  background-color: var(--c-ink);
+  inset-inline-end: 4px;
+  width: 12px;
+  height: 12px;
+  background: var(--c-ink);
   mask: var(--icon) center / contain no-repeat;
 }
 .ev-pick {
@@ -995,13 +995,6 @@ span.inline {
   outline-offset: -1.5px;
   pointer-events: none;
 }
-.ev-drag {
-  z-index: 4;
-  box-shadow:
-    inset 3px 0 0 var(--c),
-    var(--shadow-3);
-  cursor: grabbing;
-}
 .ev-title {
   display: block;
   font-weight: 600;
@@ -1009,30 +1002,37 @@ span.inline {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.ev-time {
-  display: block;
-  color: var(--text-secondary);
-  font-size: 11px;
-}
-/* A box too short for two lines: the time follows the title on one line. */
-.ev-short {
+.ev-time,
+.ev-meta {
   white-space: nowrap;
-  text-overflow: ellipsis;
+  color: var(--text-secondary);
+  font-size: var(--text-11);
+  line-height: var(--lh-11);
 }
-.ev-short .ev-title,
+/* CMP-90: a one-line card shows the time first, then the title. */
+.ev-short {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-6);
+  white-space: nowrap;
+}
 .ev-short .ev-time {
-  display: inline;
+  order: -1;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
 }
-.ev-short .ev-time {
-  margin-left: 4px;
+.ev-short .ev-title {
+  flex: 1 1 0;
+  min-width: 0;
 }
-/* A6: a card of 15 minutes or less has room for one small line. */
+/* A6: a card under 25 minutes has room for one small line. */
 .ev-tiny {
   padding-block: 0;
   font-size: 11px;
   line-height: 12px;
 }
-/* A7: a tall card wraps its title to 2 lines; a narrow card in an overlap keeps one line. */
+/* CMP-89: a tall card wraps its title to 2 lines; a narrow card in an overlap keeps one line. */
 .ev-tall:where(:not(.ev-overlap)) .ev-title {
   white-space: normal;
   overflow-wrap: anywhere;
@@ -1157,24 +1157,6 @@ a.row {
   display: flex;
   flex-direction: column;
   min-width: 240px;
-}
-
-/* Preview mode (assistant-preview-mode.md rule 4): dashed staged events, struck-through deletes */
-.ev.ev-staged {
-  --c: var(--accent);
-  --c-ink: var(--accent-text);
-  box-shadow: none;
-  border: 2px dashed var(--accent);
-  z-index: 2;
-}
-.ev.ev-staged-from {
-  opacity: 0.45;
-}
-.ev.ev-staged-deleted {
-  opacity: 0.6;
-}
-.ev-staged-deleted .ev-title {
-  text-decoration: line-through;
 }
 
 /* Automations (automations-overview.md): create menu, list groups, shared form */

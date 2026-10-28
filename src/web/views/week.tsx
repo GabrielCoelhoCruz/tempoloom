@@ -2,10 +2,18 @@ import { signal } from "@preact/signals";
 import clsx from "clsx/lite";
 import { Fragment } from "preact";
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
-import { addDays, type LocalDate, localToUtc, MINUTE, utcToLocal } from "../../shared/time.ts";
+import {
+  addDays,
+  type LocalDate,
+  localToUtc,
+  MINUTE,
+  utcToLocal,
+  weekdayOf,
+} from "../../shared/time.ts";
 import { clockText, hourText, timeText, weekdayText } from "../lib/format.ts";
 import { lazyComponent } from "../lib/lazy.ts";
 import { wide } from "../lib/media.ts";
+import { byKeyboard } from "../lib/motion.ts";
 
 export interface WeekEvent {
   id: string;
@@ -58,14 +66,16 @@ const MoreList = lazyComponent<{
   events: WeekEvent[];
   zone: string;
   style: Record<string, string>;
+  instant: boolean;
   onPick: (id: string) => void;
+  onClose: () => void;
 }>(() => import("./planner-now.tsx").then((m) => m.MoreList));
 
 const city = (z: string) => (z.split("/").at(-1) ?? z).replace(/_/g, " ");
 
 const HOUR_PX = 48;
-/** The height an event box needs for its title line and its time line (styles.css .ev). */
-const TWO_LINES_PX = 35;
+/** The height an event box needs for its title line and its time line (CMP-89). */
+const TWO_LINES_PX = 36;
 /** A box this high or more clamps its title to 2 lines (ui-refresh.md A7). */
 const TALL_PX = 56;
 /** A box lower than this has room for one small line only (ui-refresh.md A6). */
@@ -180,6 +190,8 @@ export function WeekView({
   const { boxes, more } = useMemo(() => layout(days, zone, events, cap), [days, zone, events, cap]);
   /** The "+N" list that is open: its day and top. */
   const [moreOpen, setMoreOpen] = useState<string | null>(null);
+  // MOT-6: a list opened from the keyboard shows at once.
+  const [instant, setInstant] = useState(false);
   const gridRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -188,12 +200,13 @@ export function WeekView({
   }, []);
   const nowLocal = utcToLocal(zone, now);
   const todayIdx = days.indexOf(nowLocal.date);
+  const nowTop = (nowLocal.minuteOfDay / 60) * HOUR_PX;
   // The second column reads each hour of today (or the first day shown) in the other zone.
   const ref = todayIdx >= 0 ? nowLocal.date : (days[0] as LocalDate);
   const extra = extraZone
     ? Array.from({ length: 24 }, (_, h) => utcToLocal(extraZone, localToUtc(zone, ref, h * 60)))
     : null;
-  const labelCols = extra ? "56px 64px" : "56px";
+  const labelCols = extra ? "48px 64px" : "48px";
 
   /** The pointer is on a time before now. */
   const isPast = (e: PointerEvent, date: LocalDate) => {
@@ -241,6 +254,8 @@ export function WeekView({
     const el = e.currentTarget as HTMLElement;
     el.setPointerCapture(e.pointerId);
     pressed = { el, pointer: e.pointerId };
+    // CMP-87: a pressed card is raised; it does not scale (MOT-60).
+    el.classList.add("ev-pressed");
     // Fixed events open their details on a click; they cannot be dragged. On
     // touch, the first tap selects a card and only the selected card moves (MOB-8).
     const movable =
@@ -256,6 +271,7 @@ export function WeekView({
     const end = () => {
       listen.abort();
       pressed = null;
+      el.classList.remove("ev-pressed");
       const d = drag.value;
       drag.value = null;
       return d;
@@ -345,7 +361,7 @@ export function WeekView({
             key={d}
             data-date={d}
           >
-            {weekdayText(d)} {Number(d.slice(8))}
+            {weekdayText(d)} {i === todayIdx ? <b>{Number(d.slice(8))}</b> : Number(d.slice(8))}
           </div>
         ))}
       </div>
@@ -363,6 +379,12 @@ export function WeekView({
                 {h === 0 ? "" : hourText(h)}
               </div>
             ))}
+            {/* CMP-141: the time now, in the hour gutter; not an hour label. */}
+            {todayIdx >= 0 && (
+              <div class="now-pill" style={{ top: `${nowTop}px` }}>
+                {clockText(zone, now).split(" ")[0]}
+              </div>
+            )}
           </div>
           {extra && (
             <div class="hours extra-hours">
@@ -387,7 +409,11 @@ export function WeekView({
               const busyTitle = busyDays?.get(d);
               return (
                 <div
-                  class={busyTitle === undefined ? "day-col" : "day-col day-busy"}
+                  // LAY-34: weekends are flat gray; a busy all-day day keeps its pattern.
+                  class={clsx(
+                    "day-col",
+                    busyTitle === undefined ? weekdayOf(d) > 5 && "day-off" : "day-busy",
+                  )}
                   key={d}
                   data-date={d}
                   title={busyTitle}
@@ -412,11 +438,13 @@ export function WeekView({
                 }}
               />
             )}
+            {/* CMP-140: a 1 px line across the days under the cards, today's 2 px line and its dot. */}
+            {todayIdx >= 0 && <div class="now-week" style={{ top: `${nowTop}px` }} />}
             {todayIdx >= 0 && (
               <div
                 class="now-line"
                 style={{
-                  top: `${(nowLocal.minuteOfDay / 60) * HOUR_PX}px`,
+                  top: `${nowTop}px`,
                   left: `${(todayIdx / days.length) * 100}%`,
                   width: `${100 / days.length}%`,
                 }}
@@ -436,6 +464,7 @@ export function WeekView({
                     `ev-${b.ev.kind}`,
                     !b.ev.busy && "ev-free",
                     b.ev.locked && "ev-locked",
+                    b.ev.end <= now && "ev-past",
                     b.height < TWO_LINES_PX && "ev-short",
                     b.height < TINY_PX && "ev-tiny",
                     b.height >= TALL_PX && "ev-tall",
@@ -448,9 +477,10 @@ export function WeekView({
                   data-event-id={b.ev.id}
                   data-start={b.ev.start}
                   title={b.ev.title}
+                  // CMP-82: 1 px inside its slot at the top and the bottom.
                   style={{
-                    top: `${top}px`,
-                    height: `${b.height}px`,
+                    top: `${top + 1}px`,
+                    height: `${b.height - 2}px`,
                     left: `calc(${(dayIdx / days.length) * 100}% + ${col} * ${b.col})`,
                     width: `calc(${col} - 2px)`,
                   }}
@@ -462,6 +492,7 @@ export function WeekView({
                   <span class="ev-time">
                     {clockText(zone, b.ev.start)}–{clockText(zone, b.ev.end)}
                   </span>
+                  {!b.ev.busy && <span class="ev-meta">free</span>}
                 </div>
               );
             })}
@@ -478,7 +509,10 @@ export function WeekView({
                     aria-label={n === 1 ? "1 more event" : `${n} more events`}
                     aria-expanded={moreOpen === id}
                     style={{ top: `${m.top}px`, right }}
-                    onClick={() => setMoreOpen(moreOpen === id ? null : id)}
+                    onClick={(e) => {
+                      setInstant(byKeyboard(e));
+                      setMoreOpen(moreOpen === id ? null : id);
+                    }}
                   >
                     +{n}
                   </button>
@@ -486,16 +520,22 @@ export function WeekView({
                     <MoreList
                       events={m.events}
                       zone={zone}
+                      // MOT-21: it grows from the corner next to the pill.
                       style={{
                         top: `${m.top + 24}px`,
                         ...(m.day >= days.length / 2
-                          ? { right }
-                          : { left: `calc(${((m.day + 1) / days.length) * 100}% - ${LANE_PX}px)` }),
+                          ? { right, transformOrigin: "top right" }
+                          : {
+                              left: `calc(${((m.day + 1) / days.length) * 100}% - ${LANE_PX}px)`,
+                              transformOrigin: "top left",
+                            }),
                       }}
+                      instant={instant}
                       onPick={(id) => {
                         setMoreOpen(null);
                         onSelect?.(id);
                       }}
+                      onClose={() => setMoreOpen(null)}
                     />
                   )}
                 </Fragment>
