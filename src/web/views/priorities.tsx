@@ -100,6 +100,13 @@ function usePriorities() {
   return { items, error, dragged, setLevel, addToQueue, dropZone };
 }
 
+/**
+ * The item under the last press. The browser starts a drag on the item that is
+ * under the press point when the pointer first moves; a scroll in between (the
+ * right column scrolls) puts another item there, so the drag uses this one.
+ */
+let pressed: Item | null = null;
+
 function Entry({
   it,
   dragged,
@@ -119,12 +126,17 @@ function Entry({
       data-kind={it.kind}
       data-name={it.title}
       draggable={!it.fixed}
+      onPointerDown={() => {
+        pressed = it;
+      }}
       onDragStart={(e) => {
-        dragged.current = it;
-        e.dataTransfer?.setData("text/plain", `${it.kind}:${it.id}`);
+        const from = pressed ?? it;
+        dragged.current = from;
+        e.dataTransfer?.setData("text/plain", `${from.kind}:${from.id}`);
       }}
       onDragEnd={() => {
         dragged.current = null;
+        pressed = null;
       }}
     >
       <div>
@@ -274,7 +286,7 @@ export function PrioritiesPanel() {
   const q = query.trim().toLowerCase();
   const shown = p.items.filter((it) => !q || it.title.toLowerCase().includes(q));
   return (
-    <div class="popover priorities-panel" data-testid="priorities-panel">
+    <div class="priorities-panel" data-testid="priorities-panel">
       <label>
         Search
         <input type="search" value={query} onInput={(e) => setQuery(e.currentTarget.value)} />

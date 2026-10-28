@@ -327,9 +327,11 @@ li.automation .confirm {
   font-size: var(--text-20);
 }
 
-/* Assistant chat panel (assistant-chat.md rule 1) */
+/* Assistant chat panel (assistant-chat.md rule 1); CMP-125: it fills the right column. */
 .drawer.assistant {
-  width: 400px;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
 }
 .assistant-head {
   display: flex;
@@ -429,12 +431,24 @@ li.automation .confirm {
   padding-left: 20px;
 }
 .side-panel {
-  flex: none;
-  max-height: 25vh;
-  overflow: auto;
   margin: 0;
-  padding: 4px 16px;
-  border-top: 1px solid var(--line);
+}
+.side-panel [role="tablist"] {
+  flex-wrap: nowrap;
+  gap: 0;
+}
+.side-panel [role="tab"] {
+  gap: var(--sp-6);
+  padding: 0 var(--sp-8);
+}
+/* CMP-123 */
+.count {
+  padding: 0 6px;
+  border-radius: var(--radius-full);
+  background: var(--bg-sunken);
+  color: var(--text-tertiary);
+  font: var(--weight-medium) var(--text-11) / var(--lh-11) var(--font-sans);
+  font-variant-numeric: tabular-nums;
 }
 /* A result message stays in view next to an action far down the page. */
 .notice {
@@ -444,22 +458,49 @@ li.automation .confirm {
   padding: 6px 0;
   background: var(--bg-surface);
 }
+/* LAY-13: the preview panel in the planner toolbar; its sentence shortens first (LAY-14). */
 .preview {
-  display: grid;
-  gap: 8px;
-  margin: 8px 0;
-  padding-inline: 16px;
-}
-.preview-head {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 12px;
+  gap: var(--sp-8);
+  min-width: 0;
+  min-height: 32px;
+  margin: 0;
+  position: relative;
 }
-.apply-summary {
-  border: 1px solid var(--line);
+.toolbar > .preview {
+  flex-shrink: 100;
+}
+.preview[data-on] {
+  padding: 0 4px 0 8px;
   border-radius: var(--radius-md);
-  padding: 10px 12px;
+  background: var(--bg-selected);
+}
+.preview label {
+  white-space: nowrap;
+}
+.preview > label {
+  flex: none;
+}
+.preview > .status {
+  flex: 0 1 22ch;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* The staged list, the apply summary and the error open below the panel. */
+.preview-pop {
+  top: calc(100% + 8px);
+  inset-inline-end: 0;
+  width: 320px;
+  transform-origin: top right;
+}
+.preview-pop .row {
+  grid-template-columns: minmax(0, 1fr);
+}
+.preview-pop > .primary {
+  justify-self: end;
 }
 /* Booking page options: questions, zone picker, overlay (booking-links-booking-page.md) */
 .field,
@@ -473,4 +514,57 @@ li.automation .confirm {
 .field > select {
   min-width: 0;
   max-width: 100%;
+}
+/* Motion of menus, popovers and dialogs (ui-refresh.md MOT-20 to MOT-23). It loads after
+   the first page settles; an overlay opened before that shows at once. */
+.menu,
+.popover {
+  transition:
+    opacity var(--duration-popover) var(--ease-out),
+    transform var(--duration-popover) var(--ease-out);
+  @starting-style {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+}
+.account-menu .menu {
+  transform-origin: bottom left;
+}
+.dialog-backdrop {
+  transition: background-color var(--duration-modal) var(--ease-out);
+  @starting-style {
+    background-color: rgb(0 0 0 / 0%);
+  }
+}
+.dialog {
+  transform-origin: center;
+  transition:
+    opacity var(--duration-modal) var(--ease-out),
+    transform var(--duration-modal) var(--ease-out);
+  @starting-style {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+}
+/* CMP-53, MOT-23: at 640 px and below, a dialog is a bottom sheet that slides up. */
+@media (max-width: 640px) {
+  .dialog-backdrop > .dialog {
+    align-self: end;
+    width: 100%;
+    max-width: none;
+    border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+    padding-bottom: calc(20px + env(safe-area-inset-bottom, 0px));
+    transition: transform var(--duration-modal) var(--ease-drawer);
+    @starting-style {
+      transform: translateY(100%);
+    }
+  }
+}
+@media (max-width: 640px) and (prefers-reduced-motion: reduce) {
+  .dialog {
+    transition: opacity var(--duration-fade) ease;
+    @starting-style {
+      opacity: 0;
+    }
+  }
 }

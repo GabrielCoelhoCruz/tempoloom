@@ -14,6 +14,8 @@ export interface OverlayItem {
 }
 
 export const overlay = signal<OverlayItem[]>([]);
+/** Preview mode is on and changes wait for review (ui-refresh.md CMP-12). */
+export const reviewable = signal(false);
 
 /** New and moved events get a box at their staged time; changed live events get a mark. */
 export function withPreview(events: WeekEvent[], items: OverlayItem[]): WeekEvent[] {

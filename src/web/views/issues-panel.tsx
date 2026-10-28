@@ -65,7 +65,8 @@ export function IssuesPanel() {
           aria-selected={tab === "issues"}
           onClick={() => setTab("issues")}
         >
-          Issues ({issues?.length ?? 0})
+          Issues
+          <Count n={issues?.length ?? 0} />
         </button>
         <button
           type="button"
@@ -73,7 +74,8 @@ export function IssuesPanel() {
           aria-selected={tab === "recommendations"}
           onClick={() => setTab("recommendations")}
         >
-          Recommendations ({recs.length})
+          Recommendations
+          <Count n={recs.length} />
         </button>
       </div>
       {error && (
@@ -151,4 +153,9 @@ export function IssuesPanel() {
       )}
     </section>
   );
+}
+
+/** CMP-123: a count chip; none for 0, "99+" above 99. */
+function Count({ n }: { n: number }) {
+  return n > 0 ? <span class="count">{n > 99 ? "99+" : n}</span> : null;
 }

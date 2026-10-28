@@ -1,11 +1,20 @@
 import { signal } from "@preact/signals";
 import clsx from "clsx/lite";
 import { Fragment } from "preact";
-import { useEffect, useMemo, useRef, useState } from "preact/hooks";
-import { addDays, type LocalDate, localToUtc, MINUTE, utcToLocal } from "../../shared/time.ts";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
+import {
+  addDays,
+  type LocalDate,
+  localToUtc,
+  MINUTE,
+  utcToLocal,
+  weekdayOf,
+} from "../../shared/time.ts";
 import { clockText, hourText, timeText, weekdayText } from "../lib/format.ts";
+import type { Firsts } from "../lib/glide.ts";
 import { lazyComponent } from "../lib/lazy.ts";
 import { wide } from "../lib/media.ts";
+import { byKeyboard } from "../lib/motion.ts";
 
 export interface WeekEvent {
   id: string;
@@ -58,14 +67,16 @@ const MoreList = lazyComponent<{
   events: WeekEvent[];
   zone: string;
   style: Record<string, string>;
+  instant: boolean;
   onPick: (id: string) => void;
+  onClose: () => void;
 }>(() => import("./planner-now.tsx").then((m) => m.MoreList));
 
 const city = (z: string) => (z.split("/").at(-1) ?? z).replace(/_/g, " ");
 
 const HOUR_PX = 48;
-/** The height an event box needs for its title line and its time line (styles.css .ev). */
-const TWO_LINES_PX = 35;
+/** The height an event box needs for its title line and its time line (CMP-89). */
+const TWO_LINES_PX = 36;
 /** A box this high or more clamps its title to 2 lines (ui-refresh.md A7). */
 const TALL_PX = 56;
 /** A box lower than this has room for one small line only (ui-refresh.md A6). */
@@ -152,6 +163,8 @@ export function layout(
 }
 
 const drag = signal<{ id: string; dx: number; dyMin: number } | null>(null);
+/** The replan glide (MOT-40); it loads after the first draw, which never glides. */
+let glider: typeof import("../lib/glide.ts") | undefined;
 /** The card and pointer of the press in progress (MOB-12: one drag at a time). */
 let pressed: { el: Element; pointer: number } | null = null;
 /** The width of the "+N" lane at the inline end of a cluster that folds events (LAY-41). */
@@ -180,20 +193,46 @@ export function WeekView({
   const { boxes, more } = useMemo(() => layout(days, zone, events, cap), [days, zone, events, cap]);
   /** The "+N" list that is open: its day and top. */
   const [moreOpen, setMoreOpen] = useState<string | null>(null);
+  // MOT-6: a list opened from the keyboard shows at once.
+  const [instant, setInstant] = useState(false);
   const gridRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     // Open at 07:00, where the working day starts for most people.
     if (scrollRef.current) scrollRef.current.scrollTop = 7 * HOUR_PX;
+    void import("../lib/glide.ts").then((m) => {
+      glider = m;
+    });
   }, []);
+  // MOT-44: when the events change while the same days show, measure the cards
+  // before this render draws ("first"), then glide them after it.
+  const sig = events.map((e) => `${e.id}@${e.start}-${e.end}`).join();
+  const shownDays = days.join();
+  const lastDays = useRef(shownDays);
+  // Only a new event list measures.
+  const first = useMemo<Firsts | null>(
+    () =>
+      gridRef.current && glider && lastDays.current === shownDays && !drag.value
+        ? glider.measure(gridRef.current)
+        : null,
+    [sig],
+  );
+  // The glide runs once per event list.
+  useLayoutEffect(() => {
+    const same = lastDays.current === shownDays;
+    lastDays.current = shownDays;
+    // A week that had no cards draws its first cards without motion.
+    if (same && first?.size && gridRef.current) glider?.glide(gridRef.current, first);
+  }, [sig]);
   const nowLocal = utcToLocal(zone, now);
   const todayIdx = days.indexOf(nowLocal.date);
+  const nowTop = (nowLocal.minuteOfDay / 60) * HOUR_PX;
   // The second column reads each hour of today (or the first day shown) in the other zone.
   const ref = todayIdx >= 0 ? nowLocal.date : (days[0] as LocalDate);
   const extra = extraZone
     ? Array.from({ length: 24 }, (_, h) => utcToLocal(extraZone, localToUtc(zone, ref, h * 60)))
     : null;
-  const labelCols = extra ? "56px 64px" : "56px";
+  const labelCols = extra ? "48px 64px" : "48px";
 
   /** The pointer is on a time before now. */
   const isPast = (e: PointerEvent, date: LocalDate) => {
@@ -241,6 +280,8 @@ export function WeekView({
     const el = e.currentTarget as HTMLElement;
     el.setPointerCapture(e.pointerId);
     pressed = { el, pointer: e.pointerId };
+    // CMP-87: a pressed card is raised; it does not scale (MOT-60).
+    el.classList.add("ev-pressed");
     // Fixed events open their details on a click; they cannot be dragged. On
     // touch, the first tap selects a card and only the selected card moves (MOB-8).
     const movable =
@@ -256,6 +297,7 @@ export function WeekView({
     const end = () => {
       listen.abort();
       pressed = null;
+      el.classList.remove("ev-pressed");
       const d = drag.value;
       drag.value = null;
       return d;
@@ -345,7 +387,7 @@ export function WeekView({
             key={d}
             data-date={d}
           >
-            {weekdayText(d)} {Number(d.slice(8))}
+            {weekdayText(d)} {i === todayIdx ? <b>{Number(d.slice(8))}</b> : Number(d.slice(8))}
           </div>
         ))}
       </div>
@@ -363,6 +405,12 @@ export function WeekView({
                 {h === 0 ? "" : hourText(h)}
               </div>
             ))}
+            {/* CMP-141: the time now, in the hour gutter; not an hour label. */}
+            {todayIdx >= 0 && (
+              <div class="now-pill" style={{ top: `${nowTop}px` }}>
+                {clockText(zone, now).split(" ")[0]}
+              </div>
+            )}
           </div>
           {extra && (
             <div class="hours extra-hours">
@@ -387,7 +435,11 @@ export function WeekView({
               const busyTitle = busyDays?.get(d);
               return (
                 <div
-                  class={busyTitle === undefined ? "day-col" : "day-col day-busy"}
+                  // LAY-34: weekends are flat gray; a busy all-day day keeps its pattern.
+                  class={clsx(
+                    "day-col",
+                    busyTitle === undefined ? weekdayOf(d) > 5 && "day-off" : "day-busy",
+                  )}
                   key={d}
                   data-date={d}
                   title={busyTitle}
@@ -412,17 +464,19 @@ export function WeekView({
                 }}
               />
             )}
+            {/* CMP-140: a 1 px line across the days under the cards, today's 2 px line and its dot. */}
+            {todayIdx >= 0 && <div class="now-week" style={{ top: `${nowTop}px` }} />}
             {todayIdx >= 0 && (
               <div
                 class="now-line"
                 style={{
-                  top: `${(nowLocal.minuteOfDay / 60) * HOUR_PX}px`,
+                  top: `${nowTop}px`,
                   left: `${(todayIdx / days.length) * 100}%`,
                   width: `${100 / days.length}%`,
                 }}
               />
             )}
-            {boxes.map((b) => {
+            {boxes.map((b, i) => {
               const d = drag.value?.id === b.ev.id ? drag.value : null;
               const dayIdx = b.day + (d?.dx ?? 0);
               const top = b.top + ((d?.dyMin ?? 0) / 60) * HOUR_PX;
@@ -436,6 +490,7 @@ export function WeekView({
                     `ev-${b.ev.kind}`,
                     !b.ev.busy && "ev-free",
                     b.ev.locked && "ev-locked",
+                    b.ev.end <= now && "ev-past",
                     b.height < TWO_LINES_PX && "ev-short",
                     b.height < TINY_PX && "ev-tiny",
                     b.height >= TALL_PX && "ev-tall",
@@ -446,11 +501,14 @@ export function WeekView({
                     flagged?.has(b.ev.id) && "ev-conflict",
                   )}
                   data-event-id={b.ev.id}
+                  // MOT-44: the n-th card of this event, in day order.
+                  data-box-key={`${b.ev.id}#${boxes.slice(0, i).filter((o) => o.ev.id === b.ev.id).length}`}
                   data-start={b.ev.start}
                   title={b.ev.title}
+                  // CMP-82: 1 px inside its slot at the top and the bottom.
                   style={{
-                    top: `${top}px`,
-                    height: `${b.height}px`,
+                    top: `${top + 1}px`,
+                    height: `${b.height - 2}px`,
                     left: `calc(${(dayIdx / days.length) * 100}% + ${col} * ${b.col})`,
                     width: `calc(${col} - 2px)`,
                   }}
@@ -462,6 +520,7 @@ export function WeekView({
                   <span class="ev-time">
                     {clockText(zone, b.ev.start)}–{clockText(zone, b.ev.end)}
                   </span>
+                  {!b.ev.busy && <span class="ev-meta">free</span>}
                 </div>
               );
             })}
@@ -478,7 +537,10 @@ export function WeekView({
                     aria-label={n === 1 ? "1 more event" : `${n} more events`}
                     aria-expanded={moreOpen === id}
                     style={{ top: `${m.top}px`, right }}
-                    onClick={() => setMoreOpen(moreOpen === id ? null : id)}
+                    onClick={(e) => {
+                      setInstant(byKeyboard(e));
+                      setMoreOpen(moreOpen === id ? null : id);
+                    }}
                   >
                     +{n}
                   </button>
@@ -486,16 +548,22 @@ export function WeekView({
                     <MoreList
                       events={m.events}
                       zone={zone}
+                      // MOT-21: it grows from the corner next to the pill.
                       style={{
                         top: `${m.top + 24}px`,
                         ...(m.day >= days.length / 2
-                          ? { right }
-                          : { left: `calc(${((m.day + 1) / days.length) * 100}% - ${LANE_PX}px)` }),
+                          ? { right, transformOrigin: "top right" }
+                          : {
+                              left: `calc(${((m.day + 1) / days.length) * 100}% - ${LANE_PX}px)`,
+                              transformOrigin: "top left",
+                            }),
                       }}
+                      instant={instant}
                       onPick={(id) => {
                         setMoreOpen(null);
                         onSelect?.(id);
                       }}
+                      onClose={() => setMoreOpen(null)}
                     />
                   )}
                 </Fragment>

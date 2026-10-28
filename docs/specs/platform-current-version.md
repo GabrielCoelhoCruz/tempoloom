@@ -36,7 +36,7 @@ import from a closed competitor, which Tempoloom does not need.
 5. Recommendations and issues: conflicts, days with too many meetings,
    a focus goal not met, skipped habits, and meetings with no agenda or no
    video link.
-   Tempoloom decision: a panel under the planner's week view has two tabs.
+   Tempoloom decision: a panel in the planner's right column, under the open panel, has two tabs.
    "Issues" lists the meeting check issues (`automations-meeting-quality.md`:
    conflicts, no video link, no agenda and the other checks). "Recommendations"
    lists the planner's report (skipped habits, focus goals not met, tasks and

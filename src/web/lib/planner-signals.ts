@@ -21,6 +21,8 @@ export const plannerReload = signal(0);
 export const sidePanel = signal<
   "tasks" | "priorities" | "conflicts" | "details" | "assistant" | null
 >(null);
+/** ui-refresh.md LAY-60: at 1180 px and below, the right column is a drawer; it is open. */
+export const drawerOpen = signal(false);
 /** assistant-chat.md chat message context: the dates shown and the selected event. */
 export const plannerContext = signal<{ from: string; to: string; eventId?: string }>({
   from: "",

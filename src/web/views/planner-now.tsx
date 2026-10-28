@@ -5,8 +5,9 @@
 // link (planning-planner.md PLN-7), conflicts between external events
 // (events-external-priority.md rule 8) and travel prompts
 // (timezones-home-and-travel.md rules 8-11).
+import { signal } from "@preact/signals";
 import type { ComponentChildren } from "preact";
-import { useCallback, useEffect, useState } from "preact/hooks";
+import { useCallback, useEffect, useLayoutEffect, useState } from "preact/hooks";
 import type { PlannerEvent } from "../../server/api/planner.ts";
 import { waitingNote } from "../../shared/event-settings.ts";
 import { addDays, utcToLocal } from "../../shared/time.ts";
@@ -25,6 +26,7 @@ import {
   viewAs,
 } from "../lib/planner-signals.ts";
 import { LEVEL_NAMES, loadMe, me, planNow, zone } from "../lib/state.ts";
+import { NoteText } from "./hints.tsx";
 import "./parts.css";
 import type { WeekEvent } from "./week.tsx";
 
@@ -65,6 +67,9 @@ interface Conflict {
   overlap: { start: number; end: number };
   fix: { title: string; start: number; end: number } | null;
 }
+
+/** The conflicts of the days shown: the now bar loads them, the conflicts panel lists them. */
+const conflicts = signal<Conflict[]>([]);
 
 const reason = (err: unknown) =>
   (err as { body?: { message?: string } }).body?.message ?? "That did not work. Try again.";
@@ -144,7 +149,7 @@ function TasksPanel({ onClose }: { onClose: () => void }) {
   };
   if (!data) return null;
   return (
-    <div class="popover" data-testid="tasks-panel">
+    <div class="open-panel" data-testid="tasks-panel">
       {message && <p class="error">{message}</p>}
       <h3>Suggested now</h3>
       <div class="list" data-testid="suggested-now">
@@ -167,7 +172,7 @@ function TasksPanel({ onClose }: { onClose: () => void }) {
         ))}
         {data.suggestedNow.length === 0 && <p class="status">No task to work on now.</p>}
       </div>
-      <h3>At risk</h3>
+      <h3 class="risk">At risk</h3>
       <div class="list" data-testid="at-risk">
         {data.atRisk.map((t) => (
           <TaskRow t={t} key={t.id}>
@@ -180,15 +185,37 @@ function TasksPanel({ onClose }: { onClose: () => void }) {
   );
 }
 
-/** The events that a "+N" button folds (ui-refresh.md LAY-43): time first; a choice opens one. */
+/**
+ * The events that a "+N" button folds (ui-refresh.md LAY-43): time first; a
+ * choice opens one. Escape and a press outside close the list (CMP-43).
+ */
 export function MoreList(p: {
   events: WeekEvent[];
   zone: string;
   style: Record<string, string>;
+  instant: boolean;
   onPick: (id: string) => void;
+  onClose: () => void;
 }) {
+  const { onClose } = p;
+  useLayoutEffect(() => {
+    const close = (e: Event) => {
+      if (
+        e instanceof KeyboardEvent
+          ? e.key === "Escape"
+          : !(e.target as Element).closest(".more-list, .ev-more")
+      )
+        onClose();
+    };
+    addEventListener("keydown", close);
+    addEventListener("pointerdown", close);
+    return () => {
+      removeEventListener("keydown", close);
+      removeEventListener("pointerdown", close);
+    };
+  }, [onClose]);
   return (
-    <div class="popover more-list" style={p.style}>
+    <div class="popover more-list" style={p.style} data-instant={p.instant || undefined}>
       {p.events.map((ev) => (
         <button type="button" key={ev.id} title={ev.title} onClick={() => p.onPick(ev.id)}>
           <span>
@@ -215,15 +242,25 @@ function Elapsed({ since }: { since: number }) {
   );
 }
 
-export function NowBar({ from, to }: { from: number; to: number }) {
+/**
+ * The right column's header after the panel switch (ui-refresh.md CMP-127): the
+ * conflicts button, `children` (Hide panel), then one row each for next up, the
+ * next meeting, the timer, a block preview and an error.
+ */
+export function NowBar({
+  from,
+  to,
+  children,
+}: {
+  from: number;
+  to: number;
+  children?: ComponentChildren;
+}) {
   const z = zone();
   const [now, setNow] = useState<Now | null>(null);
-  const [conflicts, setConflicts] = useState<Conflict[]>([]);
   // PLN-21: one panel at a time; opening one closes the event details.
   const open = sidePanel.value;
-  const setOpen = (v: typeof open) => (sidePanel.value = v);
   const [stopping, setStopping] = useState(false);
-  const [reviewing, setReviewing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // The conflicts URL changes with the week: only the newest load may draw.
   const newest = useNewest();
@@ -235,7 +272,7 @@ export function NowBar({ from, to }: { from: number; to: number }) {
     ]);
     if (!isNewest()) return;
     setNow(n);
-    setConflicts(c.conflicts);
+    conflicts.value = c.conflicts;
     conflictIds.value = new Set(c.conflicts.flatMap((x) => x.ids));
   }, [newest, from, to]);
   useEffect(() => {
@@ -264,72 +301,31 @@ export function NowBar({ from, to }: { from: number; to: number }) {
     }
   };
 
-  // HRS-15: a new user reviews the hours once.
-  const review = me.value?.settings.hoursReviewed === false && (
-    <span class="review" data-testid="hours-review-banner">
-      New here? Check your hours.
-      <button type="button" onClick={() => setReviewing(true)}>
-        Review hours
-      </button>
-      <button
-        type="button"
-        onClick={() =>
-          void api("PATCH", "/api/settings", { hoursReviewed: true }).then(() => loadMe())
-        }
-      >
-        Looks right
-      </button>
-      {reviewing && <HoursReview onClose={() => setReviewing(false)} />}
-    </span>
-  );
-  if (!now) return review || null;
   // PLN-6: as others see it, a free meeting looks open and a private one is only busy.
   const others = viewAs.value === "others";
-  const m = others && !now.meeting?.busy ? null : now.meeting;
+  const m = others && !now?.meeting?.busy ? null : now?.meeting;
   const masked = others && m?.private;
+  const n = conflicts.value.length;
   return (
     <>
-      {review}
-      <span data-testid="next-up">
-        Next up: <strong dir="auto">{now.nextUp?.title ?? "nothing"}</strong>
-      </span>
-      <button
-        type="button"
-        aria-expanded={open === "tasks"}
-        onClick={() => setOpen(open === "tasks" ? null : "tasks")}
-      >
-        Tasks
-      </button>
-      <button
-        type="button"
-        aria-expanded={open === "priorities"}
-        onClick={() => setOpen(open === "priorities" ? null : "priorities")}
-      >
-        Priorities
-      </button>
-      {now.timer && (
-        <span class="timer-bar" data-testid="timer-bar">
-          ⏱ {now.timer.title} <Elapsed since={now.timer.startedAt} />
-          <button type="button" onClick={() => setStopping(true)}>
-            Stop
-          </button>
+      {n > 0 && !others && (
+        <button
+          type="button"
+          class="sm danger"
+          aria-expanded={open === "conflicts"}
+          onClick={() => (sidePanel.value = open === "conflicts" ? null : "conflicts")}
+        >
+          {n} {n === 1 ? "conflict" : "conflicts"}
+        </button>
+      )}
+      {children}
+      {now && (
+        <span class="now-row" data-testid="next-up">
+          Next up: <strong dir="auto">{now.nextUp?.title ?? "nothing"}</strong>
         </span>
       )}
-      {preview && (
-        <span class="block-preview" data-testid="block-preview">
-          Preview: {preview.blocks.length} work blocks for {preview.title}
-          <button type="button" class="primary" onClick={() => void apply()}>
-            Apply
-          </button>
-          <button type="button" onClick={() => (blockPreview.value = null)}>
-            Discard
-          </button>
-        </span>
-      )}
-      {error && <span class="error">{error}</span>}
-      <span class="spacer" />
       {m && (
-        <span data-testid="next-meeting">
+        <span class="now-row" data-testid="next-meeting">
           {m.current ? "Now" : "Next"}: <strong dir="auto">{masked ? "Busy" : m.title}</strong>{" "}
           <span class="meta">{span(z, m.start, m.end)}</span>
           {m.joinUrl && !masked && (
@@ -339,31 +335,26 @@ export function NowBar({ from, to }: { from: number; to: number }) {
           )}
         </span>
       )}
-      {conflicts.length > 0 && !others && (
-        <button
-          type="button"
-          class="danger"
-          aria-expanded={open === "conflicts"}
-          onClick={() => setOpen(open === "conflicts" ? null : "conflicts")}
-        >
-          {conflicts.length} {conflicts.length === 1 ? "conflict" : "conflicts"}
-        </button>
+      {now?.timer && (
+        <span class="now-row timer-bar" data-testid="timer-bar">
+          ⏱ {now.timer.title} <Elapsed since={now.timer.startedAt} />
+          <button type="button" onClick={() => setStopping(true)}>
+            Stop
+          </button>
+        </span>
       )}
-      {open === "tasks" && <TasksPanel onClose={() => setOpen(null)} />}
-      {open === "priorities" && <PrioritiesPanel />}
-      {open === "conflicts" && !others && (
-        <div class="popover" data-testid="conflicts">
-          {conflicts.map((c) => (
-            <p key={c.ids.join()}>
-              {c.titles[0]} and {c.titles[1]} overlap {span(z, c.overlap.start, c.overlap.end)}.{" "}
-              {c.fix
-                ? `Suggested fix: move ${c.fix.title} to ${span(z, c.fix.start, c.fix.end)}.`
-                : "No free time to move either one this week."}{" "}
-              Tempoloom moves neither event.
-            </p>
-          ))}
-        </div>
+      {preview && (
+        <span class="now-row block-preview" data-testid="block-preview">
+          Preview: {preview.blocks.length} work blocks for {preview.title}
+          <button type="button" class="primary" onClick={() => void apply()}>
+            Apply
+          </button>
+          <button type="button" onClick={() => (blockPreview.value = null)}>
+            Discard
+          </button>
+        </span>
       )}
+      {error && <span class="now-row error">{error}</span>}
       {stopping && (
         <TimerDialog
           onClose={() => {
@@ -373,6 +364,55 @@ export function NowBar({ from, to }: { from: number; to: number }) {
         />
       )}
     </>
+  );
+}
+
+/** The open panel of the right column (LAY-22): tasks, priorities or conflicts. */
+export function NowPanel() {
+  const z = zone();
+  const open = sidePanel.value;
+  if (open === "tasks") return <TasksPanel onClose={() => (sidePanel.value = null)} />;
+  if (open === "priorities") return <PrioritiesPanel />;
+  if (open !== "conflicts" || viewAs.value === "others") return null;
+  return (
+    <div class="open-panel" data-testid="conflicts">
+      {conflicts.value.map((c) => (
+        <p key={c.ids.join()}>
+          {c.titles[0]} and {c.titles[1]} overlap {span(z, c.overlap.start, c.overlap.end)}.{" "}
+          {c.fix
+            ? `Suggested fix: move ${c.fix.title} to ${span(z, c.fix.start, c.fix.end)}.`
+            : "No free time to move either one this week."}{" "}
+          Tempoloom moves neither event.
+        </p>
+      ))}
+    </div>
+  );
+}
+
+/** HRS-15: a new user reviews the hours once (a notice in the right column, LAY-21). */
+export function HoursReviewNote() {
+  const [reviewing, setReviewing] = useState(false);
+  if (me.value?.settings.hoursReviewed !== false) return null;
+  const text = "New here? Check your hours.";
+  return (
+    <div class="note" data-testid="hours-review-banner">
+      <NoteText text={text} />
+      <span class="note-actions">
+        <button type="button" class="sm" onClick={() => setReviewing(true)}>
+          Review hours
+        </button>
+        <button
+          type="button"
+          class="sm ghost"
+          onClick={() =>
+            void api("PATCH", "/api/settings", { hoursReviewed: true }).then(() => loadMe())
+          }
+        >
+          Looks right
+        </button>
+      </span>
+      {reviewing && <HoursReview onClose={() => setReviewing(false)} />}
+    </div>
   );
 }
 
@@ -524,9 +564,7 @@ export function TravelPrompt() {
     const text = `Back home? Tempoloom still plans in ${active.tz} until ${dateText(active.end_date)}.`;
     return (
       <div class="note warning" data-testid="travel-prompt">
-        <span class="note-text" title={text}>
-          {text}
-        </span>
+        <NoteText text={text} />
         <span class="note-actions">
           {error && <span class="error">{error}</span>}
           <button
@@ -552,9 +590,7 @@ export function TravelPrompt() {
   }`;
   return (
     <div class="note warning" data-testid="travel-prompt">
-      <span class="note-text" title={text}>
-        {text}
-      </span>
+      <NoteText text={text} />
       <span class="note-actions">
         {error && <span class="error">{error}</span>}
         <label class="inline">

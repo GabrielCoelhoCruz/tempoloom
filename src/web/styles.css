@@ -19,6 +19,7 @@
   --weight-medium: 500;
   --weight-semibold: 600;
   --weight-brand: 700;
+  --track-label: 0.04em;
   --track-title: -0.01em;
   --track-h1: -0.015em;
 
@@ -35,10 +36,15 @@
   --radius-md: 8px;
   --radius-lg: 10px;
   --radius-xl: 14px;
+  --radius-full: 999px;
 
   /* Sizes: px on purpose, E2E geometry reads some of them */
   --control-h: 32px;
   --control-h-sm: 28px;
+  --sidebar-w: 208px;
+  --panel-w: 288px;
+  --drawer-w: 320px;
+  --toolbar-h: 56px;
   --hour-px: 48px; /* = HOUR_PX in week.tsx. E2E drags 48 px per hour. Do not change */
   --focus-width: 2px;
 
@@ -50,6 +56,7 @@
   --bg-hover: rgb(16 24 40 / 0.04);
   --bg-press: rgb(16 24 40 / 0.07);
   --bg-selected: color-mix(in srgb, var(--accent) 12%, var(--bg-surface));
+  --grid-off: color-mix(in srgb, var(--text-primary) 3%, transparent);
 
   /* Text, icons and lines (light) */
   --text-primary: #1d1f23;
@@ -97,6 +104,9 @@
 
   /* Elevation: a semi-transparent ring plus a shadow, never a solid gray border */
   --shadow-1: 0 0 0 1px rgb(16 24 40 / 0.1), 0 1px 2px rgb(16 24 40 / 0.06);
+  --shadow-2:
+    0 0 0 1px rgb(16 24 40 / 0.06), 0 2px 6px -1px rgb(16 24 40 / 0.1),
+    0 1px 2px rgb(16 24 40 / 0.06);
   --shadow-3:
     0 0 0 1px rgb(16 24 40 / 0.08), 0 4px 8px -2px rgb(16 24 40 / 0.08),
     0 12px 28px -6px rgb(16 24 40 / 0.18);
@@ -106,6 +116,11 @@
   --scrim: rgb(10 12 16 / 0.32);
 
   /* Layers (the current values, with names) */
+  --z-event: 1;
+  --z-event-raised: 2;
+  --z-now: 3;
+  --z-drag: 4;
+  --z-panel: 10;
   --z-popover: 20;
   --z-dialog: 30;
   --z-toast: 40;
@@ -113,6 +128,7 @@
   /* Motion (section 7) */
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
   --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
   --duration-press: 160ms;
   --duration-menu: 150ms;
   --duration-popover: 200ms;
@@ -121,6 +137,7 @@
   --duration-move: 250ms;
   --duration-collapse: 200ms;
   --duration-fade: 200ms;
+  --duration-drawer: 200ms;
   --duration-toast: 400ms;
 }
 
@@ -133,6 +150,7 @@
     --bg-hover: rgb(255 255 255 / 0.05);
     --bg-press: rgb(255 255 255 / 0.08);
     --bg-selected: color-mix(in srgb, var(--accent) 22%, var(--bg-surface));
+    --grid-off: rgb(255 255 255 / 0.025);
 
     --text-primary: #ececee;
     --text-secondary: #a1a6ae;
@@ -174,6 +192,7 @@
     --shadow-1:
       0 0 0 1px rgb(255 255 255 / 0.1), inset 0 1px 0 rgb(255 255 255 / 0.04),
       0 1px 2px rgb(0 0 0 / 0.4);
+    --shadow-2: 0 0 0 1px rgb(255 255 255 / 0.08), 0 2px 8px -1px rgb(0 0 0 / 0.5);
     --shadow-3:
       0 0 0 1px rgb(255 255 255 / 0.1), inset 0 1px 0 rgb(255 255 255 / 0.05),
       0 12px 28px -6px rgb(0 0 0 / 0.6);
@@ -389,7 +408,16 @@ label > select {
   .primary:hover {
     background: var(--accent-hover);
   }
-  :is(.ghost, .tabs a, [role="tab"], .menu > *, .create-menu > a, .nav a, a.row):hover {
+  :is(
+    .ghost,
+    .tabs a,
+    [role="tab"],
+    .menu > *,
+    .create-menu > a,
+    .nav a,
+    a.row,
+    .panel-switch button
+  ):hover {
     background: var(--bg-hover);
   }
   .danger:hover {
@@ -410,7 +438,16 @@ label > select {
 .primary:active {
   background: var(--accent-press);
 }
-:is(.ghost, .tabs a, [role="tab"], .menu > *, .create-menu > a, .nav a, a.row):active,
+:is(
+  .ghost,
+  .tabs a,
+  [role="tab"],
+  .menu > *,
+  .create-menu > a,
+  .nav a,
+  a.row,
+  .panel-switch button
+):active,
 button:is([aria-pressed="true"], [aria-expanded="true"]):active {
   background: var(--bg-press);
 }
@@ -563,9 +600,10 @@ summary,
   gap: var(--sp-8);
 }
 
+/* LAY-1 */
 .shell {
   display: grid;
-  grid-template-columns: 200px 1fr;
+  grid-template-columns: var(--sidebar-w) minmax(0, 1fr);
   height: 100dvh;
 }
 /* Sidebar (CMP-111, CMP-112) */
@@ -612,25 +650,53 @@ summary,
 .page h1 {
   margin: 0 0 16px;
 }
+/* LAY-10 to LAY-12 */
 .toolbar {
   display: flex;
+  flex: none;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-8) var(--sp-6);
+  min-height: var(--toolbar-h);
   padding: 12px 16px;
   border-bottom: 1px solid var(--line);
 }
 .toolbar .title {
-  font-size: var(--text-15);
-  line-height: var(--lh-15);
-  font-weight: var(--weight-semibold);
+  font: var(--weight-semibold) var(--text-15) / var(--lh-15) var(--font-sans);
   letter-spacing: var(--track-title);
-  margin-right: auto;
+  flex-shrink: 1;
+  min-width: 9ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
+.week-nav {
+  display: flex;
+  gap: 4px;
+}
+/* CMP-15: 16 px icons drawn with a mask in the text color. */
+:is(.i-prev, .i-next, .i-log, .i-side, .i-hide, .i-cal, .i-gear, .note-more)::before {
+  content: "";
+  width: 16px;
+  height: 16px;
+  background: currentColor;
+  mask: var(--i) center / contain no-repeat;
+}
+.i-next::before {
+  transform: scaleX(-1);
+}
+.i-prev,
+.i-next {
+  --i: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M10 3 5 8l5 5 1-1-4-4 4-4z'/%3E%3C/svg%3E");
+}
+.i-log {
+  --i: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill-rule='evenodd' d='M8 0a8 8 0 1 0 0 16A8 8 0 0 0 8 0zm0 1.5a6.5 6.5 0 1 1 0 13 6.5 6.5 0 0 1 0-13zM7 3h2v4.5l3 2-1 1.5-4-2.7z'/%3E%3C/svg%3E");
+}
+
 /* TOK-12 */
 .toolbar :is(.title, .status),
 .hour-label,
+.now-pill,
 .ev-time {
   font-variant-numeric: tabular-nums;
 }
@@ -644,6 +710,9 @@ span.inline {
   font-size: var(--text-12);
   line-height: var(--lh-12);
   color: var(--text-secondary);
+}
+.toolbar > .status {
+  margin-inline-start: auto;
 }
 .error {
   color: var(--danger-text);
@@ -781,50 +850,54 @@ span.inline {
   justify-content: flex-end;
 }
 
-/* Week view */
+/* Week view (LAY-30 to LAY-34, CMP-140 to CMP-142) */
 .week {
   display: flex;
   flex-direction: column;
   flex: 1;
-  /* A1: the week keeps its room when notices and issues are above or below it. */
+  /* A1: the week keeps its room when notices are above it. */
   min-height: max(240px, 50vh);
 }
 .week-head {
   display: grid;
   border-bottom: 1px solid var(--line);
+  overflow: hidden;
+  scrollbar-gutter: stable;
 }
 .day-name {
-  padding: 8px;
-  font-size: var(--text-12);
+  padding: 12px 4px 8px;
+  font: var(--weight-medium) var(--text-12) / var(--lh-12) var(--font-sans);
   color: var(--text-secondary);
   text-align: center;
 }
 .day-name.today {
   color: var(--accent-text);
-  font-weight: 600;
 }
 .day-name.focus {
   background: var(--bg-selected);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
 }
 .week-scroll {
   overflow-y: auto;
   overscroll-behavior: contain;
+  scrollbar-gutter: stable;
   flex: 1;
 }
 .week-body {
   position: relative;
   display: grid;
-  grid-template-columns: 56px 1fr;
+  grid-template-columns: 48px 1fr;
 }
 .hours {
   position: relative;
 }
-.hour-label {
+.hour-label,
+.now-pill {
   position: absolute;
-  right: 6px;
+  inset-inline-end: 8px;
   transform: translateY(-50%);
   font-size: var(--text-11);
+  line-height: var(--lh-11);
   color: var(--text-tertiary);
   white-space: nowrap;
 }
@@ -835,25 +908,28 @@ span.inline {
   background-size: 100% var(--hour-px);
 }
 .day-col {
-  border-left: 1px solid var(--line);
+  border-inline-start: 1px solid var(--line);
 }
-.now-line {
+.now-line,
+.now-week {
   position: absolute;
   height: 2px;
+  margin-top: -1px;
   background: var(--now);
-  z-index: 3;
+  z-index: var(--z-now);
   pointer-events: none;
 }
-/* Event cards: the category colors of CMP-80 and CMP-81 (tint, bar, text). PR 3 redraws the rest. */
-.ev {
+/* Event cards (CMP-80 to CMP-90); a removed card fades out as an .ev-leaving clone (MOT-44). */
+:is(.ev, .ev-leaving) {
   --c: var(--cat-task);
   --c-ink: var(--cat-task-ink);
   position: absolute;
-  border-radius: 4px;
-  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  padding: 3px;
+  padding-inline: 8px 18px;
   overflow: hidden;
-  font-size: 12px;
-  line-height: 1.25;
+  font-size: var(--text-12);
+  line-height: var(--lh-12);
   color: var(--text-primary);
   background: color-mix(in srgb, var(--c) var(--tint), var(--bg-surface));
   box-shadow: inset 3px 0 0 var(--c);
@@ -861,15 +937,13 @@ span.inline {
   user-select: none;
   /* MOB-8: a finger on a card scrolls the week; only the selected card can be dragged. */
   touch-action: pan-y;
-  z-index: 1;
-}
-.ev-selected {
-  touch-action: none;
+  z-index: var(--z-event);
 }
 .ev-task,
 .ev-habit,
 .ev-focus,
-.ev-meeting {
+.ev-meeting,
+.ev-preview {
   cursor: grab;
 }
 .ev-habit {
@@ -905,19 +979,20 @@ span.inline {
     inset 3px 0 0 var(--c),
     inset 0 0 0 1px color-mix(in srgb, var(--c) 35%, transparent);
 }
-.ev-locked {
-  padding-right: 16px;
-}
+/* CMP-86: the lock sits where the kind icon is and hides it. */
 .ev-locked::after {
   content: "";
   /* biome-ignore lint/suspicious/noDuplicateProperties: the line above is the fallback for browsers without alt text */
   content: "" / "Locked";
+}
+.ev::before,
+.ev-locked::after {
   position: absolute;
-  right: 4px;
   top: 4px;
-  width: 10px;
-  height: 10px;
-  background-color: var(--c-ink);
+  inset-inline-end: 4px;
+  width: 12px;
+  height: 12px;
+  background: var(--c-ink);
   mask: var(--icon) center / contain no-repeat;
 }
 .ev-pick {
@@ -927,13 +1002,6 @@ span.inline {
   outline-offset: -1.5px;
   pointer-events: none;
 }
-.ev-drag {
-  z-index: 4;
-  box-shadow:
-    inset 3px 0 0 var(--c),
-    var(--shadow-3);
-  cursor: grabbing;
-}
 .ev-title {
   display: block;
   font-weight: 600;
@@ -941,30 +1009,37 @@ span.inline {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.ev-time {
-  display: block;
-  color: var(--text-secondary);
-  font-size: 11px;
-}
-/* A box too short for two lines: the time follows the title on one line. */
-.ev-short {
+.ev-time,
+.ev-meta {
   white-space: nowrap;
-  text-overflow: ellipsis;
+  color: var(--text-secondary);
+  font-size: var(--text-11);
+  line-height: var(--lh-11);
 }
-.ev-short .ev-title,
+/* CMP-90: a one-line card shows the time first, then the title. */
+.ev-short {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-6);
+  white-space: nowrap;
+}
 .ev-short .ev-time {
-  display: inline;
+  order: -1;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
 }
-.ev-short .ev-time {
-  margin-left: 4px;
+.ev-short .ev-title {
+  flex: 1 1 0;
+  min-width: 0;
 }
-/* A6: a card of 15 minutes or less has room for one small line. */
+/* A6: a card under 25 minutes has room for one small line. */
 .ev-tiny {
   padding-block: 0;
   font-size: 11px;
   line-height: 12px;
 }
-/* A7: a tall card wraps its title to 2 lines; a narrow card in an overlap keeps one line. */
+/* CMP-89: a tall card wraps its title to 2 lines; a narrow card in an overlap keeps one line. */
 .ev-tall:where(:not(.ev-overlap)) .ev-title {
   white-space: normal;
   overflow-wrap: anywhere;
@@ -975,13 +1050,14 @@ span.inline {
 /* LAY-42: the "+N" button of a cluster that folds events; its list is in views/parts.css. */
 .ev-more {
   position: absolute;
-  z-index: 2;
+  z-index: var(--z-event-raised);
   min-width: 20px;
   min-height: 0;
   height: 20px;
   padding: 0 4px;
-  border-radius: 999px;
-  font-size: 11px;
+  border-radius: var(--radius-full);
+  background: var(--bg-sunken);
+  font-size: var(--text-11);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   color: var(--text-secondary);
@@ -997,37 +1073,6 @@ span.inline {
   }
 }
 
-.drawer {
-  position: fixed;
-  right: 0;
-  top: 0;
-  bottom: 0;
-  width: 340px;
-  background: var(--bg-surface);
-  padding: 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  z-index: 10;
-  box-shadow: var(--shadow-3);
-  /* A15, MOB-5, MOB-10 */
-  overflow-y: auto;
-  max-width: 100vw;
-  overscroll-behavior: contain;
-  padding-bottom: calc(20px + env(safe-area-inset-bottom, 0px));
-}
-.drawer h2 {
-  margin: 0;
-}
-.drawer h2,
-.drawer .status {
-  overflow-wrap: anywhere;
-}
-.drawer .actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
 section {
   margin-bottom: 28px;
 }
@@ -1058,16 +1103,39 @@ fieldset.days {
   gap: 8px;
   flex-wrap: wrap;
 }
-.issues {
-  padding: 8px 16px;
-  border-top: 1px solid var(--line);
-  max-height: 30vh;
-  overflow: auto;
-}
+/* The planner: the week and its toolbar, then the right column (LAY-3 to LAY-5, CMP-120, CMP-121). */
 .planner {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--panel-w);
+}
+.planner-main,
+.side-column {
   display: flex;
   flex-direction: column;
-  height: 100dvh;
+  min-width: 0;
+  min-height: 0;
+}
+.side-column {
+  background: var(--bg-surface);
+  border-inline-start: 1px solid var(--line);
+}
+/* LAY-60: at 1180 px and below, the right column is a drawer over the week. */
+@media (max-width: 1180px) {
+  .planner {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .side-column {
+    position: fixed;
+    inset-block: 0;
+    inset-inline-end: 0;
+    width: min(var(--drawer-w), 100vw);
+    z-index: var(--z-panel);
+  }
+  .side-column:not([data-open="true"]) {
+    display: none;
+  }
 }
 a.row {
   text-decoration: none;
@@ -1099,24 +1167,6 @@ a.row {
   min-width: 240px;
 }
 
-/* Preview mode (assistant-preview-mode.md rule 4): dashed staged events, struck-through deletes */
-.ev.ev-staged {
-  --c: var(--accent);
-  --c-ink: var(--accent-text);
-  box-shadow: none;
-  border: 2px dashed var(--accent);
-  z-index: 2;
-}
-.ev.ev-staged-from {
-  opacity: 0.45;
-}
-.ev.ev-staged-deleted {
-  opacity: 0.6;
-}
-.ev-staged-deleted .ev-title {
-  text-decoration: line-through;
-}
-
 /* Automations (automations-overview.md): create menu, list groups, shared form */
 .create-menu {
   margin: 0 8px 12px;
@@ -1129,17 +1179,36 @@ a.row {
   gap: 2px;
 }
 
-/* r3 s3: the planner's now line; its parts load later (src/web/views/parts.css) */
+/* The right column's header (CMP-126 to CMP-128); its parts load later (views/parts.css). */
 .now-bar {
-  position: relative;
   display: flex;
   flex: none;
   flex-wrap: wrap;
   align-items: center;
-  gap: 4px 8px;
-  min-height: 38px;
-  padding: 4px 16px;
+  gap: var(--sp-8);
+  min-height: var(--toolbar-h);
+  padding: 12px 16px;
   border-bottom: 1px solid var(--line);
+}
+.panel-switch {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  margin-inline-end: auto;
+  background: var(--bg-sunken);
+  border-radius: var(--radius-md);
+}
+.panel-switch button {
+  min-height: 28px;
+  padding: 0 var(--sp-8);
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-secondary);
+}
+.panel-switch [aria-expanded="true"] {
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-1);
+  color: var(--text-primary);
 }
 
 label.inline > select {

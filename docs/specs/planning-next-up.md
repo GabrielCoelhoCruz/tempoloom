@@ -64,7 +64,7 @@ and can be tied to focus time and habit events through saved task searches.
   is in progress now; otherwise the task with the earliest future chunk today;
   otherwise the first open task in scheduler order. With suggestions only,
   it is the first item of "Suggested now".
-  Tempoloom decision: the planner shows it on the line above the week
+  Tempoloom decision: the planner shows it in the header of its right column
   ("Next up"). "Today" is the local day in the planning zone. "Scheduler
   order" here and in NXT-32 and NXT-33 means: next-up rank, then priority,
   then due date (no due date last), then more remaining work, then creation
@@ -86,8 +86,8 @@ and can be tied to focus time and habit events through saved task searches.
 - **NXT-33.** Proposed default rule for "At risk": open tasks that are past
   due, or that the scheduler could not fully place before the due date, or
   (with suggestions only) that are due within 48 hours.
-  Tempoloom decision: both lists open from the "Tasks" button on the line
-  above the week. A task in "At risk" has work left and a due date, and
+  Tempoloom decision: both lists open from the "Tasks" button in the header
+  of the planner's right column. A task in "At risk" has work left and a due date, and
   shows why it is there. The task search filter of NXT-32 belongs to saved
   task searches (NXT-40 to NXT-45). The details of a focus time event list
   "Suggested tasks": the first 5 open tasks that may start by the block's

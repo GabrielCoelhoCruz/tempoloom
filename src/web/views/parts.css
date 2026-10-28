@@ -1,28 +1,6 @@
-/* Styles of the planner parts and editors that load on demand: the now line,
-   prompts, previews, conflicts, notes, dialogs and the hours preview. */
-.now-bar .spacer {
-  flex: 1;
-}
-/* The now bar's buttons are small buttons (CMP-11 .sm). */
-.now-bar :is(.button, button) {
-  min-height: var(--control-h-sm);
-  padding: 0 var(--sp-8);
-  font-size: var(--text-12);
-  line-height: var(--lh-12);
-}
-/* A2: long titles in the now line shorten; its parts wrap to more rows. */
-.now-bar strong {
-  display: inline-block;
-  max-width: min(40ch, 45vw);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  vertical-align: bottom;
-}
-.now-bar > span {
-  min-width: 0;
-  max-width: 100%;
-}
+/* Styles of the planner parts and editors that load on demand: the now bar rows,
+   the right column panels, prompts, previews, conflicts, notes, dialogs, the hours
+   preview, the toolbar's view controls and the kind icons of event cards. */
 /* CMP-43 (look) */
 .popover {
   position: absolute;
@@ -41,27 +19,335 @@
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-3);
 }
+/* CMP-127: next up, the next meeting, the timer, a block preview and an error: one row each. */
+.now-row {
+  flex-basis: 100%;
+  min-width: 0;
+}
+/* The now bar's row buttons are small buttons (CMP-11 .sm). */
+.now-row :is(.button, button) {
+  min-height: var(--control-h-sm);
+  padding: 0 var(--sp-8);
+  font-size: var(--text-12);
+  line-height: var(--lh-12);
+}
+/* CMP-129: long titles in the now bar shorten. */
+.now-row strong {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+  font-weight: var(--weight-medium);
+}
+/* Parts of the week that are drawn once the planner settles: today's date pill
+   (CMP-142), weekends (LAY-34), the now marks, the "free" fact (CMP-84), the
+   staged colors (CMP-80) and the right-to-left bar (CMP-81). */
+.day-name b {
+  padding: 0 6px;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  color: var(--on-accent);
+}
+.day-off {
+  background: var(--grid-off);
+}
+/* CMP-141: the time now in the hour gutter, on the line. */
+.now-pill {
+  height: 16px;
+  padding: 1px 5px;
+  border-radius: var(--radius-full);
+  background: var(--now);
+  color: var(--on-accent);
+  font-weight: 600;
+}
+/* CMP-140: the dot at the start of today's line, and a 1 px line across the days under the cards. */
+.now-line::before {
+  content: "";
+  position: absolute;
+  inset-inline-start: -4px;
+  top: -3px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: inherit;
+}
+.now-week {
+  inset-inline: 0;
+  height: 1px;
+  margin: 0;
+  background: color-mix(in srgb, var(--now) 35%, transparent);
+  z-index: 0;
+}
+.ev-staged {
+  --c: var(--accent);
+  --c-ink: var(--accent-text);
+}
+.ev-meta::before {
+  content: "\a0·\a0";
+}
+.ev-short .ev-meta {
+  display: none;
+}
+[dir="rtl"] .ev {
+  box-shadow: inset -3px 0 0 var(--c);
+}
+[dir="rtl"] .i-prev::before {
+  transform: scaleX(-1);
+}
+[dir="rtl"] .i-next::before {
+  transform: none;
+}
+.ev-leaving {
+  pointer-events: none;
+  z-index: 0;
+}
+/* Card states after a press, a selection, a drag or a staged change (CMP-87, CMP-88). */
+.ev-past,
+.ev-staged-from,
+.ev-staged-deleted {
+  background: color-mix(in srgb, var(--c) 6%, var(--bg-surface));
+  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--c) 45%, var(--bg-surface));
+}
+:is(.ev-past, .ev-staged-from, .ev-staged-deleted) .ev-title {
+  color: var(--text-secondary);
+}
+.ev-pressed {
+  box-shadow:
+    inset 3px 0 0 var(--c),
+    var(--shadow-2);
+}
+.ev-selected {
+  box-shadow:
+    inset 3px 0 0 var(--c),
+    0 0 0 2px var(--c-ink),
+    var(--shadow-2);
+  z-index: var(--z-event-raised);
+  touch-action: none;
+}
+.ev-drag {
+  box-shadow:
+    inset 3px 0 0 var(--c),
+    var(--shadow-3);
+  z-index: var(--z-drag);
+  cursor: grabbing;
+}
+/* Dashed means "not on your calendar yet". */
+.ev-staged-new {
+  outline: 1.5px dashed var(--c-ink);
+  outline-offset: -1.5px;
+  z-index: var(--z-event-raised);
+}
+.ev-staged-deleted .ev-title {
+  text-decoration: line-through;
+}
+/* MOT-30: the right column drawer at 1180 px and below slides in from its edge. */
+@media (max-width: 1180px) {
+  .side-column {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    box-shadow: var(--shadow-3);
+    transition: transform var(--duration-drawer) var(--ease-drawer);
+    @starting-style {
+      transform: translateX(100%);
+    }
+  }
+  [dir="rtl"] .side-column {
+    @starting-style {
+      transform: translateX(-100%);
+    }
+  }
+}
+/* LAY-14 (with the parts that load later): from 1440 px the toolbar keeps one row: the preview sentence, then the title
+   (to 9ch) give up their room. An error takes its own row (LAY-15). */
+@media (min-width: 1440px) {
+  .toolbar:not(:has(> .error)) {
+    flex-wrap: nowrap;
+  }
+  .toolbar > * {
+    flex-shrink: 0;
+  }
+}
+/* CMP-121: the right column's content area. */
+.side-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  padding: 12px 16px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+/* CMP-87: a buffer is a flat sunken strip with small text. */
+.ev-buffer {
+  background: var(--bg-sunken);
+  box-shadow: inset 2px 0 0 var(--c);
+  color: var(--text-secondary);
+  font-size: var(--text-11);
+  line-height: 12px;
+}
+/* The notices stack (LAY-21) and the parts of the right column (CMP-121). */
+.side-scroll > *,
+.notices {
+  flex: none;
+  margin: 0;
+}
+.notices {
+  max-height: 40vh;
+  overflow: auto;
+}
+.i-side,
+.i-hide {
+  --i: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill-rule='evenodd' d='M1 2h14v12H1zm1.5 1.5v9h7v-9zm8.5 0v9h2.5v-9z'/%3E%3C/svg%3E");
+}
+/* CMP-122: section labels of the right column. */
+.open-panel > h3 {
+  margin: 0;
+  font: var(--weight-semibold) var(--text-11) / var(--lh-11) var(--font-sans);
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+.open-panel > h3.risk {
+  color: var(--danger-text);
+}
+/* MOT-51: a notice fades in on its first draw. */
+.notices .note {
+  transition: opacity var(--duration-collapse) var(--ease-out);
+  @starting-style {
+    opacity: 0;
+  }
+}
+/* The open panel of the right column (LAY-22), and the event details (CMP-124). */
+.open-panel,
+.drawer {
+  display: grid;
+  gap: 12px;
+}
+.drawer-head {
+  display: flex;
+  align-items: start;
+  gap: 8px;
+}
+.drawer h2 {
+  flex: 1;
+  margin: 0;
+}
+.drawer h2,
+.drawer .status {
+  overflow-wrap: anywhere;
+}
+.drawer .actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.drawer > .ghost {
+  justify-self: start;
+}
+/* ROB-10 in the right column: a row's actions go under its body at every width. */
+.side-scroll .row:has(> .actions) {
+  grid-template-columns: minmax(0, 1fr);
+}
+.side-scroll .row > .actions {
+  justify-content: flex-start;
+}
+.issues summary {
+  cursor: pointer;
+}
+/* CMP-63: a notice's full message. */
+.note-text[data-open] {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.note-more {
+  --i: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3 6l1-1 4 4 4-4 1 1-5 5z'/%3E%3C/svg%3E");
+  width: 24px;
+  min-height: 24px;
+  color: inherit;
+}
+.note-more[aria-expanded="true"]::before {
+  transform: rotate(180deg);
+}
+/* The toolbar's view controls (CMP-32): a chip with an eye icon, then icon buttons. */
+.planner-options {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-6);
+}
+.planner-options .popover {
+  top: calc(100% + 8px);
+  inset-inline-end: 0;
+  transform-origin: top right;
+}
+.view-as {
+  position: relative;
+}
+.view-as::before {
+  content: "";
+  position: absolute;
+  inset-inline-start: 8px;
+  top: 8px;
+  width: 16px;
+  height: 16px;
+  background: var(--text-secondary);
+  mask:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill-rule='evenodd' d='M8 3C4.5 3 2 6 1 8c1 2 3.5 5 7 5s6-3 7-5c-1-2-3.5-5-7-5zm0 1.5a3.5 3.5 0 1 1 0 7 3.5 3.5 0 0 1 0-7zM8 6a2 2 0 1 0 0 4 2 2 0 0 0 0-4z'/%3E%3C/svg%3E")
+    center / contain no-repeat;
+  pointer-events: none;
+}
+.view-as select {
+  padding-inline-start: 28px;
+}
+.i-cal {
+  --i: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill-rule='evenodd' d='M4 1h1.5v1h5V1H12v1h2v13H2V2h2zm-.5 5v7.5h9V6z'/%3E%3C/svg%3E");
+}
+.i-gear {
+  --i: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill-rule='evenodd' d='M7 1h2l.4 1.8 1.2.5 1.6-1 1.4 1.4-1 1.6.5 1.2L15 7v2l-1.8.4-.5 1.2 1 1.6-1.4 1.4-1.6-1-1.2.5L9 15H7l-.4-1.8-1.2-.5-1.6 1-1.4-1.4 1-1.6-.5-1.2L1 9V7l1.8-.4.5-1.2-1-1.6 1.4-1.4 1.6 1 1.2-.5zm1 4.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5z'/%3E%3C/svg%3E");
+}
+/* CMP-85: the kind icon of a card (a drawn mask; it adds no text). */
+.ev:is(.ev-task, .ev-habit, .ev-focus, .ev-meeting, .ev-external)::before {
+  content: "";
+}
+.ev-task::before {
+  --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill-rule='evenodd' d='M2 2h12v12H2zm1.5 1.5v9h9v-9zm1.7 4.3 1 -1 1.5 1.5 3-3 1 1-4 4z'/%3E%3C/svg%3E");
+}
+.ev-habit::before {
+  --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M8 2a6 6 0 0 1 5.2 3H11v1.5h4.5V2H14v1.6A7.5 7.5 0 0 0 .5 8H2a6 6 0 0 1 6-6zm6 6a6 6 0 0 1-11.2 3H5V9.5H.5V14H2v-1.6A7.5 7.5 0 0 0 15.5 8z'/%3E%3C/svg%3E");
+}
+.ev-focus::before {
+  --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill-rule='evenodd' d='M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm0 1.5a5.5 5.5 0 1 1 0 11 5.5 5.5 0 0 1 0-11zM8 5a3 3 0 1 0 0 6 3 3 0 0 0 0-6zm0 1.5a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3z'/%3E%3C/svg%3E");
+}
+.ev-meeting::before {
+  --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M5.5 2a3 3 0 1 1 0 6 3 3 0 0 1 0-6zm5.5 1a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5zM0 14c0-3 2.5-5 5.5-5s5.5 2 5.5 5zm12 0c0-1.7-.6-3.2-1.6-4.3C13.6 9.4 16 11.2 16 14z'/%3E%3C/svg%3E");
+}
+.ev-external::before {
+  --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill-rule='evenodd' d='M4 1h1.5v1h5V1H12v1h2v13H2V2h2zm-.5 5v7.5h9V6z'/%3E%3C/svg%3E");
+}
+/* CMP-86, CMP-87, CMP-89: no kind icon on a locked, overlapped or tiny card. */
+.ev:is(.ev-locked, .ev-overlap, .ev-tiny)::before {
+  content: none;
+}
 .popover h3 {
   margin: 4px 0 0;
 }
-.now-bar .popover {
-  top: 100%;
-  right: 16px;
-  white-space: normal;
-}
 .timer-bar,
 .block-preview {
-  display: inline-flex;
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
   padding: 2px 8px;
   border-radius: var(--radius-md);
   background: var(--bg-selected);
 }
+/* CMP-87: a block preview is dashed (not on the calendar yet). */
 .ev-preview {
-  box-shadow: none;
-  border: 2px dashed var(--cat-task);
-  cursor: grab;
+  outline: 1.5px dashed var(--cat-task-ink);
+  outline-offset: -1.5px;
 }
 .ev-conflict {
   outline: 2px solid var(--danger);
@@ -132,11 +418,6 @@
   overflow: hidden;
   clip-path: inset(50%);
   white-space: nowrap;
-}
-.review {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
 }
 /* LAY-43: the list of a "+N" button in the week. */
 .more-list {
