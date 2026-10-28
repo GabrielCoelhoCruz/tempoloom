@@ -4,6 +4,7 @@
 import { render } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { duration } from "../lib/format.ts";
+import "./pages.css";
 
 const OCCURRENCES = {
   every_weekday: 240,
@@ -405,7 +406,7 @@ function TimerStats({ log }: { log: TimerLog }) {
                 display: "inline-block",
                 height: "8px",
                 width: `${Math.round((b.minutes / max) * 160)}px`,
-                background: "var(--focus)",
+                background: "var(--cat-focus)",
               }}
             />
           </div>

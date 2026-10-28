@@ -8,6 +8,7 @@ import { api } from "../lib/api.ts";
 import { Avatar } from "../lib/avatar.tsx";
 import { useCommit } from "../lib/commit-input.ts";
 import { loadMe, me } from "../lib/state.ts";
+import "./pages.css";
 
 const DATE_FORMATS: Record<Settings["dateFormat"], string> = {
   YMD: "Year-month-day",

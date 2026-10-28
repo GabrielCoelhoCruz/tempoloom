@@ -12,6 +12,7 @@ import { lazyComponent } from "../lib/lazy.ts";
 import { useLive } from "../lib/live.ts";
 import { onLinkClick } from "../lib/router.ts";
 import { loadMe, me, type Person, zone } from "../lib/state.ts";
+import "./pages.css";
 
 const McpSection = lazyComponent(() => import("./mcp-section.tsx").then((m) => m.McpSection));
 

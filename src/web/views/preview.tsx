@@ -6,6 +6,7 @@ import { useLive } from "../lib/live.ts";
 import { chatDraft, sidePanel } from "../lib/planner-signals.ts";
 import { type OverlayItem, overlay } from "../lib/preview.ts";
 import { onLinkClick } from "../lib/router.ts";
+import "./pages.css";
 
 interface Change {
   id: string;
@@ -258,12 +259,17 @@ export function PreviewPanel({ onApplied }: { onApplied: () => void }) {
 export function PreviewBanner() {
   const [data] = usePreview();
   if (!data?.on) return null;
+  const text = `Preview mode is on · ${plural(data.changes.length, "staged change", "staged changes")}`;
   return (
-    <div class="preview-banner" role="status" data-testid="preview-banner">
-      Preview mode is on · {plural(data.changes.length, "staged change", "staged changes")} ·{" "}
-      <a href="/" onClick={onLinkClick}>
-        Review in the planner
-      </a>
+    <div class="note accent" role="status" data-testid="preview-banner">
+      <span class="note-text" title={text}>
+        {text}
+      </span>
+      <span class="note-actions">
+        <a href="/" onClick={onLinkClick}>
+          Review in the planner
+        </a>
+      </span>
     </div>
   );
 }

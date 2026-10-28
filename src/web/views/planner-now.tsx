@@ -520,61 +520,67 @@ export function TravelPrompt() {
     sessionStorage.setItem("tempoloom.travelPrompt", `${browser}>${planning}`);
     setHidden(`${browser}>${planning}`);
   };
-  if (active && browser === home)
+  if (active && browser === home) {
+    const text = `Back home? Tempoloom still plans in ${active.tz} until ${dateText(active.end_date)}.`;
     return (
-      <div class="banner" data-testid="travel-prompt">
-        <span>
-          Back home? Tempoloom still plans in {active.tz} until {dateText(active.end_date)}.
+      <div class="note warning" data-testid="travel-prompt">
+        <span class="note-text" title={text}>
+          {text}
         </span>
-        <button
-          type="button"
-          onClick={() => void done(() => api("POST", `/api/travel/${active.id}/end`))}
-        >
-          End trip
-        </button>
-        <button type="button" onClick={dismiss}>
-          Not now
-        </button>
-        {error && <span class="error">{error}</span>}
+        <span class="note-actions">
+          {error && <span class="error">{error}</span>}
+          <button
+            type="button"
+            class="sm"
+            onClick={() => void done(() => api("POST", `/api/travel/${active.id}/end`))}
+          >
+            End trip
+          </button>
+          <button type="button" class="sm ghost" onClick={dismiss}>
+            Not now
+          </button>
+        </span>
       </div>
     );
+  }
   const today = utcToLocal(browser, Date.now()).date;
   const end = until || addDays(today, 6);
+  const text = `Your browser is in ${browser}, but Tempoloom plans in ${planning}. Are you travelling?${
+    browser === "UTC" && home !== "UTC"
+      ? ` An extension or a privacy setting can make a browser report UTC. If you are not in UTC, keep ${home} and dismiss this.`
+      : ""
+  }`;
   return (
-    <div class="banner" data-testid="travel-prompt">
-      <span>
-        Your browser is in {browser}, but Tempoloom plans in {planning}. Are you travelling?
-        {browser === "UTC" && home !== "UTC" && (
-          <>
-            {" "}
-            An extension or a privacy setting can make a browser report UTC. If you are not in UTC,
-            keep {home} and dismiss this.
-          </>
-        )}
+    <div class="note warning" data-testid="travel-prompt">
+      <span class="note-text" title={text}>
+        {text}
       </span>
-      <label class="inline">
-        Until
-        <input
-          type="date"
-          value={end}
-          min={today}
-          onInput={(e) => setUntil(e.currentTarget.value)}
-        />
-      </label>
-      <button
-        type="button"
-        onClick={() =>
-          void done(() =>
-            api("POST", "/api/travel", { tz: browser, startDate: today, endDate: end }),
-          )
-        }
-      >
-        Add travel time zone
-      </button>
-      <button type="button" onClick={dismiss}>
-        Not now
-      </button>
-      {error && <span class="error">{error}</span>}
+      <span class="note-actions">
+        {error && <span class="error">{error}</span>}
+        <label class="inline">
+          Until
+          <input
+            type="date"
+            value={end}
+            min={today}
+            onInput={(e) => setUntil(e.currentTarget.value)}
+          />
+        </label>
+        <button
+          type="button"
+          class="sm"
+          onClick={() =>
+            void done(() =>
+              api("POST", "/api/travel", { tz: browser, startDate: today, endDate: end }),
+            )
+          }
+        >
+          Add travel time zone
+        </button>
+        <button type="button" class="sm ghost" onClick={dismiss}>
+          Not now
+        </button>
+      </span>
     </div>
   );
 }

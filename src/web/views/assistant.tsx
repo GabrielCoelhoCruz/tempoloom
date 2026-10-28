@@ -14,6 +14,7 @@ import { useLive } from "../lib/live.ts";
 import { chatDraft, plannerContext, sidePanel } from "../lib/planner-signals.ts";
 import { onLinkClick } from "../lib/router.ts";
 import { messageOf } from "../lib/save.ts";
+import "./pages.css";
 
 type Item =
   | { kind: "user"; text: string }

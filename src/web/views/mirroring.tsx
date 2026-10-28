@@ -19,6 +19,7 @@ import { toLocalInput } from "../lib/format.ts";
 import { templateFromUrl } from "../lib/library.ts";
 import { onLinkClick } from "../lib/router.ts";
 import { me, planNow, zone } from "../lib/state.ts";
+import "./pages.css";
 
 type NoReply = UserSettings["noReplyCopies"];
 

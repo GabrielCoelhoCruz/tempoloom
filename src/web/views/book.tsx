@@ -16,6 +16,7 @@ import {
   timeText,
   type View,
 } from "../lib/zoned.ts";
+import "./pages.css";
 
 /** Accounts rule 16: the booking's calendar is on a disconnected account. */
 const NOT_NOW = "This booking link cannot take bookings right now. Please try again later.";

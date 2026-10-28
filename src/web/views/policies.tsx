@@ -5,6 +5,7 @@ import { ApiError, api } from "../lib/api.ts";
 import { changedFields } from "../lib/changed.ts";
 import { dateText, formatWhen } from "../lib/format.ts";
 import { zone } from "../lib/state.ts";
+import "./pages.css";
 
 type PolicyType = "focus_time" | "buffers" | "meeting_agendas" | "fragmentation";
 type Category = "one_on_one" | "team_meeting" | "external_meeting";

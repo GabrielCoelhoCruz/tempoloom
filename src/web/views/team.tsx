@@ -9,6 +9,7 @@ import { TeamBranding } from "./team-branding.tsx";
 import { Onboarding, TeamDefaults } from "./team-defaults.tsx";
 import { OutOfOffice } from "./team-ooo.tsx";
 import { TeamWebhooks } from "./team-webhooks.tsx";
+import "./pages.css";
 
 interface Member {
   userId: string;

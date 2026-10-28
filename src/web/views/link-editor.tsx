@@ -13,6 +13,7 @@ import { ApiError, api } from "../lib/api.ts";
 import { useFirstBody } from "../lib/changed.ts";
 import { LEVEL_NAMES } from "../lib/state.ts";
 import { ITEM, ItemHoursFields } from "./hours-field.tsx";
+import "./pages.css";
 
 export interface PersonOption {
   userId: string;

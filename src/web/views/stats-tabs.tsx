@@ -2,6 +2,7 @@
 // first chunk; the shared parts of the lazy team and organization views are in
 // stats-range.tsx.
 import { onLinkClick, path } from "../lib/router.ts";
+import "./pages.css";
 
 const TABS = [
   ["/stats", "My stats"],

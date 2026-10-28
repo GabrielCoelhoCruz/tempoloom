@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useState } from "preact/hooks";
 import { api } from "../lib/api.ts";
 import { errorText } from "./team.tsx";
+import "./pages.css";
 
 interface Settings {
   allowMembers: boolean;

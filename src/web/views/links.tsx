@@ -8,6 +8,7 @@ import { freeName, templateFromUrl } from "../lib/library.ts";
 import { LEVEL_NAMES, me, zone } from "../lib/state.ts";
 import { type EditableLink, LinkEditor, type PersonOption } from "./link-editor.tsx";
 import { type Group, GroupDelete, GroupEditor, GroupForm } from "./link-groups.tsx";
+import "./pages.css";
 
 // Personalize (one-off links and shared times) loads on first use.
 const Personalize = lazyComponent<{

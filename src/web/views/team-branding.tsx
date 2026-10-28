@@ -3,6 +3,7 @@
 // default that new booking pages copy.
 import { useCallback, useEffect, useState } from "preact/hooks";
 import { ApiError, api } from "../lib/api.ts";
+import "./pages.css";
 
 interface TeamBranding {
   mode: "default" | "none" | "custom";

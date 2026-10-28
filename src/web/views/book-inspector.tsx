@@ -6,6 +6,7 @@ import { localToUtc, utcToLocal } from "../../shared/time.ts";
 import { api } from "../lib/api.ts";
 import { useNewest } from "../lib/newest.ts";
 import { addPages, dayOf, dayText, timeText, type View } from "../lib/zoned.ts";
+import "./pages.css";
 
 type Reason =
   | "past"

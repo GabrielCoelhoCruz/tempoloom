@@ -8,6 +8,9 @@ import { calendarList, displayName, failure, loadCalendars } from "../lib/calend
 import { chatDraft, plannerReload, sidePanel } from "../lib/planner-signals.ts";
 import { onLinkClick } from "../lib/router.ts";
 
+const OTHER_TOOLS =
+  "Before Tempoloom plans your week, turn off any other scheduling tool that writes to these calendars, so the two tools do not create competing events.";
+
 export function PlannerHints() {
   const [hints, setHints] = useState<string[] | null>(null);
   const [chatOff, setChatOff] = useState(false);
@@ -24,15 +27,18 @@ export function PlannerHints() {
   return (
     <div data-testid="planner-hints" data-loaded={hints !== null}>
       {hints?.includes("other-tools") && (
-        <p class="hint" role="note" data-testid="hint-other-tools">
-          Before Tempoloom plans your week, turn off any other scheduling tool that writes to these
-          calendars, so the two tools do not create competing events.{" "}
-          <a href="/help/other-tools" onClick={onLinkClick}>
-            Why
-          </a>{" "}
-          <button type="button" onClick={() => dismiss("other-tools")}>
-            Got it
-          </button>
+        <p class="note" role="note" data-testid="hint-other-tools">
+          <span class="note-text" title={OTHER_TOOLS}>
+            {OTHER_TOOLS}
+          </span>
+          <span class="note-actions">
+            <a href="/help/other-tools" onClick={onLinkClick}>
+              Why
+            </a>
+            <button type="button" class="sm ghost" onClick={() => dismiss("other-tools")}>
+              Got it
+            </button>
+          </span>
         </p>
       )}
       {hints?.includes("assistant-chat") && (
@@ -69,21 +75,29 @@ function ChatOffer({ off, onDone }: { off: boolean; onDone: () => void }) {
     sidePanel.value = "assistant";
     onDone();
   };
+  const text = off
+    ? "Assistant chat is off for your team. Turn it on to ask about your calendar and ask for changes in plain language. Every change waits for your approval in preview mode."
+    : "Ask the assistant about your calendar, or ask for a change in plain language. Every change waits for your approval in preview mode.";
   return (
-    <p class="hint" role="note" data-testid="hint-assistant-chat">
-      {off
-        ? "Assistant chat is off for your team. Turn it on to ask about your calendar and ask for changes in plain language. Every change waits for your approval in preview mode."
-        : "Ask the assistant about your calendar, or ask for a change in plain language. Every change waits for your approval in preview mode."}{" "}
-      <button type="button" onClick={() => void open()}>
-        {off ? "Turn on assistant chat" : "Try the assistant"}
-      </button>{" "}
-      <button type="button" onClick={onDone}>
-        Not now
-      </button>
-      {error && <span class="error"> {error}</span>}
+    <p class="note" role="note" data-testid="hint-assistant-chat">
+      <span class="note-text" title={text}>
+        {text}
+      </span>
+      <span class="note-actions">
+        {error && <span class="error">{error}</span>}
+        <button type="button" class="sm" onClick={() => void open()}>
+          {off ? "Turn on assistant chat" : "Try the assistant"}
+        </button>
+        <button type="button" class="sm ghost" onClick={onDone}>
+          Not now
+        </button>
+      </span>
     </p>
   );
 }
+
+const MIRROR =
+  "Copy the events of one calendar to another as busy time, so people who look at the second calendar see when you are busy.";
 
 /** One source and one destination; the other policy fields keep their defaults. */
 function FirstMirror({ onDone, onDismiss }: { onDone: () => void; onDismiss: () => void }) {
@@ -96,10 +110,10 @@ function FirstMirror({ onDone, onDismiss }: { onDone: () => void; onDismiss: () 
       .catch((err) => setError(failure(err)));
   }, []);
   const calendars = calendarList.value.filter((c) => c.provider !== "ics");
-  if (!loaded) return error ? <p class="hint error">{error}</p> : null;
+  if (!loaded) return error ? <p class="note error">{error}</p> : null;
   return (
     <form
-      class="hint"
+      class="note"
       aria-label="Mirror a calendar"
       data-testid="hint-first-mirror"
       onSubmit={(e) => {
@@ -118,28 +132,34 @@ function FirstMirror({ onDone, onDismiss }: { onDone: () => void; onDismiss: () 
           .catch((err) => setError(failure(err)));
       }}
     >
-      Copy the events of one calendar to another as busy time, so people who look at the second
-      calendar see when you are busy. <label for={`${id}-source`}>Copy events from</label>{" "}
-      <select id={`${id}-source`} name="source">
-        {calendars.map((c) => (
-          <option value={c.id} key={c.id}>
-            {displayName(c, calendars)}
-          </option>
-        ))}
-      </select>{" "}
-      <label for={`${id}-dest`}>To</label>{" "}
-      <select id={`${id}-dest`} name="dest">
-        {calendars.map((c, i) => (
-          <option value={c.id} key={c.id} selected={i === 1}>
-            {displayName(c, calendars)}
-          </option>
-        ))}
-      </select>{" "}
-      <button type="submit">Start mirroring</button>{" "}
-      <button type="button" onClick={onDismiss}>
-        Not now
-      </button>
-      {error && <span class="error"> {error}</span>}
+      <span class="note-text" title={MIRROR}>
+        {MIRROR}
+      </span>
+      <span class="note-actions">
+        {error && <span class="error">{error}</span>}
+        <label for={`${id}-source`}>Copy events from</label>
+        <select id={`${id}-source`} name="source">
+          {calendars.map((c) => (
+            <option value={c.id} key={c.id}>
+              {displayName(c, calendars)}
+            </option>
+          ))}
+        </select>
+        <label for={`${id}-dest`}>To</label>
+        <select id={`${id}-dest`} name="dest">
+          {calendars.map((c, i) => (
+            <option value={c.id} key={c.id} selected={i === 1}>
+              {displayName(c, calendars)}
+            </option>
+          ))}
+        </select>
+        <button type="submit" class="sm">
+          Start mirroring
+        </button>
+        <button type="button" class="sm ghost" onClick={onDismiss}>
+          Not now
+        </button>
+      </span>
     </form>
   );
 }

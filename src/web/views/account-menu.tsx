@@ -18,23 +18,31 @@ async function actAs(ownerId: string | null): Promise<void> {
   location.assign("/");
 }
 
+const ENDED = "Your access to that account ended. You are back in your own account.";
+
 export function ActingBanner() {
   const m = me.value;
-  if (m?.actor)
+  if (m?.actor) {
+    const text = `You are acting in ${m.user.name}'s account (${m.user.email}). Changes go to their calendar.`;
     return (
-      <div class="acting-banner" role="status" data-testid="acting-banner">
-        <span>
-          You are acting in {m.user.name}'s account ({m.user.email}). Changes go to their calendar.
+      <div class="note warning" role="status" data-testid="acting-banner">
+        <span class="note-text" title={text}>
+          {text}
         </span>
-        <button type="button" onClick={() => void actAs(null)}>
-          Exit
-        </button>
+        <span class="note-actions">
+          <button type="button" class="sm" onClick={() => void actAs(null)}>
+            Exit
+          </button>
+        </span>
       </div>
     );
+  }
   if (accessEnded)
     return (
-      <div class="acting-banner ended" role="status" data-testid="acting-ended">
-        Your access to that account ended. You are back in your own account.
+      <div class="note" role="status" data-testid="acting-ended">
+        <span class="note-text" title={ENDED}>
+          {ENDED}
+        </span>
       </div>
     );
   return null;

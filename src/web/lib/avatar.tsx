@@ -1,6 +1,7 @@
 // The user's picture from the main Google account, or initials when there is
 // none (docs/specs/settings-profile.md PRF-5, edge case 1). no-referrer: the
 // picture host does not learn which page the visitor opened.
+import "../views/pages.css";
 
 export function initials(name: string): string {
   const words = name
