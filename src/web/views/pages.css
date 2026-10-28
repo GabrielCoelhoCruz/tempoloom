@@ -327,9 +327,11 @@ li.automation .confirm {
   font-size: var(--text-20);
 }
 
-/* Assistant chat panel (assistant-chat.md rule 1) */
+/* Assistant chat panel (assistant-chat.md rule 1); CMP-125: it fills the right column. */
 .drawer.assistant {
-  width: 400px;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
 }
 .assistant-head {
   display: flex;
@@ -429,12 +431,24 @@ li.automation .confirm {
   padding-left: 20px;
 }
 .side-panel {
-  flex: none;
-  max-height: 25vh;
-  overflow: auto;
   margin: 0;
-  padding: 4px 16px;
-  border-top: 1px solid var(--line);
+}
+.side-panel [role="tablist"] {
+  flex-wrap: nowrap;
+  gap: 0;
+}
+.side-panel [role="tab"] {
+  gap: var(--sp-6);
+  padding: 0 var(--sp-8);
+}
+/* CMP-123 */
+.count {
+  padding: 0 6px;
+  border-radius: var(--radius-full);
+  background: var(--bg-sunken);
+  color: var(--text-tertiary);
+  font: var(--weight-medium) var(--text-11) / var(--lh-11) var(--font-sans);
+  font-variant-numeric: tabular-nums;
 }
 /* A result message stays in view next to an action far down the page. */
 .notice {

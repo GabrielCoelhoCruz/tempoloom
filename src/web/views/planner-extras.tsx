@@ -2,6 +2,7 @@
 // (planning-planner.md PLN-11), the tasks of the running habit or focus event
 // (planning-next-up.md NXT-42), and weekly focus progress (focus-time.md Outputs).
 import { useCallback, useEffect, useState } from "preact/hooks";
+import type { ReportEntry } from "../../scheduler/model.ts";
 import type { PlannerEvent } from "../../server/api/planner.ts";
 import { utcToLocal } from "../../shared/time.ts";
 import { api } from "../lib/api.ts";
@@ -11,6 +12,7 @@ import { useNewest } from "../lib/newest.ts";
 import { navigate, onLinkClick } from "../lib/router.ts";
 import { zone } from "../lib/state.ts";
 import { type SearchTask, SearchTaskList, TaskSearchPicker } from "./task-search-picker.tsx";
+import "./parts.css";
 
 interface Actions {
   kind: string;
@@ -450,5 +452,37 @@ export function LogWork({
         </p>
       )}
     </form>
+  );
+}
+
+const AWAY = "time away (all-day or out-of-office events) covers all its hours";
+const REASONS: Record<string, string> = {
+  "outside-window": "starts after the scheduling window",
+  "no-hours": "its hours have no time in this period",
+  "too-long-for-hours": "longer than any range of its hours",
+  away: AWAY,
+  // Reports stored before the rename still say "all-day-block".
+  "all-day-block": AWAY,
+  "reserved-word": "an event with a reserved word exists that day",
+  "no-space-fixed": "no free time between your meetings",
+  "no-space-priority": "higher-priority items use the free time",
+  "after-due": "part of the work ends after the due date",
+};
+
+/** The scheduler's report: the items it could not place, with the reasons. */
+export function Report({ report }: { report: ReportEntry[] }) {
+  if (report.length === 0) return null;
+  return (
+    <details class="issues" data-testid="issues">
+      <summary>{report.length} items need attention</summary>
+      <ul>
+        {report.slice(0, 50).map((r) => (
+          <li key={r.demandKey}>
+            <strong>{r.itemKind}</strong> {r.demandKey.split(":").slice(2).join(" ")} — {r.status}:{" "}
+            {REASONS[r.reason] ?? r.reason}
+          </li>
+        ))}
+      </ul>
+    </details>
   );
 }

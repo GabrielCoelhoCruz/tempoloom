@@ -1,28 +1,6 @@
-/* Styles of the planner parts and editors that load on demand: the now line,
-   prompts, previews, conflicts, notes, dialogs and the hours preview. */
-.now-bar .spacer {
-  flex: 1;
-}
-/* The now bar's buttons are small buttons (CMP-11 .sm). */
-.now-bar :is(.button, button) {
-  min-height: var(--control-h-sm);
-  padding: 0 var(--sp-8);
-  font-size: var(--text-12);
-  line-height: var(--lh-12);
-}
-/* A2: long titles in the now line shorten; its parts wrap to more rows. */
-.now-bar strong {
-  display: inline-block;
-  max-width: min(40ch, 45vw);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  vertical-align: bottom;
-}
-.now-bar > span {
-  min-width: 0;
-  max-width: 100%;
-}
+/* Styles of the planner parts and editors that load on demand: the now bar rows,
+   the right column panels, prompts, previews, conflicts, notes, dialogs, the hours
+   preview, the toolbar's view controls and the kind icons of event cards. */
 /* CMP-43 (look) */
 .popover {
   position: absolute;
@@ -41,17 +19,109 @@
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-3);
 }
+/* CMP-127: next up, the next meeting, the timer, a block preview and an error: one row each. */
+.now-row {
+  flex-basis: 100%;
+  min-width: 0;
+}
+/* The now bar's row buttons are small buttons (CMP-11 .sm). */
+.now-row :is(.button, button) {
+  min-height: var(--control-h-sm);
+  padding: 0 var(--sp-8);
+  font-size: var(--text-12);
+  line-height: var(--lh-12);
+}
+/* CMP-129: long titles in the now bar shorten. */
+.now-row strong {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+  font-weight: var(--weight-medium);
+}
+/* CMP-121: the right column's content area. */
+.side-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  padding: 12px 16px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+/* The notices stack (LAY-21) and the parts of the right column (CMP-121). */
+.side-scroll > *,
+.notices {
+  flex: none;
+  margin: 0;
+}
+.notices {
+  max-height: 40vh;
+  overflow: auto;
+}
+.i-side,
+.i-hide {
+  --i: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill-rule='evenodd' d='M1 2h14v12H1zm1.5 1.5v9h7v-9zm8.5 0v9h2.5v-9z'/%3E%3C/svg%3E");
+}
+/* CMP-122: section labels of the right column. */
+.open-panel > h3 {
+  margin: 0;
+  font: var(--weight-semibold) var(--text-11) / var(--lh-11) var(--font-sans);
+  letter-spacing: var(--track-label);
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+.open-panel > h3.risk {
+  color: var(--danger-text);
+}
+/* The open panel of the right column (LAY-22), and the event details (CMP-124). */
+.open-panel,
+.drawer {
+  display: grid;
+  gap: 12px;
+}
+.drawer-head {
+  display: flex;
+  align-items: start;
+  gap: 8px;
+}
+.drawer h2 {
+  flex: 1;
+  margin: 0;
+}
+.drawer h2,
+.drawer .status {
+  overflow-wrap: anywhere;
+}
+.drawer .actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.drawer > .ghost {
+  justify-self: start;
+}
+/* ROB-10 in the right column: a row's actions go under its body at every width. */
+.side-scroll .row:has(> .actions) {
+  grid-template-columns: minmax(0, 1fr);
+}
+.side-scroll .row > .actions {
+  justify-content: flex-start;
+}
+.issues summary {
+  cursor: pointer;
+}
 .popover h3 {
   margin: 4px 0 0;
 }
-.now-bar .popover {
-  top: 100%;
-  right: 16px;
-  white-space: normal;
-}
 .timer-bar,
 .block-preview {
-  display: inline-flex;
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
   padding: 2px 8px;
@@ -132,11 +202,6 @@
   overflow: hidden;
   clip-path: inset(50%);
   white-space: nowrap;
-}
-.review {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
 }
 /* LAY-43: the list of a "+N" button in the week. */
 .more-list {

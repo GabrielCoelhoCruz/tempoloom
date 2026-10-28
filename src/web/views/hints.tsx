@@ -2,11 +2,12 @@
 // advice to turn off other scheduling tools first (platform-current-version.md rule 17),
 // the offer of a first mirroring policy (sync-calendar-mirroring.md rule 11), and
 // the offer of assistant chat after sign-up (teams-settings-templates.md rule 15).
-import { useEffect, useId, useState } from "preact/hooks";
+import { useEffect, useId, useRef, useState } from "preact/hooks";
 import { api } from "../lib/api.ts";
 import { calendarList, displayName, failure, loadCalendars } from "../lib/calendars.tsx";
 import { chatDraft, plannerReload, sidePanel } from "../lib/planner-signals.ts";
 import { onLinkClick } from "../lib/router.ts";
+import "./parts.css";
 
 const OTHER_TOOLS =
   "Before Tempoloom plans your week, turn off any other scheduling tool that writes to these calendars, so the two tools do not create competing events.";
@@ -28,9 +29,7 @@ export function PlannerHints() {
     <div data-testid="planner-hints" data-loaded={hints !== null}>
       {hints?.includes("other-tools") && (
         <p class="note" role="note" data-testid="hint-other-tools">
-          <span class="note-text" title={OTHER_TOOLS}>
-            {OTHER_TOOLS}
-          </span>
+          <NoteText text={OTHER_TOOLS} />
           <span class="note-actions">
             <a href="/help/other-tools" onClick={onLinkClick}>
               Why
@@ -80,9 +79,7 @@ function ChatOffer({ off, onDone }: { off: boolean; onDone: () => void }) {
     : "Ask the assistant about your calendar, or ask for a change in plain language. Every change waits for your approval in preview mode.";
   return (
     <p class="note" role="note" data-testid="hint-assistant-chat">
-      <span class="note-text" title={text}>
-        {text}
-      </span>
+      <NoteText text={text} />
       <span class="note-actions">
         {error && <span class="error">{error}</span>}
         <button type="button" class="sm" onClick={() => void open()}>
@@ -132,9 +129,7 @@ function FirstMirror({ onDone, onDismiss }: { onDone: () => void; onDismiss: () 
           .catch((err) => setError(failure(err)));
       }}
     >
-      <span class="note-text" title={MIRROR}>
-        {MIRROR}
-      </span>
+      <NoteText text={MIRROR} />
       <span class="note-actions">
         {error && <span class="error">{error}</span>}
         <label for={`${id}-source`}>Copy events from</label>
@@ -161,5 +156,38 @@ function FirstMirror({ onDone, onDismiss }: { onDone: () => void; onDismiss: () 
         </button>
       </span>
     </form>
+  );
+}
+
+/**
+ * A notice's message on one line (ui-refresh.md CMP-62, CMP-63). When it does
+ * not fit, a button at the end of the line shows the full text.
+ */
+export function NoteText({ text }: { text: string }) {
+  const ref = useRef<HTMLSpanElement>(null);
+  const [cut, setCut] = useState(false);
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const check = new ResizeObserver(() => setCut(el.scrollWidth > el.clientWidth));
+    check.observe(el);
+    return () => check.disconnect();
+  }, []);
+  return (
+    <>
+      <span ref={ref} class="note-text" data-open={open || undefined} title={text}>
+        {text}
+      </span>
+      {(cut || open) && (
+        <button
+          type="button"
+          class="icon ghost note-more"
+          aria-label="Show full text"
+          aria-expanded={open}
+          onClick={() => setOpen(!open)}
+        />
+      )}
+    </>
   );
 }

@@ -274,7 +274,7 @@ export function PrioritiesPanel() {
   const q = query.trim().toLowerCase();
   const shown = p.items.filter((it) => !q || it.title.toLowerCase().includes(q));
   return (
-    <div class="popover priorities-panel" data-testid="priorities-panel">
+    <div class="priorities-panel" data-testid="priorities-panel">
       <label>
         Search
         <input type="search" value={query} onInput={(e) => setQuery(e.currentTarget.value)} />
