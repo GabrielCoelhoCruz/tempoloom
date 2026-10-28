@@ -1227,7 +1227,8 @@ Use media queries on the viewport width. Do not detect devices.
 - **MOB-3.** `html { -webkit-tap-highlight-color: transparent;
   -webkit-text-size-adjust: 100%; overscroll-behavior: none; }`.
 - **MOB-4.** Heights: `.shell` `100dvh` (`styles.css:87`); `.login`
-  `min-height: 100svh` (`styles.css:149`); `priorities.css:31`
+  `min-height: 100svh` (`styles.css:149`); `.planner` `100dvh`
+  (`styles.css:494`, until LAY-3 removes the height); `priorities.css:31`
   `calc(100dvh - 120px)`; `parts.css:17` `60dvh`; `parts.css:118`
   `90dvh`. No `100vh` remains.
 - **MOB-5.** Inner scrollers get `overscroll-behavior: contain`:
@@ -1688,12 +1689,16 @@ fix changes visible text.
   `ev-tiny`, `ev-tall`, `ev-selected` for MOB-8 with a new `selectedId`
   prop, `dir="auto"`, the second-zone column, pointer safety),
   `settings.tsx` (A9a, A10, A14), `tasks.tsx` and `planner-now.tsx` (A8),
-  `index.html` (MOB-1, MOB-2).
+  `planner.tsx` (A8 on the details `h2`, the `selectedId` prop),
+  `index.html` (MOB-1, MOB-2). LIB-1 changes only how class strings are
+  built, not the class names.
 - Files: `src/web/index.html`, `src/web/styles.css`,
   `src/web/views/parts.css`, `src/web/views/priorities.css`,
   `src/web/views/week.tsx`, `src/web/views/settings.tsx`,
   `src/web/views/tasks.tsx`, `src/web/views/planner-now.tsx`,
-  `src/web/views/planner.tsx`, `src/web/lib/motion.ts` (new),
+  `src/web/views/planner.tsx`, the other LIB-1 files
+  (`src/web/views/priorities.tsx`, `automations.tsx`,
+  `book-inspector.tsx`), `src/web/lib/motion.ts` (new),
   `src/web/lib/media.ts` (new: a `matchMedia` signal for `(min-width:
   1440px)`),
   `playwright.config.ts`, `package.json`, `package-lock.json`,
