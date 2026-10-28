@@ -650,22 +650,49 @@ summary,
 .page h1 {
   margin: 0 0 16px;
 }
+/* LAY-10 to LAY-12 */
 .toolbar {
   display: flex;
+  flex: none;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-8) var(--sp-6);
+  min-height: var(--toolbar-h);
   padding: 12px 16px;
   border-bottom: 1px solid var(--line);
 }
 .toolbar .title {
-  font-size: var(--text-15);
-  line-height: var(--lh-15);
-  font-weight: var(--weight-semibold);
+  font: var(--weight-semibold) var(--text-15) / var(--lh-15) var(--font-sans);
   letter-spacing: var(--track-title);
-  margin-right: auto;
+  flex-shrink: 1;
+  min-width: 9ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
+.week-nav {
+  display: flex;
+  gap: 4px;
+}
+/* CMP-15: 16 px icons drawn with a mask in the text color. */
+:is(.i-prev, .i-next, .i-log, .i-side, .i-hide, .i-cal, .i-gear, .note-more)::before {
+  content: "";
+  width: 16px;
+  height: 16px;
+  background: currentColor;
+  mask: var(--i) center / contain no-repeat;
+}
+.i-next::before {
+  transform: scaleX(-1);
+}
+.i-prev,
+.i-next {
+  --i: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M10 3 5 8l5 5 1-1-4-4 4-4z'/%3E%3C/svg%3E");
+}
+.i-log {
+  --i: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill-rule='evenodd' d='M8 0a8 8 0 1 0 0 16A8 8 0 0 0 8 0zm0 1.5a6.5 6.5 0 1 1 0 13 6.5 6.5 0 0 1 0-13zM7 3h2v4.5l3 2-1 1.5-4-2.7z'/%3E%3C/svg%3E");
+}
+
 /* TOK-12 */
 .toolbar :is(.title, .status),
 .hour-label,
@@ -682,6 +709,9 @@ span.inline {
   font-size: var(--text-12);
   line-height: var(--lh-12);
   color: var(--text-secondary);
+}
+.toolbar > .status {
+  margin-inline-start: auto;
 }
 .error {
   color: var(--danger-text);

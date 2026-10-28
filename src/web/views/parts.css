@@ -41,6 +41,22 @@
   vertical-align: bottom;
   font-weight: var(--weight-medium);
 }
+[dir="rtl"] .i-prev::before {
+  transform: scaleX(-1);
+}
+[dir="rtl"] .i-next::before {
+  transform: none;
+}
+/* LAY-14 (with the parts that load later): from 1440 px the toolbar keeps one row: the preview sentence, then the title
+   (to 9ch) give up their room. An error takes its own row (LAY-15). */
+@media (min-width: 1440px) {
+  .toolbar:not(:has(> .error)) {
+    flex-wrap: nowrap;
+  }
+  .toolbar > * {
+    flex-shrink: 0;
+  }
+}
 /* CMP-121: the right column's content area. */
 .side-scroll {
   flex: 1;
@@ -114,6 +130,43 @@
 }
 .issues summary {
   cursor: pointer;
+}
+/* The toolbar's view controls (CMP-32): a chip with an eye icon, then icon buttons. */
+.planner-options {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-6);
+}
+.planner-options .popover {
+  top: calc(100% + 8px);
+  inset-inline-end: 0;
+  transform-origin: top right;
+}
+.view-as {
+  position: relative;
+}
+.view-as::before {
+  content: "";
+  position: absolute;
+  inset-inline-start: 8px;
+  top: 8px;
+  width: 16px;
+  height: 16px;
+  background: var(--text-secondary);
+  mask:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill-rule='evenodd' d='M8 3C4.5 3 2 6 1 8c1 2 3.5 5 7 5s6-3 7-5c-1-2-3.5-5-7-5zm0 1.5a3.5 3.5 0 1 1 0 7 3.5 3.5 0 0 1 0-7zM8 6a2 2 0 1 0 0 4 2 2 0 0 0 0-4z'/%3E%3C/svg%3E")
+    center / contain no-repeat;
+  pointer-events: none;
+}
+.view-as select {
+  padding-inline-start: 28px;
+}
+.i-cal {
+  --i: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill-rule='evenodd' d='M4 1h1.5v1h5V1H12v1h2v13H2V2h2zm-.5 5v7.5h9V6z'/%3E%3C/svg%3E");
+}
+.i-gear {
+  --i: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill-rule='evenodd' d='M7 1h2l.4 1.8 1.2.5 1.6-1 1.4 1.4-1 1.6.5 1.2L15 7v2l-1.8.4-.5 1.2 1 1.6-1.4 1.4-1.6-1-1.2.5L9 15H7l-.4-1.8-1.2-.5-1.6 1-1.4-1.4 1-1.6-.5-1.2L1 9V7l1.8-.4.5-1.2-1-1.6 1.4-1.4 1.6 1 1.2-.5zm1 4.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5z'/%3E%3C/svg%3E");
 }
 .popover h3 {
   margin: 4px 0 0;

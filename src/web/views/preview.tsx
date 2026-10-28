@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import { api } from "../lib/api.ts";
 import { useLive } from "../lib/live.ts";
 import { chatDraft, sidePanel } from "../lib/planner-signals.ts";
-import { type OverlayItem, overlay } from "../lib/preview.ts";
+import { type OverlayItem, overlay, reviewable } from "../lib/preview.ts";
 import { onLinkClick } from "../lib/router.ts";
 import "./pages.css";
 
@@ -64,13 +64,36 @@ export function PreviewPanel({ onApplied }: { onApplied: () => void }) {
 
   useEffect(() => {
     overlay.value = data?.on ? data.overlay : [];
+    reviewable.value = !!data?.on && data.changes.length > 0;
   }, [data]);
   useEffect(
     () => () => {
       overlay.value = [];
+      reviewable.value = false;
     },
     [],
   );
+  // CMP-43: Escape and a press outside close the apply summary and the error.
+  const popped = !!(result || error);
+  useEffect(() => {
+    if (!popped) return;
+    const close = (e: Event) => {
+      if (
+        e instanceof KeyboardEvent
+          ? e.key === "Escape"
+          : !(e.target as Element).closest(".preview-pop")
+      ) {
+        setResult(null);
+        setError(null);
+      }
+    };
+    addEventListener("keydown", close);
+    addEventListener("pointerdown", close);
+    return () => {
+      removeEventListener("keydown", close);
+      removeEventListener("pointerdown", close);
+    };
+  }, [popped]);
 
   const act = async (fn: () => Promise<unknown>) => {
     setError(null);
@@ -99,100 +122,137 @@ export function PreviewPanel({ onApplied }: { onApplied: () => void }) {
       }
     });
 
+  const ON = "Changes you make now are staged. Nothing reaches your calendar until you apply it.";
+  const pending = `${plural(n, "staged change is", "staged changes are")} pending. Turn preview mode on to review ${n === 1 ? "it" : "them"}.`;
+  const list = data.on && n > 0;
   return (
-    <section class="preview" data-testid="preview-panel">
-      <div class="preview-head">
-        <label class="inline">
-          <input
-            type="checkbox"
-            checked={data.on}
-            onChange={(e) => {
-              const on = e.currentTarget.checked;
-              void act(() => api("POST", "/api/preview/mode", { on }));
-            }}
-          />
-          Preview mode
-        </label>
-        {data.on ? (
-          <span class="status">
-            Changes you make now are staged. Nothing reaches your calendar until you apply it.
+    // LAY-13: the panel is in the planner toolbar; its sentence shortens first.
+    <section class="preview" data-testid="preview-panel" data-on={data.on || undefined}>
+      <label class="inline">
+        <input
+          type="checkbox"
+          class="switch"
+          checked={data.on}
+          onChange={(e) => {
+            const on = e.currentTarget.checked;
+            void act(() => api("POST", "/api/preview/mode", { on }));
+          }}
+        />
+        Preview mode
+      </label>
+      {data.on ? (
+        <span class="status" title={ON}>
+          {ON}
+        </span>
+      ) : (
+        n > 0 && (
+          <span class="status" data-testid="preview-pending" title={pending}>
+            {pending}
           </span>
-        ) : (
-          n > 0 && (
-            <span class="status" data-testid="preview-pending">
-              {plural(n, "staged change is", "staged changes are")} pending. Turn preview mode on to
-              review {n === 1 ? "it" : "them"}.
-            </span>
-          )
-        )}
-        {data.on && n > 0 && (
-          <button type="button" class="primary" onClick={() => setReview(true)}>
-            Review and apply changes
-          </button>
-        )}
-      </div>
-      {error && (
-        <p class="error" role="alert">
-          {error}
-        </p>
+        )
       )}
-      {data.on && n > 0 && (
-        <div class="list" data-testid="staged-list">
-          {data.changes.map((c) => (
-            <div class="row" key={c.id} data-testid="staged-change">
-              <div>
-                <div>
-                  <span class="badge">{c.state === "accepted" ? "Accepted" : "Pending"}</span>{" "}
-                  <strong>{c.summary}</strong>
+      {/* LAY-13: the staged list with its review button, the apply summary and the error
+          open below the panel, so the toolbar keeps one row. */}
+      {(list || result || error) && (
+        <div class="popover preview-pop">
+          {list && (
+            <button type="button" class="primary" onClick={() => setReview(true)}>
+              Review and apply changes
+            </button>
+          )}
+          {error && (
+            <p class="error" role="alert">
+              {error}
+            </p>
+          )}
+          {list && (
+            <div class="list" data-testid="staged-list">
+              {data.changes.map((c) => (
+                <div class="row" key={c.id} data-testid="staged-change">
+                  <div>
+                    <div>
+                      <span class="badge">{c.state === "accepted" ? "Accepted" : "Pending"}</span>{" "}
+                      <strong>{c.summary}</strong>
+                    </div>
+                    {c.description !== null && (
+                      <pre
+                        class="new-description"
+                        title="New description"
+                        data-testid="staged-description"
+                      >
+                        {c.description}
+                      </pre>
+                    )}
+                    <div class="meta">
+                      {c.sourceLabel} · {c.impact}
+                      {c.reason ? ` · “${c.reason}”` : ""}
+                    </div>
+                  </div>
+                  <div class="actions">
+                    {c.state === "pending" && (
+                      <button
+                        type="button"
+                        onClick={() => void act(() => api("POST", `/api/preview/${c.id}/accept`))}
+                      >
+                        Accept
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => void act(() => api("POST", `/api/preview/${c.id}/discard`))}
+                    >
+                      Discard
+                    </button>
+                    {c.source === "assistant_chat" && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          chatDraft.value = `About “${c.summary}”: `;
+                          sidePanel.value = "assistant";
+                        }}
+                      >
+                        Reply in chat
+                      </button>
+                    )}
+                  </div>
                 </div>
-                {c.description !== null && (
-                  <pre
-                    class="new-description"
-                    title="New description"
-                    data-testid="staged-description"
-                  >
-                    {c.description}
-                  </pre>
-                )}
-                <div class="meta">
-                  {c.sourceLabel} · {c.impact}
-                  {c.reason ? ` · “${c.reason}”` : ""}
-                </div>
-              </div>
-              <div class="actions">
-                {c.state === "pending" && (
-                  <button
-                    type="button"
-                    onClick={() => void act(() => api("POST", `/api/preview/${c.id}/accept`))}
-                  >
-                    Accept
-                  </button>
-                )}
-                <button
-                  type="button"
-                  onClick={() => void act(() => api("POST", `/api/preview/${c.id}/discard`))}
-                >
-                  Discard
-                </button>
-                {c.source === "assistant_chat" && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      chatDraft.value = `About “${c.summary}”: `;
-                      sidePanel.value = "assistant";
-                    }}
-                  >
-                    Reply in chat
-                  </button>
-                )}
-              </div>
+              ))}
             </div>
-          ))}
+          )}
+          {result && (
+            <div class="apply-summary" role="status" data-testid="apply-summary">
+              <strong>
+                Applied {result.applied.length} · Skipped as stale {result.stale.length} · Failed{" "}
+                {result.failed.length}
+              </strong>
+              <ul>
+                {result.stale.map((s) => (
+                  <li key={s.id}>
+                    Skipped: {s.summary}. {s.reason}.
+                  </li>
+                ))}
+                {result.failed.map((f) => (
+                  <li key={f.id}>
+                    Failed: {f.summary}. {f.error}
+                  </li>
+                ))}
+              </ul>
+              <button type="button" onClick={() => setResult(null)}>
+                Dismiss
+              </button>
+            </div>
+          )}
         </div>
       )}
       {review && (
         <div class="dialog-backdrop">
-          <div class="dialog" role="dialog" aria-label="Review and apply" data-testid="review-list">
+          <div
+            class="dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Review and apply"
+            data-testid="review-list"
+          >
             <h2>Review and apply</h2>
             <p class="status">
               Tempoloom writes these changes in this order and notifies guests now. Remove what you
@@ -226,29 +286,6 @@ export function PreviewPanel({ onApplied }: { onApplied: () => void }) {
               </button>
             </div>
           </div>
-        </div>
-      )}
-      {result && (
-        <div class="apply-summary" role="status" data-testid="apply-summary">
-          <strong>
-            Applied {result.applied.length} · Skipped as stale {result.stale.length} · Failed{" "}
-            {result.failed.length}
-          </strong>
-          <ul>
-            {result.stale.map((s) => (
-              <li key={s.id}>
-                Skipped: {s.summary}. {s.reason}.
-              </li>
-            ))}
-            {result.failed.map((f) => (
-              <li key={f.id}>
-                Failed: {f.summary}. {f.error}
-              </li>
-            ))}
-          </ul>
-          <button type="button" onClick={() => setResult(null)}>
-            Dismiss
-          </button>
         </div>
       )}
     </section>
