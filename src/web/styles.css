@@ -19,6 +19,7 @@
   --weight-medium: 500;
   --weight-semibold: 600;
   --weight-brand: 700;
+  --track-label: 0.04em;
   --track-title: -0.01em;
   --track-h1: -0.015em;
 
@@ -35,10 +36,15 @@
   --radius-md: 8px;
   --radius-lg: 10px;
   --radius-xl: 14px;
+  --radius-full: 999px;
 
   /* Sizes: px on purpose, E2E geometry reads some of them */
   --control-h: 32px;
   --control-h-sm: 28px;
+  --sidebar-w: 208px;
+  --panel-w: 288px;
+  --drawer-w: 320px;
+  --toolbar-h: 56px;
   --hour-px: 48px; /* = HOUR_PX in week.tsx. E2E drags 48 px per hour. Do not change */
   --focus-width: 2px;
 
@@ -50,6 +56,7 @@
   --bg-hover: rgb(16 24 40 / 0.04);
   --bg-press: rgb(16 24 40 / 0.07);
   --bg-selected: color-mix(in srgb, var(--accent) 12%, var(--bg-surface));
+  --grid-off: color-mix(in srgb, var(--text-primary) 3%, transparent);
 
   /* Text, icons and lines (light) */
   --text-primary: #1d1f23;
@@ -97,6 +104,9 @@
 
   /* Elevation: a semi-transparent ring plus a shadow, never a solid gray border */
   --shadow-1: 0 0 0 1px rgb(16 24 40 / 0.1), 0 1px 2px rgb(16 24 40 / 0.06);
+  --shadow-2:
+    0 0 0 1px rgb(16 24 40 / 0.06), 0 2px 6px -1px rgb(16 24 40 / 0.1),
+    0 1px 2px rgb(16 24 40 / 0.06);
   --shadow-3:
     0 0 0 1px rgb(16 24 40 / 0.08), 0 4px 8px -2px rgb(16 24 40 / 0.08),
     0 12px 28px -6px rgb(16 24 40 / 0.18);
@@ -106,6 +116,11 @@
   --scrim: rgb(10 12 16 / 0.32);
 
   /* Layers (the current values, with names) */
+  --z-event: 1;
+  --z-event-raised: 2;
+  --z-now: 3;
+  --z-drag: 4;
+  --z-panel: 10;
   --z-popover: 20;
   --z-dialog: 30;
   --z-toast: 40;
@@ -113,6 +128,7 @@
   /* Motion (section 7) */
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
   --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
   --duration-press: 160ms;
   --duration-menu: 150ms;
   --duration-popover: 200ms;
@@ -121,6 +137,7 @@
   --duration-move: 250ms;
   --duration-collapse: 200ms;
   --duration-fade: 200ms;
+  --duration-drawer: 200ms;
   --duration-toast: 400ms;
 }
 
@@ -133,6 +150,7 @@
     --bg-hover: rgb(255 255 255 / 0.05);
     --bg-press: rgb(255 255 255 / 0.08);
     --bg-selected: color-mix(in srgb, var(--accent) 22%, var(--bg-surface));
+    --grid-off: rgb(255 255 255 / 0.025);
 
     --text-primary: #ececee;
     --text-secondary: #a1a6ae;
@@ -174,6 +192,7 @@
     --shadow-1:
       0 0 0 1px rgb(255 255 255 / 0.1), inset 0 1px 0 rgb(255 255 255 / 0.04),
       0 1px 2px rgb(0 0 0 / 0.4);
+    --shadow-2: 0 0 0 1px rgb(255 255 255 / 0.08), 0 2px 8px -1px rgb(0 0 0 / 0.5);
     --shadow-3:
       0 0 0 1px rgb(255 255 255 / 0.1), inset 0 1px 0 rgb(255 255 255 / 0.05),
       0 12px 28px -6px rgb(0 0 0 / 0.6);
