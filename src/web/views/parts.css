@@ -94,6 +94,13 @@
 .open-panel > h3.risk {
   color: var(--danger-text);
 }
+/* MOT-51: a notice fades in on its first draw. */
+.notices .note {
+  transition: opacity var(--duration-collapse) var(--ease-out);
+  @starting-style {
+    opacity: 0;
+  }
+}
 /* The open panel of the right column (LAY-22), and the event details (CMP-124). */
 .open-panel,
 .drawer {
@@ -130,6 +137,20 @@
 }
 .issues summary {
   cursor: pointer;
+}
+/* CMP-63: a notice's full message. */
+.note-text[data-open] {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.note-more {
+  --i: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3 6l1-1 4 4 4-4 1 1-5 5z'/%3E%3C/svg%3E");
+  width: 24px;
+  min-height: 24px;
+  color: inherit;
+}
+.note-more[aria-expanded="true"]::before {
+  transform: rotate(180deg);
 }
 /* The toolbar's view controls (CMP-32): a chip with an eye icon, then icon buttons. */
 .planner-options {
