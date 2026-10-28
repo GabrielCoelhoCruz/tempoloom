@@ -285,7 +285,7 @@ export class SyncService {
       ) {
         return;
       }
-      const pool = this.#pool(userId);
+      const lists = this.#pool(userId);
       // Read each account's calendar list on first sight and every 10 minutes.
       const now0 = this.#deps.now();
       // A list read can bring new Google formats or week start (PRF-6): open pages read them again.
@@ -298,13 +298,16 @@ export class SyncService {
         now0 - CALENDAR_LIST_EVERY_MS,
       )) {
         try {
-          await syncCalendarList(db, pool.get(a.id), a.id, userId);
+          await syncCalendarList(db, lists.get(a.id), a.id, userId);
         } catch (err) {
-          if (this.#disconnected(pool, a.id, err)) continue;
+          if (this.#disconnected(lists, a.id, err)) continue;
           throw err;
         }
         run(db, "UPDATE accounts SET calendars_synced_at = ? WHERE id = ?", now0, a.id);
       }
+      // A list read can set the user's zone (the primary calendar's). Read the events in
+      // that zone: an all-day event is kept as the instants of its dates in the zone.
+      const pool = this.#pool(userId);
       if (formatsKey(db, userId) !== formatsBefore) for (const fn of this.#listeners) fn(userId);
       // A lower instance limit turns extra connected calendars off (plans edge case 1).
       enforceCalendarLimit(db, userId);

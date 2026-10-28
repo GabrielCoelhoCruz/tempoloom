@@ -15,7 +15,7 @@ import type { AddressInfo } from "node:net";
 import type { Page } from "@playwright/test";
 import { addDays } from "../../src/shared/time.ts";
 import { at, blockUntil, EMAIL, eventually, expect, test } from "./fixtures.ts";
-import { addLink, allEvents, book, claimPage, visitor, W } from "./helpers.ts";
+import { addLink, allEvents, book, claimPage, strayRequest, visitor, W } from "./helpers.ts";
 import { openTeam } from "./team-helpers.ts";
 
 const day = (n: number) => addDays(W, n);
@@ -31,6 +31,7 @@ async function receiver(answers: { status: number; delayMs?: number }[] = []) {
   const log: Received[] = [];
   const state = { fallback: 200 };
   const server: Server = createServer((req, res) => {
+    if (strayRequest(req, res, "POST", "/hook")) return;
     const arrived = Date.now();
     let raw = "";
     req.on("data", (b: Buffer) => {

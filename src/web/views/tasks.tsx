@@ -444,7 +444,8 @@ function BulkBar({
 }: {
   ids: string[];
   act: (fn: () => Promise<unknown>) => Promise<void>;
-  clear: () => void;
+  /** Unselects these tasks; a task selected while the action ran stays selected. */
+  clear: (ids: string[]) => void;
 }) {
   const z = zone();
   const [level, setLevel] = useState("2");
@@ -496,13 +497,13 @@ function BulkBar({
       >
         Set due
       </button>
-      <button type="button" onClick={() => void bulk({ action: "done" }).then(clear)}>
+      <button type="button" onClick={() => void bulk({ action: "done" }).then(() => clear(ids))}>
         Mark done
       </button>
       <button
         type="button"
         class="danger"
-        onClick={() => void bulk({ action: "delete" }).then(clear)}
+        onClick={() => void bulk({ action: "delete" }).then(() => clear(ids))}
       >
         Delete
       </button>
@@ -862,7 +863,13 @@ export function Tasks() {
           </label>
         </div>
       </div>
-      {picked.length > 0 && <BulkBar ids={picked} act={act} clear={() => setSelected(new Set())} />}
+      {picked.length > 0 && (
+        <BulkBar
+          ids={picked}
+          act={act}
+          clear={(ids) => setSelected((s) => new Set([...s].filter((id) => !ids.includes(id))))}
+        />
+      )}
       {filter === "open" && (
         <section
           class={clsx("next-up-queue", over && "over")}

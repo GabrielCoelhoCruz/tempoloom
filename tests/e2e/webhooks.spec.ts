@@ -15,7 +15,7 @@ import type { AddressInfo } from "node:net";
 import type { Page } from "@playwright/test";
 import { addDays } from "../../src/shared/time.ts";
 import { at, blockUntil, eventually, expect, local, test } from "./fixtures.ts";
-import { addLink, allEvents, book, claimPage, slot, visitor, W } from "./helpers.ts";
+import { addLink, allEvents, book, claimPage, slot, strayRequest, visitor, W } from "./helpers.ts";
 import { teamOf } from "./link-helpers.ts";
 import { openTeam } from "./team-helpers.ts";
 
@@ -34,6 +34,7 @@ type Answer = number | { status: number; retryAfter: string };
 async function receiver(answers: Answer[] = []) {
   const log: Received[] = [];
   const server: Server = createServer((req, res) => {
+    if (strayRequest(req, res, "POST", "/hook")) return;
     let raw = "";
     req.on("data", (b: Buffer) => {
       raw += b.toString();

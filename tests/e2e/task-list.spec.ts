@@ -23,7 +23,7 @@
 // - a drag makes a task of the wrong length, at the wrong time, unlocked  -> Radicale event and lock marker
 // - a click makes nothing, or the next plan moves the new chunk           -> Radicale after a plan run
 // - a task row puts the select box in the wide column, the buttons below -> part boxes in the row
-import type { Page } from "@playwright/test";
+import type { Page, Response } from "@playwright/test";
 import { addDays, addLocalDays, utcToLocal, weekdayOf } from "../../src/shared/time.ts";
 import { eventProp, rawEvent } from "./automation-list-helpers.ts";
 import { at, BACKEND, blockUntil, eventually, expect, planNow, test, ZONE } from "./fixtures.ts";
@@ -222,6 +222,64 @@ test("bulk edit sets the start date, due date and priority of the selected tasks
   await page.getByTestId("task-states").getByRole("button", { name: "Done" }).click();
   await expect(row(page, "BK1").getByTestId("task-state")).toHaveText("done");
   await expect(row(page, "BK2")).toBeHidden();
+});
+
+test("a task selected while a bulk action runs stays selected: the action unselects only the tasks it changed (TSK-45)", async ({
+  page,
+  cal,
+  signIn,
+}) => {
+  await blockUntil(cal, W);
+  await signIn();
+  for (const title of ["BS1", "BS2", "BS3"])
+    await addTask(page, { title, minutes: 60, split: false, due: "" });
+  await waitPlaced(cal, ["BS1", "BS2", "BS3"]);
+
+  // The action's plan run answers only when the test lets it: its live update
+  // reloads the list first, as it can when the answer is slow.
+  let release = () => {};
+  const held = new Promise<void>((r) => {
+    release = r;
+  });
+  await page.route(
+    "**/api/planner/sync",
+    async (route) => {
+      const response = await route.fetch();
+      await held;
+      await route.fulfill({ response });
+    },
+    { times: 1 },
+  );
+  const bulk = page.getByTestId("bulk-bar");
+  await row(page, "BS1").getByLabel("Select").check();
+  await bulk.getByRole("button", { name: "Mark done" }).click();
+  await expect(row(page, "BS1")).toBeHidden();
+  await row(page, "BS2").getByLabel("Select").check();
+  await expect(bulk).toContainText("1 selected");
+  // The action ends with a reload of the list and the timer after the answer.
+  let answered = false;
+  let ended = false;
+  const watch = (r: Response) => {
+    if (r.url().endsWith("/api/planner/sync")) answered = true;
+    else if (answered && r.url().endsWith("/api/timer")) ended = true;
+  };
+  page.on("response", watch);
+  release();
+  await expect.poll(() => ended).toBe(true);
+  page.off("response", watch);
+
+  await expect(row(page, "BS2").getByLabel("Select")).toBeChecked();
+  await bulk.getByRole("button", { name: "Delete" }).click();
+  await expect(row(page, "BS2")).toBeHidden();
+  await expect(row(page, "BS3")).toBeVisible();
+  await eventually(
+    () => allEvents(cal),
+    (l) => {
+      expect(titled(l, "BS1")).toHaveLength(0);
+      expect(titled(l, "BS2")).toHaveLength(0);
+      expect(titled(l, "BS3")).toHaveLength(1);
+    },
+  );
 });
 
 /** The first day after today with work hours (Monday to Friday). */

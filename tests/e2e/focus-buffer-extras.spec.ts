@@ -28,7 +28,14 @@ test("with offer to booking links off, focus time is hidden from every booking l
   await blockUntil(cal, W);
   await signIn();
   await openSettings(page);
+  const saved = page.waitForResponse(
+    (r) => r.url().endsWith("/api/focus") && r.request().method() === "POST" && r.ok(),
+  );
   await page.getByRole("button", { name: "Protect 10 hours of focus time per week" }).click();
+  await saved;
+  // The plan run writes the focus events one by one (on Google, one API call
+  // each): read the calendar when it has ended, not the first events it wrote.
+  await planNow(page);
   const evs = await eventually(
     () => week(cal),
     (l) => expect(titled(l, "Focus time").length).toBeGreaterThan(0),
