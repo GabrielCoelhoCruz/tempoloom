@@ -1,5 +1,6 @@
 // The availability inspector of a booking page, for the link's organizers
 // (docs/specs/booking-links-availability.md rules 18-22). Loaded on demand.
+import clsx from "clsx/lite";
 import { useEffect, useMemo, useState } from "preact/hooks";
 import { localToUtc, utcToLocal } from "../../shared/time.ts";
 import { api } from "../lib/api.ts";
@@ -142,7 +143,7 @@ export function Inspector({
                   {t.failures.map((f, i) => (
                     <span
                       key={`${f.code}-${i}`}
-                      class={`dot dot-${COLOR[f.code]}`}
+                      class={clsx("dot", `dot-${COLOR[f.code]}`)}
                       data-reason={f.code}
                       title={explain(f)}
                     />
@@ -155,7 +156,7 @@ export function Inspector({
                 {selected.offered && <li>Offered to bookers.</li>}
                 {selected.failures.map((f, i) => (
                   <li key={`${f.code}-${i}`} data-reason={f.code} data-person={f.person?.email}>
-                    <span class={`dot dot-${COLOR[f.code]}`} /> {explain(f)}{" "}
+                    <span class={clsx("dot", `dot-${COLOR[f.code]}`)} /> {explain(f)}{" "}
                     {f.settings.map((s) => (
                       <a href={s.href} key={s.label}>
                         {s.label}

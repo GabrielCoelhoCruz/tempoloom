@@ -1,7 +1,11 @@
 import { signal } from "@preact/signals";
-import { useEffect, useMemo, useRef } from "preact/hooks";
+import clsx from "clsx/lite";
+import { Fragment } from "preact";
+import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { addDays, type LocalDate, localToUtc, MINUTE, utcToLocal } from "../../shared/time.ts";
 import { clockText, hourText, timeText, weekdayText } from "../lib/format.ts";
+import { lazyComponent } from "../lib/lazy.ts";
+import { wide } from "../lib/media.ts";
 
 export interface WeekEvent {
   id: string;
@@ -39,6 +43,8 @@ interface Props {
   onPickPast?: (t: number, minutes?: number) => void;
   /** A day to mark (a link to the planner at that day). */
   focusDay?: LocalDate | null;
+  /** The event open in the details panel: on touch, only this card can be dragged (MOB-8). */
+  selectedId?: string | undefined;
 }
 
 /** PLN-5: a grey dashed pattern across a day with a busy all-day event. */
@@ -47,11 +53,23 @@ const BUSY_DAY = {
     "repeating-linear-gradient(135deg, rgba(128,128,128,0.18) 0 6px, transparent 6px 14px)",
 };
 
+// LAY-43: the list of a "+N" button loads with the planner's other parts.
+const MoreList = lazyComponent<{
+  events: WeekEvent[];
+  zone: string;
+  style: Record<string, string>;
+  onPick: (id: string) => void;
+}>(() => import("./planner-now.tsx").then((m) => m.MoreList));
+
 const city = (z: string) => (z.split("/").at(-1) ?? z).replace(/_/g, " ");
 
 const HOUR_PX = 48;
 /** The height an event box needs for its title line and its time line (styles.css .ev). */
 const TWO_LINES_PX = 35;
+/** A box this high or more clamps its title to 2 lines (ui-refresh.md A7). */
+const TALL_PX = 56;
+/** A box lower than this has room for one small line only (ui-refresh.md A6). */
+const TINY_PX = 20;
 const SNAP_MIN = 15;
 const DAY_PX = 24 * HOUR_PX;
 
@@ -61,12 +79,32 @@ interface Box {
   top: number;
   height: number;
   col: number;
+  /** The columns its cluster shows (at most the cap). */
   cols: number;
+  /** Its cluster folds events: the columns leave room for the "+N" lane. */
+  lane: boolean;
 }
 
-/** Places events into per-day columns so overlapping events sit side by side. */
-export function layout(days: LocalDate[], zone: string, events: WeekEvent[]): Box[] {
+/** The events of one cluster that do not fit in the cap (LAY-41): one "+N" button at the first. */
+export interface More {
+  day: number;
+  top: number;
+  events: WeekEvent[];
+}
+
+/**
+ * Places events into per-day columns so overlapping events sit side by side.
+ * A cluster shows at most `cap` columns; the events of the other columns fold
+ * into a "+N" list (ui-refresh.md LAY-40 to LAY-42).
+ */
+export function layout(
+  days: LocalDate[],
+  zone: string,
+  events: WeekEvent[],
+  cap = Number.POSITIVE_INFINITY,
+): { boxes: Box[]; more: More[] } {
   const boxes: Box[] = [];
+  const more: More[] = [];
   days.forEach((date, day) => {
     const dayStart = localToUtc(zone, date, 0);
     const dayEnd = localToUtc(zone, addDays(date, 1), 0);
@@ -77,8 +115,14 @@ export function layout(days: LocalDate[], zone: string, events: WeekEvent[]): Bo
     let clusterEnd = Number.NEGATIVE_INFINITY;
     const colEnds: number[] = [];
     const flush = () => {
-      const cols = colEnds.length;
-      for (const b of cluster) b.cols = cols;
+      const folded = cluster.filter((b) => b.col >= cap);
+      for (const b of cluster) {
+        b.cols = Math.min(colEnds.length, cap);
+        b.lane = folded.length > 0;
+        if (b.col < cap) boxes.push(b);
+      }
+      const first = folded[0];
+      if (first) more.push({ day, top: first.top, events: folded.map((b) => b.ev) });
       cluster = [];
       colEnds.length = 0;
     };
@@ -97,17 +141,21 @@ export function layout(days: LocalDate[], zone: string, events: WeekEvent[]): Bo
         height: Math.max(((e - s) / 3_600_000) * HOUR_PX, 14),
         col,
         cols: 1,
+        lane: false,
       };
       cluster.push(box);
-      boxes.push(box);
       clusterEnd = Math.max(clusterEnd, e);
     }
     flush();
   });
-  return boxes;
+  return { boxes, more };
 }
 
 const drag = signal<{ id: string; dx: number; dyMin: number } | null>(null);
+/** The card and pointer of the press in progress (MOB-12: one drag at a time). */
+let pressed: { el: Element; pointer: number } | null = null;
+/** The width of the "+N" lane at the inline end of a cluster that folds events (LAY-41). */
+const LANE_PX = 24;
 /** A range being picked on free space: day index and local minutes. */
 const pick = signal<{ day: number; from: number; to: number } | null>(null);
 const snapDown = (m: number) => Math.floor(m / SNAP_MIN) * SNAP_MIN;
@@ -126,8 +174,12 @@ export function WeekView({
   busyDays,
   onPickPast,
   focusDay,
+  selectedId,
 }: Props) {
-  const boxes = useMemo(() => layout(days, zone, events), [days, zone, events]);
+  const cap = wide.value ? 3 : 2;
+  const { boxes, more } = useMemo(() => layout(days, zone, events, cap), [days, zone, events, cap]);
+  /** The "+N" list that is open: its day and top. */
+  const [moreOpen, setMoreOpen] = useState<string | null>(null);
   const gridRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -141,7 +193,7 @@ export function WeekView({
   const extra = extraZone
     ? Array.from({ length: 24 }, (_, h) => utcToLocal(extraZone, localToUtc(zone, ref, h * 60)))
     : null;
-  const labelCols = extra ? "56px 56px" : "56px";
+  const labelCols = extra ? "56px 64px" : "56px";
 
   /** The pointer is on a time before now. */
   const isPast = (e: PointerEvent, date: LocalDate) => {
@@ -162,9 +214,13 @@ export function WeekView({
     const minuteAt = (y: number) =>
       Math.min(24 * 60, Math.max(0, ((y - el.getBoundingClientRect().top) / HOUR_PX) * 60));
     const from = minuteAt(e.clientY);
+    // MOB-12: a cancelled pointer (a scroll on touch) never opens Log work.
+    const listen = new AbortController();
+    el.addEventListener("pointercancel", () => listen.abort(), { signal: listen.signal });
     el.addEventListener(
       "pointerup",
       (u) => {
+        listen.abort();
         const to = minuteAt(u.clientY);
         const lo = Math.floor(Math.min(from, to) / SNAP_MIN) * SNAP_MIN;
         const hi = Math.round(Math.max(from, to) / SNAP_MIN) * SNAP_MIN;
@@ -175,46 +231,57 @@ export function WeekView({
         const dragged = hi - lo >= SNAP_MIN && Math.abs(to - from) >= SNAP_MIN / 2;
         pick(t, dragged ? Math.min(hi - lo, room) : undefined);
       },
-      { once: true },
+      { signal: listen.signal },
     );
   };
 
   const startDrag = (e: PointerEvent, box: Box) => {
-    if (e.button !== 0) return;
-    if (!box.ev.movable || !onMove) {
-      // Fixed events open their details on a click; they cannot be dragged.
-      const el = e.currentTarget as HTMLElement;
-      el.addEventListener("pointerup", () => onSelect?.(box.ev.id), { once: true });
-      return;
-    }
+    // MOB-12: one primary pointer, one drag at a time.
+    if (e.button !== 0 || !e.isPrimary || pressed?.el.hasPointerCapture(pressed.pointer)) return;
     const el = e.currentTarget as HTMLElement;
     el.setPointerCapture(e.pointerId);
+    pressed = { el, pointer: e.pointerId };
+    // Fixed events open their details on a click; they cannot be dragged. On
+    // touch, the first tap selects a card and only the selected card moves (MOB-8).
+    const movable =
+      box.ev.movable && onMove && (e.pointerType !== "touch" || box.ev.id === selectedId);
+    // A drag starts after 4 px with a mouse, 10 px with a finger or a pen.
+    const slop = e.pointerType === "mouse" ? 4 : 10;
     const x0 = e.clientX;
     const y0 = e.clientY;
     const colWidth = (gridRef.current?.clientWidth ?? 700) / days.length;
+    let started = false;
     let moved = false;
-    const move = (m: PointerEvent) => {
+    const listen = new AbortController();
+    const end = () => {
+      listen.abort();
+      pressed = null;
+      const d = drag.value;
+      drag.value = null;
+      return d;
+    };
+    const on = (type: string, fn: (p: PointerEvent) => void) =>
+      el.addEventListener(type, fn as EventListener, { signal: listen.signal });
+    on("pointermove", (m) => {
+      started ||= Math.hypot(m.clientX - x0, m.clientY - y0) >= slop;
+      if (!started || !movable) return;
       const dx = Math.round((m.clientX - x0) / colWidth);
       const dyMin = Math.round(((m.clientY - y0) / HOUR_PX) * (60 / SNAP_MIN)) * SNAP_MIN;
       if (dx !== 0 || dyMin !== 0) moved = true;
       drag.value = { id: box.ev.id, dx, dyMin };
-    };
-    const up = () => {
-      el.removeEventListener("pointermove", move);
-      el.removeEventListener("pointerup", up);
-      const d = drag.value;
-      drag.value = null;
-      if (!moved || !d) {
-        onSelect?.(box.ev.id);
-        return;
-      }
-      const local = utcToLocal(zone, box.ev.start);
-      const date = addDays(local.date, d.dx);
-      const minute = Math.round((local.minuteOfDay + d.dyMin) / SNAP_MIN) * SNAP_MIN;
-      onMove(box.ev.id, localToUtc(zone, date, minute));
-    };
-    el.addEventListener("pointermove", move);
-    el.addEventListener("pointerup", up);
+    });
+    // A click, or a move of less than one slot, selects; a swipe on a fixed card does not.
+    on("pointerup", () => {
+      const d = end();
+      if (moved && d) {
+        const local = utcToLocal(zone, box.ev.start);
+        const date = addDays(local.date, d.dx);
+        const minute = Math.round((local.minuteOfDay + d.dyMin) / SNAP_MIN) * SNAP_MIN;
+        onMove?.(box.ev.id, localToUtc(zone, date, minute));
+      } else if (movable || !started) onSelect?.(box.ev.id);
+    });
+    // A cancelled pointer (a scroll on touch) puts the card back.
+    on("pointercancel", end);
   };
 
   const startPick = (e: PointerEvent, day: number) => {
@@ -274,7 +341,7 @@ export function WeekView({
         )}
         {days.map((d, i) => (
           <div
-            class={`day-name${i === todayIdx ? " today" : ""}${d === focusDay ? " focus" : ""}`}
+            class={clsx("day-name", i === todayIdx && "today", d === focusDay && "focus")}
             key={d}
             data-date={d}
           >
@@ -359,27 +426,79 @@ export function WeekView({
               const d = drag.value?.id === b.ev.id ? drag.value : null;
               const dayIdx = b.day + (d?.dx ?? 0);
               const top = b.top + ((d?.dyMin ?? 0) / 60) * HOUR_PX;
-              const width = 100 / days.length / b.cols;
+              // One column of the cluster: the day width, less the "+N" lane, shared.
+              const col = `(${100 / days.length}%${b.lane ? ` - ${LANE_PX}px` : ""}) / ${b.cols}`;
               return (
                 <div
                   key={`${b.ev.id}:${b.day}`}
-                  class={`ev ev-${b.ev.kind}${b.ev.busy ? "" : " ev-free"}${b.ev.locked ? " ev-locked" : ""}${b.height < TWO_LINES_PX ? " ev-short" : ""}${d ? " ev-drag" : ""}${b.ev.staged ? ` ev-staged-${b.ev.staged}` : ""}${flagged?.has(b.ev.id) ? " ev-conflict" : ""}`}
+                  class={clsx(
+                    "ev",
+                    `ev-${b.ev.kind}`,
+                    !b.ev.busy && "ev-free",
+                    b.ev.locked && "ev-locked",
+                    b.height < TWO_LINES_PX && "ev-short",
+                    b.height < TINY_PX && "ev-tiny",
+                    b.height >= TALL_PX && "ev-tall",
+                    b.cols > 1 && "ev-overlap",
+                    b.ev.id === selectedId && "ev-selected",
+                    d && "ev-drag",
+                    b.ev.staged && `ev-staged-${b.ev.staged}`,
+                    flagged?.has(b.ev.id) && "ev-conflict",
+                  )}
                   data-event-id={b.ev.id}
                   data-start={b.ev.start}
                   title={b.ev.title}
                   style={{
                     top: `${top}px`,
                     height: `${b.height}px`,
-                    left: `calc(${(dayIdx / days.length) * 100}% + ${b.col * width}%)`,
-                    width: `calc(${width}% - 2px)`,
+                    left: `calc(${(dayIdx / days.length) * 100}% + ${col} * ${b.col})`,
+                    width: `calc(${col} - 2px)`,
                   }}
                   onPointerDown={(e) => startDrag(e, b)}
                 >
-                  <span class="ev-title">{b.ev.title}</span>
+                  <span class="ev-title" dir="auto">
+                    {b.ev.title}
+                  </span>
                   <span class="ev-time">
                     {clockText(zone, b.ev.start)}–{clockText(zone, b.ev.end)}
                   </span>
                 </div>
+              );
+            })}
+            {more.map((m) => {
+              const n = m.events.length;
+              const id = `${m.day}:${m.top}`;
+              // The lane's inline end, and the side the list opens to (LAY-42, LAY-43).
+              const right = `calc(${((days.length - m.day - 1) / days.length) * 100}% + 2px)`;
+              return (
+                <Fragment key={id}>
+                  <button
+                    type="button"
+                    class="ev-more"
+                    aria-label={n === 1 ? "1 more event" : `${n} more events`}
+                    aria-expanded={moreOpen === id}
+                    style={{ top: `${m.top}px`, right }}
+                    onClick={() => setMoreOpen(moreOpen === id ? null : id)}
+                  >
+                    +{n}
+                  </button>
+                  {moreOpen === id && (
+                    <MoreList
+                      events={m.events}
+                      zone={zone}
+                      style={{
+                        top: `${m.top + 24}px`,
+                        ...(m.day >= days.length / 2
+                          ? { right }
+                          : { left: `calc(${((m.day + 1) / days.length) * 100}% - ${LANE_PX}px)` }),
+                      }}
+                      onPick={(id) => {
+                        setMoreOpen(null);
+                        onSelect?.(id);
+                      }}
+                    />
+                  )}
+                </Fragment>
               );
             })}
           </div>

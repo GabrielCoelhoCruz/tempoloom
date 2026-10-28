@@ -410,6 +410,7 @@ export function Planner() {
         days={days}
         zone={z}
         focusDay={focusDay}
+        selectedId={sidePanel.value === "details" && !others ? selectedId : undefined}
         events={withPreview(visible, overlay.value)}
         now={Date.now()}
         onMove={onMove}
@@ -455,7 +456,7 @@ export function Planner() {
       )}
       {selected && !others && sidePanel.value === "details" && (
         <aside class="drawer" data-testid="event-drawer">
-          <h2>{selected.title}</h2>
+          <h2 dir="auto">{selected.title}</h2>
           <div class="status">
             {formatWhen(z, selected.start)} –{" "}
             {utcToLocal(z, selected.end - 1).date === utcToLocal(z, selected.start).date

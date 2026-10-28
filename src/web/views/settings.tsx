@@ -136,7 +136,7 @@ export function HoursEditor({
     setWeekly({ ...weekly, [day]: ranges });
   };
   return (
-    <div class="hours" data-testid={`hours-${set.kind}`}>
+    <div class="hours-card" data-testid={`hours-${set.kind}`}>
       <h3>{set.name}</h3>
       {/* PRF-6: the saved ranges in the user's time format, the days in the order of the user's week. */}
       <p class="status" data-testid={`hours-text-${set.kind}`}>
@@ -613,9 +613,11 @@ export function Settings() {
               <div class="row" key={b.id} data-buffer-title={b.title}>
                 <span>
                   {b.title} ·{" "}
-                  {b.side === "before"
-                    ? `${b.minutes_before} min before`
-                    : `${b.minutes_after} min after`}{" "}
+                  {b.side === "both"
+                    ? `${b.minutes_before} min before, ${b.minutes_after} min after`
+                    : b.side === "before"
+                      ? `${b.minutes_before} min before`
+                      : `${b.minutes_after} min after`}{" "}
                   ·{" "}
                   {b.calendar_scope
                     ? `${calendars.find((c) => c.id === b.calendar_scope)?.name ?? "one calendar"} only`
@@ -781,23 +783,25 @@ export function Settings() {
                 <span>
                   {f.title} · {f.weekly_goal_minutes / 60} h per week <PolicyMark id={f.id} />
                 </span>
-                <FocusNotes
-                  id={f.id}
-                  notes={
-                    readEventSettings(f.event_settings, defaultEventSettings("focus_time"))
-                      .description
-                  }
-                  act={act}
-                />
-                {!policyMarks.value[f.id] && (
-                  <button
-                    type="button"
-                    class="danger"
-                    onClick={() => void act(() => api("DELETE", `/api/focus/${f.id}`))}
-                  >
-                    Delete
-                  </button>
-                )}
+                <div class="actions">
+                  <FocusNotes
+                    id={f.id}
+                    notes={
+                      readEventSettings(f.event_settings, defaultEventSettings("focus_time"))
+                        .description
+                    }
+                    act={act}
+                  />
+                  {!policyMarks.value[f.id] && (
+                    <button
+                      type="button"
+                      class="danger"
+                      onClick={() => void act(() => api("DELETE", `/api/focus/${f.id}`))}
+                    >
+                      Delete
+                    </button>
+                  )}
+                </div>
               </div>
             ))
           )}

@@ -1,3 +1,4 @@
+import clsx from "clsx/lite";
 import type { ComponentChildren } from "preact";
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import { addDays, addLocalDays, localToUtc } from "../../shared/time.ts";
@@ -639,7 +640,7 @@ export function Tasks() {
         onChange={(e) => toggle(t.id, e.currentTarget.checked)}
       />
       <div>
-        <div>
+        <div dir="auto">
           {t.title}
           {t.next_up_rank !== null && <span class="badge"> next up</span>}
           {t.visibility === "private" && (
@@ -863,7 +864,7 @@ export function Tasks() {
       {picked.length > 0 && <BulkBar ids={picked} act={act} clear={() => setSelected(new Set())} />}
       {filter === "open" && (
         <section
-          class={`next-up-queue${over ? " over" : ""}`}
+          class={clsx("next-up-queue", over && "over")}
           aria-label="Next up"
           data-testid="next-up-queue"
           onDragOver={(e) => {

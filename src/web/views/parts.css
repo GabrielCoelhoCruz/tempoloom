@@ -7,15 +7,30 @@
 .now-bar button {
   padding: 2px 8px;
 }
+/* A2: long titles in the now line shorten; its parts wrap to more rows. */
+.now-bar strong {
+  display: inline-block;
+  max-width: min(40ch, 45vw);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+.now-bar > span {
+  min-width: 0;
+  max-width: 100%;
+}
 .popover {
   position: absolute;
   z-index: 20;
   display: grid;
   gap: 6px;
   min-width: 260px;
-  max-width: 460px;
-  max-height: 60vh;
+  /* A17: a popover fits a narrow screen. */
+  max-width: min(460px, calc(100vw - 32px));
+  max-height: 60dvh;
   overflow: auto;
+  overscroll-behavior: contain;
   padding: 12px;
   background: var(--panel);
   border: 1px solid var(--line);
@@ -27,7 +42,7 @@
   font-size: 13px;
 }
 .now-bar .popover {
-  top: 36px;
+  top: 100%;
   right: 16px;
   white-space: normal;
 }
@@ -65,6 +80,9 @@
   font-size: 11px;
   color: var(--muted);
   text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .extra-hours .hour-label {
   color: var(--accent);
@@ -88,8 +106,9 @@
 }
 .toast {
   position: fixed;
-  right: 16px;
-  bottom: 16px;
+  /* MOB-10: clear of the screen's rounded corners and home bar. */
+  right: calc(16px + env(safe-area-inset-right, 0px));
+  bottom: calc(16px + env(safe-area-inset-bottom, 0px));
   z-index: 40;
   padding: 10px 14px;
   border-radius: var(--radius);
@@ -115,8 +134,9 @@
 }
 .wide-dialog {
   max-width: 720px;
-  max-height: 90vh;
+  max-height: 90dvh;
   overflow: auto;
+  overscroll-behavior: contain;
 }
 .sr-only {
   position: absolute;
@@ -130,4 +150,24 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
+}
+/* LAY-43: the list of a "+N" button in the week. */
+.more-list {
+  min-width: 0;
+  width: 240px;
+  gap: 0;
+  padding: 4px;
+}
+.more-list button {
+  display: flex;
+  gap: 6px;
+  height: 28px;
+  padding: 0 8px;
+  border: 0;
+  background: none;
+  white-space: nowrap;
+}
+.more-list span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
