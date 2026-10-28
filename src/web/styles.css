@@ -696,6 +696,7 @@ summary,
 /* TOK-12 */
 .toolbar :is(.title, .status),
 .hour-label,
+.now-pill,
 .ev-time {
   font-variant-numeric: tabular-nums;
 }
@@ -849,50 +850,54 @@ span.inline {
   justify-content: flex-end;
 }
 
-/* Week view */
+/* Week view (LAY-30 to LAY-34, CMP-140 to CMP-142) */
 .week {
   display: flex;
   flex-direction: column;
   flex: 1;
-  /* A1: the week keeps its room when notices and issues are above or below it. */
+  /* A1: the week keeps its room when notices are above it. */
   min-height: max(240px, 50vh);
 }
 .week-head {
   display: grid;
   border-bottom: 1px solid var(--line);
+  overflow: hidden;
+  scrollbar-gutter: stable;
 }
 .day-name {
-  padding: 8px;
-  font-size: var(--text-12);
+  padding: 12px 4px 8px;
+  font: var(--weight-medium) var(--text-12) / var(--lh-12) var(--font-sans);
   color: var(--text-secondary);
   text-align: center;
 }
 .day-name.today {
   color: var(--accent-text);
-  font-weight: 600;
 }
 .day-name.focus {
   background: var(--bg-selected);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
 }
 .week-scroll {
   overflow-y: auto;
   overscroll-behavior: contain;
+  scrollbar-gutter: stable;
   flex: 1;
 }
 .week-body {
   position: relative;
   display: grid;
-  grid-template-columns: 56px 1fr;
+  grid-template-columns: 48px 1fr;
 }
 .hours {
   position: relative;
 }
-.hour-label {
+.hour-label,
+.now-pill {
   position: absolute;
-  right: 6px;
+  inset-inline-end: 8px;
   transform: translateY(-50%);
   font-size: var(--text-11);
+  line-height: var(--lh-11);
   color: var(--text-tertiary);
   white-space: nowrap;
 }
@@ -903,17 +908,19 @@ span.inline {
   background-size: 100% var(--hour-px);
 }
 .day-col {
-  border-left: 1px solid var(--line);
+  border-inline-start: 1px solid var(--line);
 }
-.now-line {
+.now-line,
+.now-week {
   position: absolute;
   height: 2px;
+  margin-top: -1px;
   background: var(--now);
-  z-index: 3;
+  z-index: var(--z-now);
   pointer-events: none;
 }
-/* Event cards: the category colors of CMP-80 and CMP-81 (tint, bar, text). PR 3 redraws the rest. */
-.ev {
+/* Event cards (CMP-80 to CMP-90); a removed card fades out as an .ev-leaving clone (MOT-44). */
+:is(.ev, .ev-leaving) {
   --c: var(--cat-task);
   --c-ink: var(--cat-task-ink);
   position: absolute;
@@ -1043,13 +1050,14 @@ span.inline {
 /* LAY-42: the "+N" button of a cluster that folds events; its list is in views/parts.css. */
 .ev-more {
   position: absolute;
-  z-index: 2;
+  z-index: var(--z-event-raised);
   min-width: 20px;
   min-height: 0;
   height: 20px;
   padding: 0 4px;
-  border-radius: 999px;
-  font-size: 11px;
+  border-radius: var(--radius-full);
+  background: var(--bg-sunken);
+  font-size: var(--text-11);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   color: var(--text-secondary);

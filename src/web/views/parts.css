@@ -41,6 +41,45 @@
   vertical-align: bottom;
   font-weight: var(--weight-medium);
 }
+/* Parts of the week that are drawn once the planner settles: today's date pill
+   (CMP-142), weekends (LAY-34), the now marks, the "free" fact (CMP-84), the
+   staged colors (CMP-80) and the right-to-left bar (CMP-81). */
+.day-name b {
+  padding: 0 6px;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  color: var(--on-accent);
+}
+.day-off {
+  background: var(--grid-off);
+}
+/* CMP-141: the time now in the hour gutter, on the line. */
+.now-pill {
+  height: 16px;
+  padding: 1px 5px;
+  border-radius: var(--radius-full);
+  background: var(--now);
+  color: var(--on-accent);
+  font-weight: 600;
+}
+/* CMP-140: the dot at the start of today's line, and a 1 px line across the days under the cards. */
+.now-line::before {
+  content: "";
+  position: absolute;
+  inset-inline-start: -4px;
+  top: -3px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: inherit;
+}
+.now-week {
+  inset-inline: 0;
+  height: 1px;
+  margin: 0;
+  background: color-mix(in srgb, var(--now) 35%, transparent);
+  z-index: 0;
+}
 .ev-staged {
   --c: var(--accent);
   --c-ink: var(--accent-text);
