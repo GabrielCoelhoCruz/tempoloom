@@ -1041,7 +1041,7 @@ PR 4 adds toasts (MOT-50, section 9 decides Sonner or CSS-only).
 ### 4.16 Now line and day header
 
 - **CMP-140.** Now line (`.now-line`, today's column): 2 px `--now`.
-  Add an 8 px dot (`.now-dot`) centered on the line at the inline start
+  Add an 8 px dot (`.now-line::before`) centered on the line at the inline start
   of today's column, and a 1 px line across all days (`.now-week`,
   `color-mix(in srgb, var(--now) 35%, transparent)`, under the cards).
   All have `pointer-events: none`.
@@ -1118,13 +1118,21 @@ PR 4 adds toasts (MOT-50, section 9 decides Sonner or CSS-only).
   nowrap; overflow: hidden; text-overflow: ellipsis` and a `title` with
   the full text. When preview mode is on, the section has `background:
   var(--bg-selected); border-radius: var(--radius-md); padding: 0 4px 0
-  8px; min-height: 32px`. The apply summary and the error in the section
-  open as a popover below it (`top: calc(100% + 8px);
-  inset-inline-end: 0; width: 320px`).
+  8px; min-height: 32px`. The staged list (`staged-list`) with the
+  "Review and apply changes" button above it, the apply summary and the
+  error in the section open as a popover below it (`top: calc(100% + 8px);
+  inset-inline-end: 0; width: 320px`). They stay inside the section, so
+  tests that scope them to `preview-panel` find them. The button is not in
+  the toolbar row: with it, the row at 1440 px needs about 990 px of the
+  944 px.
 - **LAY-14.** Shrink order when the toolbar is too narrow: first the
   preview sentence (to 0), then the week title (to 9ch), then the
   toolbar wraps to a second row. At 1440 px the toolbar holds one row in
-  every state that the E2E suite reaches.
+  every state that the E2E suite reaches. A flex line breaks before its
+  items shrink, so from 1440 px the toolbar has `flex-wrap: nowrap`, and
+  its items have `flex-shrink: 0` except the title (`flex-shrink: 1`) and
+  the preview section (`flex-shrink: 100; min-width: 0`). Below 1440 px it
+  wraps. A toolbar with an error (LAY-15) wraps at every width.
 - **LAY-15.** The planner error (`planner.tsx:352`) stays inline. It takes
   its own row: `order: 99; flex-basis: 100%; overflow-wrap: anywhere`.
 - **LAY-16.** The "Assistant" button moves from the toolbar to the now bar
@@ -1641,6 +1649,11 @@ fix changes visible text.
   If any item fails, keep the menus and dialogs hand-built and add the
   behavior of CMP-42 and CMP-54. Record the result and the chunk sizes in
   the PR 3 description.
+  Result (PR 3, a 90-minute spike, `@base-ui/react` 1.9.0): rejected.
+  Item 1 passes only with `skipLibCheck` (18 type errors in its `.d.mts`
+  files under `preact/compat`). Item 6 fails: the Menu chunk is 47.9 KB
+  gzip, and the account menu is in the cold load. The menus and dialogs
+  stay hand-built.
 - **LIB-4.** Sonner 2.0.8: one spike, time-boxed to 4 hours, before PR 4.
   Load it on demand after `settled`. Use `toast.custom()` with the markup
   and classes of CMP-72, `position="bottom-center"`, `visibleToasts={3}`,
@@ -1773,7 +1786,18 @@ fix changes visible text.
   `src/web/lib/planner-signals.ts` (drawer state), `src/web/lib/media.ts`
   (add signals for 1180, 860 and 640 px),
   `src/web/lib/motion.ts`, `src/web/styles.css`,
-  `src/web/views/parts.css`, the docs above.
+  `src/web/views/parts.css`, the docs above. For TST-12 also:
+  `src/web/views/event-details.tsx` (new: the details panel loads on the
+  first click on an event), `src/web/lib/glide.ts` (new: the MOT-44 code
+  loads after the first draw), `src/web/lib/preview.ts` (the CMP-12
+  signal), `src/web/views/pages.css` (the toolbar preview panel; the
+  motion of MOT-20 to MOT-23 with the CMP-53 sheet, which load after
+  `settled`), `priorities.tsx` and `priorities.css` (the priorities panel
+  is not a popover). Rules that the first paint does not need load with
+  `parts.css` after `settled`: the kind icons, today's date pill, the
+  weekend tint, the now dot, line and pill colors, the "free" separator,
+  the card states after a press, a drag or a staged change, and the drawer
+  motion. The Log work form opens at the top of the right column.
 - Acceptance: 10.1; at 1440×900 the grid starts right under the toolbar
   (56 px) in every state of 2.2, and no part covers it; the toolbar is one row
   in the states of 2.2; notices are all visible; keyboard-opened menus

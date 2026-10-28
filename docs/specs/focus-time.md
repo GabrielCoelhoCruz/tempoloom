@@ -142,7 +142,7 @@ Its priority is also fixed at P4 (E-0070, E-0141).
 33. Focus events respect `#tl_busy` blocks as busy. Proposed: focus may be placed inside a busy `#tl_free` block, like tasks and habits (open question 6).
 34. The scheduler never moves a locked focus event or a past focus event.
 35. When the goal cannot be reached, the planner shows "goal not reached" with the missing hours. Proposed text. It does not list one unplaced item per missing block.
-    Tempoloom decision: above the week, the planner shows "<title>: X h of Y h this week." per focus goal, with the counted time of that week, and adds "Goal not reached: N h missing." when the last plan could not reach the goal for that week.
+    Tempoloom decision: in the planner's right column, the planner shows "<title>: X h of Y h this week." per focus goal, with the counted time of that week, and adds "Goal not reached: N h missing." when the last plan could not reach the goal for that week.
 
 ## Outputs
 

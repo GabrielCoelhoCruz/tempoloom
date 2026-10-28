@@ -34,7 +34,7 @@ are always P1. The user cannot change them (E-0104).
 6. When an invitee books such a slot, Tempoloom does not move or change the external event. The user now has an overlap, and the planner shows it as a conflict (Proposed; E-0141 says a conflict is flagged with a suggested fix).
 7. Tempoloom never sends updates to the other attendees of an external event when its priority changes. The priority is stored only in Tempoloom. Proposed (open question 1).
 8. When an accepted external event overlaps another fixed event, Tempoloom flags the conflict in the planner and suggests a fix. It moves neither event (E-0141).
-   Tempoloom decision: two busy, timed external events that the user attends and that overlap are a conflict. The planner outlines both and lists the conflict from the line above the week. The suggested fix moves the later one to the first free time of its length in work hours, from the end of the earlier one, within 7 days. Tempoloom never applies it.
+   Tempoloom decision: two busy, timed external events that the user attends and that overlap are a conflict. The planner outlines both and lists the conflict from the header of the planner's right column. The suggested fix moves the later one to the first free time of its length in work hours, from the end of the earlier one, within 7 days. Tempoloom never applies it.
 
 ### Scheduler interaction
 

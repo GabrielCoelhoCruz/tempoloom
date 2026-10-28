@@ -39,6 +39,10 @@ assistant chat.
   sessions (legacy evidence, E-0139).
 - **PLN-4.** The planner draws a free managed event with a dashed border and
   a busy event with a solid fill and border (E-0089, E-0139).
+  Tempoloom decision: a free event is hatched (diagonal stripes of its
+  category tint). A dashed outline marks events that are not on the calendar
+  yet: staged changes of preview mode and proposed work blocks
+  (`ui-refresh.md` CMP-87, CMP-88).
 - **PLN-5.** A day with a busy all-day event shows a grey dashed pattern
   across the day, because the event uses the day's availability (legacy
   evidence, E-0139).
@@ -48,7 +52,7 @@ assistant chat.
 - **PLN-7.** The planner shows what is next and lets the user join the
   current or next meeting with one click, using the meeting's conference link
   (E-0010).
-  Tempoloom decision: the line above the week shows the meeting in progress,
+  Tempoloom decision: the header of the planner's right column shows the meeting in progress,
   else the next one in the coming 7 days (timed, not declined, not all day),
   with its time. "Join" opens the first `http` or `https` link of the
   location, else of the description, in a new tab. No vendor app is needed.
