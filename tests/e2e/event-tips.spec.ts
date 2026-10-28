@@ -8,7 +8,7 @@
 // - the setting is lost on reload, or a plan run brings tips back -> checkbox after reload; replan
 // - a tip change writes over the organizer's own description of a
 //   meeting occurrence (meetings-flexible-rescheduling.md rule 22) -> organizer test
-import type { Page } from "@playwright/test";
+import type { Page, Response } from "@playwright/test";
 import { addDays } from "../../src/shared/time.ts";
 import { eventProp } from "./automation-list-helpers.ts";
 import { openSettings, week } from "./calendar-helpers.ts";
@@ -32,19 +32,27 @@ const tipsBox = (page: Page) => page.getByLabel("Add tips to event descriptions"
  * Turns tips on or off in Settings and waits for the whole save: the PATCH,
  * the plan run and the reload of the settings. Until the reload, a render
  * can show the old value again, and a click then sends the old value.
+ * The page reads the settings again only when its plan run ends, and that run
+ * writes every future event (29 in the first test). Google takes one API call
+ * per event, more than an action's 15 seconds in all: wait on the run itself.
  */
 async function setTips(page: Page, on: boolean): Promise<void> {
   await openSettings(page);
   await expect(tipsBox(page)).toBeChecked({ checked: !on });
   let patched = false;
-  const reloaded = page.waitForResponse((r) => {
-    const method = r.request().method();
-    if (r.url().endsWith("/api/settings") && method === "PATCH" && r.ok()) patched = true;
-    return patched && r.url().endsWith("/api/settings") && method === "GET" && r.ok();
-  });
+  let reloaded = false;
+  const saved = (r: Response) => {
+    if (!r.url().endsWith("/api/settings") || !r.ok()) return;
+    if (r.request().method() === "PATCH") patched = true;
+    else if (patched && r.request().method() === "GET") reloaded = true;
+  };
+  page.on("response", saved);
   // A click, not setChecked: the box shows the saved value again while the save runs.
   await tipsBox(page).click();
-  await reloaded;
+  await expect.poll(() => patched).toBe(true);
+  await planNow(page);
+  await expect.poll(() => reloaded).toBe(true);
+  page.off("response", saved);
   await expect(page.getByTestId("settings-message")).toHaveText("Saved");
   await expect(tipsBox(page)).toBeChecked({ checked: on });
 }
