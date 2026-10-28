@@ -99,6 +99,10 @@
 [dir="rtl"] .i-next::before {
   transform: none;
 }
+.ev-leaving {
+  pointer-events: none;
+  z-index: 0;
+}
 /* Card states after a press, a selection, a drag or a staged change (CMP-87, CMP-88). */
 .ev-past,
 .ev-staged-from,

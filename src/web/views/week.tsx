@@ -1,7 +1,7 @@
 import { signal } from "@preact/signals";
 import clsx from "clsx/lite";
 import { Fragment } from "preact";
-import { useEffect, useMemo, useRef, useState } from "preact/hooks";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import {
   addDays,
   type LocalDate,
@@ -11,6 +11,7 @@ import {
   weekdayOf,
 } from "../../shared/time.ts";
 import { clockText, hourText, timeText, weekdayText } from "../lib/format.ts";
+import type { Firsts } from "../lib/glide.ts";
 import { lazyComponent } from "../lib/lazy.ts";
 import { wide } from "../lib/media.ts";
 import { byKeyboard } from "../lib/motion.ts";
@@ -162,6 +163,8 @@ export function layout(
 }
 
 const drag = signal<{ id: string; dx: number; dyMin: number } | null>(null);
+/** The replan glide (MOT-40); it loads after the first draw, which never glides. */
+let glider: typeof import("../lib/glide.ts") | undefined;
 /** The card and pointer of the press in progress (MOB-12: one drag at a time). */
 let pressed: { el: Element; pointer: number } | null = null;
 /** The width of the "+N" lane at the inline end of a cluster that folds events (LAY-41). */
@@ -197,7 +200,30 @@ export function WeekView({
   useEffect(() => {
     // Open at 07:00, where the working day starts for most people.
     if (scrollRef.current) scrollRef.current.scrollTop = 7 * HOUR_PX;
+    void import("../lib/glide.ts").then((m) => {
+      glider = m;
+    });
   }, []);
+  // MOT-44: when the events change while the same days show, measure the cards
+  // before this render draws ("first"), then glide them after it.
+  const sig = events.map((e) => `${e.id}@${e.start}-${e.end}`).join();
+  const shownDays = days.join();
+  const lastDays = useRef(shownDays);
+  // Only a new event list measures.
+  const first = useMemo<Firsts | null>(
+    () =>
+      gridRef.current && glider && lastDays.current === shownDays && !drag.value
+        ? glider.measure(gridRef.current)
+        : null,
+    [sig],
+  );
+  // The glide runs once per event list.
+  useLayoutEffect(() => {
+    const same = lastDays.current === shownDays;
+    lastDays.current = shownDays;
+    // A week that had no cards draws its first cards without motion.
+    if (same && first?.size && gridRef.current) glider?.glide(gridRef.current, first);
+  }, [sig]);
   const nowLocal = utcToLocal(zone, now);
   const todayIdx = days.indexOf(nowLocal.date);
   const nowTop = (nowLocal.minuteOfDay / 60) * HOUR_PX;
@@ -450,7 +476,7 @@ export function WeekView({
                 }}
               />
             )}
-            {boxes.map((b) => {
+            {boxes.map((b, i) => {
               const d = drag.value?.id === b.ev.id ? drag.value : null;
               const dayIdx = b.day + (d?.dx ?? 0);
               const top = b.top + ((d?.dyMin ?? 0) / 60) * HOUR_PX;
@@ -475,6 +501,8 @@ export function WeekView({
                     flagged?.has(b.ev.id) && "ev-conflict",
                   )}
                   data-event-id={b.ev.id}
+                  // MOT-44: the n-th card of this event, in day order.
+                  data-box-key={`${b.ev.id}#${boxes.slice(0, i).filter((o) => o.ev.id === b.ev.id).length}`}
                   data-start={b.ev.start}
                   title={b.ev.title}
                   // CMP-82: 1 px inside its slot at the top and the bottom.

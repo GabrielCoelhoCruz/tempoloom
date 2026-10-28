@@ -5,7 +5,11 @@ const token = (name: string) => {
   tokens ??= getComputedStyle(document.documentElement);
   return tokens.getPropertyValue(name).trim();
 };
-const ms = (name: string) => Number.parseFloat(token(name));
+/** A duration token in ms; the CSS build can write 250ms as .25s. */
+const ms = (name: string) => {
+  const v = token(name);
+  return Number.parseFloat(v) * (v.endsWith("ms") ? 1 : 1000);
+};
 
 export const easeOut = () => token("--ease-out");
 export const easeInOut = () => token("--ease-in-out");
