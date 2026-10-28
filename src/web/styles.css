@@ -14,6 +14,18 @@
   --meeting: #d08a1e;
   --external: #c9ccd2;
   --radius: 6px;
+  /* Motion (docs/specs/ui-refresh.md section 7) */
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --duration-press: 160ms;
+  --duration-menu: 150ms;
+  --duration-popover: 200ms;
+  --duration-modal: 250ms;
+  --duration-exit: 125ms;
+  --duration-move: 250ms;
+  --duration-collapse: 200ms;
+  --duration-fade: 200ms;
+  --duration-toast: 400ms;
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
   font-size: 14px;
 }
@@ -80,11 +92,53 @@ label > textarea {
   color: var(--fg);
   font-size: 14px;
 }
+/* A11, ROB-11: selects and inputs never overflow a form (also label.inline and .field below). */
+label:not(.inline) {
+  grid-template-columns: minmax(0, 1fr);
+}
+label > input:not([type="checkbox"], [type="radio"]),
+label > select {
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* Mobile baseline (ui-refresh.md MOB-3, MOB-6, MOB-7, CMP-7) */
+html {
+  -webkit-tap-highlight-color: transparent;
+  -webkit-text-size-adjust: 100%;
+  overscroll-behavior: none;
+}
+button,
+a,
+summary,
+[role="button"] {
+  touch-action: manipulation;
+}
+button,
+summary,
+[role="tab"],
+.nav a {
+  user-select: none;
+  -webkit-user-select: none;
+}
+@media (pointer: coarse) {
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
+}
+/* Motion (ui-refresh.md MOT-6): an overlay opened from the keyboard shows at once. */
+[data-instant],
+[data-instant] * {
+  /* biome-ignore lint/complexity/noImportantStyles: an instant open must beat the component's transition */
+  transition-duration: 0ms !important;
+}
 
 .shell {
   display: grid;
   grid-template-columns: 200px 1fr;
-  height: 100vh;
+  height: 100dvh;
 }
 .nav {
   border-right: 1px solid var(--line);
@@ -126,6 +180,7 @@ label > textarea {
 }
 .toolbar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   padding: 12px 16px;
@@ -134,6 +189,12 @@ label > textarea {
 .toolbar .title {
   font-weight: 600;
   margin-right: auto;
+  white-space: nowrap;
+}
+span.inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 .status {
   font-size: 12px;
@@ -142,11 +203,16 @@ label > textarea {
 .error {
   color: var(--danger);
 }
+.toolbar .error {
+  order: 99;
+  flex-basis: 100%;
+  overflow-wrap: anywhere;
+}
 
 .login {
   display: grid;
   place-items: center;
-  height: 100vh;
+  min-height: 100svh;
   text-align: center;
 }
 .login .card {
@@ -162,9 +228,9 @@ label > textarea {
 }
 .row {
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
-  align-items: center;
+  align-items: start;
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -175,7 +241,31 @@ label > textarea {
   font-size: 12px;
 }
 .task-row {
-  grid-template-columns: auto 1fr auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+.task-row > input[type="checkbox"] {
+  margin-top: 3px;
+}
+.row > :not(.actions):not(button):not(.badge) {
+  overflow-wrap: anywhere;
+}
+.row > .actions {
+  max-width: 28rem;
+  justify-content: flex-end;
+}
+/* ROB-10: below 1101 px, a row's actions go under its body. */
+@media (max-width: 1100px) {
+  .row:has(> .actions) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .task-row:has(> .actions) {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+  .row > .actions {
+    grid-column: -2 / -1;
+    max-width: none;
+    justify-content: flex-start;
+  }
 }
 /* Icons painted in the text color through a mask: they need no emoji or symbol font. */
 .lock-icon,
@@ -200,10 +290,14 @@ label > textarea {
   border-radius: 10px;
   border: 1px solid var(--line);
   color: var(--muted);
+  white-space: nowrap;
 }
 .badge.risk {
   color: var(--danger);
   border-color: var(--danger);
+  white-space: normal;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
 }
 .form {
   display: grid;
@@ -225,7 +319,16 @@ label > textarea {
   display: flex;
   flex-direction: column;
   flex: 1;
-  min-height: 0;
+  /* A1: the week keeps its room when notices and issues are above or below it. */
+  min-height: max(240px, 50vh);
+}
+.side-panel {
+  flex: none;
+  max-height: 25vh;
+  overflow: auto;
+  margin: 0;
+  padding: 4px 16px;
+  border-top: 1px solid var(--line);
 }
 .week-head {
   display: grid;
@@ -247,6 +350,7 @@ label > textarea {
 }
 .week-scroll {
   overflow-y: auto;
+  overscroll-behavior: contain;
   flex: 1;
 }
 .week-body {
@@ -263,6 +367,7 @@ label > textarea {
   transform: translateY(-50%);
   font-size: 11px;
   color: var(--muted);
+  white-space: nowrap;
 }
 .grid {
   position: relative;
@@ -292,8 +397,12 @@ label > textarea {
   border: 1px solid color-mix(in srgb, #000 12%, transparent);
   cursor: default;
   user-select: none;
-  touch-action: none;
+  /* MOB-8: a finger on a card scrolls the week; only the selected card can be dragged. */
+  touch-action: pan-y;
   z-index: 1;
+}
+.ev-selected {
+  touch-action: none;
 }
 .ev-task {
   background: var(--task);
@@ -378,6 +487,38 @@ label > textarea {
 .ev-short .ev-time {
   margin-left: 4px;
 }
+/* A6: a card of 15 minutes or less has room for one small line. */
+.ev-tiny {
+  padding-block: 0;
+  font-size: 11px;
+  line-height: 12px;
+}
+/* A7: a tall card wraps its title to 2 lines. */
+.ev-tall .ev-title {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+/* LAY-42: the "+N" button of a cluster that folds events; its list is in views/parts.css. */
+.ev-more {
+  position: absolute;
+  z-index: 2;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 4px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+.ev-more::before {
+  content: "";
+  position: absolute;
+  inset: -2px;
+}
 
 .drawer {
   position: fixed;
@@ -393,10 +534,19 @@ label > textarea {
   gap: 12px;
   z-index: 10;
   box-shadow: -8px 0 24px rgb(0 0 0 / 0.08);
+  /* A15, MOB-5, MOB-10 */
+  overflow-y: auto;
+  max-width: 100vw;
+  overscroll-behavior: contain;
+  padding-bottom: calc(20px + env(safe-area-inset-bottom, 0px));
 }
 .drawer h2 {
   font-size: 16px;
   margin: 0;
+}
+.drawer h2,
+.drawer .status {
+  overflow-wrap: anywhere;
 }
 .drawer .actions {
   display: flex;
@@ -434,14 +584,14 @@ section h2 {
   font-size: 15px;
   margin: 0 0 10px;
 }
-.hours {
+.hours-card {
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: var(--radius);
   padding: 12px;
   margin-bottom: 12px;
 }
-.hours h3 {
+.hours-card h3 {
   margin: 0 0 8px;
   font-size: 14px;
 }
@@ -478,6 +628,7 @@ fieldset.days {
 }
 .actions {
   display: flex;
+  align-items: center;
   gap: 8px;
   flex-wrap: wrap;
 }
@@ -491,7 +642,7 @@ fieldset.days {
 .planner {
   display: flex;
   flex-direction: column;
-  height: 100vh;
+  height: 100dvh;
 }
 button[aria-pressed="true"],
 button[aria-selected="true"] {
@@ -857,6 +1008,8 @@ li.automation .confirm {
 .field > select {
   color: var(--fg);
   font-size: 14px;
+  min-width: 0;
+  max-width: 100%;
 }
 
 /* Booking page options: questions, zone picker, overlay (booking-links-booking-page.md) */
@@ -940,7 +1093,7 @@ fieldset {
   font-size: 16px;
   margin: 0 0 8px;
 }
-.preview {
+.wide.preview {
   border: 1px dashed var(--line);
   border-radius: var(--radius);
   padding: 8px 12px;
@@ -962,13 +1115,14 @@ fieldset {
 .now-bar {
   position: relative;
   display: flex;
+  flex: none;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
-  height: 38px;
-  padding: 0 16px;
+  gap: 4px 8px;
+  min-height: 38px;
+  padding: 4px 16px;
   border-bottom: 1px solid var(--line);
   font-size: 13px;
-  white-space: nowrap;
 }
 /* The next-up queue area at the top of the task list (planning-next-up.md NXT-5). */
 .next-up-queue {
@@ -1023,6 +1177,7 @@ fieldset {
 .assistant-log {
   flex: 1;
   overflow-y: auto;
+  overscroll-behavior: contain;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -1103,4 +1258,22 @@ fieldset {
 .assistant-form textarea {
   width: 100%;
   resize: vertical;
+}
+
+label.inline > select {
+  min-width: 0;
+  max-width: 100%;
+}
+/* MOT-9: reduced motion keeps fades and color changes; movement, scale and size snap. */
+@media (prefers-reduced-motion: reduce) {
+  html {
+    /* biome-ignore lint/complexity/noImportantStyles: no smooth scrolling under reduced motion */
+    scroll-behavior: auto !important;
+  }
+  *,
+  *::before,
+  *::after {
+    /* biome-ignore lint/complexity/noImportantStyles: the safety net must win over every component transition */
+    transition-property: opacity, color, background-color, border-color !important;
+  }
 }

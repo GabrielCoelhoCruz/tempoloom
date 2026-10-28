@@ -2,6 +2,7 @@
 // (docs/specs/planning-priorities.md PRI-51 to PRI-53; planning-next-up.md NXT-6).
 // Both show every item with a priority by level; a drag to another level or the
 // level menu on an item changes its level.
+import clsx from "clsx/lite";
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import { api } from "../lib/api.ts";
 import { useLive } from "../lib/live.ts";
@@ -242,7 +243,7 @@ export function Priorities() {
           return (
             <section
               key={level}
-              class={`priority-column${over === level ? " over" : ""}`}
+              class={clsx("priority-column", over === level && "over")}
               style={{ width: `${WIDTHS[width]}px` }}
               aria-label={LEVEL_NAMES[level]}
               data-testid="priority-column"
@@ -287,7 +288,7 @@ export function PrioritiesPanel() {
         return (
           <section
             key={level}
-            class={`priority-level${over === level ? " over" : ""}`}
+            class={clsx("priority-level", over === level && "over")}
             data-testid="priority-level"
             data-level={level}
             {...p.dropZone(level, setOver)}

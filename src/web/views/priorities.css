@@ -28,7 +28,7 @@
   grid-template-columns: 1fr;
 }
 .priorities-panel {
-  max-height: calc(100vh - 120px);
+  max-height: calc(100dvh - 120px);
   overflow-y: auto;
   min-width: 480px;
 }

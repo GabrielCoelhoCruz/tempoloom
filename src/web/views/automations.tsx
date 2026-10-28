@@ -1,6 +1,7 @@
 // The automation list (automations-overview.md rules 6-13; planning-priorities.md
 // PRI-54): every automation grouped by priority, P1 at the top, in the order the
 // scheduler gives them time. Drag an entry to change its rank or its priority.
+import clsx from "clsx/lite";
 import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import { api } from "../lib/api.ts";
 import { CalendarDisconnected } from "../lib/calendars.tsx";
@@ -177,7 +178,7 @@ export function Automations() {
     const planned = PLANNED[a.type];
     return (
       <li
-        class={`row automation${a.enabled ? "" : " off"}`}
+        class={clsx("row automation", !a.enabled && "off")}
         key={key}
         data-testid="automation"
         data-type={a.type}
@@ -346,7 +347,7 @@ export function Automations() {
         return (
           <section
             key={level}
-            class={`automation-group${over === level ? " over" : ""}`}
+            class={clsx("automation-group", over === level && "over")}
             aria-label={LEVEL_NAMES[level]}
             data-testid="automation-group"
             data-level={level}

@@ -26,6 +26,7 @@ import {
 } from "../lib/planner-signals.ts";
 import { LEVEL_NAMES, loadMe, me, planNow, zone } from "../lib/state.ts";
 import "./parts.css";
+import type { WeekEvent } from "./week.tsx";
 
 const TimerDialog = lazyComponent<{ onClose: () => void }>(() =>
   import("./timer-dialog.tsx").then((m) => m.TimerDialog),
@@ -77,7 +78,7 @@ function TaskRow({ t, children }: { t: TaskLite; children?: ComponentChildren })
   const z = zone();
   return (
     <div class="row" data-task-title={t.title}>
-      <span>
+      <span dir="auto">
         {t.title}{" "}
         <span class="meta">
           {LEVEL_NAMES[t.level]}
@@ -179,6 +180,27 @@ function TasksPanel({ onClose }: { onClose: () => void }) {
   );
 }
 
+/** The events that a "+N" button folds (ui-refresh.md LAY-43): time first; a choice opens one. */
+export function MoreList(p: {
+  events: WeekEvent[];
+  zone: string;
+  style: Record<string, string>;
+  onPick: (id: string) => void;
+}) {
+  return (
+    <div class="popover more-list" style={p.style}>
+      {p.events.map((ev) => (
+        <button type="button" key={ev.id} title={ev.title} onClick={() => p.onPick(ev.id)}>
+          <span>
+            {clockText(p.zone, ev.start)}–{clockText(p.zone, ev.end)}
+          </span>
+          <span dir="auto">{ev.title}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function Elapsed({ since }: { since: number }) {
   const [, tick] = useState(0);
   useEffect(() => {
@@ -269,7 +291,7 @@ export function NowBar({ from, to }: { from: number; to: number }) {
     <>
       {review}
       <span data-testid="next-up">
-        Next up: <strong>{now.nextUp?.title ?? "nothing"}</strong>
+        Next up: <strong dir="auto">{now.nextUp?.title ?? "nothing"}</strong>
       </span>
       <button
         type="button"
@@ -308,7 +330,7 @@ export function NowBar({ from, to }: { from: number; to: number }) {
       <span class="spacer" />
       {m && (
         <span data-testid="next-meeting">
-          {m.current ? "Now" : "Next"}: <strong>{masked ? "Busy" : m.title}</strong>{" "}
+          {m.current ? "Now" : "Next"}: <strong dir="auto">{masked ? "Busy" : m.title}</strong>{" "}
           <span class="meta">{span(z, m.start, m.end)}</span>
           {m.joinUrl && !masked && (
             <a class="button" href={m.joinUrl} target="_blank" rel="noopener noreferrer">

@@ -21,6 +21,9 @@ export default defineConfig({
     timezoneId: "Europe/Berlin",
     locale: "en-GB",
     viewport: { width: 1440, height: 900 },
+    // The app's motion is off in E2E: boxes are where they end up on the first frame.
+    // tests/e2e/motion.spec.ts turns it on.
+    reducedMotion: "reduce",
     actionTimeout: 15_000,
     navigationTimeout: 30_000,
     // Never record traces or video: they can contain session tokens.
