@@ -222,7 +222,9 @@ the pull request that adds the rule (PR 1):
 ### 3.1 Token block
 
 PR 1 adds the motion tokens to the current `:root`. PR 2 replaces the
-whole `:root` block of `src/web/styles.css` with this block. Type and
+whole `:root` block of `src/web/styles.css` with this block, without the
+tokens that no rule uses yet: each of those comes with the pull request
+that first uses it (TST-12). Type and
 spacing are in `rem` and assume `html { font-size: 100% }` (TOK-3).
 Calendar geometry stays in `px`.
 
@@ -481,7 +483,9 @@ names. Change them to the new names in PR 2.
 | H1 | 20/26 | 600 | `--track-h1` | Page titles |
 
 - **TOK-10.** Use only these five sizes and the weights 400, 500 and 600.
-  Use 700 only for the wordmark. Do not use 550 or 650.
+  Use 700 only for the wordmark. Do not use 550 or 650. Exceptions: the
+  16 px inputs with a coarse pointer (token block) and the Pomodoro timer
+  digits (`.timer`, 64 px).
 - **TOK-11.** Headings: H1 20/26 600; H2 15/20 600; H3 13/18 600. One
   level has one style on every page (`styles.css:123, 398, 433, 717,
   832, 941, 984`, `parts.css:25`).
@@ -1720,14 +1724,19 @@ fix changes visible text.
   CMP-52, CMP-60 to CMP-62 and CMP-64 for the banners in their current
   places, CMP-103, CMP-110 to CMP-112; MOT-10, MOT-15.
 - No layout change: no element moves, no column changes. Event cards get
-  only the new color tokens; their redesign is PR 3.
+  only the new colors: the CMP-80 variables and the colors of CMP-81
+  (tint, `--text-primary`, the 3 px bar), because white text on the dark
+  category colors fails 4.5:1. Their geometry and the rest of their
+  redesign are PR 3.
 - Files: `src/web/styles.css`, `src/web/views/parts.css`,
   `src/web/views/priorities.css`, `src/web/views/tools.tsx`,
   `src/web/views/stats.tsx`, `src/web/views/stats-extras.tsx`,
   `src/web/views/team-stats.tsx`, `src/web/main.tsx` (CMP-12), and the
   banner markup that needs the
   `.note` classes (`hints.tsx`, `planner-now.tsx`, `preview.tsx`,
-  `account-menu.tsx`, `connect.tsx`).
+  `account-menu.tsx`, `connect.tsx`). To keep TST-12, the rules of pages
+  and panels that load on demand move from `styles.css` to
+  `src/web/views/pages.css` (new), which those views import.
 - Acceptance: 10.1; TOK-1 and TOK-2 greps are clean; every pressable
   element shows the five states (compare with
   `ui-refresh/states.png`); a screenshot of the public booking page at

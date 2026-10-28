@@ -16,6 +16,7 @@ import {
   saveQuery,
 } from "./stats-range.tsx";
 import { StatsTabs } from "./stats-tabs.tsx";
+import "./pages.css";
 
 interface Metrics {
   meetings: number;

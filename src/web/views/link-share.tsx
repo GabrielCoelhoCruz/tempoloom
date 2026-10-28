@@ -3,6 +3,7 @@
 // first use.
 import { useEffect, useState } from "preact/hooks";
 import { api } from "../lib/api.ts";
+import "./pages.css";
 
 type Format = "script" | "object" | "iframe" | "url";
 type Redirect = "disabled" | "topPage" | "frame";

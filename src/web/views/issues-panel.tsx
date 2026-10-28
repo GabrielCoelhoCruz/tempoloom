@@ -9,6 +9,7 @@ import { dateTimeText } from "../lib/format.ts";
 import { useLive } from "../lib/live.ts";
 import { messageOf } from "../lib/save.ts";
 import { zone } from "../lib/state.ts";
+import "./pages.css";
 
 const CHECK_LABELS: Record<Issue["checkId"], string> = {
   conflict: "Conflict",

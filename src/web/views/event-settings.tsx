@@ -6,6 +6,7 @@ import { useEffect, useState } from "preact/hooks";
 import type { EventSettings, SettingsKind } from "../../shared/event-settings.ts";
 import { api } from "../lib/api.ts";
 import { COLORS } from "../lib/categories.ts";
+import "./pages.css";
 
 interface Calendar {
   id: string;

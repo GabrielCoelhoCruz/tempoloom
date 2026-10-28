@@ -1,20 +1,116 @@
+/* Design tokens (docs/specs/ui-refresh.md section 3.1). Hex colors live only in these blocks (TOK-1).
+   A token comes with the pull request that first uses it (TST-12). */
 :root {
   color-scheme: light dark;
-  --bg: #fbfbfa;
-  --panel: #ffffff;
-  --fg: #1d1f23;
-  --muted: #6b7079;
-  --line: #e4e5e8;
+
+  /* Type: size, line height, weight and tracking go together */
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --text-11: 0.6875rem;
+  --lh-11: 0.875rem;
+  --text-12: 0.75rem;
+  --lh-12: 1rem;
+  --text-13: 0.8125rem;
+  --lh-13: 1.125rem;
+  --text-15: 0.9375rem;
+  --lh-15: 1.25rem;
+  --text-20: 1.25rem;
+  --lh-20: 1.625rem;
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --weight-brand: 700;
+  --track-title: -0.01em;
+  --track-h1: -0.015em;
+
+  /* Spacing: 4 px grid; 2 and 6 only inside dense controls */
+  --sp-4: 0.25rem;
+  --sp-6: 0.375rem;
+  --sp-8: 0.5rem;
+  --sp-12: 0.75rem;
+  --sp-20: 1.25rem;
+  --sp-24: 1.5rem;
+
+  /* Radii: inner radius = outer radius - padding */
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
+  --radius-xl: 14px;
+
+  /* Sizes: px on purpose, E2E geometry reads some of them */
+  --control-h: 32px;
+  --control-h-sm: 28px;
+  --hour-px: 48px; /* = HOUR_PX in week.tsx. E2E drags 48 px per hour. Do not change */
+  --focus-width: 2px;
+
+  /* Surfaces (light) */
+  --bg-canvas: #f6f6f4;
+  --bg-surface: #ffffff;
+  --bg-raised: #ffffff;
+  --bg-sunken: #f1f2f4;
+  --bg-hover: rgb(16 24 40 / 0.04);
+  --bg-press: rgb(16 24 40 / 0.07);
+  --bg-selected: color-mix(in srgb, var(--accent) 12%, var(--bg-surface));
+
+  /* Text, icons and lines (light) */
+  --text-primary: #1d1f23;
+  --text-secondary: #5f646d;
+  --text-tertiary: #6b7079;
+  --text-disabled: #9a9fa7;
+  --line: rgb(16 24 40 / 0.1);
+  --line-strong: rgb(16 24 40 / 0.16);
+  --chart-neutral: #c9ccd2;
+
+  /* Roles (light) */
   --accent: #3b6fd8;
+  --accent-hover: #3466cf;
+  --accent-press: #2f5cbd;
+  --accent-text: #2e63c9;
+  --on-accent: #ffffff;
+  --focus-ring: #3b6fd8;
   --danger: #c2413a;
-  --task: #3b6fd8;
-  --habit: #2f9e6e;
-  --focus: #7a52c7;
-  --buffer: #9aa0a8;
-  --meeting: #d08a1e;
-  --external: #c9ccd2;
-  --radius: 6px;
-  /* Motion (docs/specs/ui-refresh.md section 7) */
+  --danger-text: #b8382f;
+  --danger-soft: #fde8e7;
+  --warning-text: #8a5a00;
+  --warning-soft: #fdf0dc;
+  --success-text: #1f7a52;
+  --info-soft: #eef3fd;
+  --info-text: #2c3e66;
+  --now: #d1343b;
+
+  /* Event categories: bar color and ink (icon, selection ring) */
+  --cat-task: #3b6fd8;
+  --cat-task-ink: #2e63c9;
+  --cat-habit: #2f9e6e;
+  --cat-habit-ink: #1f7a52;
+  --cat-focus: #7a52c7;
+  --cat-focus-ink: #6a43b3;
+  --cat-meeting: #b7791f;
+  --cat-meeting-ink: #8a5a00;
+  --cat-external: #c2477a;
+  --cat-external-ink: #a8365f;
+  --cat-buffer: #9aa0a8;
+  --cat-buffer-ink: #6b7079;
+  --tint: 14%;
+
+  /* Native select chevron (data URI colors cannot use variables) */
+  --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='%236b7079' d='M4.5 6 8 9.5 11.5 6l1 1L8 11.5 3.5 7z'/%3E%3C/svg%3E");
+
+  /* Elevation: a semi-transparent ring plus a shadow, never a solid gray border */
+  --shadow-1: 0 0 0 1px rgb(16 24 40 / 0.1), 0 1px 2px rgb(16 24 40 / 0.06);
+  --shadow-3:
+    0 0 0 1px rgb(16 24 40 / 0.08), 0 4px 8px -2px rgb(16 24 40 / 0.08),
+    0 12px 28px -6px rgb(16 24 40 / 0.18);
+  --shadow-4:
+    0 0 0 1px rgb(16 24 40 / 0.08), 0 8px 16px -4px rgb(16 24 40 / 0.1),
+    0 24px 56px -12px rgb(16 24 40 / 0.28);
+  --scrim: rgb(10 12 16 / 0.32);
+
+  /* Layers (the current values, with names) */
+  --z-popover: 20;
+  --z-dialog: 30;
+  --z-toast: 40;
+
+  /* Motion (section 7) */
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
   --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
   --duration-press: 160ms;
@@ -26,71 +122,251 @@
   --duration-collapse: 200ms;
   --duration-fade: 200ms;
   --duration-toast: 400ms;
-  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
-  font-size: 14px;
 }
+
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #15171a;
-    --panel: #1c1f23;
-    --fg: #e7e8ea;
-    --muted: #9298a2;
-    --line: #2c3036;
-    --external: #3a3f47;
+    --bg-canvas: #111214;
+    --bg-surface: #18191c;
+    --bg-raised: #1f2124;
+    --bg-sunken: #141517;
+    --bg-hover: rgb(255 255 255 / 0.05);
+    --bg-press: rgb(255 255 255 / 0.08);
+    --bg-selected: color-mix(in srgb, var(--accent) 22%, var(--bg-surface));
+
+    --text-primary: #ececee;
+    --text-secondary: #a1a6ae;
+    --text-tertiary: #8b919a;
+    --text-disabled: #5d636c;
+    --line: rgb(255 255 255 / 0.08);
+    --line-strong: rgb(255 255 255 / 0.14);
+    --chart-neutral: #3a3f47;
+
+    --accent: #2f6bd6;
+    --accent-hover: #3a76e0;
+    --accent-press: #2a60c2;
+    --accent-text: #7aa7ff;
+    --focus-ring: #7aa7ff;
+    --danger-text: #f2777a;
+    --danger-soft: color-mix(in srgb, #f2777a 16%, var(--bg-surface));
+    --warning-text: #e5a33a;
+    --warning-soft: color-mix(in srgb, #e5a33a 14%, var(--bg-surface));
+    --success-text: #4cc38a;
+    --info-soft: color-mix(in srgb, #7aa7ff 12%, var(--bg-surface));
+    --info-text: #c9d8f5;
+
+    --cat-task: #6ea0ff;
+    --cat-task-ink: #6ea0ff;
+    --cat-habit: #4cc38a;
+    --cat-habit-ink: #4cc38a;
+    --cat-focus: #a98bf0;
+    --cat-focus-ink: #a98bf0;
+    --cat-meeting: #e5a33a;
+    --cat-meeting-ink: #e5a33a;
+    --cat-external: #ef7fab;
+    --cat-external-ink: #ef7fab;
+    --cat-buffer: #6b7079;
+    --cat-buffer-ink: #8b919a;
+    --tint: 22%;
+
+    --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='%238b919a' d='M4.5 6 8 9.5 11.5 6l1 1L8 11.5 3.5 7z'/%3E%3C/svg%3E");
+
+    --shadow-1:
+      0 0 0 1px rgb(255 255 255 / 0.1), inset 0 1px 0 rgb(255 255 255 / 0.04),
+      0 1px 2px rgb(0 0 0 / 0.4);
+    --shadow-3:
+      0 0 0 1px rgb(255 255 255 / 0.1), inset 0 1px 0 rgb(255 255 255 / 0.05),
+      0 12px 28px -6px rgb(0 0 0 / 0.6);
+    --shadow-4:
+      0 0 0 1px rgb(255 255 255 / 0.1), inset 0 1px 0 rgb(255 255 255 / 0.06),
+      0 24px 56px -12px rgb(0 0 0 / 0.7);
+    --scrim: rgb(0 0 0 / 0.55);
   }
 }
+
+/* High contrast: the user asks for more contrast */
+@media (prefers-contrast: more) {
+  :root {
+    --text-tertiary: var(--text-secondary);
+    --line: var(--line-strong);
+    --tint: 10%;
+    --focus-width: 3px;
+    --shadow-1: 0 0 0 1px rgb(16 24 40 / 0.32), 0 1px 2px rgb(16 24 40 / 0.06);
+  }
+}
+@media (prefers-contrast: more) and (prefers-color-scheme: dark) {
+  :root {
+    --tint: 16%;
+    --shadow-1: 0 0 0 1px rgb(255 255 255 / 0.32), 0 1px 2px rgb(0 0 0 / 0.4);
+  }
+}
+
+/* Forced colors (Windows high contrast): box-shadow does not paint */
+@media (forced-colors: active) {
+  .ev {
+    border: 1px solid CanvasText;
+  }
+  .ev-selected {
+    outline: 2px solid Highlight;
+  }
+  .switch {
+    appearance: auto;
+  }
+  :focus-visible {
+    outline-color: Highlight;
+  }
+}
+
+/* Touch: bigger controls and no input zoom (MOB-6) */
+@media (pointer: coarse) {
+  :root {
+    --control-h: 44px;
+    --control-h-sm: 40px;
+  }
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
+}
+
 * {
   box-sizing: border-box;
 }
+/* TOK-3, MOB-3 */
+html {
+  font-size: 100%;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-text-size-adjust: 100%;
+  overscroll-behavior: none;
+}
 body {
   margin: 0;
-  background: var(--bg);
-  color: var(--fg);
+  font: var(--weight-regular) var(--text-13) / var(--lh-13) var(--font-sans);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+}
+/* TOK-11: one style per heading level on every page; components set only margins. */
+h1 {
+  font: var(--weight-semibold) var(--text-20) / var(--lh-20) var(--font-sans);
+  letter-spacing: var(--track-h1);
+}
+h2 {
+  font: var(--weight-semibold) var(--text-15) / var(--lh-15) var(--font-sans);
+  letter-spacing: var(--track-title);
+}
+h3,
+h4,
+h5,
+h6 {
+  font: var(--weight-semibold) var(--text-13) / var(--lh-13) var(--font-sans);
+}
+/* TOK-10: 700 is for the wordmark only. */
+b,
+strong,
+th {
+  font-weight: var(--weight-semibold);
 }
 a {
-  color: var(--accent);
+  color: var(--accent-text);
 }
-button,
-input,
-select,
-textarea {
-  font: inherit;
-  color: inherit;
-}
-button {
-  border: 1px solid var(--line);
-  background: var(--panel);
-  border-radius: var(--radius);
-  padding: 6px 12px;
+
+/* Buttons (CMP-10, CMP-11). The base is in :where(), so a variant class always wins. */
+:where(button, a.button, .create-menu summary) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-6);
+  min-height: var(--control-h);
+  padding: 0 var(--sp-12);
+  font: var(--weight-medium) var(--text-13) / var(--lh-13) var(--font-sans);
+  color: var(--text-primary);
+  background: var(--bg-surface);
+  border: 0;
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-1);
   cursor: pointer;
+  white-space: nowrap;
+  text-decoration: none;
 }
-button.primary {
+.primary {
   background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
+  font-weight: var(--weight-semibold);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--accent) 80%, black),
+    inset 0 1px 0 rgb(255 255 255 / 0.12),
+    0 1px 2px rgb(16 24 40 / 0.12);
 }
-button.danger {
-  color: var(--danger);
+.ghost {
+  background: transparent;
+  box-shadow: none;
 }
-input,
-select,
-textarea {
-  border: 1px solid var(--line);
-  background: var(--panel);
-  border-radius: var(--radius);
-  padding: 6px 8px;
+.danger {
+  color: var(--danger-text);
 }
+.icon {
+  width: var(--control-h);
+  padding: 0;
+}
+.sm {
+  min-height: var(--control-h-sm);
+  padding: 0 var(--sp-8);
+  font-size: var(--text-12);
+  line-height: var(--lh-12);
+}
+/* Toggles; CMP-14: a selected button that is not a tab gets the same look. */
+button:is([aria-pressed="true"], [aria-expanded="true"]) {
+  background: var(--bg-selected);
+  color: var(--accent-text);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+/* Text inputs, selects and text areas (CMP-20 to CMP-24, CMP-31) */
+:where(
+  input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"]),
+  select,
+  textarea
+) {
+  min-height: var(--control-h);
+  padding: 0 10px;
+  font: var(--weight-regular) var(--text-13) / var(--lh-13) var(--font-sans);
+  color: var(--text-primary);
+  background: var(--bg-surface);
+  border: 0;
+  border-radius: var(--radius-md);
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+}
+:where(select) {
+  appearance: none;
+  padding-inline-end: 28px;
+  background:
+    var(--select-chevron) no-repeat right 8px center / 16px 16px,
+    var(--bg-surface);
+}
+:where(textarea) {
+  min-height: 72px;
+  padding: var(--sp-8) 10px;
+}
+::placeholder {
+  color: var(--text-tertiary);
+}
+:where(input, select, textarea)[aria-invalid="true"] {
+  box-shadow: inset 0 0 0 1px var(--danger);
+}
+/* CMP-35: native checkboxes and radios */
+:where(input[type="checkbox"], input[type="radio"]) {
+  accent-color: var(--accent);
+  width: 16px;
+  height: 16px;
+  margin: 0;
+}
+/* CMP-25 */
 label {
   display: grid;
-  gap: 4px;
-  color: var(--muted);
-  font-size: 12px;
-}
-label > input,
-label > select,
-label > textarea {
-  color: var(--fg);
-  font-size: 14px;
+  gap: var(--sp-4);
+  font: var(--weight-medium) var(--text-12) / var(--lh-12) var(--font-sans);
+  color: var(--text-secondary);
 }
 /* A11, ROB-11: selects and inputs never overflow a form (also label.inline and .field below). */
 label:not(.inline) {
@@ -102,12 +378,71 @@ label > select {
   max-width: 100%;
 }
 
-/* Mobile baseline (ui-refresh.md MOB-3, MOB-6, MOB-7, CMP-7) */
-html {
-  -webkit-tap-highlight-color: transparent;
-  -webkit-text-size-adjust: 100%;
-  overscroll-behavior: none;
+[dir="rtl"] select {
+  background-position: left 8px center;
 }
+/* States (CMP-1 to CMP-7). CMP-2: hover only with a fine pointer. */
+@media (hover: hover) and (pointer: fine) {
+  :where(button, a.button, .create-menu summary):hover {
+    background: color-mix(in srgb, var(--text-primary) 4%, var(--bg-surface));
+  }
+  .primary:hover {
+    background: var(--accent-hover);
+  }
+  :is(.ghost, .tabs a, [role="tab"], .menu > *, .create-menu > a, .nav a, a.row):hover {
+    background: var(--bg-hover);
+  }
+  .danger:hover {
+    background: var(--danger-soft);
+  }
+  :where(
+    input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"]),
+    select,
+    textarea
+  ):hover {
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text-primary) 28%, transparent);
+  }
+}
+/* CMP-3: buttons scale (MOT-10 below); rows, tabs, menu items and links darken at once. */
+:where(button, a.button, .create-menu summary):active {
+  background: color-mix(in srgb, var(--text-primary) 7%, var(--bg-surface));
+}
+.primary:active {
+  background: var(--accent-press);
+}
+:is(.ghost, .tabs a, [role="tab"], .menu > *, .create-menu > a, .nav a, a.row):active,
+button:is([aria-pressed="true"], [aria-expanded="true"]):active {
+  background: var(--bg-press);
+}
+/* CMP-4: the ring shows at once and never animates. */
+:focus-visible {
+  outline: var(--focus-width) solid var(--focus-ring);
+  outline-offset: 2px;
+}
+:is(.row, .nav a, .menu > *, .create-menu > a, [role="tab"], .tabs a):focus-visible {
+  outline-offset: -2px;
+}
+:where(
+  input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"]),
+  select,
+  textarea
+):focus {
+  outline: none;
+  box-shadow:
+    inset 0 0 0 1px var(--accent),
+    0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent);
+}
+/* CMP-5, CMP-23 */
+:disabled,
+[aria-disabled="true"] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+:where(input, select, textarea):disabled {
+  background-color: var(--bg-sunken);
+  color: var(--text-disabled);
+}
+/* MOB-7, CMP-7 */
 button,
 a,
 summary,
@@ -121,13 +456,6 @@ summary,
   user-select: none;
   -webkit-user-select: none;
 }
-@media (pointer: coarse) {
-  input,
-  select,
-  textarea {
-    font-size: 16px;
-  }
-}
 /* Motion (ui-refresh.md MOT-6): an overlay opened from the keyboard shows at once. */
 [data-instant],
 [data-instant] * {
@@ -135,31 +463,138 @@ summary,
   transition-duration: 0ms !important;
 }
 
+/* Tabs (CMP-110) */
+:is(.tabs a, [role="tab"]) {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 0 var(--sp-12);
+  font: var(--weight-medium) var(--text-13) / var(--lh-13) var(--font-sans);
+  color: var(--text-secondary);
+  background: none;
+  box-shadow: none;
+  border-radius: 0;
+  text-decoration: none;
+}
+:is(.tabs a, [role="tab"]):is([aria-selected="true"], [aria-current="page"]) {
+  color: var(--text-primary);
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+/* Menus (CMP-40, CMP-41); the Create list's links are menu items too. */
+.menu {
+  min-width: 200px;
+  padding: 4px;
+  border: 0;
+  border-radius: var(--radius-lg);
+  background: var(--bg-raised);
+  box-shadow: var(--shadow-3);
+  z-index: var(--z-popover);
+}
+.menu > *,
+.create-menu > a {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: var(--sp-8);
+  min-height: 28px;
+  padding: 0 var(--sp-8);
+  border-radius: var(--radius-sm);
+  font: var(--weight-regular) var(--text-13) / var(--lh-13) var(--font-sans);
+  text-align: start;
+  color: var(--text-primary);
+  background: none;
+  box-shadow: none;
+  text-decoration: none;
+}
+.menu > :focus-visible {
+  background: var(--bg-press);
+}
+.menu > hr {
+  min-height: 0;
+  height: 1px;
+  margin: 4px -4px;
+  padding: 0;
+  border: 0;
+  background: var(--line);
+}
+
+/* Notices (CMP-60 to CMP-62, CMP-64): one card, three tones, the icon drawn by ::before. */
+.note {
+  --note-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill-rule='evenodd' d='M8 0a8 8 0 1 0 0 16A8 8 0 0 0 8 0zm0 1.5a6.5 6.5 0 1 1 0 13 6.5 6.5 0 0 1 0-13zM7 7h2v5H7zm0-3h2v2H7z'/%3E%3C/svg%3E");
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: var(--sp-8);
+  row-gap: var(--sp-6);
+  min-height: 36px;
+  margin: 8px 16px 0;
+  padding: 6px 8px 6px 12px;
+  border-radius: var(--radius-md);
+  background: var(--info-soft);
+  color: var(--info-text);
+}
+.note::before {
+  content: "";
+  width: 16px;
+  height: 16px;
+  background: currentColor;
+  mask: var(--note-icon) center / contain no-repeat;
+}
+.note.warning {
+  --note-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill-rule='evenodd' d='M8 1 0 15h16zm0 3.2L13.4 13.5H2.6zM7.2 7h1.6v3.5H7.2zm0 4.5h1.6V13H7.2z'/%3E%3C/svg%3E");
+  background: var(--warning-soft);
+}
+.note.accent {
+  background: var(--bg-selected);
+  color: var(--text-primary);
+}
+.note-text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.note-actions {
+  grid-column: 2 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--sp-8);
+}
+
 .shell {
   display: grid;
   grid-template-columns: 200px 1fr;
   height: 100dvh;
 }
+/* Sidebar (CMP-111, CMP-112) */
 .nav {
-  border-right: 1px solid var(--line);
-  padding: 16px 12px;
+  background: var(--bg-canvas);
+  border-inline-end: 1px solid var(--line);
+  padding: var(--sp-12) var(--sp-8);
   display: flex;
   flex-direction: column;
   gap: 2px;
 }
 .nav .brand {
-  font-weight: 700;
-  margin: 0 8px 16px;
+  font: var(--weight-brand) var(--text-15) / var(--lh-15) var(--font-sans);
+  padding: 2px 8px 12px;
 }
 .nav a {
-  padding: 6px 8px;
-  border-radius: var(--radius);
-  color: var(--fg);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-8);
+  min-height: 30px;
+  padding: 0 var(--sp-8);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
   text-decoration: none;
 }
 .nav a[aria-current="page"] {
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
-  color: var(--accent);
+  background: var(--bg-selected);
+  color: var(--accent-text);
+  font-weight: var(--weight-semibold);
 }
 .nav .spacer {
   flex: 1;
@@ -175,7 +610,6 @@ summary,
   max-width: 960px;
 }
 .page h1 {
-  font-size: 20px;
   margin: 0 0 16px;
 }
 .toolbar {
@@ -187,9 +621,18 @@ summary,
   border-bottom: 1px solid var(--line);
 }
 .toolbar .title {
-  font-weight: 600;
+  font-size: var(--text-15);
+  line-height: var(--lh-15);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--track-title);
   margin-right: auto;
   white-space: nowrap;
+}
+/* TOK-12 */
+.toolbar :is(.title, .status),
+.hour-label,
+.ev-time {
+  font-variant-numeric: tabular-nums;
 }
 span.inline {
   display: inline-flex;
@@ -198,11 +641,12 @@ span.inline {
   gap: 6px;
 }
 .status {
-  font-size: 12px;
-  color: var(--muted);
+  font-size: var(--text-12);
+  line-height: var(--lh-12);
+  color: var(--text-secondary);
 }
 .error {
-  color: var(--danger);
+  color: var(--danger-text);
 }
 .toolbar .error {
   order: 99;
@@ -210,36 +654,33 @@ span.inline {
   overflow-wrap: anywhere;
 }
 
-.login {
-  display: grid;
-  place-items: center;
-  min-height: 100svh;
-  text-align: center;
+/* Cards: lists (CMP-103), forms, hours editors and panels */
+.list,
+.form {
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-1);
+  border-radius: var(--radius-lg);
 }
-.login .card {
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  padding: 32px 40px;
-}
-
 .list {
   display: grid;
-  gap: 6px;
+}
+.list:empty {
+  box-shadow: none;
+}
+.list > * + * {
+  border-top: 1px solid var(--line);
 }
 .row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
   align-items: start;
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
   padding: 10px 12px;
 }
 .row .meta {
-  color: var(--muted);
-  font-size: 12px;
+  color: var(--text-secondary);
+  font-size: var(--text-12);
+  line-height: var(--lh-12);
 }
 .task-row {
   grid-template-columns: auto minmax(0, 1fr) auto;
@@ -286,15 +727,16 @@ span.inline {
   --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill-rule='evenodd' d='M8 0a8 8 0 1 0 0 16A8 8 0 0 0 8 0zm0 1.5a6.5 6.5 0 1 1 0 13 6.5 6.5 0 0 1 0-13zM7 7h2v5H7zm0-3h2v2H7z'/%3E%3C/svg%3E");
 }
 .badge {
-  font-size: 11px;
+  font-size: var(--text-11);
+  line-height: var(--lh-11);
   padding: 1px 6px;
   border-radius: 10px;
   border: 1px solid var(--line);
-  color: var(--muted);
+  color: var(--text-secondary);
   white-space: nowrap;
 }
 .badge.risk {
-  color: var(--danger);
+  color: var(--danger-text);
   border-color: var(--danger);
   white-space: normal;
   -webkit-box-decoration-break: clone;
@@ -305,14 +747,38 @@ span.inline {
   grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
   gap: 12px;
   align-items: end;
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
   padding: 14px;
   margin-bottom: 16px;
 }
 .form .wide {
   grid-column: 1 / -1;
+}
+
+/* Dialogs (CMP-50 to CMP-52) */
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-dialog);
+  display: grid;
+  place-items: center;
+  background: var(--scrim);
+}
+.dialog {
+  width: min(480px, calc(100vw - 32px));
+  max-height: calc(100dvh - 48px);
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: var(--sp-20) var(--sp-24);
+  border: 0;
+  border-radius: var(--radius-xl);
+  background: var(--bg-raised);
+  box-shadow: var(--shadow-4);
+}
+.dialog h2 {
+  margin: 0 0 8px;
+}
+.dialog .actions {
+  justify-content: flex-end;
 }
 
 /* Week view */
@@ -323,31 +789,23 @@ span.inline {
   /* A1: the week keeps its room when notices and issues are above or below it. */
   min-height: max(240px, 50vh);
 }
-.side-panel {
-  flex: none;
-  max-height: 25vh;
-  overflow: auto;
-  margin: 0;
-  padding: 4px 16px;
-  border-top: 1px solid var(--line);
-}
 .week-head {
   display: grid;
   border-bottom: 1px solid var(--line);
 }
 .day-name {
   padding: 8px;
-  font-size: 12px;
-  color: var(--muted);
+  font-size: var(--text-12);
+  color: var(--text-secondary);
   text-align: center;
 }
 .day-name.today {
-  color: var(--accent);
+  color: var(--accent-text);
   font-weight: 600;
 }
 .day-name.focus {
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
-  border-radius: 6px;
+  background: var(--bg-selected);
+  border-radius: var(--radius-sm);
 }
 .week-scroll {
   overflow-y: auto;
@@ -366,15 +824,15 @@ span.inline {
   position: absolute;
   right: 6px;
   transform: translateY(-50%);
-  font-size: 11px;
-  color: var(--muted);
+  font-size: var(--text-11);
+  color: var(--text-tertiary);
   white-space: nowrap;
 }
 .grid {
   position: relative;
   display: grid;
   background-image: linear-gradient(var(--line) 1px, transparent 1px);
-  background-size: 100% 48px;
+  background-size: 100% var(--hour-px);
 }
 .day-col {
   border-left: 1px solid var(--line);
@@ -382,20 +840,23 @@ span.inline {
 .now-line {
   position: absolute;
   height: 2px;
-  background: var(--danger);
+  background: var(--now);
   z-index: 3;
   pointer-events: none;
 }
+/* Event cards: the category colors of CMP-80 and CMP-81 (tint, bar, text). PR 3 redraws the rest. */
 .ev {
+  --c: var(--cat-task);
+  --c-ink: var(--cat-task-ink);
   position: absolute;
   border-radius: 4px;
   padding: 2px 6px;
   overflow: hidden;
   font-size: 12px;
   line-height: 1.25;
-  color: #fff;
-  background: var(--task);
-  border: 1px solid color-mix(in srgb, #000 12%, transparent);
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--c) var(--tint), var(--bg-surface));
+  box-shadow: inset 3px 0 0 var(--c);
   cursor: default;
   user-select: none;
   /* MOB-8: a finger on a card scrolls the week; only the selected card can be dragged. */
@@ -405,38 +866,44 @@ span.inline {
 .ev-selected {
   touch-action: none;
 }
-.ev-task {
-  background: var(--task);
+.ev-task,
+.ev-habit,
+.ev-focus,
+.ev-meeting {
   cursor: grab;
 }
 .ev-habit {
-  background: var(--habit);
-  cursor: grab;
+  --c: var(--cat-habit);
+  --c-ink: var(--cat-habit-ink);
 }
 .ev-focus {
-  background: var(--focus);
-  cursor: grab;
+  --c: var(--cat-focus);
+  --c-ink: var(--cat-focus-ink);
 }
 .ev-buffer {
-  background: var(--buffer);
+  --c: var(--cat-buffer);
+  --c-ink: var(--cat-buffer-ink);
 }
 .ev-meeting {
-  background: var(--meeting);
-  cursor: grab;
-}
-.warning {
-  color: var(--meeting);
+  --c: var(--cat-meeting);
+  --c-ink: var(--cat-meeting-ink);
 }
 .ev-external {
-  background: var(--external);
-  color: var(--fg);
+  --c: var(--cat-external);
+  --c-ink: var(--cat-external-ink);
+}
+.warning {
+  color: var(--warning-text);
 }
 .ev-free {
-  background-image: repeating-linear-gradient(
+  background: repeating-linear-gradient(
     135deg,
-    transparent 0 6px,
-    rgb(255 255 255 / 0.18) 6px 12px
+    color-mix(in srgb, var(--c) var(--tint), var(--bg-surface)) 0 6px,
+    var(--bg-surface) 6px 12px
   );
+  box-shadow:
+    inset 3px 0 0 var(--c),
+    inset 0 0 0 1px color-mix(in srgb, var(--c) 35%, transparent);
 }
 .ev-locked {
   padding-right: 16px;
@@ -450,18 +917,21 @@ span.inline {
   top: 4px;
   width: 10px;
   height: 10px;
-  background-color: currentColor;
+  background-color: var(--c-ink);
   mask: var(--icon) center / contain no-repeat;
 }
 .ev-pick {
-  background: var(--line);
-  opacity: 0.7;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  box-shadow: none;
+  outline: 1.5px dashed var(--accent);
+  outline-offset: -1.5px;
   pointer-events: none;
 }
 .ev-drag {
-  opacity: 0.85;
   z-index: 4;
-  box-shadow: 0 4px 12px rgb(0 0 0 / 0.2);
+  box-shadow:
+    inset 3px 0 0 var(--c),
+    var(--shadow-3);
   cursor: grabbing;
 }
 .ev-title {
@@ -473,7 +943,7 @@ span.inline {
 }
 .ev-time {
   display: block;
-  opacity: 0.85;
+  color: var(--text-secondary);
   font-size: 11px;
 }
 /* A box too short for two lines: the time follows the title on one line. */
@@ -507,18 +977,24 @@ span.inline {
   position: absolute;
   z-index: 2;
   min-width: 20px;
+  min-height: 0;
   height: 20px;
   padding: 0 4px;
   border-radius: 999px;
   font-size: 11px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
-  color: var(--muted);
+  color: var(--text-secondary);
 }
 .ev-more::before {
   content: "";
   position: absolute;
   inset: -2px;
+}
+@media (pointer: coarse) {
+  .ev-more::before {
+    inset: -12px;
+  }
 }
 
 .drawer {
@@ -527,14 +1003,13 @@ span.inline {
   top: 0;
   bottom: 0;
   width: 340px;
-  background: var(--panel);
-  border-left: 1px solid var(--line);
+  background: var(--bg-surface);
   padding: 20px;
   display: flex;
   flex-direction: column;
   gap: 12px;
   z-index: 10;
-  box-shadow: -8px 0 24px rgb(0 0 0 / 0.08);
+  box-shadow: var(--shadow-3);
   /* A15, MOB-5, MOB-10 */
   overflow-y: auto;
   max-width: 100vw;
@@ -542,7 +1017,6 @@ span.inline {
   padding-bottom: calc(20px + env(safe-area-inset-bottom, 0px));
 }
 .drawer h2 {
-  font-size: 16px;
   margin: 0;
 }
 .drawer h2,
@@ -554,78 +1028,29 @@ span.inline {
   flex-wrap: wrap;
   gap: 8px;
 }
-a.button {
-  display: inline-block;
-  text-decoration: none;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  padding: 8px 14px;
-  background: var(--panel);
-  color: var(--fg);
-}
-a.button.primary {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
-}
-.login-form {
-  display: grid;
-  gap: 10px;
-  text-align: left;
-  margin-top: 12px;
-  min-width: 320px;
-}
-.login .card details {
-  margin-top: 16px;
-}
 section {
   margin-bottom: 28px;
 }
 section h2 {
-  font-size: 15px;
   margin: 0 0 10px;
-}
-.hours-card {
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  padding: 12px;
-  margin-bottom: 12px;
-}
-.hours-card h3 {
-  margin: 0 0 8px;
-  font-size: 14px;
-}
-.hours-day {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-  margin-bottom: 6px;
-}
-.hours-day .day {
-  width: 36px;
-  color: var(--muted);
-}
-.hours-day .range {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
 }
 label.inline {
   display: flex;
   flex-direction: row;
   align-items: center;
   gap: 6px;
-  color: var(--fg);
-  font-size: 14px;
+  color: var(--text-primary);
+  font: inherit;
+}
+fieldset {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
 }
 fieldset.days {
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  display: flex;
   gap: 10px;
-  flex-wrap: wrap;
 }
 .actions {
   display: flex;
@@ -636,7 +1061,6 @@ fieldset.days {
 .issues {
   padding: 8px 16px;
   border-top: 1px solid var(--line);
-  font-size: 13px;
   max-height: 30vh;
   overflow: auto;
 }
@@ -645,86 +1069,9 @@ fieldset.days {
   flex-direction: column;
   height: 100dvh;
 }
-button[aria-pressed="true"],
-button[aria-selected="true"] {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-.public {
-  margin: 0 auto;
-  padding: 32px 24px;
-}
-.day-times {
-  margin: 12px 0;
-}
-.day-times h3 {
-  font-size: 14px;
-  margin: 0 0 6px;
-}
-button.preferred {
-  border-color: color-mix(in srgb, var(--habit) 60%, var(--line));
-}
-.dot {
-  display: inline-block;
-  width: 8px;
-  height: 8px;
-  margin-right: 4px;
-  border-radius: 50%;
-  background: #1a9e4b;
-  vertical-align: middle;
-}
 a.row {
   text-decoration: none;
-  color: var(--fg);
-}
-.timer {
-  font-size: 64px;
-  font-variant-numeric: tabular-nums;
-  margin: 16px 0 8px;
-}
-progress {
-  width: 100%;
-  max-width: 420px;
-}
-.swatch {
-  display: inline-block;
-  width: 10px;
-  height: 10px;
-  border-radius: 2px;
-  vertical-align: middle;
-}
-.trend {
-  display: flex;
-  gap: 6px;
-  align-items: flex-end;
-  overflow-x: auto;
-  padding-bottom: 4px;
-}
-.trend-col {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
-  min-width: 40px;
-}
-.trend-bar {
-  display: flex;
-  flex-direction: column-reverse;
-  width: 24px;
-  height: 160px;
-  justify-content: flex-start;
-}
-
-/* Team */
-.toolbar-inline {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 16px 0 8px;
-}
-.toolbar-inline h2 {
-  font-size: 16px;
-  margin: 0 auto 0 0;
+  color: var(--text-primary);
 }
 .confirm {
   display: flex;
@@ -734,184 +1081,29 @@ progress {
   margin-top: 8px;
 }
 
-/* Team policies */
-.report-table {
-  border-collapse: collapse;
-  font-size: 12px;
-  margin: 8px 0 16px;
-}
-.report-table th,
-.report-table td {
-  border: 1px solid var(--line);
-  padding: 4px 8px;
-  text-align: right;
-}
-.report-table caption,
-.report-table tbody th {
-  text-align: left;
-}
-.report-table th.baseline {
-  color: var(--muted);
-}
-.inline-form {
-  display: flex;
-  gap: 8px;
-  align-items: end;
-}
-
-/* Stats tabs and report tables */
-.tabs {
-  display: flex;
-  gap: 4px;
-  border-bottom: 1px solid var(--line);
-  margin-bottom: 12px;
-}
-.tabs a {
-  padding: 6px 12px;
-  color: var(--muted);
-  text-decoration: none;
-  border-bottom: 2px solid transparent;
-}
-.tabs a[aria-current="page"] {
-  color: var(--fg);
-  border-bottom-color: var(--accent);
-}
-table.report {
-  border-collapse: collapse;
-  margin: 8px 0 16px;
-}
-table.report th,
-table.report td {
-  border: 1px solid var(--line);
-  padding: 4px 8px;
-  text-align: right;
-}
-table.report th:first-child {
-  text-align: left;
-}
-table.heat td {
-  min-width: 64px;
-  text-align: center;
-}
-
 /* Delegated access and the Account page */
-.acting-banner {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 8px 16px;
-  border-bottom: 1px solid var(--line);
-  background: color-mix(in srgb, var(--meeting) 22%, var(--panel));
-  font-weight: 600;
-}
-.acting-banner.ended {
-  background: color-mix(in srgb, var(--accent) 14%, var(--panel));
-  font-weight: 400;
-}
 .account-menu {
   position: relative;
   margin: 8px 0;
 }
 .account-menu > button {
   width: 100%;
-  text-align: left;
+  justify-content: flex-start;
 }
 .account-menu .menu {
   position: absolute;
   bottom: calc(100% + 4px);
   left: 0;
-  z-index: 20;
   display: flex;
   flex-direction: column;
   min-width: 240px;
-  padding: 4px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--panel);
-  box-shadow: 0 4px 16px rgb(0 0 0 / 12%);
-}
-.account-menu .menu > * {
-  padding: 6px 8px;
-  border: 0;
-  border-radius: var(--radius);
-  background: none;
-  color: var(--fg);
-  text-align: left;
-  text-decoration: none;
-}
-.account-menu .menu > *:hover {
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
-}
-.dialog-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 30;
-  display: grid;
-  place-items: center;
-  background: rgb(0 0 0 / 30%);
-}
-.dialog {
-  max-width: 480px;
-  padding: 16px 20px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--panel);
-}
-/* A result message stays in view next to an action far down the page. */
-.notice {
-  position: sticky;
-  top: 0;
-  z-index: 5;
-  padding: 6px 0;
-  background: var(--bg);
-}
-.dialog h2 {
-  margin: 0 0 8px;
-  font-size: 16px;
-}
-
-/* Booking page branding (booking-links-booking-page.md rules 25-31) */
-.brand-header {
-  display: grid;
-  gap: 12px;
-  margin-bottom: 16px;
-}
-.brand-default {
-  font-weight: 600;
-  color: var(--muted);
-}
-.brand-logo {
-  max-height: 48px;
-  max-width: 240px;
-}
-.brand-banner {
-  display: block;
-  width: 100%;
-  aspect-ratio: 3 / 1;
-  object-fit: cover;
-  border-radius: var(--radius);
 }
 
 /* Preview mode (assistant-preview-mode.md rule 4): dashed staged events, struck-through deletes */
-.preview {
-  display: grid;
-  gap: 8px;
-  margin: 8px 0;
-}
-.preview-head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 12px;
-}
-.preview-banner {
-  padding: 8px 16px;
-  border-bottom: 1px solid var(--line);
-  background: color-mix(in srgb, var(--accent) 12%, var(--panel));
-}
 .ev.ev-staged {
-  background: color-mix(in srgb, var(--accent) 14%, var(--panel));
-  color: var(--fg);
+  --c: var(--accent);
+  --c-ink: var(--accent-text);
+  box-shadow: none;
   border: 2px dashed var(--accent);
   z-index: 2;
 }
@@ -924,192 +1116,17 @@ table.heat td {
 .ev-staged-deleted .ev-title {
   text-decoration: line-through;
 }
-.apply-summary {
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  padding: 10px 12px;
-}
-
-/* Help pages and planner hints (support-troubleshooting.md) */
-.help section ul,
-.help ol {
-  padding-left: 20px;
-}
-.hint {
-  margin: 8px 0;
-  padding: 8px 12px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: color-mix(in srgb, var(--accent) 8%, var(--panel));
-}
-
-/* Stats: weekday heat map of solo work (analytics-personal-stats.md rule 4) */
-.heat {
-  display: grid;
-  grid-template-columns: repeat(7, 1fr);
-  gap: 4px;
-}
-.heat-cell {
-  display: grid;
-  gap: 2px;
-  padding: 6px;
-  border-radius: 4px;
-  text-align: center;
-}
 
 /* Automations (automations-overview.md): create menu, list groups, shared form */
 .create-menu {
   margin: 0 8px 12px;
 }
 .create-menu summary {
-  cursor: pointer;
-  padding: 6px 8px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
+  display: flex;
 }
 .create-menu[open] {
   display: grid;
   gap: 2px;
-}
-.automation-group {
-  border: 1px dashed transparent;
-  border-radius: var(--radius);
-  padding: 4px 8px 12px;
-  margin-bottom: 8px;
-}
-.automation-group.over {
-  border-color: var(--accent);
-}
-.automation-group h2 {
-  font-size: 14px;
-  margin: 8px 0;
-}
-ol.list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-li.automation {
-  cursor: grab;
-}
-li.automation.off {
-  opacity: 0.6;
-}
-li.automation .confirm {
-  grid-column: 1 / -1;
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-.field {
-  display: grid;
-  gap: 4px;
-  align-content: end;
-}
-.field > select {
-  color: var(--fg);
-  font-size: 14px;
-  min-width: 0;
-  max-width: 100%;
-}
-
-/* Booking page options: questions, zone picker, overlay (booking-links-booking-page.md) */
-.field,
-.question {
-  display: grid;
-  gap: 4px;
-}
-.field > label,
-.question > label {
-  color: var(--muted);
-  font-size: 12px;
-}
-.my-events {
-  margin: 0 0 6px;
-  padding-left: 16px;
-  color: var(--muted);
-  font-size: 12px;
-}
-button[data-mine="busy"] {
-  border-style: dashed;
-}
-/* Availability inspector (booking-links-availability.md rules 18-22) */
-button.not-offered {
-  color: var(--muted);
-}
-.dot {
-  display: inline-block;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  margin-left: 4px;
-  vertical-align: middle;
-}
-.dot-grey {
-  background: #9aa0a8;
-}
-.dot-orange {
-  background: #d08a1e;
-}
-.dot-purple {
-  background: #7a52c7;
-}
-.dot-red {
-  background: #c2413a;
-}
-.dot-blue {
-  background: #3b6fd8;
-}
-.inspect-details {
-  margin: 8px 0;
-  padding-left: 16px;
-}
-.inspect-details a {
-  margin-left: 6px;
-}
-/* Links page: one section per booking page (booking-links.md rule 5) */
-.link-section {
-  margin: 16px 0;
-}
-.link-section h2 {
-  font-size: 16px;
-  margin: 0 8px 8px 0;
-}
-fieldset {
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 16px;
-}
-/* Share panel, personalize and embeds (booking-links-sharing.md) */
-.panel {
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  padding: 12px 16px;
-  margin: 12px 0;
-  background: var(--panel);
-}
-.panel h2 {
-  font-size: 16px;
-  margin: 0 0 8px;
-}
-.wide.preview {
-  border: 1px dashed var(--line);
-  border-radius: var(--radius);
-  padding: 8px 12px;
-}
-.public.embedded {
-  padding: 12px;
-}
-.link-section .row > .actions {
-  align-items: center;
-  justify-content: flex-end;
-  max-width: 600px;
-}
-.tz-picker {
-  align-items: end;
-  margin: 8px 0;
 }
 
 /* r3 s3: the planner's now line; its parts load later (src/web/views/parts.css) */
@@ -1123,147 +1140,40 @@ fieldset {
   min-height: 38px;
   padding: 4px 16px;
   border-bottom: 1px solid var(--line);
-  font-size: 13px;
-}
-/* The next-up queue area at the top of the task list (planning-next-up.md NXT-5). */
-.next-up-queue {
-  border: 2px dashed var(--line);
-  border-radius: var(--radius);
-  padding: 4px 8px 8px;
-  margin-bottom: 8px;
-}
-.next-up-queue.over {
-  border-color: var(--accent);
-}
-.next-up-queue h2 {
-  font-size: 14px;
-  margin: 8px 0;
-}
-.task-list {
-  min-height: 32px;
-}
-
-/* The profile picture, or initials without one (settings-profile.md PRF-5, edge case 1). */
-.avatar {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 64px;
-  height: 64px;
-  border-radius: 50%;
-  object-fit: cover;
-}
-.avatar-initials {
-  background: var(--line);
-  font-weight: 600;
-  font-size: 1.5rem;
-}
-
-/* Assistant chat panel (assistant-chat.md rule 1) */
-.drawer.assistant {
-  width: 400px;
-}
-.assistant-head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-}
-.assistant-head button {
-  white-space: nowrap;
-}
-.assistant-head .spacer {
-  flex: 1;
-}
-.assistant-log {
-  flex: 1;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.assistant .msg {
-  padding: 8px 10px;
-  border-radius: var(--radius);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  max-width: 90%;
-}
-.assistant .msg.user {
-  align-self: flex-end;
-  background: color-mix(in srgb, var(--accent) 16%, var(--panel));
-}
-.assistant .msg.bot {
-  align-self: flex-start;
-  border: 1px solid var(--line);
-}
-/* An assistant reply (src/web/lib/chat-text.ts): paragraphs and lists. */
-.assistant .msg.bot > :is(p, ul, ol) {
-  margin: 0;
-}
-.assistant .msg.bot > :is(p, ul, ol) + :is(p, ul, ol) {
-  margin-top: 6px;
-}
-.assistant .msg.bot :is(ul, ol) {
-  padding-left: 20px;
-}
-.assistant .msg.bot code {
-  font-size: 0.9em;
-  background: var(--line);
-  border-radius: 3px;
-  padding: 0 3px;
-}
-.assistant-convo {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-}
-.assistant-convo label {
-  flex: 1;
-  min-width: 0;
-}
-.assistant-convo select {
-  min-width: 0;
-}
-.assistant .msg.note {
-  align-self: flex-start;
-  font-size: 13px;
-  opacity: 0.8;
-}
-.assistant .proposal {
-  border: 2px dashed var(--accent);
-  border-radius: var(--radius);
-  padding: 8px 10px;
-  display: grid;
-  gap: 6px;
-}
-/* The full new description of a staged change: it scrolls, nothing is cut. */
-.new-description {
-  margin: 0;
-  max-height: 12em;
-  overflow: auto;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  font: inherit;
-  font-size: 13px;
-  border-left: 3px solid var(--accent);
-  padding-left: 8px;
-}
-.assistant-form {
-  display: grid;
-  gap: 8px;
-}
-.assistant-form textarea {
-  width: 100%;
-  resize: vertical;
 }
 
 label.inline > select {
   min-width: 0;
   max-width: 100%;
+}
+/* CMP-6: 44 px targets with a coarse pointer. */
+@media (pointer: coarse) {
+  .sm {
+    position: relative;
+  }
+  .sm::before {
+    content: "";
+    position: absolute;
+    inset: -2px;
+  }
+  label:has(> :is([type="checkbox"], [type="radio"])),
+  .menu > *,
+  .create-menu > a,
+  .nav a {
+    min-height: 44px;
+  }
+}
+/* MOT-10: buttons scale while pressed; menu items, tabs and segmented items do not. */
+@media (prefers-reduced-motion: no-preference) {
+  :where(button, a.button, .create-menu summary) {
+    transition: transform var(--duration-press) var(--ease-out);
+  }
+  :is(button:not(:disabled), a.button, .create-menu summary):active {
+    transform: scale(0.97);
+  }
+  :is([role="menuitem"], [role="tab"], .panel-switch button):active {
+    transform: none;
+  }
 }
 /* MOT-9: reduced motion keeps fades and color changes; movement, scale and size snap. */
 @media (prefers-reduced-motion: reduce) {

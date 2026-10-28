@@ -12,6 +12,7 @@ import { LEVEL_NAMES, me, planNow, zone } from "../lib/state.ts";
 import { Select } from "./event-settings.tsx";
 import { type HoursChoice, HoursField } from "./hours-field.tsx";
 import { ItemChanges } from "./item-changes.tsx";
+import "./pages.css";
 
 const TimerDialog = lazyComponent<{ onClose: () => void }>(() =>
   import("./timer-dialog.tsx").then((m) => m.TimerDialog),

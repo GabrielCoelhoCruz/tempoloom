@@ -203,7 +203,7 @@ function App() {
       <nav class="nav">
         <div class="brand">Tempoloom</div>
         <CreateMenu />
-        <button type="button" class="primary" onClick={() => (newTask.value = true)}>
+        <button type="button" onClick={() => (newTask.value = true)}>
           New task
         </button>
         {NAV.map((n) => (

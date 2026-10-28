@@ -4,12 +4,14 @@ import { useState } from "preact/hooks";
 import { ApiError, api } from "../lib/api.ts";
 import { loadMe } from "../lib/state.ts";
 
+const TEXT = "Connect a calendar so Tempoloom can plan in it.";
+
 export function ConnectCalendar() {
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   return (
     <form
-      class="form"
+      class="note"
       data-testid="connect-calendar"
       onSubmit={async (e) => {
         e.preventDefault();
@@ -41,27 +43,31 @@ export function ConnectCalendar() {
         }
       }}
     >
-      <p class="wide">Connect a calendar so Tempoloom can plan in it.</p>
-      <label>
-        CalDAV server URL
-        <input name="serverUrl" type="url" required placeholder="https://dav.example.com/" />
-      </label>
-      <label>
-        User name
-        <input name="username" required autocomplete="username" />
-      </label>
-      <label>
-        Password
-        <input name="password" type="password" required autocomplete="current-password" />
-      </label>
-      <button type="submit" class="primary" disabled={pending}>
-        {pending ? "Connecting…" : "Connect calendar"}
-      </button>
-      {error && (
-        <p class="error wide" role="alert">
-          {error}
-        </p>
-      )}
+      <span class="note-text" title={TEXT}>
+        {TEXT}
+      </span>
+      <div class="note-actions">
+        <label>
+          CalDAV server URL
+          <input name="serverUrl" type="url" required placeholder="https://dav.example.com/" />
+        </label>
+        <label>
+          User name
+          <input name="username" required autocomplete="username" />
+        </label>
+        <label>
+          Password
+          <input name="password" type="password" required autocomplete="current-password" />
+        </label>
+        <button type="submit" class="primary" disabled={pending}>
+          {pending ? "Connecting…" : "Connect calendar"}
+        </button>
+        {error && (
+          <p class="error" role="alert">
+            {error}
+          </p>
+        )}
+      </div>
     </form>
   );
 }

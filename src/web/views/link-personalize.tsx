@@ -17,6 +17,7 @@ import {
   OrganizersEditor,
   type PersonOption,
 } from "./link-editor.tsx";
+import "./pages.css";
 
 const linkUrl = (l: EditableLink) => `${location.origin}/book/${l.pageSlug ?? ""}/${l.slug}`;
 

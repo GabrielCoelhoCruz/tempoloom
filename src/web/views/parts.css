@@ -3,9 +3,12 @@
 .now-bar .spacer {
   flex: 1;
 }
-.now-bar .button,
-.now-bar button {
-  padding: 2px 8px;
+/* The now bar's buttons are small buttons (CMP-11 .sm). */
+.now-bar :is(.button, button) {
+  min-height: var(--control-h-sm);
+  padding: 0 var(--sp-8);
+  font-size: var(--text-12);
+  line-height: var(--lh-12);
 }
 /* A2: long titles in the now line shorten; its parts wrap to more rows. */
 .now-bar strong {
@@ -20,41 +23,31 @@
   min-width: 0;
   max-width: 100%;
 }
+/* CMP-43 (look) */
 .popover {
   position: absolute;
-  z-index: 20;
+  z-index: var(--z-popover);
   display: grid;
   gap: 6px;
-  min-width: 260px;
+  min-width: min(260px, calc(100vw - 32px));
   /* A17: a popover fits a narrow screen. */
   max-width: min(460px, calc(100vw - 32px));
-  max-height: 60dvh;
+  max-height: min(60dvh, 480px);
   overflow: auto;
   overscroll-behavior: contain;
-  padding: 12px;
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  box-shadow: 0 8px 24px rgb(0 0 0 / 0.12);
+  padding: var(--sp-12);
+  background: var(--bg-raised);
+  border: 0;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-3);
 }
 .popover h3 {
   margin: 4px 0 0;
-  font-size: 13px;
 }
 .now-bar .popover {
   top: 100%;
   right: 16px;
   white-space: normal;
-}
-.banner {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 16px;
-  border-bottom: 1px solid var(--line);
-  background: color-mix(in srgb, var(--accent) 8%, transparent);
-  font-size: 13px;
 }
 .timer-bar,
 .block-preview {
@@ -62,13 +55,12 @@
   align-items: center;
   gap: 6px;
   padding: 2px 8px;
-  border-radius: var(--radius);
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-radius: var(--radius-md);
+  background: var(--bg-selected);
 }
 .ev-preview {
-  background: color-mix(in srgb, var(--task) 25%, transparent);
-  color: var(--fg);
-  border: 2px dashed var(--task);
+  box-shadow: none;
+  border: 2px dashed var(--cat-task);
   cursor: grab;
 }
 .ev-conflict {
@@ -77,18 +69,17 @@
 }
 .zone-head {
   padding: 8px 4px;
-  font-size: 11px;
-  color: var(--muted);
+  font-size: var(--text-11);
+  color: var(--text-secondary);
   text-align: right;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .extra-hours .hour-label {
-  color: var(--accent);
+  color: var(--accent-text);
 }
 .md {
-  font-size: 13px;
   overflow-wrap: anywhere;
 }
 .md h3,
@@ -109,12 +100,11 @@
   /* MOB-10: clear of the screen's rounded corners and home bar. */
   right: calc(16px + env(safe-area-inset-right, 0px));
   bottom: calc(16px + env(safe-area-inset-bottom, 0px));
-  z-index: 40;
-  padding: 10px 14px;
-  border-radius: var(--radius);
-  background: var(--panel);
-  border: 1px solid var(--line);
-  box-shadow: 0 8px 24px rgb(0 0 0 / 0.12);
+  z-index: var(--z-toast);
+  padding: 10px 12px;
+  border-radius: var(--radius-lg);
+  background: var(--bg-raised);
+  box-shadow: var(--shadow-3);
 }
 .hours-info {
   position: relative;
@@ -133,10 +123,7 @@
   gap: 8px;
 }
 .wide-dialog {
-  max-width: 720px;
-  max-height: 90dvh;
-  overflow: auto;
-  overscroll-behavior: contain;
+  width: min(720px, calc(100vw - 32px));
 }
 .sr-only {
   position: absolute;
@@ -159,15 +146,52 @@
   padding: 4px;
 }
 .more-list button {
-  display: flex;
+  justify-content: flex-start;
   gap: 6px;
-  height: 28px;
+  min-height: 28px;
   padding: 0 8px;
-  border: 0;
+  border-radius: var(--radius-sm);
+  font-weight: var(--weight-regular);
   background: none;
-  white-space: nowrap;
+  box-shadow: none;
 }
 .more-list span:last-child {
   overflow: hidden;
   text-overflow: ellipsis;
+}
+/* CMP-36, MOT-15: the switch is a native checkbox; PR 3 puts it on "Preview mode". */
+.switch {
+  appearance: none;
+  position: relative;
+  flex: none;
+  width: 32px;
+  height: 18px;
+  margin: 0;
+  border-radius: 9px;
+  background: var(--line-strong);
+  transition: background-color var(--duration-press) ease;
+}
+.switch::before {
+  content: "";
+  position: absolute;
+  inset-block-start: 2px;
+  inset-inline-start: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--on-accent);
+  box-shadow: var(--shadow-1);
+  transition: transform var(--duration-press) var(--ease-in-out);
+}
+.switch:checked {
+  background: var(--accent);
+}
+.switch:checked::before {
+  transform: translateX(14px);
+}
+[dir="rtl"] .switch:checked::before {
+  transform: translateX(-14px);
+}
+.switch:focus-visible::before {
+  transition-duration: 0ms;
 }

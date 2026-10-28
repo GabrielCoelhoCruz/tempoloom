@@ -10,6 +10,7 @@ import { loadPolicyMarks, PolicyMark, policyMarks } from "../lib/policy-marks.ts
 import { onLinkClick } from "../lib/router.ts";
 import { LEVEL_NAMES, planNow } from "../lib/state.ts";
 import { ItemChanges } from "./item-changes.tsx";
+import "./pages.css";
 
 interface Automation {
   type: string;

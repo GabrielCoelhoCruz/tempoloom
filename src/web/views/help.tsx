@@ -6,6 +6,7 @@ import { HELP_PAGES, type HelpBlock, helpInline } from "../../shared/help-pages.
 import { ApiError, api } from "../lib/api.ts";
 import { useNewest } from "../lib/newest.ts";
 import { navigate, onLinkClick, path } from "../lib/router.ts";
+import "./pages.css";
 
 function A({ href, children }: { href: string; children: ComponentChildren }) {
   return (

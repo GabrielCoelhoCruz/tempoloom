@@ -5,6 +5,7 @@ import { duration } from "../lib/format.ts";
 import { lazyComponent } from "../lib/lazy.ts";
 import { zone } from "../lib/state.ts";
 import { StatsTabs } from "./stats-tabs.tsx";
+import "./pages.css";
 
 const StatsExtras = lazyComponent<{ from: string; to: string; base: Base }>(() =>
   import("./stats-extras.tsx").then((m) => m.StatsExtras),
@@ -55,15 +56,15 @@ const LABELS: Record<Category, string> = {
   buffers: "Buffers",
 };
 const COLORS: Record<Category, string> = {
-  oneOnOne: "var(--meeting)",
-  groupMeetings: "color-mix(in srgb, var(--meeting) 70%, #000)",
-  bookedMeetings: "color-mix(in srgb, var(--meeting) 50%, #fff)",
-  soloEvents: "var(--external)",
-  tasks: "var(--task)",
-  workHabits: "var(--habit)",
-  personalHabits: "color-mix(in srgb, var(--habit) 50%, #fff)",
-  focus: "var(--focus)",
-  buffers: "var(--buffer)",
+  oneOnOne: "var(--cat-meeting)",
+  groupMeetings: "color-mix(in srgb, var(--cat-meeting) 70%, #000)",
+  bookedMeetings: "color-mix(in srgb, var(--cat-meeting) 50%, #fff)",
+  soloEvents: "var(--chart-neutral)",
+  tasks: "var(--cat-task)",
+  workHabits: "var(--cat-habit)",
+  personalHabits: "color-mix(in srgb, var(--cat-habit) 50%, #fff)",
+  focus: "var(--cat-focus)",
+  buffers: "var(--cat-buffer)",
 };
 const ORDER = Object.keys(LABELS) as Category[];
 const round = (m: number) => duration(Math.round(m));

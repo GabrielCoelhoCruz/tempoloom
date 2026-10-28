@@ -6,6 +6,7 @@ import { type Fact, factText } from "../../shared/facts.ts";
 import { api } from "../lib/api.ts";
 import { duration } from "../lib/format.ts";
 import { useNewest } from "../lib/newest.ts";
+import "./pages.css";
 
 interface Insights {
   categories: Record<string, number>;
@@ -109,7 +110,7 @@ export function StatsExtras({ from, to, base }: { from: string; to: string; base
               data-testid={`weekday-${w.weekday}`}
               title={`${w.name}: ${h(w.solo)} of solo work on average`}
               style={{
-                background: `color-mix(in srgb, var(--focus) ${Math.round((w.solo / maxSolo) * 100)}%, var(--panel))`,
+                background: `color-mix(in srgb, var(--cat-focus) ${Math.round((w.solo / maxSolo) * 100)}%, var(--bg-surface))`,
               }}
             >
               <span>{w.name.slice(0, 3)}</span>

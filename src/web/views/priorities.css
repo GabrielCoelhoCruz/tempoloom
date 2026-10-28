@@ -10,18 +10,17 @@
   flex: none;
   box-sizing: border-box;
   border: 1px dashed transparent;
-  border-radius: var(--radius);
+  border-radius: var(--radius-md);
   padding: 4px 8px 12px;
 }
 .priority-column {
-  background: var(--panel);
+  background: var(--bg-surface);
 }
 .priority-column.over,
 .priority-level.over {
   border-color: var(--accent);
 }
 .priority-column h2 {
-  font-size: 14px;
   margin: 8px 0;
 }
 .priority-item {
@@ -42,7 +41,8 @@
   margin: 8px 0 4px;
 }
 .priorities-panel h4 {
-  font-size: 12px;
-  color: var(--muted);
+  font-size: var(--text-12);
+  line-height: var(--lh-12);
+  color: var(--text-secondary);
   margin: 6px 0 4px;
 }

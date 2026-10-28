@@ -1,0 +1,476 @@
+/* Styles of the pages and panels that load on demand (login, settings, tasks, stats,
+   tools, team, policies, automations, booking pages and links, the assistant chat).
+   They stay out of the planner's cold load (ui-refresh.md TST-12). */
+.hours-card,
+.panel,
+.login .card {
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-1);
+  border-radius: var(--radius-lg);
+}
+button.preferred {
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--cat-habit) 60%, transparent);
+}
+button[data-mine="busy"] {
+  outline: 1px dashed var(--line-strong);
+  outline-offset: -1px;
+}
+button.not-offered {
+  color: var(--text-secondary);
+}
+
+.login {
+  display: grid;
+  place-items: center;
+  min-height: 100svh;
+  text-align: center;
+}
+.login .card {
+  padding: 32px 40px;
+}
+.login-form {
+  display: grid;
+  gap: 10px;
+  text-align: left;
+  margin-top: 12px;
+  min-width: 320px;
+}
+.login .card details {
+  margin-top: 16px;
+}
+.hours-card {
+  padding: 12px;
+  margin-bottom: 12px;
+}
+.hours-card h3 {
+  margin: 0 0 8px;
+}
+.hours-day {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+.hours-day .day {
+  width: 36px;
+  color: var(--text-secondary);
+}
+.hours-day .range {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.public {
+  margin: 0 auto;
+  padding: 32px 24px;
+}
+.day-times {
+  margin: 12px 0;
+}
+.day-times h3 {
+  margin: 0 0 6px;
+}
+.timer {
+  font-size: 64px;
+  font-variant-numeric: tabular-nums;
+  margin: 16px 0 8px;
+}
+progress {
+  width: 100%;
+  max-width: 420px;
+}
+.swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  vertical-align: middle;
+}
+.trend {
+  display: flex;
+  gap: 6px;
+  align-items: flex-end;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+.trend-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  min-width: 40px;
+}
+.trend-bar {
+  display: flex;
+  flex-direction: column-reverse;
+  width: 24px;
+  height: 160px;
+  justify-content: flex-start;
+}
+
+/* Team */
+.toolbar-inline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 16px 0 8px;
+}
+.toolbar-inline h2 {
+  margin: 0 auto 0 0;
+}
+
+/* Team policies and stats report tables */
+.report-table {
+  font-size: var(--text-12);
+  line-height: var(--lh-12);
+}
+:is(.report-table, table.report) {
+  border-collapse: collapse;
+  margin: 8px 0 16px;
+}
+:is(.report-table, table.report) :is(th, td) {
+  border: 1px solid var(--line);
+  padding: 4px 8px;
+  text-align: right;
+}
+.report-table caption,
+.report-table tbody th,
+table.report th:first-child {
+  text-align: left;
+}
+.report-table th.baseline {
+  color: var(--text-secondary);
+}
+.inline-form {
+  display: flex;
+  gap: 8px;
+  align-items: end;
+}
+
+/* Stats tabs */
+.tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 12px;
+}
+table.heat td {
+  min-width: 64px;
+  text-align: center;
+}
+
+/* Booking page branding (booking-links-booking-page.md rules 25-31) */
+.brand-header {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.brand-default {
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+.brand-logo {
+  max-height: 48px;
+  max-width: 240px;
+}
+.brand-banner {
+  display: block;
+  width: 100%;
+  aspect-ratio: 3 / 1;
+  object-fit: cover;
+  border-radius: var(--radius-md);
+}
+
+/* Stats: weekday heat map of solo work (analytics-personal-stats.md rule 4) */
+.heat {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
+}
+.heat-cell {
+  display: grid;
+  gap: 2px;
+  padding: 6px;
+  border-radius: 4px;
+  text-align: center;
+}
+.automation-group {
+  border: 1px dashed transparent;
+  border-radius: var(--radius-md);
+  padding: 4px 8px 12px;
+  margin-bottom: 8px;
+}
+.automation-group.over {
+  border-color: var(--accent);
+}
+.automation-group h2 {
+  margin: 8px 0;
+}
+ol.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+li.automation {
+  cursor: grab;
+}
+li.automation.off {
+  opacity: 0.6;
+}
+li.automation .confirm {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.my-events {
+  margin: 0 0 6px;
+  padding-left: 16px;
+  color: var(--text-secondary);
+  font-size: var(--text-12);
+}
+/* Booking dots: preferred times and the availability inspector (booking-links-availability.md rules 18-22) */
+.dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin: 0 4px;
+  border-radius: 50%;
+  background: var(--success-text);
+  vertical-align: middle;
+}
+.dot-grey {
+  background: var(--cat-buffer);
+}
+.dot-orange {
+  background: var(--cat-meeting);
+}
+.dot-purple {
+  background: var(--cat-focus);
+}
+.dot-red {
+  background: var(--danger);
+}
+.dot-blue {
+  background: var(--accent);
+}
+.inspect-details {
+  margin: 8px 0;
+  padding-left: 16px;
+}
+.inspect-details a {
+  margin-left: 6px;
+}
+/* Links page: one section per booking page (booking-links.md rule 5) */
+.link-section {
+  margin: 16px 0;
+}
+.link-section h2 {
+  margin: 0 8px 8px 0;
+}
+/* Share panel, personalize and embeds (booking-links-sharing.md) */
+.panel {
+  padding: 12px 16px;
+  margin: 12px 0;
+}
+.panel h2 {
+  margin: 0 0 8px;
+}
+.wide.preview {
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-md);
+  padding: 8px 12px;
+}
+.public.embedded {
+  padding: 12px;
+}
+.link-section .row > .actions {
+  align-items: center;
+  justify-content: flex-end;
+  max-width: 600px;
+}
+.tz-picker {
+  align-items: end;
+  margin: 8px 0;
+}
+/* The next-up queue area at the top of the task list (planning-next-up.md NXT-5). */
+.next-up-queue {
+  border: 2px dashed var(--line-strong);
+  border-radius: var(--radius-md);
+  padding: 4px 8px 8px;
+  margin-bottom: 8px;
+}
+.next-up-queue.over {
+  border-color: var(--accent);
+}
+.next-up-queue h2 {
+  margin: 8px 0;
+}
+.task-list {
+  min-height: 32px;
+}
+
+/* The profile picture, or initials without one (settings-profile.md PRF-5, edge case 1). */
+.avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+.avatar-initials {
+  background: var(--bg-sunken);
+  font-weight: 600;
+  font-size: var(--text-20);
+}
+
+/* Assistant chat panel (assistant-chat.md rule 1) */
+.drawer.assistant {
+  width: 400px;
+}
+.assistant-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.assistant-head .spacer {
+  flex: 1;
+}
+.assistant-log {
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.assistant .msg {
+  padding: 8px 10px;
+  border-radius: var(--radius-md);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-width: 90%;
+}
+.assistant .msg.user {
+  align-self: flex-end;
+  background: var(--bg-selected);
+}
+.assistant .msg.bot {
+  align-self: flex-start;
+  box-shadow: var(--shadow-1);
+}
+/* An assistant reply (src/web/lib/chat-text.ts): paragraphs and lists. */
+.assistant .msg.bot > :is(p, ul, ol) {
+  margin: 0;
+}
+.assistant .msg.bot > :is(p, ul, ol) + :is(p, ul, ol) {
+  margin-top: 6px;
+}
+.assistant .msg.bot :is(ul, ol) {
+  padding-left: 20px;
+}
+.assistant .msg.bot code {
+  font-size: var(--text-12);
+  background: var(--bg-sunken);
+  border-radius: 3px;
+  padding: 0 3px;
+}
+.assistant-convo {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.assistant-convo label {
+  flex: 1;
+  min-width: 0;
+}
+.assistant-convo select {
+  min-width: 0;
+}
+.assistant .msg.note {
+  align-self: flex-start;
+  color: var(--text-secondary);
+}
+.assistant .proposal {
+  border: 2px dashed var(--accent);
+  border-radius: var(--radius-md);
+  padding: 8px 10px;
+  display: grid;
+  gap: 6px;
+}
+/* The full new description of a staged change: it scrolls, nothing is cut. */
+.new-description {
+  margin: 0;
+  max-height: 12em;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+  border-left: 3px solid var(--accent);
+  padding-left: 8px;
+}
+.assistant-form {
+  display: grid;
+  gap: 8px;
+}
+.assistant-form textarea {
+  width: 100%;
+  resize: vertical;
+}
+/* Help pages (support-troubleshooting.md) */
+.help section ul,
+.help ol {
+  padding-left: 20px;
+}
+.side-panel {
+  flex: none;
+  max-height: 25vh;
+  overflow: auto;
+  margin: 0;
+  padding: 4px 16px;
+  border-top: 1px solid var(--line);
+}
+/* A result message stays in view next to an action far down the page. */
+.notice {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  padding: 6px 0;
+  background: var(--bg-surface);
+}
+.preview {
+  display: grid;
+  gap: 8px;
+  margin: 8px 0;
+  padding-inline: 16px;
+}
+.preview-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+.apply-summary {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+}
+/* Booking page options: questions, zone picker, overlay (booking-links-booking-page.md) */
+.field,
+.question {
+  display: grid;
+  gap: 4px;
+}
+.field {
+  align-content: end;
+}
+.field > select {
+  min-width: 0;
+  max-width: 100%;
+}

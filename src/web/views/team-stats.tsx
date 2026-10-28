@@ -18,6 +18,7 @@ import {
   WEEKDAYS,
 } from "./stats-range.tsx";
 import { StatsTabs } from "./stats-tabs.tsx";
+import "./pages.css";
 
 type Figure =
   | Bucket
@@ -55,16 +56,16 @@ const LABELS: Record<Bucket, string> = {
   free: "Free work time",
 };
 const COLORS: Record<Bucket, string> = {
-  oneOnOne: "var(--meeting)",
-  teamMeetings: "color-mix(in srgb, var(--meeting) 70%, #000)",
-  externalMeetings: "color-mix(in srgb, var(--meeting) 50%, #fff)",
-  deepWork: "var(--focus)",
-  shallowWork: "color-mix(in srgb, var(--focus) 50%, #fff)",
-  personal: "var(--habit)",
-  travel: "var(--task)",
-  breaks: "var(--buffer)",
-  vacation: "var(--external)",
-  personalCommitment: "color-mix(in srgb, var(--external) 50%, #fff)",
+  oneOnOne: "var(--cat-meeting)",
+  teamMeetings: "color-mix(in srgb, var(--cat-meeting) 70%, #000)",
+  externalMeetings: "color-mix(in srgb, var(--cat-meeting) 50%, #fff)",
+  deepWork: "var(--cat-focus)",
+  shallowWork: "color-mix(in srgb, var(--cat-focus) 50%, #fff)",
+  personal: "var(--cat-habit)",
+  travel: "var(--cat-task)",
+  breaks: "var(--cat-buffer)",
+  vacation: "var(--chart-neutral)",
+  personalCommitment: "color-mix(in srgb, var(--chart-neutral) 50%, #fff)",
   free: "transparent",
 };
 const ORDER = Object.keys(LABELS) as Bucket[];
@@ -254,7 +255,7 @@ export function TeamStats() {
                     key={data.distribution?.thresholds[i]}
                     data-threshold={data.distribution?.thresholds[i]}
                     style={{
-                      background: `color-mix(in srgb, var(--meeting) ${p}%, transparent)`,
+                      background: `color-mix(in srgb, var(--cat-meeting) ${p}%, transparent)`,
                     }}
                   >
                     {p}%
@@ -281,7 +282,7 @@ export function TeamStats() {
                     <td
                       key={WEEKDAYS[i]}
                       style={{
-                        background: `color-mix(in srgb, var(--focus) ${Math.round((m / top) * 100)}%, transparent)`,
+                        background: `color-mix(in srgb, var(--cat-focus) ${Math.round((m / top) * 100)}%, transparent)`,
                       }}
                     >
                       {hours(m)}

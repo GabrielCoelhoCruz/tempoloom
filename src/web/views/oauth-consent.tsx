@@ -7,6 +7,7 @@ import { utcToLocal } from "../../shared/time.ts";
 import { ApiError, api } from "../lib/api.ts";
 import { dateText } from "../lib/format.ts";
 import { zone } from "../lib/state.ts";
+import "./pages.css";
 
 interface Request {
   client: string;

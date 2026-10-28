@@ -31,6 +31,7 @@ import {
 } from "./settings-extra.tsx";
 import { TaskDefaults } from "./task-defaults.tsx";
 import { WeeklyReportSetting } from "./weekly-report-setting.tsx";
+import "./pages.css";
 
 interface HoursSet {
   id: string;

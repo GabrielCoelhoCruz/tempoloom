@@ -4,6 +4,7 @@ import { useEffect, useState } from "preact/hooks";
 import { ApiError, api } from "../lib/api.ts";
 import { keepAssistantLink } from "../lib/assistant-link.ts";
 import { loadMe } from "../lib/state.ts";
+import "./pages.css";
 
 /** Sign-in errors that come back in ?login_error= (single sign-on, Google). */
 const LOGIN_ERRORS: Record<string, string> = {
