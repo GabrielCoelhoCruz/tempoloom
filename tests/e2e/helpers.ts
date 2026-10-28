@@ -1,4 +1,5 @@
 // Shared steps for E2E scenarios: they drive the real UI like a user would.
+import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Browser, Locator, Page } from "@playwright/test";
 import type { ProviderEvent } from "../../src/server/providers/types.ts";
 import { addDays } from "../../src/shared/time.ts";
@@ -217,6 +218,24 @@ export async function addLink(
   if (l.hidden) await form.getByLabel("Page", { exact: true }).selectOption("hidden");
   await form.getByRole("button", { name: "Add link" }).click();
   await expect(page.locator(`[data-link-title="${l.title}"]`)).toBeVisible();
+}
+
+/**
+ * For a test's loopback server: answers 404 to a request that is not the
+ * app's `method` and `path`, and returns true. Another program on the host
+ * can probe each new port (GET / with no body); such a request is not the app's.
+ */
+export function strayRequest(
+  req: IncomingMessage,
+  res: ServerResponse,
+  method: string,
+  path: string,
+): boolean {
+  if (req.method === method && req.url === path) return false;
+  req.resume();
+  res.statusCode = 404;
+  res.end();
+  return true;
 }
 
 /** A signed-out visitor in a separate browser context. */
