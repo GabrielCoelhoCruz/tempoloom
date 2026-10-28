@@ -138,6 +138,22 @@
 .ev-staged-deleted .ev-title {
   text-decoration: line-through;
 }
+/* MOT-30: the right column drawer at 1180 px and below slides in from its edge. */
+@media (max-width: 1180px) {
+  .side-column {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    box-shadow: var(--shadow-3);
+    transition: transform var(--duration-drawer) var(--ease-drawer);
+    @starting-style {
+      transform: translateX(100%);
+    }
+  }
+  [dir="rtl"] .side-column {
+    @starting-style {
+      transform: translateX(-100%);
+    }
+  }
+}
 /* LAY-14 (with the parts that load later): from 1440 px the toolbar keeps one row: the preview sentence, then the title
    (to 9ch) give up their room. An error takes its own row (LAY-15). */
 @media (min-width: 1440px) {
