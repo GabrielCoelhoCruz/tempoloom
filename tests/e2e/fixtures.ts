@@ -691,6 +691,13 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
         : {}),
     };
     const start = async () => {
+      // A server that already answers here is not this test's: the health check
+      // below would pass on it, and the test would sign in on another database.
+      const taken = await fetch(`${BASE_URL}/healthz`).then(
+        (r) => r.ok,
+        () => false,
+      );
+      if (taken) throw new Error(`Another server answers on ${BASE_URL}; stop it first`);
       proc = spawn(process.execPath, ["src/server/main.ts"], {
         cwd: ROOT,
         env,
@@ -706,6 +713,8 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
         } catch {}
         await new Promise((r) => setTimeout(r, 100));
       }
+      // Stop it, or it starts later, keeps the port, and serves the next tests.
+      await stop();
       throw new Error(`Server did not start (data: ${dataDir}):\n${log.join("")}`);
     };
     const stop = async () => {
