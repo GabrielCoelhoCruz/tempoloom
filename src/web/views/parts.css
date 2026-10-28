@@ -153,6 +153,7 @@
 }
 /* LAY-43: the list of a "+N" button in the week. */
 .more-list {
+  min-width: 0;
   width: 240px;
   gap: 0;
   padding: 4px;

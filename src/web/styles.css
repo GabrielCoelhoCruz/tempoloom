@@ -193,6 +193,7 @@ summary,
 }
 span.inline {
   display: inline-flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
 }
@@ -493,8 +494,8 @@ span.inline {
   font-size: 11px;
   line-height: 12px;
 }
-/* A7: a tall card wraps its title to 2 lines. */
-.ev-tall .ev-title {
+/* A7: a tall card wraps its title to 2 lines; a narrow card in an overlap keeps one line. */
+.ev-tall:where(:not(.ev-overlap)) .ev-title {
   white-space: normal;
   overflow-wrap: anywhere;
   display: -webkit-box;
