@@ -515,3 +515,56 @@ li.automation .confirm {
   min-width: 0;
   max-width: 100%;
 }
+/* Motion of menus, popovers and dialogs (ui-refresh.md MOT-20 to MOT-23). It loads after
+   the first page settles; an overlay opened before that shows at once. */
+.menu,
+.popover {
+  transition:
+    opacity var(--duration-popover) var(--ease-out),
+    transform var(--duration-popover) var(--ease-out);
+  @starting-style {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+}
+.account-menu .menu {
+  transform-origin: bottom left;
+}
+.dialog-backdrop {
+  transition: background-color var(--duration-modal) var(--ease-out);
+  @starting-style {
+    background-color: rgb(0 0 0 / 0%);
+  }
+}
+.dialog {
+  transform-origin: center;
+  transition:
+    opacity var(--duration-modal) var(--ease-out),
+    transform var(--duration-modal) var(--ease-out);
+  @starting-style {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+}
+/* CMP-53, MOT-23: at 640 px and below, a dialog is a bottom sheet that slides up. */
+@media (max-width: 640px) {
+  .dialog-backdrop > .dialog {
+    align-self: end;
+    width: 100%;
+    max-width: none;
+    border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+    padding-bottom: calc(20px + env(safe-area-inset-bottom, 0px));
+    transition: transform var(--duration-modal) var(--ease-drawer);
+    @starting-style {
+      transform: translateY(100%);
+    }
+  }
+}
+@media (max-width: 640px) and (prefers-reduced-motion: reduce) {
+  .dialog {
+    transition: opacity var(--duration-fade) ease;
+    @starting-style {
+      opacity: 0;
+    }
+  }
+}

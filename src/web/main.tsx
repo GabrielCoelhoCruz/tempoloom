@@ -3,6 +3,7 @@ import type { ComponentChildren } from "preact";
 import { render } from "preact";
 import { useEffect } from "preact/hooks";
 import { lazyComponent, settle, settled } from "./lib/lazy.ts";
+import { byKeyboard } from "./lib/motion.ts";
 import { onLinkClick, path } from "./lib/router.ts";
 import { loadMe, me } from "./lib/state.ts";
 import { AccountMenu, ActingBanner } from "./views/account-menu.tsx";
@@ -57,7 +58,7 @@ const AutomationForm = lazyComponent(() =>
 );
 // r3 s3: profile page, New task form (TSK-5, TSK-6) and event start alerts (NTF-1, NTF-2).
 const ProfilePage = lazyComponent(() => import("./views/profile.tsx").then((m) => m.ProfilePage));
-const NewTaskDialog = lazyComponent<{ onClose: () => void }>(() =>
+const NewTaskDialog = lazyComponent<{ onClose: () => void; instant: boolean }>(() =>
   import("./views/task-dialog.tsx").then((m) => m.NewTaskDialog),
 );
 const Alerts = lazyComponent(() => import("./views/alerts.tsx").then((m) => m.Alerts));
@@ -67,13 +68,14 @@ const OAuthConsent = lazyComponent(() =>
 // The sign-in page is for signed-out visitors only; it loads on demand.
 const Login = lazyComponent(() => import("./views/login.tsx").then((m) => m.Login));
 const CalDavLogin = lazyComponent(() => import("./views/login.tsx").then((m) => m.CalDavLogin));
-const newTask = signal(false);
+/** The New task form is open; "key" when the keyboard opened it, so it shows at once (MOT-6). */
+const newTask = signal<boolean | "key">(false);
 addEventListener("keydown", (e) => {
   const t = e.target as HTMLElement | null;
   if (e.key !== "c" || e.ctrlKey || e.metaKey || e.altKey || !me.value) return;
   if (t?.closest("input, textarea, select, [contenteditable], [role=dialog]")) return;
   e.preventDefault();
-  newTask.value = true;
+  newTask.value = "key";
 });
 
 const NAV: { href: string; label: string }[] = [
@@ -203,7 +205,7 @@ function App() {
       <nav class="nav">
         <div class="brand">Tempoloom</div>
         <CreateMenu />
-        <button type="button" onClick={() => (newTask.value = true)}>
+        <button type="button" onClick={(e) => (newTask.value = byKeyboard(e) ? "key" : true)}>
           New task
         </button>
         {NAV.map((n) => (
@@ -226,7 +228,9 @@ function App() {
         {!me.value.accounts.some((a) => !a.viaGrant) && <ConnectCalendar />}
         <Page />
       </main>
-      {newTask.value && <NewTaskDialog onClose={() => (newTask.value = false)} />}
+      {newTask.value && (
+        <NewTaskDialog instant={newTask.value === "key"} onClose={() => (newTask.value = false)} />
+      )}
       {settled.value && <Alerts />}
     </div>
   );

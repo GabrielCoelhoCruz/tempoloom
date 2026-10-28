@@ -8,7 +8,8 @@ import { TaskForm } from "./tasks.tsx";
 
 const KEY = "tempoloom.createAnother";
 
-export function NewTaskDialog({ onClose }: { onClose: () => void }) {
+/** `instant`: the keyboard opened the form, so it shows at once (ui-refresh.md MOT-6). */
+export function NewTaskDialog({ onClose, instant }: { onClose: () => void; instant: boolean }) {
   const [another, setAnother] = useState(() => localStorage.getItem(KEY) === "1");
   const [created, setCreated] = useState<string[]>([]);
   // Listen at once, not after paint: an Escape right after opening must close the form.
@@ -23,7 +24,7 @@ export function NewTaskDialog({ onClose }: { onClose: () => void }) {
     )?.focus();
   }, []);
   return (
-    <div class="dialog-backdrop">
+    <div class="dialog-backdrop" data-instant={instant || undefined}>
       <div
         class="dialog wide-dialog"
         role="dialog"
