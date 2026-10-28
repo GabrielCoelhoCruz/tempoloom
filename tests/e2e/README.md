@@ -99,10 +99,15 @@ supports guest invitations. The same test calendar is reused on each run.
    `op://tempoloom-e2e/<document item title>/<file name>` and select it with
    `TEMPOLOOM_E2E_ENV_TEMPLATE`. The service account must be able to read that
    item too. Write item titles, never vault or item ids, in a committed file.
-5. Give the read-only 1Password service account access to that item. Save its
+5. In Google Calendar settings of the test account, set "Start week on" to
+   Monday, "Date format" to 2026-12-31 and "Time format" to 13:00. Tempoloom
+   copies these settings from Google into the user's profile on sync
+   (docs/specs/settings-profile.md, PRF-3), and the tests expect Monday weeks,
+   ISO dates and 24-hour times.
+6. Give the read-only 1Password service account access to that item. Save its
    token as described in the service account setup above.
-6. Run the command below.
-7. Open the printed loopback URL in a browser that can reach the callback port.
+7. Run the command below.
+8. Open the printed loopback URL in a browser that can reach the callback port.
    Sign in as the test user and approve all requested access once for that run.
    The helper stops if another Google account approves, if Google has not
    verified the account's email, or if nobody approves within 10 minutes.

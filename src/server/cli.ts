@@ -96,7 +96,9 @@ if (!email && command !== "limit") throw new Error("--email is required");
 switch (command) {
   case "login-link": {
     const user = ensureUser(db, email, values.name ?? email);
-    console.log(new URL(`/auth/link/${createLoginLink(db, user.id)}`, config.BASE_URL).toString());
+    // The link expires by the server clock, which TEST_CLOCK_START can move.
+    const token = createLoginLink(db, user.id, clockOf(config)());
+    console.log(new URL(`/auth/link/${token}`, config.BASE_URL).toString());
     break;
   }
   case "connect-google-service-account": {

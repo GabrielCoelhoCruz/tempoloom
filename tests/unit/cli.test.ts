@@ -6,6 +6,7 @@ import { spawnSync } from "node:child_process";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 
 const cli = (env: Record<string, string>, ...args: string[]) =>
@@ -35,5 +36,28 @@ describe("weekly-reports --now", () => {
   it("runs at the server clock without --now", () => {
     const r = cli({}, "weekly-reports");
     expect(r.stdout).toContain("sent 0 reports");
+  });
+});
+
+describe("login-link", () => {
+  it("expires by the server clock that TEST_CLOCK_START moves", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "tempoloom-cli-"));
+    const start = "2030-01-07T08:00:00Z";
+    const r = cli(
+      { DATA_DIR: dataDir, TEMPOLOOM_TEST_MODE: "1", TEST_CLOCK_START: start },
+      "login-link",
+      "--email",
+      "clock@example.com",
+    );
+    expect(r.stderr).toBe("");
+    const db = new DatabaseSync(join(dataDir, "tempoloom.db"), { readOnly: true });
+    try {
+      const [link] = db.prepare("SELECT expires_at FROM login_links").all() as {
+        expires_at: number;
+      }[];
+      expect(link?.expires_at).toBeGreaterThan(Date.parse(start));
+    } finally {
+      db.close();
+    }
   });
 });
